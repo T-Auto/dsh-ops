@@ -5,13 +5,20 @@ All notable changes to this package are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.1] — Windows payload packaging
+## [0.2.1] — Windows payload packaging — published
+
+Published to the public npm registry on 2026-10-08 as `dsh-ops@0.2.1` with
+`@dsh-ops/fastctx-win32-x64@0.2.1`, `@dsh-ops/bash-win32-x64@0.2.1` and
+`@dsh-ops/pwsh-win32-x64@0.2.1`. Packed sizes and registry digests:
+[docs/release-0.2.1.md](docs/release-0.2.1.md).
 
 - Assemble complete digest-verified PortableGit/bash and PowerShell 7 runtime packages instead of metadata-only pins; inject all three Windows x64 runtime dependencies in the publish artifact.
 - Add explicit-profile install/status/uninstall delegation to the official DSH manager; map tui to dsh-tui and use Desktop's installation-owned CLI.
 - Resolve the pwsh dependency from the plugin package under pnpm isolation.
 - Make the default README Chinese and add a concise English translation.
-- Correct the npm credential selection: the initial E403 used an old local token, not the maintainer-provided bypass token. The explicitly selected bypass token was accepted for publication. Local payload builds are not license-compliance evidence.
+- Materialize PortableGit's hardlinked paths during assembly: npm rejects hard links with E415, so the shell packages publish regular files with identical bytes.
+- Fix credential selection: the first publish attempt used an unrelated local npm token and received E403. The maintainer's explicitly selected bypass credential was accepted; the earlier attribution of that failure to the maintainer's token was wrong.
+- Known unresolved item: complete corresponding-source delivery for the GPL/LGPL components in the PortableGit inventory was not collected or reviewed, and no source offer is claimed. Publication proceeded at the maintainer's explicit direction.
 
 ## [Unreleased] — additive tool surface
 

@@ -41,6 +41,9 @@ dsh plugin --profile dsh-tui add dsh-ops
 Update by repeating the npx install command, or official `add dsh-ops@latest`.
 Reload/restart as the application requests; replacing loaded code may require restart.
 
+The current npm version is `0.2.1` (published 2026-10-08); packed sizes and registry
+digests are in [docs/release-0.2.1.md](docs/release-0.2.1.md).
+
 ```console
 npx --yes dsh-ops@latest status --profile desktop
 npx --yes dsh-ops@latest uninstall --profile desktop

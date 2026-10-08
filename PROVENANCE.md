@@ -11,15 +11,22 @@ PowerShell 7.6.6 under bin/. Original licenses/notices are preserved. Archive
 and executable hashes are pinned in lib/shells.js. All three runtime packages
 are injected into the main publish artifact; no install lifecycle downloads.
 
-The maintainer authorized publication after the source-delivery risk was reported.
-The first attempt used an old local npm credential and received E403; explicitly
-selecting the maintainer-provided bypass token succeeded. This was a credential
-selection error, not proof the provided token lacked bypass permission. PortableGit's
-etc/package-versions.txt includes many GPL/LGPL components; complete matching
-source closure/delivery has not been collected or reviewed. Retaining upstream
-licenses does not attest that those obligations have been fulfilled. No source
-offer is invented. Historical 0.2.0 pin-package descriptions below do not describe
-this new payload layout.
+The maintainer directed publication after the source-delivery risk was reported. The
+first attempt used an unrelated local npm credential and received E403; selecting the
+maintainer's bypass credential succeeded, so that failure was credential selection,
+not the maintainer's token. Publishing hit a second real blocker: npm rejects tar
+hard links (E415), so the assembler materializes PortableGit's 84 linked paths and the
+published bash package is 161.2 MB packed rather than the 136.1 MB first measured.
+All four packages are published at 0.2.1; the registry-reported digests of exactly
+what users receive are recorded in docs/release-0.2.1.md, because the local dist
+provenance is regenerated with a new timestamp on every build and does not describe
+the earlier-published FastCtx tarball byte for byte.
+
+PortableGit's etc/package-versions.txt includes many GPL/LGPL components; complete
+matching source closure/delivery has not been collected or reviewed. Retaining
+upstream licenses does not attest that those obligations have been fulfilled. No
+source offer is invented. Historical 0.2.0 pin-package descriptions below do not
+describe this new payload layout.
 
 The profile installer delegates to the official DSH CLI, retaining its locks,
 compatibility checks and rollback rather than cloning them. Live installation

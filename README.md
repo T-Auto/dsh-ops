@@ -40,6 +40,8 @@ dsh plugin --profile dsh-tui add dsh-ops
 
 **更新**：重新运行相同的 `npx --yes dsh-ops@latest install --profile ...`，或用官方 CLI `add dsh-ops@latest`。按应用提示重载；替换已加载代码时重启应用。
 
+当前 npm 版本为 `0.2.1`（2026-10-08 发布），打包与摘要见 [docs/release-0.2.1.md](docs/release-0.2.1.md)。
+
 **卸载与查看状态**：
 
 ```console
