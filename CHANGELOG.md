@@ -11,7 +11,7 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Add explicit-profile install/status/uninstall delegation to the official DSH manager; map tui to dsh-tui and use Desktop's installation-owned CLI.
 - Resolve the pwsh dependency from the plugin package under pnpm isolation.
 - Make the default README Chinese and add a concise English translation.
-- Publication is paused pending complete corresponding-source delivery for the PortableGit GPL/LGPL inventory. Local payload builds are not license-compliance evidence.
+- The maintainer authorized a publish attempt despite the previously reported source-delivery risk; npm rejected the first package with E403 (2FA or granular bypass token required). No package was published. Local payload builds are not license-compliance evidence.
 
 ## [Unreleased] — additive tool surface
 

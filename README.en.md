@@ -8,8 +8,8 @@ Routing: **file tools → bash → PowerShell 7**. Prefer bash for general comma
 use pwsh only for necessary Windows-native operations. Fix bash errors in bash.
 Windows x64 only; target DSH `0.2.0-rc.2`. [中文](README.md)
 
-> Payload version 0.2.1 is locally packed, not published to npm. The following
-> npm installation instructions become available after PortableGit corresponding-source delivery is completed.
+> Payload version 0.2.1 is locally packed, not published to npm. The registry
+> rejected the actual publish request because publishing requires 2FA or a granular token with bypass 2FA. Installation instructions become available after publication succeeds.
 
 ## Install, update and remove
 

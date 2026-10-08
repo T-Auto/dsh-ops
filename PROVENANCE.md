@@ -11,11 +11,14 @@ PowerShell 7.6.6 under bin/. Original licenses/notices are preserved. Archive
 and executable hashes are pinned in lib/shells.js. All three runtime packages
 are injected into the main publish artifact; no install lifecycle downloads.
 
-Publication remains paused: PortableGit's etc/package-versions.txt includes many
-GPL/LGPL components. Complete matching source closure and delivery have not been
-collected/reviewed. Upstream URLs alone and the binary tar.bz2 release do not
-establish corresponding-source delivery. No source offer is invented. Historical
-0.2.0 pin-package descriptions below do not describe this new payload layout.
+The maintainer authorized publication after the source-delivery risk was reported.
+The actual first-package publish was rejected by npm with E403: 2FA or a granular
+token with bypass 2FA is required. No package was published. PortableGit's
+etc/package-versions.txt includes many GPL/LGPL components; complete matching
+source closure/delivery has not been collected or reviewed. Retaining upstream
+licenses does not attest that those obligations have been fulfilled. No source
+offer is invented. Historical 0.2.0 pin-package descriptions below do not describe
+this new payload layout.
 
 The profile installer delegates to the official DSH CLI, retaining its locks,
 compatibility checks and rollback rather than cloning them. Live installation
