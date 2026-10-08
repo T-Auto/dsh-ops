@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Repository tools",
-    "description": "Read, search, replace, and run commands through the hosted FastCtx ops_* tool surface instead of shell commands."
+    "description": "Provides bash, PowerShell 7, and a suite of high-performance tools written in Rust for Windows DSH to enhance token efficiency"
   }
 }

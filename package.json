@@ -19,7 +19,7 @@
   "cpu": [
     "x64"
   ],
-  "description": "DSH plugin: hosts the vendored FastCtx MCP runtime as the profile's repository tool surface, and steers the model away from PowerShell.",
+  "description": "Provides bash, PowerShell 7, and a suite of high-performance tools written in Rust for Windows DSH to enhance token efficiency",
   "icon": "./icon.svg",
   "keywords": [
     "dsh",

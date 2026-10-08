@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "仓库工具",
-    "description": "通过托管的 FastCtx ops_* 工具完成读取、搜索、替换与命令执行，替代 shell 命令。"
+    "description": "为windows的dsh提供bash、powershell7及一系列rust编写的高性能tools来提高token效率"
   }
 }
