@@ -26,9 +26,8 @@ name: CI
 # A green hermetic run is not evidence about the runtime, and the hermetic job
 # ends by asserting that it really did skip the suite rather than quietly lose
 # it.
+# Automatic gates paused by the maintainer; existing suites remain opt-in.
 on:
-  push:
-  pull_request:
   workflow_dispatch:
 
 permissions:

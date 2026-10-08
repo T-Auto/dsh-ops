@@ -2,6 +2,12 @@
   "name": "dsh-ops",
   "version": "0.2.0",
   "private": true,
+  "publishConfig": { "access": "public" },
+  "repository": { "type": "git", "url": "git+https://github.com/T-Auto/dsh-ops.git" },
+  "homepage": "https://github.com/T-Auto/dsh-ops#readme",
+  "bugs": { "url": "https://github.com/T-Auto/dsh-ops/issues" },
+  "os": ["win32"],
+  "cpu": ["x64"],
   "description": "DSH plugin: hosts the vendored FastCtx MCP runtime as the profile's repository tool surface, and steers the model away from PowerShell.",
   "icon": "./icon.svg",
   "keywords": [
