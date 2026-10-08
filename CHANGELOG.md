@@ -5,6 +5,12 @@ All notable changes to this package are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] — Bash parameter schema hotfix
+
+- Fix `ops_bash` parameters to use a JSON Schema object root with `properties`, `required: ['command']`, and `additionalProperties: false`. The previous field map was forwarded unchanged by the official host and rejected by the model API before tool execution.
+- Reuse the three published Windows runtime packages at exact version 0.2.1; only the main plugin package changes.
+- Validate the exported schema through the official host tool registry without calling a model. Registry installation and shell version probes alone did not verify this boundary in 0.2.1.
+
 ## [0.2.1] — Windows payload packaging — published
 
 Published to the public npm registry on 2026-10-08 as `dsh-ops@0.2.1` with

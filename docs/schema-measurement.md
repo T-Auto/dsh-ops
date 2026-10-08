@@ -10,7 +10,7 @@ Baseline: plugin `dee3c57`, FastCtx 0.2.6, before presentation changes. Current:
 | Four file schemas | 12,807 | 6,724 | 47.5% |
 | Routing section (original full ladder vs restored compact three-layer table) | 3,373 | 1,053 | 68.8% |
 
-Full-access FastCtx schema estimate: 4,723 → 2,435 tokens. The restored ops_bash schema adds 894 bytes (~224 tokens); full FastCtx+bash surface is 10,633 bytes (~2,659 tokens). Restricted file-only surface: about 1,681 tokens; its routing table is 470 bytes (~118 tokens). No server instructions are published (the original raw server instructions were 246 bytes); the old host-shell section is also removed. Baseline excludes ops_bash, so compare nine FastCtx tools like-for-like rather than treating restoration as a regression of those numbers. Total request savings depend on host presentation; these are not API usage/billing measurements.
+Full-access FastCtx schema estimate: 4,723 → 2,435 tokens. The corrected object-root ops_bash schema adds 961 bytes (~241 tokens); full FastCtx+bash surface is 10,700 bytes (~2,675 tokens). Restricted file-only surface: about 1,681 tokens; its routing table is 470 bytes (~118 tokens). No server instructions are published (the original raw server instructions were 246 bytes); the old host-shell section is also removed. Baseline excludes ops_bash, so compare nine FastCtx tools like-for-like rather than treating restoration as a regression of those numbers. Total request savings depend on host presentation; these are not API usage/billing measurements.
 
 `ops_grep` went from 3,766 → 2,019 bytes; `ops_inspect_local_file` from 4,375 → 1,968. `ops_replace` is retained: schema cost cannot establish invocation frequency, and no usage-frequency measurement was collected.
 

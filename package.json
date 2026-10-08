@@ -1,13 +1,24 @@
 {
   "name": "dsh-ops",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
-  "publishConfig": { "access": "public" },
-  "repository": { "type": "git", "url": "git+https://github.com/T-Auto/dsh-ops.git" },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/T-Auto/dsh-ops.git"
+  },
   "homepage": "https://github.com/T-Auto/dsh-ops#readme",
-  "bugs": { "url": "https://github.com/T-Auto/dsh-ops/issues" },
-  "os": ["win32"],
-  "cpu": ["x64"],
+  "bugs": {
+    "url": "https://github.com/T-Auto/dsh-ops/issues"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
   "description": "DSH plugin: hosts the vendored FastCtx MCP runtime as the profile's repository tool surface, and steers the model away from PowerShell.",
   "icon": "./icon.svg",
   "keywords": [
@@ -85,6 +96,11 @@
     "@deepseek-ai/dsh": {
       "optional": true
     }
+  },
+  "optionalDependencies": {
+    "@dsh-ops/fastctx-win32-x64": "0.2.1",
+    "@dsh-ops/bash-win32-x64": "0.2.1",
+    "@dsh-ops/pwsh-win32-x64": "0.2.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4",

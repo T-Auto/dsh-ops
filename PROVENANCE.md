@@ -3,6 +3,17 @@
 What this repository is, where its parts came from, what was verified, and what
 was not.
 
+## 0.2.2 Bash schema hotfix
+
+The maintainer reported a model API rejection after official marketplace installation:
+`ops_bash` had no object-root JSON Schema. The plugin supplied a field map directly to
+`tools.register`, whereas only the host's `defineTool` helper compiles such maps; raw
+registration and model projection preserve `parameters` unchanged. The plugin now
+supplies explicit `type: 'object'`, `properties`, and root `required`. Inspection through
+the installed official 0.2.0-rc.2 registry confirms the exported schema is object-rooted
+and valid. No model API request or full marketplace round trip is claimed. The three
+existing 0.2.1 runtime payloads are reused unchanged; only the main package is patched.
+
 ## 0.2.1 Windows payload packaging
 
 The assembler now builds all three Windows x64 payload packages. Bash carries

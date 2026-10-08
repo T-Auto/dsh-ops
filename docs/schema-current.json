@@ -62,12 +62,12 @@
     "approximateTokens": 118
   },
   "bashSchema": {
-    "bytes": 894,
-    "approximateTokens": 224
+    "bytes": 961,
+    "approximateTokens": 241
   },
   "fullWithBash": {
-    "bytes": 10633,
-    "approximateTokens": 2659
+    "bytes": 10700,
+    "approximateTokens": 2675
   },
   "toolingPrompt": {
     "bytes": 1053,
