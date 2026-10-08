@@ -5,7 +5,8 @@ import path from 'node:path'
 import { resolveBinary, probeBinary } from '../lib/binary.js'
 import { McpStdioClient } from '../lib/handshake.js'
 import { childEnv, toolDefinition } from '../lib/tools.js'
-import { FILE_TOOLS, publicToolName, renderToolingPolicy } from '../lib/policy.js'
+import { BASH_TOOL, FILE_TOOLS, publicToolName, renderToolingPolicy } from '../lib/policy.js'
+import { bashToolDefinition } from '../lib/shells.js'
 
 const runtime = resolveBinary()
 const probe = probeBinary(runtime.file)
@@ -24,6 +25,9 @@ try {
   const bytes = rows.reduce((sum, row) => sum + row.bytes, 0)
   const fileNames = tools.filter(tool => FILE_TOOLS.includes(tool.name)).map(tool => publicToolName(tool.name))
   const fileBytes = rows.filter(row => fileNames.includes(row.name)).reduce((sum, row) => sum + row.bytes, 0)
+  const bash = bashToolDefinition({ file: 'measurement-only', source: 'measurement', subprocess: {} })
+  const bashSchema = { name: bash.name, description: bash.description, parameters: bash.parameters }
+  const bashSize = size(bashSchema)
   const report = {
     format: 'dsh-ops-schema-measurement-v1',
     metric: 'UTF-8 bytes of compact JSON {name,description,parameters}; approximate tokens = ceil(bytes/4), not a tokenizer or usage-frequency count',
@@ -32,7 +36,9 @@ try {
     total: { bytes, approximateTokens: Math.ceil(bytes / 4) },
     fileOnly: { bytes: fileBytes, approximateTokens: Math.ceil(fileBytes / 4) },
     fileOnlyPrompt: size(renderToolingPolicy({ published: fileNames })),
-    toolingPrompt: size(renderToolingPolicy({ published: tools.map(tool => publicToolName(tool.name)) })),
+    bashSchema: bashSize,
+    fullWithBash: { bytes: bytes + bashSize.bytes, approximateTokens: Math.ceil((bytes + bashSize.bytes) / 4) },
+    toolingPrompt: size(renderToolingPolicy({ published: [...tools.map(tool => publicToolName(tool.name)), BASH_TOOL, 'pwsh'], pwsh7: true })),
     publishedServerInstructions: size(''),
     rawServerInstructions: size(handshake.instructions ?? ''),
   }

@@ -1,12 +1,12 @@
 # dsh-ops
 
-An additive DSH repository-tool bundle backed by [FastCtx](https://github.com/yc-duan/fastctx). It complements the host's tools rather than duplicating image reading, precise editing, or shell executors.
+An additive DSH repository-tool bundle backed by [FastCtx](https://github.com/yc-duan/fastctx). It keeps the three-layer design: **repository tools → bash → PowerShell 7**, without duplicating image reading or precise editing. General command lines prefer bash; PowerShell is for necessary Windows-native operations only.
 
 | | |
 | --- | --- |
 | Host target | DSH `0.2.0-rc.2` |
 | Manifest | dsh-std Community v0.15 |
-| Surface | Four file tools; five command/job tools in authorized sessions only |
+| Surface | Four file tools; preferred `ops_bash` executor plus five command/job tools in authorized sessions |
 | License | `MIT AND Apache-2.0` |
 
 ## Tool surface
@@ -18,15 +18,19 @@ An additive DSH repository-tool bundle backed by [FastCtx](https://github.com/yc
 | Content search | `ops_grep`: one Rust regex, `glob[]` filters with `!` exclusions, count/summary, encoding fallback |
 | Find paths | `ops_glob`: `pattern[]` with `!` exclusions; paths/details output |
 | Cross-file mechanical replacement | `ops_replace`; use host `edit` for precise edits |
-| Bash commands and owned background jobs | `ops_run`, `ops_run_background`, `ops_job_output`, `ops_job_list`, `ops_job_kill`; full access only |
+| General commands, builds, git/gh, pipelines and scripts | `ops_bash` — preferred command executor |
+| Windows-native cmdlets, registry and services | Host pwsh, using provisioned PowerShell 7 when available |
+| Bounded bash commands and owned background jobs | `ops_run`, `ops_run_background`, `ops_job_output`, `ops_job_list`, `ops_job_kill`; full access only |
 
-`ops_bash` is no longer published. Shell resolution and provisioning CLI utilities remain; the Windows bundle patch can still point the **host's** sandboxed pwsh executor at a provisioned PowerShell 7. No extra shell rung is injected.
+`ops_bash` is the second layer, not a duplicate to remove: it runs the plugin-resolved bash through the host subprocess service. `publishBashTool` defaults to true. Shell provisioning remains; the Windows bundle patch points the **host's** pwsh executor at provisioned PowerShell 7 when available. File operations stay in the tool layer, general commands prefer bash, and pwsh is reserved for Windows-native necessities. Fix bash errors in bash; do not switch shells or mix syntax.
 
 The plugin contributes just **one compact routing table**, plus two rules: do not construct shell commands for file operations; correct failed tool arguments rather than switching to a shell workaround. Authorized sessions also get the own-job rule. The old host-shell section and `mcp:fastctx` instructions are not published. Turning off `promptPolicy` disables this routing section.
 
 ## Permission authority
 
 `enableShellTools` is a deployment opt-in, not permission. The five command/job tools are published together only when the host's `sandboxPolicy.resolve({ session })` returns exactly `danger-full-access`. `read-only`, `workspace-write`, absent authority, or absent session do not qualify. Environment variables and permission-preset labels are not used as authority.
+
+`ops_bash` independently requires `publishBashTool`, a resolved bash, the host subprocess service and the same authoritative full-access session. It remains available when FastCtx is missing or `enableShellTools` is false. Its definitions are likewise plugin-owned agent fibers, reconciled on mode changes; execution rechecks authority and defaults workdir to the calling session workspace.
 
 Command definitions live in a plugin-owned child fiber inheriting the agent's registration scope. `sandbox/mode` session events reconcile those definitions without reconnecting FastCtx. The plugin also checks the current authority immediately before each command/job call, protecting against stale handles. Permission downgrades prevent **new calls**, not already-started commands; background jobs are not automatically terminated by a mode change.
 
@@ -83,9 +87,9 @@ config:
   deniedHostTools: [pwsh, bash, pwsh_persistent]
   promptPolicy: true
   # extraGuidance: 'Deployment-specific guidance'
-  publishBashTool: false   # legacy key; no longer publishes anything
+  publishBashTool: true    # preferred bash layer, gated by session full access
   # bashPath: 'C:\Program Files\Git\bin\bash.exe'
-  allowSystemShellFallback: true # shell diagnostic/resolution utility only
+  allowSystemShellFallback: true # allow resolved system bash if no bundled copy
 ```
 
 `required` makes missing/unusable runtime resolution fail synchronously; connection failure also rejects activation. With `false`, the runtime can retry in the background (up to ten attempts with bounded backoff). A disconnected server withdraws tools immediately, avoiding phantom schema/prompt entries.
@@ -103,7 +107,7 @@ node bin/dsh-ops.mjs provision-shells --bash
 node bin/dsh-ops.mjs provision-shells --pwsh
 ```
 
-Shell pin packages contain metadata, not upstream payloads. Explicit provisioning downloads official upstream assets, verifies pinned SHA-256, and unpacks under `<DSH_HOME>/dsh-ops/shells/`. It neither modifies PATH nor adds a model-facing executor. See [PROVENANCE.md](PROVENANCE.md) for upstream identity and license records.
+Shell pin packages contain metadata, not upstream payloads. Explicit provisioning downloads official upstream assets, verifies pinned SHA-256, and unpacks under `<DSH_HOME>/dsh-ops/shells/`. It neither modifies PATH nor bypasses permission policy; the bash layer uses the resolved executable. See [PROVENANCE.md](PROVENANCE.md) for upstream identity and license records.
 
 ## Manual validation and measurement
 

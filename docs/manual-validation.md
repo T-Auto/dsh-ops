@@ -9,7 +9,9 @@
 - `enableShellTools: false`、无 sandboxPolicy 服务、无会话：命令组不出现。
 - 同时开受限会话与完全权限会话：两者目录互不污染。受限子 agent 不继承祖先的命令组。
 - 同一会话切换受限 → 完全权限 → 受限：每次下一请求目录/提示词跟随变化，不重连 FastCtx；旧命令句柄不能继续调用。
-- `ops_bash` 不出现；提示词仅一段 `dsh-ops:repository-tooling`，没有旧 host-shell 段或 `mcp:fastctx`。
+- 受限会话不发布 `ops_bash`；完全权限 + publishBashTool=true + bash 可解析 + subprocess 可用时出现，通用命令优先走它。FastCtx 缺失或 enableShellTools=false 时 bash 层仍独立可用。
+- 提示词仅一段 `dsh-ops:repository-tooling`：工具包 → bash → pwsh7；不混语法，不因 bash 报错切 PowerShell。Windows 原生操作才用 pwsh。没有旧 host-shell 段或 `mcp:fastctx`。
+- publishBashTool=false 隐去 bash 这一层；bash 权限动态切换、受限子 agent 继承过滤和卸载清理一起验证。
 - `promptPolicy: false`：不发布路由提示词。
 - `deny-host-shell`：有无 ops 命令组都应拒绝配置的宿主 shell；若工具来自继承层，目录也应遮蔽。无可用执行器时不推荐不可调用的 ops 命令。
 

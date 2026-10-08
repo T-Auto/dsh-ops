@@ -7,6 +7,7 @@ was not.
 
 This pass changes only plugin presentation, registration, and result projection; no vendored functionality changed. Historical tables below describe the earlier implementation and its earlier tests, not acceptance of the current revision.
 
+- Restored three-layer intent: tools → ops_bash → PowerShell 7. `lib/session-shells.js` publishes bash through plugin-owned agent child fibers only with full-access authority and the subprocess service; it is independent of FastCtx availability and enableShellTools. Prompt routing prefers bash for general commands, not PowerShell fallback.
 - Permission authority: host `packages/sandbox/sandbox-policy/src/index.ts:157-186`, `sandboxPolicy.resolve({session})`; durable mode event at `src/session-mode.ts:25-56`.
 - Session mode feed: `ctx.on('session/event', (session, event))`, not client-wire projection change notifications. The plugin reconciles plugin-owned agent child fibers on `sandbox/mode`.
 - Own registration scopes: `packages/core/tools/src/index.ts:1058-1088`; inherited restrictions and own-layer exemption at `:1090-1124,1163-1206`; prompt callbacks use assembly agent plus `ctx.get('tools').schemas(agent)`.

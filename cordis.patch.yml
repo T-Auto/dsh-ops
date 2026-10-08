@@ -61,8 +61,9 @@
         # first, then PATH, then the well-known Git for Windows locations.
         # bashPath: 'C:\Program Files\Git\bin\bash.exe'
 
-        # Legacy key accepted for compatibility; ops_bash is no longer published.
-        publishBashTool: false
+        # Layer 2: preferred executor for general commands, pipelines and scripts.
+        # Requires a resolved bash, host subprocess and session full access.
+        publishBashTool: true
 
         # Fall back to a system-installed bash when the plugin carries no copy
         # of its own. Set false to confine the bash rung to plugin-provided

@@ -270,7 +270,9 @@ function shellReport(resolution) {
  */
 function ladderFor({ runtime, shells, config }) {
   const published = runtime.resolved ? FILE_TOOLS.map(publicToolName) : []
-  return ladderLevels({ published })
+  if (config.publishBashTool && shells.bash.available) published.push(BASH_TOOL)
+  if (shells.pwsh.available) published.push('pwsh')
+  return ladderLevels({ published, pwsh: shells.pwsh.available })
 }
 
 /**
@@ -315,10 +317,10 @@ function printLadder(report) {
     console.log(`    detail:     ${rung.detail}`)
   }
 
-  console.log('\nRouting policy (legacy ladder command)')
+  console.log('\nThree layers: repository tools → bash → PowerShell 7')
   console.log(report.policy || '(no file tools resolved)')
   console.log('\nResolution only: command visibility requires a live host session and sandboxPolicy.')
-  console.log('Shell executables are not separate model-facing rungs; nothing is spawned.')
+  console.log('Resolved candidates only; bash also requires full-access session and subprocess. Nothing is spawned.')
 }
 
 /**
@@ -352,7 +354,11 @@ function commandLadder({ json, configFile }) {
     levels,
     rungs: [],
     policy: renderToolingPolicy({
-      published: runtime.resolved ? FILE_TOOLS.map(publicToolName) : [],
+      published: [
+        ...(runtime.resolved ? FILE_TOOLS.map(publicToolName) : []),
+        ...(levels.bash ? [BASH_TOOL] : []),
+        ...(levels.pwsh ? ['pwsh'] : []),
+      ],
       extraGuidance: config.extraGuidance,
     }),
   }

@@ -1,12 +1,12 @@
 # dsh-ops
 
-由 [FastCtx](https://github.com/yc-duan/fastctx) 驱动的 DSH **增益型仓库工具插件**。补足批量读取、编码、搜索过滤、跨文件替换与后台任务管理，不重复宿主的看图、定点编辑和 shell 执行器。
+由 [FastCtx](https://github.com/yc-duan/fastctx) 驱动的 DSH 仓库工具插件，保持**工具包 → bash → pwsh7**三层设计。文件操作走工具包，通用命令优先 bash，Windows 原生操作才用 PowerShell 7；不重复宿主看图和定点编辑能力。
 
 | | |
 | --- | --- |
 | 目标宿主 | DSH `0.2.0-rc.2` |
 | 清单 | dsh-std Community v0.15 |
-| 工具面 | 四个文件工具；仅授权会话额外提供五个命令/job 工具 |
+| 工具面 | 四个文件工具；授权会话提供优先命令执行器 ops_bash 与五个命令/job 工具 |
 | 许可证 | `MIT AND Apache-2.0` |
 
 ## 工具面
@@ -18,9 +18,11 @@
 | 搜内容 | `ops_grep`：单个 Rust 正则、支持 `!` 排除的 `glob[]`、count/summary、编码回退 |
 | 找文件 | `ops_glob`：支持 `!` 排除的 `pattern[]`；paths/details 输出 |
 | 跨文件机械替换 | `ops_replace`；定点改代码用宿主 `edit` |
-| bash 命令与自己的后台任务 | `ops_run`、`ops_run_background`、`ops_job_output`、`ops_job_list`、`ops_job_kill`；只在完全权限会话发布 |
+| 通用命令、构建、git/gh、管道和脚本 | `ops_bash`，优先的命令执行器 |
+| Windows 原生 cmdlet、注册表、服务 | 宿主 pwsh，可指向 provision 的 PowerShell 7 |
+| 有界 bash 命令与自己的后台任务 | `ops_run`、`ops_run_background`、`ops_job_output`、`ops_job_list`、`ops_job_kill`；只在完全权限会话发布 |
 
-不再发布 `ops_bash`。shell 解析与安装 CLI 保留；Windows bundle patch 仍可把**宿主的**沙箱 pwsh 执行器指向已 provision 的 PowerShell 7，但不额外注入 shell 阶梯。
+`ops_bash` 是核心第二层，不是应删除的重复工具：用插件解析的 bash，经宿主 subprocess 执行。`publishBashTool` 默认 true。Windows bundle patch 保留，把**宿主的** pwsh 执行器指向可用的 PowerShell 7。通用命令行优先 bash，只有必须用 Windows 原生能力时才用 pwsh；bash 出错在 bash 内修，不切换 shell，不混两套语法。
 
 插件只注入**一张紧凑路由表**，加两条规则：文件操作不要拼 shell 命令；工具出错改参数重试，不换 shell 兜底。命令组可见时另加“只操作自己启动的 job”规则。不再发布旧 host-shell 段和 `mcp:fastctx` 服务端 instructions。`promptPolicy: false` 关闭这张表。
 
@@ -29,6 +31,8 @@
 `enableShellTools` 只表示部署想不想要，不表示授权。命令与 job 五件组只有在宿主
 `sandboxPolicy.resolve({ session })` 明确返回 `danger-full-access` 时才一起发布。
 `read-only`、`workspace-write`、没有权威服务、没有调用会话，都不发布。不用环境变量或权限预设名称猜授权。
+
+`ops_bash` 独立要求 `publishBashTool` 开启、bash 可解析、宿主 subprocess 可用，以及同样的完全权限会话。FastCtx 缺失或 `enableShellTools: false` 不影响 bash 这一层。它也使用插件自己的 agent 子 fiber 注册，随权限事件切换；调用时重查权限，workdir 默认取当前调用会话的工作目录。
 
 命令定义注册在插件拥有的子 fiber 中，继承 agent 的注册 scope。收到 `sandbox/mode` 会话事件就重新协调工具集，不需要重连 FastCtx。每次命令/job 调用前再读一次有效权限，防止旧句柄绕过撤销。权限降级阻止**新调用**，不会自动终止已开始的命令或后台 job。
 
@@ -86,9 +90,9 @@ config:
   deniedHostTools: [pwsh, bash, pwsh_persistent]
   promptPolicy: true
   # extraGuidance: '部署特有规则'
-  publishBashTool: false   # 兼容旧键，不再发布任何工具
+  publishBashTool: true    # 优先 bash 层，仍须会话完全权限
   # bashPath: 'C:\Program Files\Git\bin\bash.exe'
-  allowSystemShellFallback: true # 只影响 shell 解析/诊断工具
+  allowSystemShellFallback: true # 无自带副本时允许解析系统 bash
 ```
 
 `required` 让缺失或不可用的运行时在加载期同步失败；连接失败也拒绝激活。false 时后台有界重试，最多十次。服务端断线立即撤下工具，避免虚假的 schema 和提示词项。
@@ -106,7 +110,7 @@ node bin/dsh-ops.mjs provision-shells --bash
 node bin/dsh-ops.mjs provision-shells --pwsh
 ```
 
-shell pin 包只含元数据，不含上游载荷。显式 provision 下载官方资产、校验固定 SHA-256，再解到 `<DSH_HOME>/dsh-ops/shells/`；不改 PATH，不增加模型可见执行器。上游标识与许可记录见 [PROVENANCE.md](PROVENANCE.md)。
+shell pin 包只含元数据，不含上游载荷。显式 provision 下载官方资产、校验固定 SHA-256，再解到 `<DSH_HOME>/dsh-ops/shells/`；不改 PATH，不绕过权限；bash 层使用解析出的可执行文件。上游标识与许可记录见 [PROVENANCE.md](PROVENANCE.md)。
 
 ## 手动验证与测量
 

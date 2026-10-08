@@ -52,7 +52,7 @@
       {
         "name": "dsh-ops:repository-tooling",
         "order": 3250,
-        "summary": "One compact routing table for available additive tools and two recovery rules."
+        "summary": "Compact tools-to-bash-to-PowerShell-7 routing; prefer bash except for Windows-native operations."
       }
     ],
     "x-tool-namespaces": [
@@ -73,6 +73,14 @@
           "job_kill"
         ],
         "shellPermission": "enableShellTools AND per-session sandboxPolicy danger-full-access"
+      },
+      {
+        "serverName": "dsh-ops",
+        "transport": "in-process",
+        "source": "the plugin's bash layer via host subprocess",
+        "publicPrefix": "ops_",
+        "tools": ["bash"],
+        "shellPermission": "publishBashTool AND per-session sandboxPolicy danger-full-access"
       }
     ]
   },

@@ -10,7 +10,7 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Changed
 
 - Replace the execution ladder and duplicate prompt sections with one compact routing table.
-- Retire `ops_bash` publication; preserve shell resolution/provisioning utilities and the host pwsh path patch.
+- Preserve `ops_bash` as the preferred general command executor in the tools → bash → PowerShell 7 design; publish it in full-access agent scopes with the host subprocess service. Keep the compact routing table and use pwsh only for necessary Windows-native operations.
 - Publish command/job tools only in plugin-owned agent fibers under authoritative per-session `danger-full-access`; reconcile `sandbox/mode` changes and recheck calls. No env/preset fallback.
 - Reject image inspection explicitly and advertise PDF text only; preserve batch text ranges, encodings, hex, search filtering, and batch replacement.
 - Shorten published schema descriptions and advertise only symmetric grep context. Forward ordinary arguments unchanged.

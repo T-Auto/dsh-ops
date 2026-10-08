@@ -58,12 +58,20 @@
     "approximateTokens": 1681
   },
   "fileOnlyPrompt": {
-    "bytes": 432,
-    "approximateTokens": 108
+    "bytes": 470,
+    "approximateTokens": 118
+  },
+  "bashSchema": {
+    "bytes": 894,
+    "approximateTokens": 224
+  },
+  "fullWithBash": {
+    "bytes": 10633,
+    "approximateTokens": 2659
   },
   "toolingPrompt": {
-    "bytes": 631,
-    "approximateTokens": 158
+    "bytes": 1053,
+    "approximateTokens": 264
   },
   "publishedServerInstructions": {
     "bytes": 0,
