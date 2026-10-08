@@ -3,6 +3,25 @@
 What this repository is, where its parts came from, what was verified, and what
 was not.
 
+## 0.2.1 packaging work — not published
+
+The assembler now builds all three Windows x64 payload packages. Bash carries
+complete, unmodified PortableGit 2.56.0.2 (GNU bash 5.3.15); pwsh carries complete
+PowerShell 7.6.6 under bin/. Original licenses/notices are preserved. Archive
+and executable hashes are pinned in lib/shells.js. All three runtime packages
+are injected into the main publish artifact; no install lifecycle downloads.
+
+Publication remains paused: PortableGit's etc/package-versions.txt includes many
+GPL/LGPL components. Complete matching source closure and delivery have not been
+collected/reviewed. Upstream URLs alone and the binary tar.bz2 release do not
+establish corresponding-source delivery. No source offer is invented. Historical
+0.2.0 pin-package descriptions below do not describe this new payload layout.
+
+The profile installer delegates to the official DSH CLI, retaining its locks,
+compatibility checks and rollback rather than cloning them. Live installation
+on each application version has not been attested. Default README is Chinese;
+README.en.md is the English counterpart.
+
 ## Current slimming-pass evidence (supersedes historical ladder claims below)
 
 This pass changes only plugin presentation, registration, and result projection; no vendored functionality changed. Historical tables below describe the earlier implementation and its earlier tests, not acceptance of the current revision.

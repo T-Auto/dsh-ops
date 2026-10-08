@@ -5,6 +5,14 @@ All notable changes to this package are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] — Windows payload packaging (unpublished)
+
+- Assemble complete digest-verified PortableGit/bash and PowerShell 7 runtime packages instead of metadata-only pins; inject all three Windows x64 runtime dependencies in the publish artifact.
+- Add explicit-profile install/status/uninstall delegation to the official DSH manager; map tui to dsh-tui and use Desktop's installation-owned CLI.
+- Resolve the pwsh dependency from the plugin package under pnpm isolation.
+- Make the default README Chinese and add a concise English translation.
+- Publication is paused pending complete corresponding-source delivery for the PortableGit GPL/LGPL inventory. Local payload builds are not license-compliance evidence.
+
 ## [Unreleased] — additive tool surface
 
 ### Changed

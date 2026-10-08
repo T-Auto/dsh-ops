@@ -1,135 +1,108 @@
 # dsh-ops
 
-An additive DSH repository-tool bundle backed by [FastCtx](https://github.com/yc-duan/fastctx). It keeps the three-layer design: **repository tools → bash → PowerShell 7**, without duplicating image reading or precise editing. General command lines prefer bash; PowerShell is for necessary Windows-native operations only.
+解决 Windows 下 DSH 反复使用 PowerShell 报错造成的 token、时间和模型注意力浪费。本插件提供：
 
-| | |
-| --- | --- |
-| Host target | DSH `0.2.0-rc.2` |
-| Manifest | dsh-std Community v0.15 |
-| Surface | Four file tools; preferred `ops_bash` executor plus five command/job tools in authorized sessions |
-| License | `MIT AND Apache-2.0` |
+- 独立 **bash 5.3.15**，用于通用命令、构建、Git、管道和脚本。
+- 独立 **PowerShell 7.6.6**，用于必要的 Windows 原生操作，沿用宿主 `pwsh` 工具。
+- Rust 编写的高性能增强工具，支持批量读取、搜索、替换和有界输出，减少不必要的输入输出。由于部分工具不经过 DSH 的受限终端后端，命令与后台任务工具只在**完全权限**时启用。
 
-## Tool surface
+执行顺序：**工具包 → bash → PowerShell 7**。bash 报错在 bash 内修正，不随意换 shell，不混用两套语法。
 
-| Task | Tool / genuine increment |
-| --- | --- |
-| Multiple text ranges, source encoding, PDF text, hex | `ops_inspect_local_file`; prefer `files[]` (1–32 ranges) |
-| Images | Host `read_image`; ops rejects image results instead of pretending to display them |
-| Content search | `ops_grep`: one Rust regex, `glob[]` filters with `!` exclusions, count/summary, encoding fallback |
-| Find paths | `ops_glob`: `pattern[]` with `!` exclusions; paths/details output |
-| Cross-file mechanical replacement | `ops_replace`; use host `edit` for precise edits |
-| General commands, builds, git/gh, pipelines and scripts | `ops_bash` — preferred command executor |
-| Windows-native cmdlets, registry and services | Host pwsh, using provisioned PowerShell 7 when available |
-| Bounded bash commands and owned background jobs | `ops_run`, `ops_run_background`, `ops_job_output`, `ops_job_list`, `ops_job_kill`; full access only |
+仅支持 **Windows x64**；目标宿主 DSH `0.2.0-rc.2`。[English](README.en.md)
 
-`ops_bash` is the second layer, not a duplicate to remove: it runs the plugin-resolved bash through the host subprocess service. `publishBashTool` defaults to true. Shell provisioning remains; the Windows bundle patch points the **host's** pwsh executor at provisioned PowerShell 7 when available. File operations stay in the tool layer, general commands prefer bash, and pwsh is reserved for Windows-native necessities. Fix bash errors in bash; do not switch shells or mix syntax.
+> 载荷版 `0.2.1` 已本地打包，尚未发布 npm；待完成 PortableGit 对应源码交付后，以下 npm 安装方式才可用。
 
-The plugin contributes just **one compact routing table**, plus two rules: do not construct shell commands for file operations; correct failed tool arguments rather than switching to a shell workaround. Authorized sessions also get the own-job rule. The old host-shell section and `mcp:fastctx` instructions are not published. Turning off `promptPolicy` disables this routing section.
+## 安装、更新、卸载
 
-## Permission authority
+### 官方插件市场
 
-`enableShellTools` is a deployment opt-in, not permission. The five command/job tools are published together only when the host's `sandboxPolicy.resolve({ session })` returns exactly `danger-full-access`. `read-only`, `workspace-write`, absent authority, or absent session do not qualify. Environment variables and permission-preset labels are not used as authority.
+在目标 DSH 应用的插件市场中输入 npm 包名 **`dsh-ops`**，安装后选择启用。安装归属于当前运行的 profile，桌面端为 `desktop`。发布包依赖完整 FastCtx、bash 和 PowerShell 7 载荷；不使用安装脚本下载，不改系统 PATH。
 
-`ops_bash` independently requires `publishBashTool`, a resolved bash, the host subprocess service and the same authoritative full-access session. It remains available when FastCtx is missing or `enableShellTools` is false. Its definitions are likewise plugin-owned agent fibers, reconciled on mode changes; execution rechecks authority and defaults workdir to the calling session workspace.
-
-Command definitions live in a plugin-owned child fiber inheriting the agent's registration scope. `sandbox/mode` session events reconcile those definitions without reconnecting FastCtx. The plugin also checks the current authority immediately before each command/job call, protecting against stale handles. Permission downgrades prevent **new calls**, not already-started commands; background jobs are not automatically terminated by a mode change.
-
-`danger-full-access` is the file-sandbox mode, not an assertion that every approval policy is disabled. Host approval guards still apply. This bridge does not implement per-command approval escalation.
-
-The default `shellPolicy: advise` leaves host shell tools alone. Explicit `deny-host-shell` masks the configured inherited host names and rejects their calls even when no ops command capability exists. This can intentionally leave a session with **no command executor**; the denial does not advertise an unavailable ops replacement. Scope-local host tools may resist masking but remain denied at execution.
-
-**This is not a filesystem sandbox.** The four FastCtx file tools run outside the host's confined file backend; in particular, `ops_replace` is not made workspace-confined by the shell permission gate. Do not treat this bundle as suitable for an untrusted confined deployment without a separate filesystem-enforcement design.
-
-## Job isolation and bounded output
-
-Only successful `ops_run_background` responses grant ownership of a job ID, keyed by **calling session and current connection**. List/footer output never grants ownership. Foreign `job_output` and `job_kill` calls are rejected before forwarding. `ops_job_list` privately scans bounded upstream pages and returns only owned entries with owned pagination/counts; no global totals or offsets are exposed. An incomplete scan says so explicitly.
-
-Background footers are filtered at their server-decorated terminal position. Foreign jobs and unfilterable aggregate summaries disappear; no owned jobs means no footer. Existing continuation/status lines remain.
-
-Reconnect or plugin unload clears job ownership. Durable FastCtx jobs may still exist, but this new connection cannot adopt them. A timed-out launch can also leave a job whose ID was never delivered. Operator cleanup is needed in those cases; do not claim the jobs were killed.
-
-The schemas are presentation projections: shorter descriptions, only symmetric `context` advertised by grep, PDF text mode only. Other arguments are forwarded unchanged; legacy before/after context values remain accepted by FastCtx. Images returned under renamed paths are also explicitly rejected; `view: hex` remains available for raw-byte inspection.
-
-The three read-only definitions declare `isConcurrencySafe: () => true`. Mutation and command definitions remain exclusive. `toolCallTimeoutMs` bounds RPC waiting. Host definition `timeoutMs` is deliberately **not** asserted: the current transport abandons waiting on cancellation but does not prove server work reached quiescence. `ops_run.timeout_ms` is the separate FastCtx process-tree timeout.
-
-## Install, update, remove
+### npm 一键安装
 
 ```console
-dsh plugin --profile desktop add <absolute checkout path or package spec>
-dsh plugin --profile web add <absolute checkout path or package spec>
-dsh --profile desktop --dump-config
+npx --yes dsh-ops@latest install --profile desktop
+npx --yes dsh-ops@latest install --profile web
+npx --yes dsh-ops@latest install --profile tui
 ```
 
-Installation belongs to the target profile, not `npm i -g`. The host `plugin_manager` can likewise use `install_bundle` / `remove_bundle`. No downloads or dependency installs occur at plugin load.
+必须显式选择目标 profile；`tui` 映射到 **dsh-TUI 产品的 `dsh-tui` profile**，不是旧的 `tui` 目录。请先初始化目标应用。该入口委托官方 DSH CLI 安装，不另写一套 profile 锁与回滚逻辑。
 
-Config changes can reapply through host HMR. Replacing already-loaded JavaScript requires a DSH restart; permission-mode changes do not. Restart after applying this source update before manually validating it.
+桌面端必须使用桌面应用自带的 CLI；默认探测 `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd`。安装在其它位置时加 `--dsh-cli "<安装目录>\resources\runtime\cli\bin\dsh.cmd"`。Web/TUI 需要可用的 DSH CLI，可同样显式指定。
+
+也可以直接使用官方命令：
 
 ```console
-dsh plugin --profile desktop remove dsh-ops
-node bin/dsh-ops.mjs uninstall             # report/dry run
-node bin/dsh-ops.mjs uninstall --yes       # remove owned managed runtime/shell directory
+dsh plugin --profile web add dsh-ops
+dsh plugin --profile dsh-tui add dsh-ops
+"<桌面安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add dsh-ops
 ```
 
-Unload releases file registrations, per-agent command fibers, restrictions, listeners, the routing section, and the MCP process. Managed `<DSH_HOME>/dsh-ops/` files and upstream `~/.fastctx/` state are not deleted by bundle removal; purging FastCtx state requires explicit `--purge-fastctx`.
+普通 DSH CLI 不能管理保留的 `desktop` profile；不要把它与桌面自带入口混淆。
 
-## Configuration
+**更新**：重新运行相同的 `npx --yes dsh-ops@latest install --profile ...`，或用官方 CLI `add dsh-ops@latest`。按应用提示重载；替换已加载代码时重启应用。
 
-Validated in `lib/config.js`; unknown keys fail and are named.
+**卸载与查看状态**：
+
+```console
+npx --yes dsh-ops@latest status --profile desktop
+npx --yes dsh-ops@latest uninstall --profile desktop
+```
+
+把 `desktop` 换成 `web` 或 `tui` 即可。也可在市场卸载，或执行官方 `dsh plugin --profile ... remove dsh-ops`。二进制随 profile 的插件依赖管理；卸载移除依赖引用，不误删系统 shell、其它 profile 的副本或包管理器共享缓存。
+
+旧版显式 provision 的 `<DSH_HOME>/dsh-ops/` 文件需单独清理：`npx --yes dsh-ops@latest uninstall --yes`。默认不删 `~/.fastctx/` 持久状态；需要时显式加 `--purge-fastctx`。卸载/降权不保证已经启动的持久后台任务终止，先处理自己的任务。
+
+## 配置方式与工具列表
+
+在 DSH 的配置编辑器中找到 `dsh-ops` 行，调整 `config` 后保存；未知配置键会点名报错。主要默认值：
 
 ```yaml
 config:
-  # binaryPath: 'C:\tools\fastctx.exe'
-  serverName: fastctx       # legacy server identity; no MCP prompt section
-  enableShellTools: true   # additionally requires session danger-full-access
+  enableShellTools: true
+  publishBashTool: true
+  promptPolicy: true
   toolCallTimeoutMs: 300000
   required: false
-  shellPolicy: advise      # advise | deny-host-shell
-  deniedHostTools: [pwsh, bash, pwsh_persistent]
-  promptPolicy: true
-  # extraGuidance: 'Deployment-specific guidance'
-  publishBashTool: true    # preferred bash layer, gated by session full access
-  # bashPath: 'C:\Program Files\Git\bin\bash.exe'
-  allowSystemShellFallback: true # allow resolved system bash if no bundled copy
+  shellPolicy: advise
+  allowSystemShellFallback: true
+  # binaryPath: 'C:\tools\fastctx.exe'
+  # bashPath: 'C:\tools\bash.exe'
 ```
 
-`required` makes missing/unusable runtime resolution fail synchronously; connection failure also rejects activation. With `false`, the runtime can retry in the background (up to ten attempts with bounded backoff). A disconnected server withdraws tools immediately, avoiding phantom schema/prompt entries.
+- `enableShellTools`：部署开关，开启仍须会话 `danger-full-access` 才发布 FastCtx 命令/job 组。
+- `publishBashTool`：是否发布 `ops_bash`，同样要求完全权限和宿主 subprocess 服务。
+- `promptPolicy`：是否注入紧凑三层路由说明；可用 `extraGuidance` 追加指导。
+- `toolCallTimeoutMs`：FastCtx RPC 等待超时，不代表服务端工作已终止。
+- `required`：运行时不可用时是否拒绝激活。
+- `shellPolicy`：默认 `advise`；`deny-host-shell` 拒绝 `deniedHostTools` 列表中的宿主 shell（默认 `[pwsh, bash, pwsh_persistent]`）。这也会禁用第三层 pwsh，谨慎开启。
+- `binaryPath` / `bashPath`：可选显式路径；不可用时报错，不悄悄换执行器。一般无需配置。
 
-## Runtime utilities
+| 工具 | 用途 | 完全权限要求 |
+| --- | --- | --- |
+| `ops_inspect_local_file` | 批量文本范围、编码、PDF 文本、hex | 无命令权限门¹ |
+| `ops_grep` | Rust 正则搜索、多文件过滤、计数/摘要 | 无命令权限门¹ |
+| `ops_glob` | 多模式找路径，支持排除 | 无命令权限门¹ |
+| `ops_replace` | 跨文件批量替换；精确编辑仍用宿主 edit | 无命令权限门¹ |
+| `ops_bash` | 优先的通用 bash 命令执行器 | 是 |
+| `ops_run` | 有界 bash 命令结果 | 是 |
+| `ops_run_background` | 启动后台任务 | 是 |
+| `ops_job_output` / `ops_job_list` / `ops_job_kill` | 查看、列出、停止当前会话启动的任务 | 是 |
+| 宿主 `pwsh` | 使用随包 PowerShell 7 的 Windows 原生操作 | 沿用宿主策略 |
 
-FastCtx resolution order: `binaryPath`, `DSH_OPS_FASTCTX_BIN`, managed `<DSH_HOME>/dsh-ops/bin/`, vendored release build, `@dsh-ops/fastctx-<platform>-<arch>`, upstream `@fastctx/<platform>-<arch>`, then PATH. Explicit paths are authoritative and do not fall through on error.
+¹ **文件工具不是宿主文件系统沙箱。** 它们未接入 DSH 的受限文件后端，尤其 `ops_replace` 没有 workspace confinement。不要把该插件视为不可信受限环境的安全方案。图片交给宿主 `read_image`，插件不会假装已看过图片。
 
-```console
-node bin/dsh-ops.mjs status        # diagnostic file-tool list; no session authorization
-node bin/dsh-ops.mjs ladder        # legacy command: resolution and compact routing policy
-node bin/dsh-ops.mjs build         # vendored Rust build; Rust >=1.88
-node bin/dsh-ops.mjs provision     # managed runtime and SHA-256 receipt
-node bin/dsh-ops.mjs provision-shells --bash
-node bin/dsh-ops.mjs provision-shells --pwsh
-```
+命令工具随会话权限变化发布/撤销，调用前重查权限。后台 job 按会话和当前连接隔离；断线后不能重新认领旧任务。[手动验证清单](docs/manual-validation.md)与[schema 测量](docs/schema-measurement.md)记录了验证范围，不构成运行时无缺陷保证。
 
-Shell pin packages contain metadata, not upstream payloads. Explicit provisioning downloads official upstream assets, verifies pinned SHA-256, and unpacks under `<DSH_HOME>/dsh-ops/shells/`. It neither modifies PATH nor bypasses permission policy; the bash layer uses the resolved executable. See [PROVENANCE.md](PROVENANCE.md) for upstream identity and license records.
+## 许可证
 
-## Manual validation and measurement
+插件源码分发采用 **`MIT AND Apache-2.0`**：`vendor/fastctx/` 之外为 MIT；vendored FastCtx 为 Apache-2.0。见 [NOTICE](NOTICE)、`vendor/fastctx/LICENSE-APACHE` 与 `vendor/fastctx/NOTICE`。
 
-No regression tests or CI were added for this slimming change; the existing test suite was not updated or run and retains obsolete ladder/publication expectations. It is not evidence of this version's acceptance. Follow [the manual checklist](docs/manual-validation.md).
+独立的 Windows 载荷包另按上游组件许可证分发：Git for Windows 包含 GPL 等许可组件，PowerShell 包含 MIT 与第三方组件。其原始许可证、声明及来源记录随载荷保留；插件的 MIT 许可不替代这些许可。详见 [PROVENANCE.md](PROVENANCE.md)。
 
-```console
-node scripts/measure-schemas.mjs docs/schema-current.json
-```
+## 致谢
 
-This command only handshakes/lists schemas; it executes no tool. [Baseline](docs/schema-baseline.json) and [current measurement](docs/schema-current.json) use compact UTF-8 JSON `{name,description,parameters}`. Token estimates are `ceil(bytes/4)`, not tokenizer counts, observed API billing, or tool-use frequency. Four-tool and nine-tool subtotals distinguish sandboxed from full-access surfaces; `ops_bash` savings are not included in the nine-tool baseline.
-
-## Registration boundary
-
-All public names come from `lib/policy.js` `publicToolName()`. Definitions are registered through this plugin's contexts only. No shared `ToolRuntime` method is replaced and no `@deepseek-ai/*` value is imported by the host half. Vendor functionality is unchanged by this slimming pass.
-
-## License
-
-This distribution is licensed under **`MIT AND Apache-2.0`**: everything outside `vendor/fastctx/` is MIT; vendored FastCtx is Apache-2.0. See [NOTICE](NOTICE), `vendor/fastctx/LICENSE-APACHE`, and `vendor/fastctx/NOTICE`.
-
-## Acknowledgments
-
-FastCtx is the work of [yc-duan](https://github.com/yc-duan). This distribution depends on upstream's runtime, tool design, and output discipline. Its NOTICE requires the following text verbatim:
+Rust 工具基于 [yc-duan](https://github.com/yc-duan) 的 Codex 插件 FastCtx 并使用其源代码。vendor 标识与删除型分发改动记在 [vendor/fastctx/FORK.md](vendor/fastctx/FORK.md) 和 [vendor/fastctx/UPSTREAM.md](vendor/fastctx/UPSTREAM.md)。需要转载的 FastCtx 声明如下：
 
 > This product includes FastCtx
 > (https://github.com/yc-duan/fastctx), Copyright (c) 2026 yc-duan,
@@ -141,5 +114,3 @@ FastCtx is the work of [yc-duan](https://github.com/yc-duan). This distribution 
 > supported by, and not attributable to the author of FastCtx, who
 > accepts no liability of any kind arising from this distribution or
 > from anything built on top of it.
-
-Vendor identity and deletion-only distribution changes are recorded in [vendor/fastctx/FORK.md](vendor/fastctx/FORK.md) and [vendor/fastctx/UPSTREAM.md](vendor/fastctx/UPSTREAM.md).
