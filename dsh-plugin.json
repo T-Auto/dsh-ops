@@ -40,7 +40,7 @@
     "x-display": [
       {
         "icon": "./icon.svg",
-        "title": "Repository tools",
+        "title": "dsh-ops",
         "description": "Provides bash, PowerShell 7, and a suite of high-performance tools written in Rust for Windows DSH to enhance token efficiency",
         "locales": [
           "locale/en.json",
