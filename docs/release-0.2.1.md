@@ -32,6 +32,16 @@ registry did not have.
    136.1 MB measured before. Runtime layout and file contents are unchanged; the
    executable digests still match `lib/shells.js`.
 
+## Distribution
+
+- Tag `v0.2.1` and a GitHub Release with **notes only, no assets**. `v0.2.0`
+  attached four tarballs and `SHA256SUMS`; npm is now the installation channel, so
+  re-uploading ~290 MB of tarballs would only duplicate it.
+- Repository Actions are **disabled at repository level**. Nothing runs on push,
+  tag, schedule or dispatch; the tag push above triggered no workflow. `.github/workflows/`
+  is kept as documentation of the intended gate and pipeline, and each file now says
+  at the top that it does not run. Publication is performed from a maintainer machine.
+
 ## What was verified, and what was not
 
 Verified by installing the published artifacts from the registry into an isolated

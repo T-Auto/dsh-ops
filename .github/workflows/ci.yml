@@ -1,5 +1,9 @@
 name: CI
 
+# NOT RUNNING. Actions are disabled at repository level (Settings → Actions),
+# so this file is documentation of the gate's design rather than a live gate.
+# Nothing here runs on push, tag, schedule or manual dispatch.
+
 # TWO JOBS, ON PURPOSE, AND NEITHER MAY STAND IN FOR THE OTHER.
 #
 #   hermetic     the whole gate on a machine with no FastCtx build at all: no

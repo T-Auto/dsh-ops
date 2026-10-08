@@ -1,5 +1,11 @@
 name: Release
 
+# NOT RUNNING. Actions are disabled at repository level (Settings → Actions).
+# Publishing is done from a maintainer machine (see docs/release-0.2.1.md), and
+# release tags are published as tag + notes without the tarball assets this file
+# would upload — npm is the installation channel, so the assets were redundant.
+# Pushing a v* tag does not trigger this workflow.
+
 # Windows payload packages are built and published before the main package.
 # All three carry runtime files and are injected as exact optionalDependencies.
 # Repository tests are intentionally not a publishing prerequisite.
