@@ -486,7 +486,7 @@ const REQUIRED_ENTRIES = [
   'bin',
   'cordis.patch.yml',
   'dsh-plugin.json',
-  'icon.svg',
+  'icon.png',
   'locale',
   'LICENSE',
   'NOTICE',

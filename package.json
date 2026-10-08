@@ -1,6 +1,6 @@
 {
   "name": "dsh-ops",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "publishConfig": {
     "access": "public"
@@ -20,7 +20,7 @@
     "x64"
   ],
   "description": "Provides bash, PowerShell 7, and a suite of high-performance tools written in Rust for Windows DSH to enhance token efficiency",
-  "icon": "./icon.svg",
+  "icon": "./icon.png",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -55,7 +55,7 @@
     "bin",
     "cordis.patch.yml",
     "dsh-plugin.json",
-    "icon.svg",
+    "icon.png",
     "locale",
     "docs",
     "LICENSE",

@@ -3,6 +3,17 @@
 What this repository is, where its parts came from, what was verified, and what
 was not.
 
+## 0.2.3 Prompt and display update
+
+Add one model-facing sentence in `lib/policy.js`: `ops_* arguments are strict:
+pass only declared fields.` FastCtx strips `additionalProperties` from published
+schemas for provider portability but retains its runtime unknown-field guards;
+this prompt reminder does not change schemas or Rust behaviour. No files under
+`vendor/fastctx` were modified. The display title and bilingual descriptions use
+the maintainer's wording. The new icon is an operator-supplied image resized,
+without cropping, to a 256×256 PNG under the official host's 256 KiB limit;
+no independent authorship or licence verification of that image is claimed.
+
 ## 0.2.2 Bash schema hotfix
 
 The maintainer reported a model API rejection after official marketplace installation:

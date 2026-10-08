@@ -3,7 +3,7 @@
   "manifestVersion": "0.15",
   "id": "dsh-ops.fastctx",
   "name": "dsh-ops",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "license": "MIT AND Apache-2.0",
   "facets": {
     "host": {
@@ -39,7 +39,7 @@
   "contributes": {
     "x-display": [
       {
-        "icon": "./icon.svg",
+        "icon": "./icon.png",
         "title": "dsh-ops",
         "description": "Provides bash, PowerShell 7, and a suite of high-performance tools written in Rust for Windows DSH to enhance token efficiency",
         "locales": [

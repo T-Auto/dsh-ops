@@ -41,10 +41,10 @@ dsh plugin --profile dsh-tui add dsh-ops
 Update by repeating the npx install command, or official `add dsh-ops@latest`.
 Reload/restart as the application requests; replacing loaded code may require restart.
 
-The patch version is `0.2.2`: it fixes the malformed `ops_bash` parameter schema
-that caused model requests to fail after marketplace installation. All three runtime
-dependencies remain pinned to `0.2.1`; their original release record is in
-[docs/release-0.2.1.md](docs/release-0.2.1.md).
+The current version is `0.2.3`: it reminds the model to pass only declared `ops_*`
+fields and updates the display title, descriptions, and icon. It retains the 0.2.2
+bash parameter schema fix. Runtime dependencies remain pinned to `0.2.1`; their
+original release record is in [docs/release-0.2.1.md](docs/release-0.2.1.md).
 
 ```console
 npx --yes dsh-ops@latest status --profile desktop
