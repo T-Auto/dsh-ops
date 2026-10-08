@@ -9,6 +9,9 @@ vendor/fastctx/target/
 *.scratch.*
 .scratch-*
 
+# Local cross-session handoff, project context and architecture notes
+memorybank/
+
 # Editor and OS noise
 .DS_Store
 Thumbs.db
