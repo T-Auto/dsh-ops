@@ -1,160 +1,25 @@
-# ============================================================================
-# dsh-ops — DSH bundle patch
-# ============================================================================
-# This is the plugin's "mount declaration". DSH applies every bundle patch in
-# the profile's `dsh.profile.bundles` order at startup; this file inserts the
-# dsh-ops row into that tree.
-#
-# Install:
-#   dsh plugin --profile desktop add <path to this package>
-#   dsh plugin --profile web     add <path to this package>
-#
-# The row's config is validated by lib/config.js; every key below is optional
-# and the values shown are the defaults. An unknown key fails the plugin at load
-# rather than being ignored.
-# ----------------------------------------------------------------------------
-
+# Three independent market components; no unconditional host executor override.
+# Shell and file are enabled by default. Background is explicitly opt-in.
 - insert:
-    - id: dsh-ops
-      name: dsh-ops
+    - id: dsh-ops-shell
+      name: dsh-ops/shell
       config:
-        # Absolute path to the FastCtx executable. When set, the plugin hosts
-        # exactly this file and fails loud if it is unusable.
-        # binaryPath: 'C:\path\to\fastctx.exe'
-
-        # The FastCtx server's own name, used to attribute the server
-        # instructions this plugin publishes as a prompt section. The model
-        # never sees it: this plugin speaks MCP to the server it spawns itself
-        # and registers every tool under its own ops_<tool> name.
-        serverName: fastctx
-
-        # Deployment opt-in only. Command/job tools are published per session
-        # only when sandboxPolicy.resolve() reports danger-full-access.
-        enableShellTools: true
-
-        # Per-call deadline for one FastCtx tool call, in milliseconds.
-        toolCallTimeoutMs: 300000
-
-        # Fail plugin activation when the FastCtx server cannot start. Keep
-        # false so a missing runtime degrades to "prompt policy only" instead of
-        # taking the plugin down.
-        required: false
-
-        # 'advise'   — inject the prompt policy only.
-        # 'deny-host-shell' — additionally refuse the host shell tools below at
-        #                     the tools/pre-execute gate.
-        shellPolicy: advise
-
-        # Host tool names refused under 'deny-host-shell'.
-        deniedHostTools:
-          - pwsh
-          - bash
-          - pwsh_persistent
-
-        # Inject the repository-tooling prompt section.
         promptPolicy: true
-
-        # ---- L2: the plugin's own bash -------------------------------------
-        # Absolute path to the bash this plugin runs `ops_bash` through. When
-        # set, the plugin runs exactly this file and refuses the rung when it is
-        # unusable; leave it unset to search the plugin's own bundled copy
-        # first, then PATH, then the well-known Git for Windows locations.
-        # bashPath: 'C:\Program Files\Git\bin\bash.exe'
-
-        # Layer 2: preferred executor for general commands, pipelines and scripts.
-        # Requires a resolved bash, host subprocess and session full access.
         publishBashTool: true
-
-        # Fall back to a system-installed bash when the plugin carries no copy
-        # of its own. Set false to confine the bash rung to plugin-provided
-        # shells. (L3 needs no such switch: whether the host's pwsh row runs
-        # the plugin's own pwsh is decided by the executable's presence — see
-        # the L3 override below.)
+        shellPolicy: advise
         allowSystemShellFallback: true
-
-# ----------------------------------------------------------------------------
-# L3: run the host's pwsh tool on the plugin's own PowerShell 7.
-#
-# WHY ONE LINE IS ENOUGH. `pwsh-local`'s Config owns a `pwshPath` field
-# ("Explicit pwsh executable", packages/shell/pwsh-local/src/index.ts:71-77),
-# and `pwsh-sandbox` inherits it verbatim because it declares
-# `type Config = LocalConfig` (packages/shell/pwsh-sandbox/src/index.ts:40).
-# Pointing this row at the plugin's executable therefore gets the bundled pwsh
-# 7 under the host's sandbox, credential scrub, and output governance with no
-# custom executor and no patched internals.
-#
-# WHY IT CAN EVALUATE TO `undefined` — and that is the safe answer. The row's
-# `pwshPath` default is `undefined`, and `undefined` means "resolve a pwsh the
-# official way" (PowerShell 7 install, PATH, Windows PowerShell 5.1;
-# packages/shell/pwsh-local/src/resolve.ts:67-79). The expression keeps exactly
-# four guards:
-#
-#   1. the platform gate, matching the row's own `disabled` gate: this override
-#      is meaningless off Windows, where `pwsh-sandbox` is not mounted;
-#   2. an existence check over the SAME THREE PLACES, IN THE SAME ORDER, as the
-#      plugin's own probe in `lib/shells.js` (`PWSH_LAYOUT_ORDER`): first the
-#      provisioned store, `<DSH_HOME>/dsh-ops/shells/pwsh/<version>/bin/pwsh.exe`
-#      (what `dsh-ops provision-shells` installs, and the copy the plugin
-#      prefers), then `@dsh-ops/pwsh-<platform>-<arch>` with the shell at
-#      `bin/pwsh.exe` (a deployment that installed the platform package), then
-#      the vendored `vendor/pwsh/<platform>-<arch>/pwsh.exe` (a checkout that
-#      carries its own copy). Keeping the order identical is what makes the
-#      ladder's L3 and the host row the same fact rather than two guesses;
-#   3. a `lstat`-based usability test, so a Windows Store execution alias (a
-#      symlink whose target is not statable) counts, while a directory named
-#      `pwsh.exe` does not — the same rule `resolveShells` applies;
-#   4. a wrapping `try`/`catch` around the whole body, plus a `try` each for the
-#      store scan, the plugin-package resolution, and the platform-package
-#      resolution: an absent store, an unresolvable package, and a malformed
-#      manifest alike may not fail the boot. The store scan sits outside the
-#      plugin resolution on purpose — a provisioned copy is an absolute path
-#      under `DSH_HOME`, so a profile whose `baseUrl` cannot resolve `dsh-ops`
-#      still gets it rather than losing the rung.
-#
-# The store scan picks the greatest version name that holds the executable —
-# the identical comparison `provisionedShell` makes in `lib/shells.js`, which is
-# why it is one expression rather than a version list repeated here. The store's
-# root mirrors `dshHome` there too: `DSH_HOME` when the deployment names one,
-# `~/.dsh` otherwise.
-#
-# Until one of those three places actually carries the executable, the
-# expression yields `undefined` and the host row is left completely untouched.
-#
-# "Installed means used" is the point of the rung: a deployment that carries
-# the plugin's pwsh 7 wants the host's pwsh tool to run it, not the machine's.
-# A deployment that does NOT want this rewrite removes or edits this patch
-# entry in its OWN profile `cordis.patch.yml` — that layer applies after every
-# bundle layer (docs/user/develop/basic/publish.md:118-130), so it has the last
-# word. There is deliberately no plugin config key for it: a bundle patch is
-# evaluated before any dsh-ops row is mounted (the Loader defers a row's `!!js`
-# interpolation until that row's own injections are active), so a config key
-# could not reach this expression, and a key that pretends to is a ladder that
-# lies about the row it never changed.
-#
-# `!!js` SCOPE, VERIFIED IN THE VENDORED LOADER. The Loader evaluates these
-# expressions as `with (ctx) { return eval(expr) }`
-# (vendor/loader/src/config/utils.ts:5-9), so bare `baseUrl` (the owning config
-# tree's base URL) and `ctx` are both in scope — the same convention the shipped
-# bundle uses at packages/bundle/web-app/presets/cordis.patch.yml:147.
-# `dsh-ops` is a dependency of the profile, so
-# `createRequire(baseUrl).resolve('dsh-ops/package.json')` finds the package
-# whether it was installed as a link or from the registry.
-#
-# WHOLE-OBJECT REPLACEMENT — AUDITED, NOT ASSUMED. A patch replaces the target
-# row's ENTIRE `config` object rather than deep-merging it
-# (docs/user/develop/basic/publish.md:129), so every non-default field of the
-# target must be restated here. The base row this targets is
-# packages/bundle/base/cordis.patch.yml:241-243:
-#
-#     - id: pwsh-sandbox
-#       name: '@deepseek-ai/dsh-pwsh-sandbox'
-#       disabled: !!js process.platform !== 'win32'
-#
-# It declares NO `config` at all, and this patch writes only `config` (the
-# row's `name` and its platform `disabled` gate are untouched), so there is no
-# non-default field to restate and nothing is silently dropped. If the base row
-# ever gains one, it must be restated here.
-# ----------------------------------------------------------------------------
-- id: pwsh-sandbox
-  config:
-    pwshPath: !!js "(() => { if (process.platform !== 'win32') return undefined; try { const builtin = (name) => process.getBuiltinModule(name); const fs = builtin('node:fs'); const nodePath = builtin('node:path'); const win = process.platform + '-' + process.arch; const usable = (file) => { try { const stat = fs.lstatSync(file); return stat.isFile() || stat.isSymbolicLink(); } catch { return false; } }; const named = process.env.DSH_HOME; const home = typeof named === 'string' && named.trim() !== '' ? nodePath.resolve(named) : nodePath.join(builtin('node:os').homedir(), '.dsh'); const layouts = []; try { const store = nodePath.join(home, 'dsh-ops', 'shells', 'pwsh'); const versions = fs.readdirSync(store, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort().reverse(); for (const version of versions) layouts.push(nodePath.join(store, version, 'bin', 'pwsh.exe')); } catch {} try { const requires = builtin('node:module').createRequire(String(baseUrl).replace(/[^/]*$/, 'noop.json')); const dir = nodePath.dirname(requires.resolve('dsh-ops/package.json')); try { const pluginRequire = builtin('node:module').createRequire(nodePath.join(dir, 'package.json')); const pkg = nodePath.dirname(pluginRequire.resolve('@dsh-ops/pwsh-' + win + '/package.json')); layouts.push(nodePath.join(pkg, 'bin', 'pwsh.exe')); } catch {} layouts.push(nodePath.join(dir, 'vendor', 'pwsh', win, 'pwsh.exe')); } catch {} for (const candidate of layouts) { if (usable(candidate)) return candidate; } return undefined; } catch { return undefined; } })()"
+    - id: dsh-ops-file
+      name: dsh-ops/file
+      config:
+        promptPolicy: true
+        enableShellTools: false
+        required: false
+        toolCallTimeoutMs: 300000
+    - id: dsh-ops-background
+      name: dsh-ops/background
+      disabled: true
+      config:
+        promptPolicy: true
+        enableShellTools: true
+        required: false
+        toolCallTimeoutMs: 300000

@@ -23,6 +23,7 @@ import {
   FILE_TOOLS,
   IN_PROCESS_TOOLS,
   SHELL_TOOLS,
+  BACKGROUND_TOOLS,
   TOOLING_SECTION,
   TOOL_PREFIX,
   publicToolName,
@@ -222,28 +223,14 @@ if (typeof patch === 'string' && fs.existsSync(path.join(PACKAGE_ROOT, patch))) 
     const rows = Array.isArray(document)
       ? document.flatMap((entry) => (Array.isArray(entry?.insert) ? entry.insert : []))
       : []
-    const row = rows.find((candidate) => candidate?.name === pkg.name)
-    check(row !== undefined, `the bundle patch inserts the ${pkg.name} row`)
-    check(patchText.includes(`name: ${pkg.name}`), `the patch text names ${pkg.name}`)
-    if (row !== undefined) {
-      check(row.id === pkg.name, 'the inserted row id matches the package name', `got ${JSON.stringify(row.id)}`)
-      try {
-        const config = resolveConfig(row.config)
-        check(true, "the row's config passes the plugin's own validator")
-        check(
-          config.serverName === DEFAULT_SERVER_NAME,
-          'the shipped patch leaves serverName at the documented default',
-          `got ${JSON.stringify(config.serverName)}`,
-        )
-        check(
-          config.enableShellTools === true && config.required === false
-          && config.shellPolicy === 'advise' && config.promptPolicy === true,
-          'the shipped patch ships the documented defaults',
-          JSON.stringify(config),
-        )
-      } catch (error) {
-        check(false, "the row's config passes the plugin's own validator", String(error?.message ?? error))
-      }
+    check(rows.length === 3, 'the bundle declares exactly three components')
+    for (const component of ['shell', 'file', 'background']) {
+      const row = rows.find(candidate => candidate?.name === `${pkg.name}/${component}`)
+      check(row?.id === `${pkg.name}-${component}`, `the ${component} component has a stable row id`)
+      if (!row) continue
+      check((row.disabled === true) === (component === 'background'), `${component} has its documented enablement default`)
+      try { resolveConfig(row.config); check(true, `${component} config is valid`) }
+      catch (error) { check(false, `${component} config is valid`, String(error?.message ?? error)) }
     }
   }
 }
@@ -256,7 +243,7 @@ if (hostedNamespace === undefined) {
   check(false, 'contributes.x-tool-namespaces declares the hosted tool namespace')
 } else {
   const declared = [...hostedNamespace.tools]
-  const expected = [...FILE_TOOLS, ...SHELL_TOOLS]
+  const expected = [...FILE_TOOLS, ...BACKGROUND_TOOLS]
   check(
     declared.length === expected.length && expected.every((toolName) => declared.includes(toolName)),
     'the declared tool namespace matches lib/policy.js',
@@ -314,7 +301,7 @@ namespaces.slice(1).forEach((entry, offset) => {
 const sections = manifestRaw.contributes?.['x-prompt-sections'] ?? []
 const sectionNames = sections.map((section) => section.name)
 check(
-  sectionNames.length === 1 && sectionNames.includes(TOOLING_SECTION),
+  sectionNames.length === 3 && ['file', 'shell', 'background'].every(component => sectionNames.includes(`${TOOLING_SECTION}:${component}`)),
   'the declared prompt sections match lib/policy.js',
   `declared ${sectionNames.join(', ')} vs policy ${TOOLING_SECTION}`,
 )

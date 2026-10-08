@@ -3,6 +3,30 @@
 What this repository is, where its parts came from, what was verified, and what
 was not.
 
+## 0.2.4 Component lifecycle
+
+Three exported subpath plugins replace the single bundle row: shell/file on by
+default, background off. Each owns its registrations and system-prompt section;
+file and background lease one plugin-owned MCP connection scoped to the Cordis root.
+No global host registry or service methods are replaced. Foreground ops_run is no
+longer published. Background shutdown drains tracked calls, attempts to kill only
+remembered job IDs, then releases its connection lease; disconnect can still lose
+ownership, so cleanup is not guaranteed for unknown durable jobs.
+
+The unconditional pwsh-sandbox patch is removed. Shell mounts an internal/config
+waterfall hook targeted at the official pwsh-sandbox row, then uses public
+Fiber.update(rawConfig, true) to apply/revoke the temporary path via the official
+config lifecycle (noSave). Removing the hook recomputes from the latest owning raw
+config, not a stale saved copy. It does not mutate a service/config reference, write
+profile files, change OS defaults or cancel existing host shell processes. An
+isolated real Cordis/ToolRuntime inspection verified independent tool/prompt
+withdrawal, permission-gated commands, shared-client leases, and config restoration
+with a stand-in executor. Real desktop marketplace toggles and the real sandbox
+executor require user validation; no model requests/old suites were run.
+
+Default schema bytes drop from 10,700 (0.2.3 ten tools) to 7,685 (five tools).
+This is a byte metric, not a tokenizer or proof of lower whole-task usage.
+
 ## 0.2.3 Prompt and display update
 
 Add one model-facing sentence in `lib/policy.js`: `ops_* arguments are strict:

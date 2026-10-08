@@ -40,7 +40,7 @@ dsh plugin --profile dsh-tui add dsh-ops
 
 **更新**：重新运行相同的 `npx --yes dsh-ops@latest install --profile ...`，或用官方 CLI `add dsh-ops@latest`。按应用提示重载；替换已加载代码时重启应用。
 
-当前 npm 版本为 `0.2.3`：提示词提醒 `ops_*` 只传声明字段，标题统一为 `dsh-ops`，并更新中英文介绍和图标；保留 `0.2.2` 的 bash schema 修复，三个运行包仍使用 `0.2.1`。原始载荷发布记录见 [docs/release-0.2.1.md](docs/release-0.2.1.md)。
+当前版本 `0.2.4` 支持三个独立组件；bash 参数 schema 修复和自定义图标保留。三个二进制依赖继续使用 `0.2.1`，它们会自动安装，不影响主插件版本。新发布版本可能受桌面 pnpm 的 24 小时安全冷却策略影响：如果市场分析版号与安装结果不一致，指定 `dsh-ops@0.2.4` 并选择 npm 官方源，确认实际版本后完全退出并重启。原始载荷记录见 [docs/release-0.2.1.md](docs/release-0.2.1.md)。
 
 **卸载与查看状态**：
 
@@ -51,14 +51,29 @@ npx --yes dsh-ops@latest uninstall --profile desktop
 
 把 `desktop` 换成 `web` 或 `tui` 即可。也可在市场卸载，或执行官方 `dsh plugin --profile ... remove dsh-ops`。二进制随 profile 的插件依赖管理；卸载移除依赖引用，不误删系统 shell、其它 profile 的副本或包管理器共享缓存。
 
-旧版显式 provision 的 `<DSH_HOME>/dsh-ops/` 文件需单独清理：`npx --yes dsh-ops@latest uninstall --yes`。默认不删 `~/.fastctx/` 持久状态；需要时显式加 `--purge-fastctx`。卸载/降权不保证已经启动的持久后台任务终止，先处理自己的任务。
+旧版显式 provision 的 `<DSH_HOME>/dsh-ops/` 文件需单独清理：`npx --yes dsh-ops@latest uninstall --yes`。默认不删 `~/.fastctx/` 持久状态；需要时显式加 `--purge-fastctx`。关闭后台组件会等待已发出的调用，然后尝试终止该组件当前连接记住的自有任务；失败会告警。断线丢失归属的旧任务及单纯降权不保证终止，先处理自己的任务。
+
+## 组件开关与提示词
+
+官方市场显示三个组件，分别启停，首次安装默认开启前两个：
+
+| 组件 | 介绍 | 默认 | 发布的工具 |
+| --- | --- | --- | --- |
+| `dsh-ops-bash & powershell 7` | 将默认终端改为bash，以及bash覆盖不到时提供powershell7 | 开 | `ops_bash`；宿主 `pwsh` 使用随包 PowerShell 7 |
+| `dsh-ops-file` | 更快、更高性能、输出更精简更省token的rust文件检索 | 开 | 四个文件工具 |
+| `dsh-ops-background` | 为科研仿真、模型训练及其他长进程后台任务提供托管 | 关 | 启动、输出、列出、终止后台任务 |
+
+“默认终端改为 bash”指模型提示优先使用 `ops_bash`，**不修改系统默认终端、PATH 或宿主原有 shell 工具名称**。Shell 组件开时，通过官方配置生命周期临时指定 `pwsh-sandbox` 的 PowerShell 7 路径；关时按执行器最新原配置恢复，不写 profile 配置。执行器配置切换不代表取消已在运行的宿主命令。
+
+提示词注册为独立运行时段，**不写 AGENTS.md**：Shell 关就撤销 bash/pwsh 路由；文件关就撤销检索说明；后台关就不发布后台工具及自有 job 指导。文件与后台共享一个插件拥有的 FastCtx 连接，关闭其中一个不关闭另一个。默认仅新增五个工具，不发布重复前台 `ops_run`。这些改变减少固定声明成本，**不保证任意任务总 token 降低**。极简预设会覆盖附加 system sections；PTC 模式经 SDK 调用底层工具，权限门不变。
 
 ## 配置方式与工具列表
 
-在 DSH 的配置编辑器中找到 `dsh-ops` 行，调整 `config` 后保存；未知配置键会点名报错。主要默认值：
+在 DSH 的配置编辑器中找到对应的 `dsh-ops/shell`、`dsh-ops/file` 或 `dsh-ops/background` 行，调整 `config` 后保存；未知配置键会点名报错。也可直接在市场切换组件。主要配置：
 
 ```yaml
 config:
+  # background component only; its market row is disabled by default
   enableShellTools: true
   publishBashTool: true
   promptPolicy: true
@@ -70,9 +85,9 @@ config:
   # bashPath: 'C:\tools\bash.exe'
 ```
 
-- `enableShellTools`：部署开关，开启仍须会话 `danger-full-access` 才发布 FastCtx 命令/job 组。
+- `enableShellTools`：后台组件的部署开关，开启仍须会话 `danger-full-access` 才发布四个后台工具；文件组件不发布命令工具。
 - `publishBashTool`：是否发布 `ops_bash`，同样要求完全权限和宿主 subprocess 服务。
-- `promptPolicy`：是否注入紧凑三层路由说明；可用 `extraGuidance` 追加指导。
+- `promptPolicy`：是否注入该组件的运行时说明；可用 `extraGuidance` 追加指导。
 - `toolCallTimeoutMs`：FastCtx RPC 等待超时，不代表服务端工作已终止。
 - `required`：运行时不可用时是否拒绝激活。
 - `shellPolicy`：默认 `advise`；`deny-host-shell` 拒绝 `deniedHostTools` 列表中的宿主 shell（默认 `[pwsh, bash, pwsh_persistent]`）。这也会禁用第三层 pwsh，谨慎开启。
@@ -85,7 +100,6 @@ config:
 | `ops_glob` | 多模式找路径，支持排除 | 无命令权限门¹ |
 | `ops_replace` | 跨文件批量替换；精确编辑仍用宿主 edit | 无命令权限门¹ |
 | `ops_bash` | 优先的通用 bash 命令执行器 | 是 |
-| `ops_run` | 有界 bash 命令结果 | 是 |
 | `ops_run_background` | 启动后台任务 | 是 |
 | `ops_job_output` / `ops_job_list` / `ops_job_kill` | 查看、列出、停止当前会话启动的任务 | 是 |
 | 宿主 `pwsh` | 使用随包 PowerShell 7 的 Windows 原生操作 | 沿用宿主策略 |

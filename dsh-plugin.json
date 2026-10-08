@@ -3,7 +3,7 @@
   "manifestVersion": "0.15",
   "id": "dsh-ops.fastctx",
   "name": "dsh-ops",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "license": "MIT AND Apache-2.0",
   "facets": {
     "host": {
@@ -50,9 +50,19 @@
     ],
     "x-prompt-sections": [
       {
-        "name": "dsh-ops:repository-tooling",
+        "name": "dsh-ops:repository-tooling:file",
         "order": 3250,
-        "summary": "Compact tools-to-bash-to-PowerShell-7 routing; prefer bash except for Windows-native operations."
+        "summary": "File operations only; follows the file component visibility."
+      },
+      {
+        "name": "dsh-ops:repository-tooling:shell",
+        "order": 3251,
+        "summary": "Prefer bash, use bundled PowerShell 7 for Windows-native functionality; removed when shell component is off."
+      },
+      {
+        "name": "dsh-ops:repository-tooling:background",
+        "order": 3252,
+        "summary": "Owned background tasks only; absent by default."
       }
     ],
     "x-tool-namespaces": [
@@ -66,21 +76,39 @@
           "grep",
           "glob",
           "replace",
-          "run",
           "run_background",
           "job_output",
           "job_list",
           "job_kill"
         ],
-        "shellPermission": "enableShellTools AND per-session sandboxPolicy danger-full-access"
+        "shellPermission": "background component enabled AND enableShellTools AND per-session sandboxPolicy danger-full-access"
       },
       {
         "serverName": "dsh-ops",
         "transport": "in-process",
         "source": "the plugin's bash layer via host subprocess",
         "publicPrefix": "ops_",
-        "tools": ["bash"],
-        "shellPermission": "publishBashTool AND per-session sandboxPolicy danger-full-access"
+        "tools": [
+          "bash"
+        ],
+        "shellPermission": "shell component enabled AND publishBashTool AND per-session sandboxPolicy danger-full-access"
+      }
+    ],
+    "x-components": [
+      {
+        "id": "dsh-ops-shell",
+        "entry": "dsh-ops/shell",
+        "defaultEnabled": true
+      },
+      {
+        "id": "dsh-ops-file",
+        "entry": "dsh-ops/file",
+        "defaultEnabled": true
+      },
+      {
+        "id": "dsh-ops-background",
+        "entry": "dsh-ops/background",
+        "defaultEnabled": false
       }
     ]
   },

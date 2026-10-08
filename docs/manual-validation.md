@@ -4,13 +4,17 @@
 
 ## 工具发布与提示词
 
-- `workspace-write`、`read-only`：目录只有四个 ops 文件工具；没有任何 `ops_run` / `ops_job_*`，提示词也不出现这些名字。
-- `danger-full-access` 且 `enableShellTools: true`：五个命令/job 工具一起出现。
-- `enableShellTools: false`、无 sandboxPolicy 服务、无会话：命令组不出现。
+- 组件列表恰为三个：shell/file 默认开启，background 默认关闭。分别核验组件名称、中文介绍、图标，以及实际版本。
+- `workspace-write`、`read-only`：只有开启的四个 ops 文件工具；没有 ops_bash/后台工具，提示词不广告不存在的命令。
+- `danger-full-access`：默认四个文件工具 + ops_bash；仅后台组件开且 enableShellTools=true 时增加四个后台工具。任何组合都不发布 ops_run。
+- 文件与后台共享一个 FastCtx；关文件仍能管理后台，关后台仍能读搜改，重开不积累注册。
+- `enableShellTools: false`、无 sandboxPolicy 服务、无会话：后台组不出现。
 - 同时开受限会话与完全权限会话：两者目录互不污染。受限子 agent 不继承祖先的命令组。
 - 同一会话切换受限 → 完全权限 → 受限：每次下一请求目录/提示词跟随变化，不重连 FastCtx；旧命令句柄不能继续调用。
 - 受限会话不发布 `ops_bash`；完全权限 + publishBashTool=true + bash 可解析 + subprocess 可用时出现，通用命令优先走它。FastCtx 缺失或 enableShellTools=false 时 bash 层仍独立可用。
-- 提示词仅一段 `dsh-ops:repository-tooling`：工具包 → bash → pwsh7；不混语法，不因 bash 报错切 PowerShell。Windows 原生操作才用 pwsh。没有旧 host-shell 段或 `mcp:fastctx`。
+- 提示词按组件分段 `dsh-ops:repository-tooling:{file,shell,background}`：开关只移除对应段；bash/pwsh 路由仅 shell 开时出现，后台关闭不出现后台指导。不写 AGENTS.md，没有旧 host-shell 段或 mcp:fastctx。
+- shell 开时宿主 pwsh-sandbox 采用随包 pwsh7，关时恢复最新宿主原配置；profile 文件不得被改动。开关期间用户更改执行器原配置后也应恢复新值。
+- 极简预设 complete persona 可排除附加提示；PTC 通过 SDK 使用同一工具层，权限/组件开关仍应生效。
 - publishBashTool=false 隐去 bash 这一层；bash 权限动态切换、受限子 agent 继承过滤和卸载清理一起验证。
 - `promptPolicy: false`：不发布路由提示词。
 - `deny-host-shell`：有无 ops 命令组都应拒绝配置的宿主 shell；若工具来自继承层，目录也应遮蔽。无可用执行器时不推荐不可调用的 ops 命令。
@@ -35,6 +39,7 @@
 - 完成/kill 后仍能读取自己已有 ID 的日志。
 - job_list status/limit/offset 是自己的分页，不暴露全局总数/offset；空列表明确为空。
 - 大全局 job 存储扫描不完整时必须报告 Partial，不冒充完整；原工具结果的 Complete/Partial 续页提示不能丢。
+- 关闭后台组件/卸载：等待已发调用，再尝试终止当前组件已知的自有 ID；不能杀别的会话或组件任务。清理失败有告警。断线后已丢归属的任务不保证终止。
 - 重连后不认领旧 ID；操作者可通过上游工具清理持久 job。权限降级不自动杀已运行任务，须操作者管理。
 
 ## 生命周期与边界
@@ -42,7 +47,7 @@
 - 服务端断线立即撤下工具与对应提示词项，恢复后重新出现。
 - 卸载后工具/提示词/限制全部消失；共享注册表方法未改写，外来同名工具仍可按自己的 scope 注册。
 - 未知配置键报错点名；required=true 的缺失/不可用二进制拒绝激活。
-- 取消/传输超时只表明停止等待，不把它误读为命令已停止。ops_run 的 timeout_ms 才是上游进程树超时。
+- 取消/传输超时只表明停止等待，不把它误读为命令已停止。ops_bash 的宿主执行器截止时间独立于 MCP 等待超时。
 
 ## 数字复核
 

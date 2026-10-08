@@ -41,10 +41,12 @@ dsh plugin --profile dsh-tui add dsh-ops
 Update by repeating the npx install command, or official `add dsh-ops@latest`.
 Reload/restart as the application requests; replacing loaded code may require restart.
 
-The current version is `0.2.3`: it reminds the model to pass only declared `ops_*`
-fields and updates the display title, descriptions, and icon. It retains the 0.2.2
-bash parameter schema fix. Runtime dependencies remain pinned to `0.2.1`; their
-original release record is in [docs/release-0.2.1.md](docs/release-0.2.1.md).
+Version `0.2.4` adds three independently toggled components and retains the bash
+object-root schema fix and custom icon. Runtime dependencies remain at `0.2.1` and
+install automatically. Desktop pnpm's 24-hour release-age policy may show new metadata
+but select an older package for a bare name: specify `dsh-ops@0.2.4` from the official
+npm registry, confirm the installed version, then fully quit/restart. See the original
+[payload release record](docs/release-0.2.1.md).
 
 ```console
 npx --yes dsh-ops@latest status --profile desktop
@@ -56,11 +58,32 @@ also remove profile dependency references. Runtime files are package dependencie
 not a new shared provisioned directory. System shells, other profiles and package
 manager caches are never manually deleted. Clean legacy provisioned files separately
 with `npx --yes dsh-ops@latest uninstall --yes`; `~/.fastctx/` is kept unless
-`--purge-fastctx` is explicit. Unload/downgrade does not prove durable jobs stopped.
+`--purge-fastctx` is explicit. Background OFF drains in-flight calls and attempts to
+kill only jobs remembered by this component on its current connection; failures warn.
+Lost ownership after disconnect and permission downgrade do not guarantee termination.
+
+## Components and prompts
+
+| Component | Default | Capability |
+| --- | --- | --- |
+| dsh-ops-bash & powershell 7 | On | Prefer ops_bash for general commands; bundled PowerShell 7 for Windows-native work |
+| dsh-ops-file | On | Rust batch reads, search, path discovery and replacement |
+| dsh-ops-background | Off | Scientific simulations, model training and other long-running tasks |
+
+Each row owns its tools and runtime prompt section; OFF withdraws both. Nothing is
+appended to AGENTS.md. Shell ON adds a runtime-only configuration overlay for the
+stock pwsh-sandbox path; OFF recomputes its latest owning raw configuration via the
+official lifecycle, without writing profile files. It does not change the OS default
+terminal or cancel already-running host commands. File/background share one owned
+FastCtx connection; turning one off does not stop the other. Default tool count is
+five; duplicate ops_run is no longer published. Reduced fixed schema cost is not a
+promise of lower task-total tokens. Minimal's complete persona excludes extra sections;
+PTC invokes the tools through its generated SDK with unchanged permission checks.
 
 ## Configuration and tools
 
-Edit the dsh-ops row's `config` in the DSH configuration editor. Unknown keys fail.
+Edit the corresponding dsh-ops/shell, dsh-ops/file or dsh-ops/background row's config.
+Unknown keys fail; normal component enablement is available in the marketplace.
 
 ```yaml
 config:
@@ -75,8 +98,8 @@ config:
   # bashPath: 'C:\tools\bash.exe'
 ```
 
-`enableShellTools` controls the FastCtx command/job group; `publishBashTool` controls
-bash. Both additionally require authoritative session `danger-full-access`; bash
+`enableShellTools` controls the background component's four run/job tools; file never
+publishes commands. `publishBashTool` controls bash. Both additionally require authoritative session `danger-full-access`; bash
 also requires the host subprocess service. `promptPolicy` controls compact routing;
 `extraGuidance` appends text. RPC wait timeout does not prove server termination.
 `required` fails activation on unavailable runtime. Explicit binary/bash paths are
@@ -90,7 +113,6 @@ authoritative. `shellPolicy: deny-host-shell` blocks `deniedHostTools` (default
 | ops_glob | Multiple path patterns and exclusions | No command gate¹ |
 | ops_replace | Mechanical cross-file replacement; host edit for precise edits | No command gate¹ |
 | ops_bash | Preferred general bash executor | Required |
-| ops_run | Bounded bash result | Required |
 | ops_run_background | Start background jobs | Required |
 | ops_job_output / ops_job_list / ops_job_kill | Operate on this session's owned jobs | Required |
 | Host pwsh | Bundled PowerShell 7 Windows-native operations | Host policy |

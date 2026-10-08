@@ -1,6 +1,6 @@
 {
   "name": "dsh-ops",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "publishConfig": {
     "access": "public"
@@ -40,7 +40,22 @@
       "default": "./lib/policy.js"
     },
     "./package.json": "./package.json",
-    "./locale/*.json": "./locale/*.json"
+    "./locale/*.json": "./locale/*.json",
+    "./shell": {
+      "default": "./lib/components/shell/index.js"
+    },
+    "./shell/package.json": "./lib/components/shell/package.json",
+    "./shell/locale/*.json": "./lib/components/shell/locale/*.json",
+    "./file": {
+      "default": "./lib/components/file/index.js"
+    },
+    "./file/package.json": "./lib/components/file/package.json",
+    "./file/locale/*.json": "./lib/components/file/locale/*.json",
+    "./background": {
+      "default": "./lib/components/background/index.js"
+    },
+    "./background/package.json": "./lib/components/background/package.json",
+    "./background/locale/*.json": "./lib/components/background/locale/*.json"
   },
   "bin": {
     "dsh-ops": "bin/dsh-ops.mjs"

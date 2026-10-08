@@ -1,17 +1,37 @@
 # Schema measurement
 
-Manual measurement only; not CI, regression coverage, a tokenizer, or tool-use telemetry.
+Manual measurement only; not a tokenizer, CI, or proof of whole-task savings.
+Metric: compact UTF-8 JSON `{name,description,parameters}` bytes, tokens ≈ ceil(bytes/4).
+Runtime is FastCtx 0.2.6; only plugin publication/presentation changes.
 
-Baseline: plugin `dee3c57`, FastCtx 0.2.6, before presentation changes. Current: same runtime, plugin-only schema projections. Metric: sum of compact UTF-8 JSON `{name,description,parameters}` sizes, no whitespace formatting; tokens ≈ ceil(bytes/4).
+## 0.2.4 component surface
 
-| Surface | Baseline bytes | Current bytes | Reduction |
+| Enabled components | Tools | Schema bytes | Approximate tokens |
 | --- | ---: | ---: | ---: |
-| Nine FastCtx schemas (full-access session) | 18,889 | 9,739 | 48.4% |
-| Four file schemas | 12,807 | 6,724 | 47.5% |
-| Routing section (original full ladder vs compact three-layer table with strict-argument reminder) | 3,373 | 1,110 | 67.1% |
+| File only | 4 | 6,724 | 1,681 |
+| Shell + file (default, full access) | 5 | 7,685 | 1,922 |
+| Shell + file + background (full access) | 9 | 9,949 | 2,488 |
+| 0.2.3 full surface (historical) | 10 | 10,700 | 2,675 |
 
-Full-access FastCtx schema estimate: 4,723 → 2,435 tokens. The corrected object-root ops_bash schema adds 961 bytes (~241 tokens); full FastCtx+bash surface is 10,700 bytes (~2,675 tokens). Restricted file-only surface: about 1,681 tokens; its routing table is 527 bytes (~132 tokens). No server instructions are published (the original raw server instructions were 246 bytes); the old host-shell section is also removed. Baseline excludes ops_bash, so compare nine FastCtx tools like-for-like rather than treating restoration as a regression of those numbers. Total request savings depend on host presentation; these are not API usage/billing measurements.
+Default reduces plugin schema bytes by 28.2% versus 0.2.3. Background contributes
+2,264 bytes only when enabled; duplicate ops_run (751 bytes) is no longer published.
+The host tool declarations remain additive and are not included in this table.
+Restricted sessions have no ops_bash or background command tools.
 
-`ops_grep` went from 3,766 → 2,019 bytes; `ops_inspect_local_file` from 4,375 → 1,968. `ops_replace` is retained: schema cost cannot establish invocation frequency, and no usage-frequency measurement was collected.
+Prompt sections are component-owned and independently removed: file 498 bytes,
+shell 492 bytes, background 269 bytes. These sum when multiple components are on;
+`toolingPrompt` in the snapshot is the legacy combined CLI renderer, not the actual
+sum of separately registered sections. Minimal's complete persona can exclude them.
+No raw server instructions or old host-shell policy segment is published.
 
-Reproduce the current snapshot with `node scripts/measure-schemas.mjs docs/schema-current.json`. It only starts FastCtx, initializes, lists schemas, then closes it; it executes no tools. Keep the baseline unchanged; a different runtime schema requires an explicitly labeled comparison.
+## Historical comparison
+
+The unchanged baseline is dee3c57 before description compression: nine FastCtx
+schemas 18,889 bytes; four file schemas 12,807. File descriptions remain 6,724 bytes
+(47.5% reduction). ops_grep: 3,766 → 2,019; inspect: 4,375 → 1,968. These are plugin
+old/new comparisons, NOT official-host versus plugin comparisons.
+
+Reproduce with `node scripts/measure-schemas.mjs docs/schema-current.json`.
+It initializes and lists schemas without tool execution. Preserve baseline JSON.
+Actual request count, cache pricing, tool output and repeated history can outweigh
+fixed schema savings; no percentage here predicts task-total provider tokens.

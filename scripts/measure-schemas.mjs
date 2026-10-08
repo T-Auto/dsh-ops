@@ -5,7 +5,7 @@ import path from 'node:path'
 import { resolveBinary, probeBinary } from '../lib/binary.js'
 import { McpStdioClient } from '../lib/handshake.js'
 import { childEnv, toolDefinition } from '../lib/tools.js'
-import { BASH_TOOL, FILE_TOOLS, publicToolName, renderToolingPolicy } from '../lib/policy.js'
+import { BASH_TOOL, BACKGROUND_TOOLS, FILE_TOOLS, publicToolName, renderToolingPolicy } from '../lib/policy.js'
 import { bashToolDefinition } from '../lib/shells.js'
 
 const runtime = resolveBinary()
@@ -18,7 +18,7 @@ function size(value) {
 try {
   const handshake = await client.initialize('dsh-ops-schema-measurement')
   const tools = await client.listTools()
-  const rows = tools.map(tool => {
+  const rows = tools.filter(tool => tool.name !== 'run').map(tool => {
     const definition = toolDefinition({ tool, call: () => {} })
     return { name: publicToolName(tool.name), ...size({ name: definition.name, description: definition.description, parameters: definition.parameters }) }
   })
@@ -37,8 +37,11 @@ try {
     fileOnly: { bytes: fileBytes, approximateTokens: Math.ceil(fileBytes / 4) },
     fileOnlyPrompt: size(renderToolingPolicy({ published: fileNames })),
     bashSchema: bashSize,
+    defaultWithBash: { bytes: fileBytes + bashSize.bytes, approximateTokens: Math.ceil((fileBytes + bashSize.bytes) / 4) },
     fullWithBash: { bytes: bytes + bashSize.bytes, approximateTokens: Math.ceil((bytes + bashSize.bytes) / 4) },
-    toolingPrompt: size(renderToolingPolicy({ published: [...tools.map(tool => publicToolName(tool.name)), BASH_TOOL, 'pwsh'], pwsh7: true })),
+    shellPrompt: size(renderToolingPolicy({ published: [BASH_TOOL, 'pwsh'], pwsh7: true })),
+    backgroundPrompt: size(renderToolingPolicy({ published: BACKGROUND_TOOLS.map(publicToolName), shellComponent: false })),
+    toolingPrompt: size(renderToolingPolicy({ published: [...FILE_TOOLS.map(publicToolName), BASH_TOOL, 'pwsh'], pwsh7: true })),
     publishedServerInstructions: size(''),
     rawServerInstructions: size(handshake.instructions ?? ''),
   }

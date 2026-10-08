@@ -39,39 +39,46 @@
       "approximateTokens": 378
     },
     {
-      "name": "ops_run",
-      "bytes": 751,
-      "approximateTokens": 188
-    },
-    {
       "name": "ops_run_background",
       "bytes": 635,
       "approximateTokens": 159
     }
   ],
   "total": {
-    "bytes": 9739,
-    "approximateTokens": 2435
+    "bytes": 8988,
+    "approximateTokens": 2247
   },
   "fileOnly": {
     "bytes": 6724,
     "approximateTokens": 1681
   },
   "fileOnlyPrompt": {
-    "bytes": 527,
-    "approximateTokens": 132
+    "bytes": 498,
+    "approximateTokens": 125
   },
   "bashSchema": {
     "bytes": 961,
     "approximateTokens": 241
   },
+  "defaultWithBash": {
+    "bytes": 7685,
+    "approximateTokens": 1922
+  },
   "fullWithBash": {
-    "bytes": 10700,
-    "approximateTokens": 2675
+    "bytes": 9949,
+    "approximateTokens": 2488
+  },
+  "shellPrompt": {
+    "bytes": 492,
+    "approximateTokens": 123
+  },
+  "backgroundPrompt": {
+    "bytes": 269,
+    "approximateTokens": 68
   },
   "toolingPrompt": {
-    "bytes": 1110,
-    "approximateTokens": 278
+    "bytes": 878,
+    "approximateTokens": 220
   },
   "publishedServerInstructions": {
     "bytes": 0,
