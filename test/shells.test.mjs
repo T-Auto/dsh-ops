@@ -203,8 +203,17 @@ await test('the System32 WSL launcher is never used as bash', async () => {
       platform: 'win32',
       arch: 'x64',
     })
-    assert.equal(resolved.bash.available, false)
-    assert.equal(resolved.bash.source, 'missing')
+    // The invariant is that the WSL launcher is never chosen, not that no bash
+    // exists: a host with msys64 or a Git for Windows in Program Files has a
+    // legitimate bash, and a case that forbade one would only pass on the machine
+    // it was written on (which is what the first CI run of this repository
+    // caught).
+    assert.notEqual(resolved.bash.file, path.join(systemRoot, 'System32', 'bash.exe'))
+    if (resolved.bash.available) {
+      assert.ok(!resolved.bash.file.startsWith(systemRoot), resolved.bash.file)
+    } else {
+      assert.equal(resolved.bash.source, 'missing')
+    }
   })
 })
 

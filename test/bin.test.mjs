@@ -318,11 +318,16 @@ await test('a shell the deployment does not have is reported as missing, with th
     fs.mkdirSync(home, { recursive: true })
     fs.mkdirSync(user, { recursive: true })
     const runtime = seedFile(path.join(dir, 'fastctx-stub'))
-    const config = { binaryPath: runtime }
+    // `allowSystemShellFallback: false` is what makes this case host-independent.
+    // A machine with a Git for Windows or an msys64 bash at a well-known location
+    // would otherwise resolve one, and each side of the comparison would resolve
+    // the one its own environment names — which is exactly what the first CI run
+    // of this repository caught. With the host's shells out of play, both sides
+    // can only report the rung missing, which is what this case is about.
+    const config = { binaryPath: runtime, allowSystemShellFallback: false }
     const absent = path.join(dir, 'absent')
-    // One environment, handed to the child and to the resolver this suite runs
-    // in process: whatever this machine keeps outside the environment is still
-    // compared against, so the assertion holds on a host that has a bash there.
+    // The whole environment both sides see, so nothing outside it can decide the
+    // answer.
     const env = {
       ...process.env,
       DSH_HOME: home,

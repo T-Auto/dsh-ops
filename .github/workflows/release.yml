@@ -36,11 +36,6 @@ jobs:
     # (`scripts/build-platform-packages.mjs` refuses another platform), so the
     # release job has to run where those binaries can be built.
     runs-on: windows-latest
-    env:
-      # Empty on a repository whose npm publishing is not configured yet: the run
-      # then still builds, verifies, and attaches the release assets, and says so
-      # instead of failing at the publish step.
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - name: Check out
         uses: actions/checkout@v7.0.1
@@ -82,17 +77,22 @@ jobs:
         # Downloads and builds nothing: re-reads every digest the build recorded.
         run: node scripts/build-platform-packages.mjs check --dist "$env:DIST"
 
-      - name: Note the publishing credentials
+      - name: Check the publishing credentials
+        id: credentials
         shell: pwsh
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          if ($env:NPM_TOKEN) {
+          if ($env:NODE_AUTH_TOKEN) {
             Write-Host 'NPM_TOKEN is set: this run publishes the platform packages, then the main package.'
+            "publish=yes" >> $env:GITHUB_OUTPUT
           } else {
             Write-Host '::warning::NPM_TOKEN is not set: this run attaches the release assets but publishes nothing to npm.'
+            "publish=no" >> $env:GITHUB_OUTPUT
           }
 
       - name: Publish the platform packages
-        if: env.NPM_TOKEN != ''
+        if: steps.credentials.outputs.publish == 'yes'
         shell: pwsh
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -111,7 +111,7 @@ jobs:
           }
 
       - name: Publish the main package
-        if: env.NPM_TOKEN != ''
+        if: steps.credentials.outputs.publish == 'yes'
         shell: pwsh
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
