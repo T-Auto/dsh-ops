@@ -28,9 +28,8 @@
         # and registers every tool under its own ops_<tool> name.
         serverName: fastctx
 
-        # Publish FastCtx's run/run_background/job_* tools as well. They are a
-        # POSIX bash shell; disable this when the deployment must not run
-        # arbitrary commands.
+        # Deployment opt-in only. Command/job tools are published per session
+        # only when sandboxPolicy.resolve() reports danger-full-access.
         enableShellTools: true
 
         # Per-call deadline for one FastCtx tool call, in milliseconds.
@@ -62,10 +61,8 @@
         # first, then PATH, then the well-known Git for Windows locations.
         # bashPath: 'C:\Program Files\Git\bin\bash.exe'
 
-        # Publish the plugin's own `ops_bash` tool. It takes effect only when a
-        # bash was resolved; when none was, the tool is skipped with a warning
-        # and the ladder simply loses its second rung.
-        publishBashTool: true
+        # Legacy key accepted for compatibility; ops_bash is no longer published.
+        publishBashTool: false
 
         # Fall back to a system-installed bash when the plugin carries no copy
         # of its own. Set false to confine the bash rung to plugin-provided

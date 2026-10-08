@@ -3,6 +3,20 @@
 What this repository is, where its parts came from, what was verified, and what
 was not.
 
+## Current slimming-pass evidence (supersedes historical ladder claims below)
+
+This pass changes only plugin presentation, registration, and result projection; no vendored functionality changed. Historical tables below describe the earlier implementation and its earlier tests, not acceptance of the current revision.
+
+- Permission authority: host `packages/sandbox/sandbox-policy/src/index.ts:157-186`, `sandboxPolicy.resolve({session})`; durable mode event at `src/session-mode.ts:25-56`.
+- Session mode feed: `ctx.on('session/event', (session, event))`, not client-wire projection change notifications. The plugin reconciles plugin-owned agent child fibers on `sandbox/mode`.
+- Own registration scopes: `packages/core/tools/src/index.ts:1058-1088`; inherited restrictions and own-layer exemption at `:1090-1124,1163-1206`; prompt callbacks use assembly agent plus `ctx.get('tools').schemas(agent)`.
+- Concurrency API: `packages/core/tools/src/index.ts:267-280,1303-1309` requires a pure function, not a boolean. FastCtx's read/search handlers use shared bounded permits and blocking executors (`vendor/fastctx/src/server.rs:198-280`); MCP request IDs isolate pending replies. Only read-only tools opt into sibling overlap.
+- Host timeout metadata requires work quiescence; the current MCP transport removes pending waits but cannot prove server cancellation. No host `timeoutMs` promise is added.
+- Job launch ID is parsed only from FastCtx's successful terminal marker (`vendor/fastctx/src/shell/jobs/mod.rs:232-278`); global durable lists at `:1053-1250` are projected to session-owned IDs. Footer grammar/placement comes from `vendor/fastctx/src/background_status.rs`.
+- Baseline at pre-change plugin HEAD `dee3c57`, runtime FastCtx 0.2.6, is recorded in `docs/schema-baseline.json`. `scripts/measure-schemas.mjs` measures compact name/description/parameters JSON, not use frequency or actual billing.
+- Per operator instruction: no regression tests or CI added, no existing suite updated or run. Syntax checks and schema-list measurements are not runtime acceptance. See `docs/manual-validation.md`.
+- Residual boundaries: file tools remain outside the host filesystem sandbox; shell-mode gating does not confine `ops_replace`. Approval and sandbox state are separate; no new approval escalation is implemented. Reconnect loses job ownership and does not prove durable jobs terminated.
+
 ## Two bodies of work
 
 | | Author | License | Where |

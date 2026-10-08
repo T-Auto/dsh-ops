@@ -21,7 +21,6 @@ import { fileURLToPath } from 'node:url'
 import { parse as parseYaml } from 'yaml'
 import {
   FILE_TOOLS,
-  HOST_SHELL_SECTION,
   IN_PROCESS_TOOLS,
   SHELL_TOOLS,
   TOOLING_SECTION,
@@ -315,9 +314,9 @@ namespaces.slice(1).forEach((entry, offset) => {
 const sections = manifestRaw.contributes?.['x-prompt-sections'] ?? []
 const sectionNames = sections.map((section) => section.name)
 check(
-  sectionNames.includes(HOST_SHELL_SECTION) && sectionNames.includes(TOOLING_SECTION),
+  sectionNames.length === 1 && sectionNames.includes(TOOLING_SECTION),
   'the declared prompt sections match lib/policy.js',
-  `declared ${sectionNames.join(', ')} vs policy ${[HOST_SHELL_SECTION, TOOLING_SECTION].join(', ')}`,
+  `declared ${sectionNames.join(', ')} vs policy ${TOOLING_SECTION}`,
 )
 check(
   sections.every((section) => typeof section.order === 'number' && Number.isFinite(section.order)),

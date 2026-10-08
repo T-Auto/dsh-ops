@@ -5,6 +5,25 @@ All notable changes to this package are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — additive tool surface
+
+### Changed
+
+- Replace the execution ladder and duplicate prompt sections with one compact routing table.
+- Retire `ops_bash` publication; preserve shell resolution/provisioning utilities and the host pwsh path patch.
+- Publish command/job tools only in plugin-owned agent fibers under authoritative per-session `danger-full-access`; reconcile `sandbox/mode` changes and recheck calls. No env/preset fallback.
+- Reject image inspection explicitly and advertise PDF text only; preserve batch text ranges, encodings, hex, search filtering, and batch replacement.
+- Shorten published schema descriptions and advertise only symmetric grep context. Forward ordinary arguments unchanged.
+- Track background-job ownership per session/connection; reject foreign output/kill, filter background footers, and project owned job listings/counts/pagination.
+- Withdraw tools on disconnect. Scope all definitions/disposers to plugin ownership, with no shared registry rewrite or host value imports.
+- Declare read-only sibling concurrency through the host's function API. Do not assert host timeout quiescence; preserve the existing transport deadline.
+
+### Measurement and validation
+
+- Add a standalone schema measurement command and pre-change baseline, not a test gate.
+- Document manual acceptance and limits. No regression tests/CI added, existing tests neither updated nor run for this change.
+- Filesystem confinement of FastCtx file tools, per-command approval escalation, and cancellation quiescence remain outside this pass.
+
 ## [0.2.0] - Unreleased
 
 The command-execution ladder, the plugin's own shells, the runtime package and the

@@ -156,8 +156,9 @@ async function commandStatus() {
   })
   try {
     const handshake = await client.initialize('dsh-ops-status')
-    const tools = await client.listTools()
+    const tools = (await client.listTools()).filter(tool => FILE_TOOLS.includes(tool.name))
     console.log(`server:     ${handshake.serverInfo?.name} ${handshake.serverInfo?.version}`)
+    console.log('scope:      standalone diagnostic; command tools need an authorized host session')
     console.log(`tools:      ${tools.length}`)
     for (const tool of tools) console.log(`  - ${publicToolName(tool.name)}`)
     return tools.length === 0 ? 1 : 0
@@ -268,14 +269,8 @@ function shellReport(resolution) {
  * @returns {import('../lib/policy.js').LadderLevels} the rungs.
  */
 function ladderFor({ runtime, shells, config }) {
-  const published = runtime.resolved
-    ? [
-      ...FILE_TOOLS.map(publicToolName),
-      ...(config.enableShellTools ? SHELL_TOOLS.map(publicToolName) : []),
-      ...(shells.bash.available ? [BASH_TOOL] : []),
-    ]
-    : []
-  return ladderLevels({ published, pwsh: shells.pwsh.available })
+  const published = runtime.resolved ? FILE_TOOLS.map(publicToolName) : []
+  return ladderLevels({ published })
 }
 
 /**
@@ -320,19 +315,10 @@ function printLadder(report) {
     console.log(`    detail:     ${rung.detail}`)
   }
 
-  const { levels, rungs } = report
-  console.log('\nLadder the prompt renders (lib/policy.js renderToolingPolicy)')
-  console.log(`  levels:  fastctx=${levels.fastctx}  bash=${levels.bash}  pwsh=${levels.pwsh}`)
-  if (rungs.length === 0) {
-    console.log('  rungs:   (none — the tooling section is empty while the FastCtx rung is not live)')
-  } else {
-    console.log('  rungs:')
-    for (const rung of rungs) console.log(`    - Rung ${rung.number} — ${rung.title}`)
-  }
-  console.log('')
-  console.log('This report resolves executables instead of reading the live registry: a resolved FastCtx')
-  console.log('stands in for a connected server, and a resolved bash for the published `ops_bash` tool')
-  console.log("(which also needs the host's subprocess service). Nothing is spawned.")
+  console.log('\nRouting policy (legacy ladder command)')
+  console.log(report.policy || '(no file tools resolved)')
+  console.log('\nResolution only: command visibility requires a live host session and sandboxPolicy.')
+  console.log('Shell executables are not separate model-facing rungs; nothing is spawned.')
 }
 
 /**
@@ -364,11 +350,11 @@ function commandLadder({ json, configFile }) {
     fastctx: runtime,
     shells: { bash: shellReport(shells.bash), pwsh: shellReport(shells.pwsh) },
     levels,
-    rungs: renderedRungs(renderToolingPolicy({
-      enableShellTools: config.enableShellTools,
+    rungs: [],
+    policy: renderToolingPolicy({
+      published: runtime.resolved ? FILE_TOOLS.map(publicToolName) : [],
       extraGuidance: config.extraGuidance,
-      levels,
-    })),
+    }),
   }
 
   if (json) {
