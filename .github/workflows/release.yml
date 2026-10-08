@@ -24,14 +24,18 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  # The build writes tarballs, checksums, and the publish directory here; every
-  # later step reads the plan the build wrote rather than recomputing a path.
-  DIST: ${{ runner.temp }}/dsh-ops-dist
-
 jobs:
   release:
     name: Build and publish the release
+    env:
+      # The build writes tarballs, checksums, and the publish directory here;
+      # every later step reads the plan the build wrote rather than recomputing a
+      # path. This belongs to the job and not to the workflow: the `runner`
+      # context is not available in a workflow-level `env`, and naming it there
+      # makes GitHub reject the whole file before the run starts — which is how
+      # the first tag of this repository produced a zero-second failure instead
+      # of a release.
+      DIST: ${{ runner.temp }}/dsh-ops-dist
     # FastCtx is a native binary and only Windows payloads are published
     # (`scripts/build-platform-packages.mjs` refuses another platform), so the
     # release job has to run where those binaries can be built.
