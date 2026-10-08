@@ -70,7 +70,11 @@ jobs:
           # Not `$home`: that name is PowerShell's own read-only variable for the
           # user profile, so assigning to it fails this step before the suite ever
           # runs — which is what the first hermetic run of this repository did.
-          $staging = Join-Path ([System.IO.Path]::GetTempPath()) ("dsh-ops-hermetic-" + [guid]::NewGuid().ToString('N'))
+          # And not `[System.IO.Path]::GetTempPath()` either: it can disagree with
+          # the directory Node calls `os.tmpdir()`, and the suite refuses a
+          # DSH_HOME outside its own temporary directory. `$env:RUNNER_TEMP` is
+          # the directory both sides agree on.
+          $staging = Join-Path $env:RUNNER_TEMP ("dsh-ops-hermetic-" + [guid]::NewGuid().ToString('N'))
           New-Item -ItemType Directory -Path $staging | Out-Null
           $env:DSH_HOME = $staging
           node test/mount.test.mjs
