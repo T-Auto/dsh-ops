@@ -67,12 +67,15 @@ jobs:
         # runtime (test/lib/harness.mjs `skipSuite`), and this job has none.
         shell: pwsh
         run: |
-          $home = Join-Path ([System.IO.Path]::GetTempPath()) ("dsh-ops-hermetic-" + [guid]::NewGuid().ToString('N'))
-          New-Item -ItemType Directory -Path $home | Out-Null
-          $env:DSH_HOME = $home
+          # Not `$home`: that name is PowerShell's own read-only variable for the
+          # user profile, so assigning to it fails this step before the suite ever
+          # runs — which is what the first hermetic run of this repository did.
+          $staging = Join-Path ([System.IO.Path]::GetTempPath()) ("dsh-ops-hermetic-" + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $staging | Out-Null
+          $env:DSH_HOME = $staging
           node test/mount.test.mjs
           $code = $LASTEXITCODE
-          Remove-Item -Recurse -Force $home
+          Remove-Item -Recurse -Force $staging
           if ($code -eq 77) {
             Write-Host 'mount skipped, as a machine without a runtime must'
             exit 0
