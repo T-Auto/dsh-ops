@@ -28,14 +28,15 @@ jobs:
   release:
     name: Build and publish the release
     env:
-      # The build writes tarballs, checksums, and the publish directory here;
+      # The build writes tarballs, checksums, and the publish directory here, and
       # every later step reads the plan the build wrote rather than recomputing a
-      # path. This belongs to the job and not to the workflow: the `runner`
-      # context is not available in a workflow-level `env`, and naming it there
-      # makes GitHub reject the whole file before the run starts — which is how
-      # the first tag of this repository produced a zero-second failure instead
-      # of a release.
-      DIST: ${{ runner.temp }}/dsh-ops-dist
+      # path. Relative on purpose: neither a workflow-level nor a job-level `env`
+      # may name the `runner` context, and naming it in either place makes GitHub
+      # reject the whole file before the run starts — which is how the first tag
+      # of this repository produced a zero-second failure instead of a release.
+      # Steps start in the workspace root, so this is a directory of the checkout
+      # on an ephemeral runner.
+      DIST: dist-release
     # FastCtx is a native binary and only Windows payloads are published
     # (`scripts/build-platform-packages.mjs` refuses another platform), so the
     # release job has to run where those binaries can be built.
