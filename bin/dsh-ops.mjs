@@ -28,6 +28,7 @@ import {
   probeBinary,
   resolveBinary,
 } from '../lib/binary.js'
+import { profileCommand } from '../lib/profile-install.js'
 import { resolveConfig } from '../lib/config.js'
 import { McpStdioClient } from '../lib/handshake.js'
 import {
@@ -81,6 +82,12 @@ function usage() {
   console.log(`dsh-ops — FastCtx runtime management for the dsh-ops plugin
 
 Usage:
+  dsh-ops install --profile <desktop|web|tui> [--dsh-cli <path>]
+                                  Install this version using the official target-profile manager
+  dsh-ops uninstall --profile <desktop|web|tui> [--dsh-cli <path>]
+                                  Remove the profile plugin and its binary dependency references
+  dsh-ops status --profile <desktop|web|tui>
+                                  Report target-profile installation (tui maps to dsh-tui)
   dsh-ops resolve                 Print the FastCtx executable the plugin will host
   dsh-ops status                  Resolve, probe, and list the MCP tools it publishes
   dsh-ops build [--force]         Build the vendored FastCtx source with cargo (release)
@@ -104,10 +111,9 @@ Environment:
                        the provisioned shells in <DSH_HOME>/dsh-ops/shells
   HTTPS_PROXY          Proxy handed to curl explicitly by provision-shells
 
-Removing the plugin itself is a profile operation this command does not perform:
-use \`dsh plugin --profile <profile> remove dsh-ops\`, or the plugin_manager
-\`remove_bundle\` tool. Uninstall only reports and removes what the plugin wrote
-outside the profile.
+With --profile, install/uninstall delegate to the official DSH profile manager.
+Without --profile, uninstall only cleans legacy provisioned runtime/shell files;
+use --yes to confirm that separate cleanup. No system shell or shared npm cache is removed.
 `)
 }
 
@@ -1139,6 +1145,8 @@ async function main() {
     args: process.argv.slice(2),
     allowPositionals: true,
     options: {
+      profile: { type: 'string' },
+      'dsh-cli': { type: 'string' },
       force: { type: 'boolean', default: false },
       from: { type: 'string' },
       'no-build': { type: 'boolean', default: false },
@@ -1153,6 +1161,10 @@ async function main() {
     },
   })
   const command = positionals[0] ?? 'help'
+  if (positionals.length > 1) throw new Error('Unexpected positional arguments.')
+  if (command === 'install' || (['uninstall', 'status'].includes(command) && values.profile !== undefined)) {
+    return profileCommand(command, { profile: values.profile, dshCli: values['dsh-cli'], dryRun: values['dry-run'] === true })
+  }
   switch (command) {
     case 'resolve':
       return commandResolve()
@@ -1200,4 +1212,5 @@ async function main() {
   }
 }
 
-process.exitCode = await main()
+try { process.exitCode = await main() }
+catch (error) { console.error(`dsh-ops: ${error.message}`); process.exitCode = 1 }

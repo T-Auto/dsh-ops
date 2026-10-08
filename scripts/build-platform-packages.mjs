@@ -2,20 +2,10 @@
 /**
  * Build and verify the three platform packages this plugin publishes.
  *
- * The three packages are not the same kind of thing, and the difference is the
- * point of this script:
- *
- * - `<scope>/fastctx-<platform>-<arch>` **carries a payload**. It is this fork's
- *   own Apache-2.0 runtime, built here with `cargo build --release --locked`
- *   over `vendor/fastctx`, and it ships `bin/<fastctx executable>` plus the
- *   licence and notice documents Apache-2.0 requires a redistributor to carry.
- * - `<scope>/bash-<platform>-<arch>` and `<scope>/pwsh-<platform>-<arch>` are
- *   **pin packages**: a few kilobytes of metadata (`package.json`,
- *   `provenance.json`, `README.md`) that name an upstream release asset — its
- *   repository, tag, file name, direct URL, sha256, byte count, the layout it
- *   unpacks to, the executable inside it, and its licence and copyright. They
- *   carry **no upstream bytes at all**: third-party binaries are pointed at, not
- *   forwarded, so nothing here redistributes Git for Windows or PowerShell.
+ * All three packages carry ready-to-run Windows payloads. FastCtx is built from
+ * vendored source; bash and pwsh are complete, digest-verified upstream runtime
+ * trees with their licenses preserved. All are injected as exact optional deps.
+ * Downloads happen during release assembly, never in an install lifecycle hook.
  *
  * `--verify-upstream` keeps the packages honest: it downloads the pinned assets,
  * checks each one against the sha256 recorded here, and deletes them again. It
@@ -40,18 +30,10 @@
  *   pack          `npm pack` each directory, then write `SHA256SUMS` and the
  *                 release-wide `provenance.json`
  *   publish-dir   copy the main package into a temporary publish directory,
- *                 inject the platform packages a normal install should get (the
- *                 FastCtx one — the shell pins are looked up only when a
- *                 deployment wants them), and pack it
+ *                 inject all three platform payload packages and pack it
  *   check         verify every artifact without downloading or building
  *   fetch         download the pinned upstream assets and keep them
  *   verify-upstream  download them, verify the digests, delete them again
- *
- * WHY ONLY FASTCTX IS INJECTED: a dependency on a shell pin would install a
- * package that carries no shell, which is worse than not installing one. The
- * pins exist so a deployment (or `dsh-ops provision-shells`) can resolve a
- * payload deliberately; the plugin's own `optionalDependencies` stay free of
- * anything that cannot work by itself.
  *
  * Everything lands under `--dist` (default: `../dist`, a sibling of this
  * checkout so a build never writes into the source tree).
@@ -172,14 +154,6 @@ const SHELL_PIN_ANNOTATIONS = Object.freeze({
 
 /** The three packages one release publishes, in publish order. */
 const KINDS = Object.freeze([FASTCTX_KIND, 'bash', 'pwsh'])
-
-/** The files a pin package is allowed to contain: ours, and nothing upstream. */
-const PIN_PACKAGE_FILES = Object.freeze(['package.json', 'provenance.json', 'README.md'])
-
-/** The sentence every pin package states about what it does not do. */
-const PIN_NOTICE = 'This package does not carry or forward the upstream asset. '
-  + 'The bytes are downloaded from the upstream release, on the machine that needs them, '
-  + 'and are verified against the sha256 recorded here.'
 
 // ---------------------------------------------------------------------------
 // Small utilities
@@ -778,7 +752,7 @@ function describePackages(platform, arch, dist) {
       arch,
       dist,
       executable: `bin/${PLATFORM_PACKAGES.bash.executable}`,
-      payload: { type: 'pin', pin: resolveShellPin('bash', platform, arch) },
+      payload: { type: 'archive', pin: resolveShellPin('bash', platform, arch) },
     },
     {
       kind: 'pwsh',
@@ -788,7 +762,7 @@ function describePackages(platform, arch, dist) {
       arch,
       dist,
       executable: `bin/${PLATFORM_PACKAGES.pwsh.executable}`,
-      payload: { type: 'pin', pin: resolveShellPin('pwsh', platform, arch) },
+      payload: { type: 'archive', pin: resolveShellPin('pwsh', platform, arch) },
     },
   ]
 }
@@ -940,13 +914,15 @@ function provenanceFor(pkg, context, sources, license, skeletonSha256) {
     builtFromCommit: gitRevision(),
     builtAt: new Date().toISOString(),
   }
-  if (pkg.payload.type === 'pin') {
+  if (pkg.payload.type === 'archive') {
     const pin = pkg.payload.pin
     return {
       ...common,
       license,
-      redistributesUpstreamBytes: false,
-      notice: PIN_NOTICE,
+      redistributesUpstreamBytes: true,
+      notice: 'Complete upstream Windows runtime, redistributed without changes. Included licenses apply to their respective components.',
+      payloadSha256: pin.entrySha256,
+      payloadBytes: pin.entryBytes,
       skeletonSha256,
       entryPoint: pkg.executable,
       entrySha256: pin.entrySha256,
@@ -1014,8 +990,9 @@ async function stepAssemble(context) {
     if (!force && complete !== undefined && complete.skeletonSha256 === digest
       && complete.builtBySha256 === SCRIPT_SHA256
       && complete.version === pkg.version
-      && (pkg.payload.type === 'pin'
-        || (complete.payloadSha256 === context.build.sha256 && fs.existsSync(path.join(stage, pkg.executable))))) {
+      && (pkg.payload.type === 'archive'
+        ? (complete.payloadSha256 === pkg.payload.pin.entrySha256 && fs.existsSync(path.join(stage, pkg.executable)))
+        : (complete.payloadSha256 === context.build.sha256 && fs.existsSync(path.join(stage, pkg.executable))))) {
       log('assemble', `reusing ${pkg.name} (${pkg.payload.type})`)
       results.push({ pkg, stage, provenance: complete })
       continue
@@ -1024,6 +1001,22 @@ async function stepAssemble(context) {
     log('assemble', `assembling ${pkg.name} (${pkg.payload.type})`)
     fs.rmSync(stage, { recursive: true, force: true })
     fs.mkdirSync(stage, { recursive: true })
+
+    if (pkg.payload.type === 'archive') {
+      const pin = pkg.payload.pin
+      const archive = path.join(context.dist, 'downloads', pin.assetName)
+      if (!fs.existsSync(archive) || await sha256File(archive) !== pin.assetSha256) {
+        throw new Error(`Missing verified archive: ${archive}; run fetch first`)
+      }
+      if (pin.extractor === 'zip') {
+        const into = path.join(stage, 'bin')
+        fs.mkdirSync(into, { recursive: true })
+        run(path.join(process.env.SystemRoot ?? 'C:/Windows', 'System32/tar.exe'), ['-xf', archive, '-C', into])
+      } else if (pin.extractor === 'sfx-7z') {
+        run(archive, [`-o${stage}`, '-y'])
+      } else throw new Error(`Unsupported archive extractor: ${pin.extractor}`)
+      if (await sha256File(path.join(stage, pkg.executable)) !== pin.entrySha256) throw new Error(`Executable digest mismatch: ${pkg.name}`)
+    }
 
     if (pkg.payload.type === 'cargo') {
       const target = path.join(stage, pkg.executable)
@@ -1067,18 +1060,7 @@ async function stepAssemble(context) {
     }
     writeJson(path.join(stage, 'package.json'), { name: pkg.name, version: pkg.version, ...fragment })
 
-    if (pkg.payload.type === 'pin') {
-      const carried = treeFiles(stage).filter((file) => !PIN_PACKAGE_FILES.includes(file))
-      if (carried.length > 0) {
-        throw new Error(`${pkg.name} is a pin package but the stage carries ${carried.join(', ')}`)
-      }
-      const pin = pkg.payload.pin
-      log('assemble', `${pkg.name}@${pkg.version}: pin only (${pin.assetName}, ${pin.assetSha256.slice(0, 12)}…), `
-        + `entry ${pin.entryPoint} sha256 ${pin.entrySha256.slice(0, 12)}…`)
-      log('assemble', `  pin source: ${pin.pinSource}`)
-    } else {
-      log('assemble', `${pkg.name}@${pkg.version}: ${pkg.executable} sha256 ${context.build.sha256}`)
-    }
+    log('assemble', `${pkg.name}@${pkg.version}: ${pkg.executable} sha256 ${provenance.payloadSha256}`)
     if (pkg.payload.type === 'cargo') {
       const provenanceWithPayload = readJsonIfExists(path.join(stage, 'provenance.json'))
       results.push({ pkg, stage, provenance: provenanceWithPayload ?? provenance })
@@ -1100,7 +1082,7 @@ async function stepAssemble(context) {
  * @returns {Promise<object>} the tarball facts.
  */
 async function packDirectory(directory, dist) {
-  const result = npm(['pack', '--pack-destination', dist, '--json'], { cwd: directory })
+  const result = npm(['pack', '--ignore-scripts', '--pack-destination', dist, '--json'], { cwd: directory })
   const [reported] = parseNpmJson(result.stdout, `npm pack in ${directory}`)
   const tarball = path.join(dist, reported.filename)
   return {
@@ -1154,7 +1136,7 @@ async function writeReleaseRecords(context, assembled) {
     const provenance = entry.provenance ?? {}
     const upstream = provenance.upstream ?? {}
     const asset = upstream.asset ?? {}
-    const isPin = pkg.payload.type === 'pin'
+    const isPin = pkg.payload.type === 'archive'
     packages.push({
       name: pkg.name,
       kind: pkg.kind,
@@ -1172,7 +1154,7 @@ async function writeReleaseRecords(context, assembled) {
       upstreamUnpackedBytes: upstream.unpacked?.bytes,
       upstreamUnpackedBytesAsSumOfFileSizes: upstream.unpacked?.bytesAsSumOfFileSizes,
       license: provenance.license,
-      redistributesUpstreamBytes: isPin ? false : true,
+      redistributesUpstreamBytes: true,
       entryPoint: pkg.executable,
       payloadSha256: provenance.payloadSha256 ?? provenance.entrySha256,
       payloadBytes: provenance.payloadBytes ?? provenance.entryBytes,
@@ -1270,14 +1252,8 @@ function printArtifactTable(dist) {
 /**
  * The `optionalDependencies` a publish would inject.
  *
- * A platform package is injected only when installing it alone can work: the
- * FastCtx payload package can, and a shell pin package cannot — it carries no
- * shell, so depending on it would install metadata where a deployment expects a
- * binary. The pins are resolved deliberately instead (by the plugin's own
- * provisioning path or by an explicit install). The committed manifest declares
- * no runtime dependency of its own: it is the publish directory that gains the
- * FastCtx package, because an unpublished version in a repository manifest is a
- * 404 for every contributor.
+ * Exact Windows runtime optionalDependencies, injected only in the publish
+ * artifact so an unpublished version does not break contributor installs.
  *
  * @param {object} context - the run context.
  * @returns {Record<string, string>} the map.
@@ -1286,7 +1262,6 @@ function injectedOptionalDependencies(context) {
   const declared = mainManifest().optionalDependencies ?? {}
   const injected = { ...declared }
   for (const pkg of context.packages) {
-    if (pkg.payload.type === 'pin') continue
     injected[pkg.name] = pkg.version
   }
   return injected
@@ -1306,7 +1281,7 @@ function printInjection(context) {
     console.log(`  ${own ? '+' : ' '} ${name}: ${range}`)
   }
   console.log('  (+ marks a platform package this release injects; the rest came from the committed manifest)')
-  console.log('  (the shell pin packages are published but never injected: a pin carries no shell to install)')
+  console.log('  (all three platform packages carry ready-to-run Windows binaries)')
   console.log('  (lib/binary.js resolves this plugin\'s own FastCtx package ahead of the upstream @fastctx/* fallbacks)\n')
 }
 
@@ -1378,7 +1353,7 @@ async function downloadPins(context, { keep }) {
   fs.mkdirSync(directory, { recursive: true })
   const verdicts = []
   for (const pkg of context.packages) {
-    if (pkg.payload.type !== 'pin') continue
+    if (pkg.payload.type !== 'archive') continue
     const pin = pkg.payload.pin
     const file = path.join(directory, pin.assetName)
     let digest = null
@@ -1467,7 +1442,7 @@ async function stepCheck(context) {
   //    the upstream release pages, and the only place a fallback pin shows up.
   console.log('  pins this release publishes:')
   for (const pkg of context.packages) {
-    if (pkg.payload.type !== 'pin') continue
+    if (pkg.payload.type !== 'archive') continue
     const pin = pkg.payload.pin
     console.log(`    ${pkg.name} -> ${pin.upstream} ${pin.releaseTag}`)
     console.log(`      asset   ${pin.assetName} ${pin.assetBytes} bytes`)
@@ -1491,7 +1466,7 @@ async function stepCheck(context) {
   // and the digest of the executable. Printed beside the shell pins so one list
   // answers "what is in this release, and where did every byte come from".
   for (const pkg of context.packages) {
-    if (pkg.payload.type === 'pin') continue
+    if (pkg.payload.type !== 'cargo') continue
     const provenance = readJsonIfExists(path.join(stageDir(pkg), 'provenance.json'))
     const source = provenance?.sources?.[0] ?? {}
     console.log(`    ${pkg.name} -> ${source.upstream ?? 'vendor/fastctx'} ${source.release ?? ''}`.trimEnd())
@@ -1520,20 +1495,10 @@ async function stepCheck(context) {
       continue
     }
     const files = treeFiles(stage)
-    if (pkg.payload.type === 'pin') {
-      const carried = files.filter((file) => !PIN_PACKAGE_FILES.includes(file))
-      if (carried.length > 0) {
-        missing('stage', `${pkg.name} is a pin package but carries ${carried.slice(0, 5).join(', ')}${carried.length > 5 ? ', …' : ''}`)
-      } else {
-        ok('stage', `${pkg.name}@${provenance.version} pin only (${files.length} files, no upstream bytes)`)
-      }
-      if (provenance.upstream?.asset?.sha256 !== pkg.payload.pin.assetSha256) {
-        missing('stage', `${pkg.name} records asset sha256 ${String(provenance.upstream?.asset?.sha256)}, the pin says ${pkg.payload.pin.assetSha256}`)
-      }
-      if (provenance.redistributesUpstreamBytes !== false) {
-        missing('stage', `${pkg.name} does not state that it forwards no upstream bytes`)
-      }
-    } else {
+    if (pkg.payload.type === 'archive' && provenance.upstream?.asset?.sha256 !== pkg.payload.pin.assetSha256) {
+      missing('stage', `${pkg.name} upstream archive digest differs from its pin`)
+    }
+    {
       const entry = path.join(stage, pkg.executable)
       if (!fs.existsSync(entry)) {
         missing('stage', `${pkg.name} has no ${pkg.executable}`)
@@ -1772,6 +1737,7 @@ async function main() {
     context.build = await runStep('build', () => stepBuild(context))
   }
   if (['all', 'assemble', 'pack', 'publish-dir'].includes(options.command)) {
+    await runStep('fetch', () => downloadPins(context, { keep: true }))
     assembled = await runStep('assemble', () => stepAssemble(context))
   }
   if (['all', 'pack', 'publish-dir'].includes(options.command)) {

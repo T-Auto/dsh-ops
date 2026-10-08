@@ -1,11 +1,8 @@
 name: Release
 
-# Windows release artifacts are built and checked; the old repository test gate
-# is intentionally not a publishing prerequisite. Platform packages are pushed before the
-# main package that depends on them, so a release can never leave a main package
-# pointing at a version that does not exist. Only the FastCtx package is a
-# dependency of the main package: the two shell packages are pins that carry no
-# upstream bytes, published for deployments that resolve a shell deliberately.
+# Windows payload packages are built and published before the main package.
+# All three carry runtime files and are injected as exact optionalDependencies.
+# Repository tests are intentionally not a publishing prerequisite.
 #
 # `workflow_dispatch` re-runs this pipeline for an existing tag ref (use "Run
 # workflow" with the tag selected): a release that failed after publishing some
@@ -127,8 +124,7 @@ jobs:
             Write-Host "already published, skipping: $spec"
             exit 0
           }
-          # The publish directory injects the exact FastCtx optional dependency.
-          # Shell packages remain pins and carry no binaries.
+          # All three runtime payload packages are exact optional dependencies.
           Write-Host "publishing $spec from $($plan.mainPublishDir)"
           npm publish $plan.mainPublishDir --access public
           if ($LASTEXITCODE -ne 0) { throw "npm publish failed for $spec" }
@@ -138,6 +134,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if ($env:GITHUB_REF_TYPE -ne 'tag') {
+            Write-Host 'Branch dispatch: npm publication completed; GitHub Release requires a version tag.'
+            exit 0
+          }
           $plan = Get-Content "$env:DIST/publish-plan.json" -Raw | ConvertFrom-Json
           # Four installable assets plus the checksum manifest the offline
           # instructions verify them against.

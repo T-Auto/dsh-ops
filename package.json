@@ -1,6 +1,6 @@
 {
   "name": "dsh-ops",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "publishConfig": { "access": "public" },
   "repository": { "type": "git", "url": "git+https://github.com/T-Auto/dsh-ops.git" },
@@ -50,6 +50,7 @@
     "LICENSE",
     "NOTICE",
     "README.md",
+    "README.en.md",
     "README.zh.md",
     "PROVENANCE.md",
     "CHANGELOG.md",

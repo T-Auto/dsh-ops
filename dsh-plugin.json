@@ -3,7 +3,7 @@
   "manifestVersion": "0.15",
   "id": "dsh-ops.fastctx",
   "name": "dsh-ops",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "license": "MIT AND Apache-2.0",
   "facets": {
     "host": {
