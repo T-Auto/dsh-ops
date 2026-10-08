@@ -1,0 +1,147 @@
+name: Release
+
+# A release is cut by pushing a `v*` tag. Everything the tag implies is checked
+# before anything is published, and the platform packages are pushed before the
+# main package that depends on them, so a release can never leave a main package
+# pointing at a version that does not exist. Only the FastCtx package is a
+# dependency of the main package: the two shell packages are pins that carry no
+# upstream bytes, published for deployments that resolve a shell deliberately.
+#
+# `workflow_dispatch` re-runs this pipeline for an existing tag ref (use "Run
+# workflow" with the tag selected): a release that failed after publishing some
+# of its packages can be finished rather than restarted from scratch, because
+# each publish step skips a version the registry already has.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # The build writes tarballs, checksums, and the publish directory here; every
+  # later step reads the plan the build wrote rather than recomputing a path.
+  DIST: ${{ runner.temp }}/dsh-ops-dist
+
+jobs:
+  release:
+    name: Build and publish the release
+    # FastCtx is a native binary and only Windows payloads are published
+    # (`scripts/build-platform-packages.mjs` refuses another platform), so the
+    # release job has to run where those binaries can be built.
+    runs-on: windows-latest
+    env:
+      # Empty on a repository whose npm publishing is not configured yet: the run
+      # then still builds, verifies, and attaches the release assets, and says so
+      # instead of failing at the publish step.
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '24.18.0'
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Set up the Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+        with:
+          # Pinned rather than `stable`: the released FastCtx binary must be
+          # reproducible from the tag, and the vendored crate needs edition 2024
+          # (rust-version 1.88).
+          toolchain: 1.97.1
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run the repository gate
+        run: npm run verify
+
+      - name: Check the tag against the package version
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ("v$version" -ne $env:GITHUB_REF_NAME) {
+            throw "tag $env:GITHUB_REF_NAME does not match the package version v$version"
+          }
+
+      - name: Build the platform packages and the publish directory
+        run: node scripts/build-platform-packages.mjs --dist "$env:DIST"
+
+      - name: Verify the built artifacts
+        # Downloads and builds nothing: re-reads every digest the build recorded.
+        run: node scripts/build-platform-packages.mjs check --dist "$env:DIST"
+
+      - name: Note the publishing credentials
+        shell: pwsh
+        run: |
+          if ($env:NPM_TOKEN) {
+            Write-Host 'NPM_TOKEN is set: this run publishes the platform packages, then the main package.'
+          } else {
+            Write-Host '::warning::NPM_TOKEN is not set: this run attaches the release assets but publishes nothing to npm.'
+          }
+
+      - name: Publish the platform packages
+        if: env.NPM_TOKEN != ''
+        shell: pwsh
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          $plan = Get-Content "$env:DIST/publish-plan.json" -Raw | ConvertFrom-Json
+          foreach ($package in $plan.platformPackages) {
+            $spec = "$($package.name)@$($package.version)"
+            npm view $spec version 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "already published, skipping: $spec"
+              continue
+            }
+            Write-Host "publishing $spec from $($package.tarball)"
+            npm publish $package.tarball --access public
+            if ($LASTEXITCODE -ne 0) { throw "npm publish failed for $spec" }
+          }
+
+      - name: Publish the main package
+        if: env.NPM_TOKEN != ''
+        shell: pwsh
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          $plan = Get-Content "$env:DIST/publish-plan.json" -Raw | ConvertFrom-Json
+          $spec = "$($plan.mainName)@$($plan.mainVersion)"
+          npm view $spec version 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "already published, skipping: $spec"
+            exit 0
+          }
+          # The publish directory is the main package's own content with the
+          # three platform packages injected as exact optionalDependencies.
+          Write-Host "publishing $spec from $($plan.mainPublishDir)"
+          npm publish $plan.mainPublishDir --access public
+          if ($LASTEXITCODE -ne 0) { throw "npm publish failed for $spec" }
+
+      - name: Create the release and attach the assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $plan = Get-Content "$env:DIST/publish-plan.json" -Raw | ConvertFrom-Json
+          # Four installable assets plus the checksum manifest the offline
+          # instructions verify them against.
+          $assets = @($plan.mainTarball) + @($plan.platformTarballs) + @("$env:DIST/$($plan.sha256sums)")
+          gh release view "$env:GITHUB_REF_NAME" 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload "$env:GITHUB_REF_NAME" @assets --clobber
+          } else {
+            gh release create "$env:GITHUB_REF_NAME" @assets --title "$env:GITHUB_REF_NAME" --generate-notes --verify-tag
+          }
+          if ($LASTEXITCODE -ne 0) { throw "attaching the release assets failed" }

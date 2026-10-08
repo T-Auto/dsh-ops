@@ -1,0 +1,93 @@
+{
+  "$schema": "https://raw.githubusercontent.com/T-Auto/dsh-std/8a15541117cb3c13ddb8f2468308691b6051d162/packages/manifest/schema/dsh-plugin-0.15.schema.json",
+  "manifestVersion": "0.15",
+  "id": "dsh-ops.fastctx",
+  "name": "dsh-ops",
+  "version": "0.2.0",
+  "license": "MIT AND Apache-2.0",
+  "facets": {
+    "host": {
+      "entry": "lib/index.js",
+      "apiVersion": "v1alpha1"
+    }
+  },
+  "requires": {
+    "contracts": [
+      {
+        "apiVersion": "tools.dsh/v1alpha1",
+        "kind": "Tool"
+      }
+    ]
+  },
+  "permissions": [
+    {
+      "name": "dsh-ops.process.spawn",
+      "scope": "subprocess",
+      "reason": "Start the FastCtx MCP server and the command execution it owns."
+    },
+    {
+      "name": "dsh-ops.fs.read",
+      "scope": "filesystem-read",
+      "reason": "Read the FastCtx executable, the vendored source, and the runtime receipt."
+    },
+    {
+      "name": "dsh-ops.fs.write",
+      "scope": "dsh-home",
+      "reason": "Install the provisioned runtime into <DSH_HOME>/dsh-ops/bin and record its receipt."
+    }
+  ],
+  "contributes": {
+    "x-display": [
+      {
+        "icon": "./icon.svg",
+        "title": "Repository tools",
+        "description": "Read, search, replace, and run commands through the hosted FastCtx ops_* tool surface instead of shell commands.",
+        "locales": [
+          "locale/en.json",
+          "locale/zh.json"
+        ]
+      }
+    ],
+    "x-prompt-sections": [
+      {
+        "name": "dsh-ops:host-shell-policy",
+        "order": 1500,
+        "summary": "Prohibits shell-based file reading, searching, listing, and replacement."
+      },
+      {
+        "name": "dsh-ops:repository-tooling",
+        "order": 3250,
+        "summary": "Names the FastCtx tools, what each replaces, and the recovery step for a failed call."
+      }
+    ],
+    "x-tool-namespaces": [
+      {
+        "serverName": "fastctx",
+        "transport": "stdio",
+        "source": "vendored FastCtx runtime",
+        "publicPrefix": "ops_",
+        "tools": [
+          "inspect_local_file",
+          "grep",
+          "glob",
+          "replace",
+          "run",
+          "run_background",
+          "job_output",
+          "job_list",
+          "job_kill"
+        ]
+      },
+      {
+        "serverName": "dsh-ops",
+        "transport": "in-process",
+        "source": "the plugin's own shell tools",
+        "publicPrefix": "ops_",
+        "tools": [
+          "bash"
+        ]
+      }
+    ]
+  },
+  "subscriptions": []
+}

@@ -1,0 +1,24 @@
+{
+  "description": "Pin for Git for Windows PortableGit (GPL-2.0-only), the bash the dsh-ops plugin executes ops_bash with. Carries no upstream bytes; provenance.json names the asset and its digest.",
+  "license": "MIT",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "keywords": [
+    "dsh-ops",
+    "bash",
+    "git-bash",
+    "git-for-windows",
+    "portablegit",
+    "pin",
+    "win32",
+    "x64"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/T-Auto/dsh-ops.git"
+  }
+}

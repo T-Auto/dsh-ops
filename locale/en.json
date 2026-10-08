@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Repository tools",
+    "description": "Read, search, replace, and run commands through the hosted FastCtx ops_* tool surface instead of shell commands."
+  }
+}

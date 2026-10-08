@@ -1,0 +1,93 @@
+{
+  "name": "dsh-ops",
+  "version": "0.2.0",
+  "private": true,
+  "description": "DSH plugin: hosts the vendored FastCtx MCP runtime as the profile's repository tool surface, and steers the model away from PowerShell.",
+  "icon": "./icon.svg",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "mcp",
+    "fastctx",
+    "repository-tools"
+  ],
+  "license": "MIT AND Apache-2.0",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./policy": {
+      "default": "./lib/policy.js"
+    },
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "bin": {
+    "dsh-ops": "bin/dsh-ops.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "lib",
+    "bin",
+    "cordis.patch.yml",
+    "dsh-plugin.json",
+    "icon.svg",
+    "locale",
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    "README.zh.md",
+    "PROVENANCE.md",
+    "CHANGELOG.md",
+    "vendor/fastctx/Cargo.toml",
+    "vendor/fastctx/Cargo.lock",
+    "vendor/fastctx/build.rs",
+    "vendor/fastctx/src",
+    "vendor/fastctx/third-party",
+    "vendor/fastctx/LICENSE-APACHE",
+    "vendor/fastctx/NOTICE",
+    "vendor/fastctx/THIRD_PARTY_LICENSES.md",
+    "vendor/fastctx/THIRD_PARTY_LICENSES_RUST.md",
+    "vendor/fastctx/FORK.md",
+    "vendor/fastctx/UPSTREAM.md"
+  ],
+  "scripts": {
+    "status": "node bin/dsh-ops.mjs status",
+    "build:rust": "node bin/dsh-ops.mjs build",
+    "provision": "node bin/dsh-ops.mjs provision",
+    "validate:manifest": "node scripts/validate-manifest.mjs",
+    "test": "node test/run.mjs",
+    "verify": "node scripts/validate-manifest.mjs && node test/run.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/dsh": "^0.2.0-rc.2"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-scope": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-subprocess": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "@dsh-std/manifest": "0.1.1-rc.3",
+    "yaml": "^2.9.1"
+  },
+  "engines": {
+    "node": "^22.19 || >=24"
+  }
+}

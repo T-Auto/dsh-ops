@@ -1,0 +1,22 @@
+{
+  "description": "Pin for PowerShell 7 (MIT), the pwsh the dsh-ops plugin points the host's sandboxed shell rung at. Carries no upstream bytes; provenance.json names the asset and its digest.",
+  "license": "MIT",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "keywords": [
+    "dsh-ops",
+    "pwsh",
+    "powershell",
+    "pin",
+    "win32",
+    "x64"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/T-Auto/dsh-ops.git"
+  }
+}
