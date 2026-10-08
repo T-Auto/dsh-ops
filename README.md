@@ -1,10 +1,10 @@
 # dsh-ops
 
-解决 Windows 下 DSH 反复使用 PowerShell 报错造成的 token、时间和模型注意力浪费。本插件提供：
+解决 Windows 下 DSH 反复使用 PowerShell 报错造成的 token、时间和模型注意力浪费。本插件的三个主要功能提供：
 
-- 独立 **bash 5.3.15**，用于通用命令、构建、Git、管道和脚本。
-- 独立 **PowerShell 7.6.6**，用于必要的 Windows 原生操作，沿用宿主 `pwsh` 工具。
-- Rust 编写的高性能增强工具，支持批量读取、搜索、替换和有界输出，减少不必要的输入输出。由于部分工具不经过 DSH 的受限终端后端，命令与后台任务工具只在**完全权限**时启用。
+- 提供独立 **bash 5.3.15** 并优先使用bash，让你的AI不再和PowerShell打架
+- 独立 **PowerShell 7.6.6**，用于必要的 Windows 原生操作，沿用宿主 `pwsh` 工具。PowerShell 7 比自带的 PowerShell 5 也有不少优化
+- 一些 Rust 编写的性能更好的，更快的读取、查找、替换工具，加速任务运行，减少不必要的输入输出。由于部分工具不经过 DSH 的受限终端后端，命令与后台任务工具只在**完全权限**时启用。
 
 执行顺序：**工具包 → bash → PowerShell 7**。bash 报错在 bash 内修正，不随意换 shell，不混用两套语法。
 
@@ -14,7 +14,9 @@
 
 ### 官方插件市场
 
-在目标 DSH 应用的插件市场中输入 npm 包名 **`dsh-ops`**，安装后选择启用。安装归属于当前运行的 profile，桌面端为 `desktop`。发布包依赖完整 FastCtx、bash 和 PowerShell 7 载荷；不使用安装脚本下载，不改系统 PATH。
+在目标 DSH 应用的插件市场中输入 npm 包名 **`dsh-ops@0.2.3`**，安装后选择启用。安装归属于当前运行的 profile，桌面端为 `desktop`。发布包依赖完整 FastCtx、bash 和 PowerShell 7 载荷；不使用安装脚本下载，不改系统 PATH。
+
+注：暂时必须写dsh-ops@0.2.3，因为有npm包冷静期
 
 ### npm 一键安装
 
