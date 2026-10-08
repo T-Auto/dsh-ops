@@ -3,7 +3,7 @@
 What this repository is, where its parts came from, what was verified, and what
 was not.
 
-## 0.2.1 packaging work — not published
+## 0.2.1 Windows payload packaging
 
 The assembler now builds all three Windows x64 payload packages. Bash carries
 complete, unmodified PortableGit 2.56.0.2 (GNU bash 5.3.15); pwsh carries complete
@@ -12,8 +12,9 @@ and executable hashes are pinned in lib/shells.js. All three runtime packages
 are injected into the main publish artifact; no install lifecycle downloads.
 
 The maintainer authorized publication after the source-delivery risk was reported.
-The actual first-package publish was rejected by npm with E403: 2FA or a granular
-token with bypass 2FA is required. No package was published. PortableGit's
+The first attempt used an old local npm credential and received E403; explicitly
+selecting the maintainer-provided bypass token succeeded. This was a credential
+selection error, not proof the provided token lacked bypass permission. PortableGit's
 etc/package-versions.txt includes many GPL/LGPL components; complete matching
 source closure/delivery has not been collected or reviewed. Retaining upstream
 licenses does not attest that those obligations have been fulfilled. No source

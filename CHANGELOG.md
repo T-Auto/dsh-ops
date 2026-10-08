@@ -5,13 +5,13 @@ All notable changes to this package are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.1] — Windows payload packaging (unpublished)
+## [0.2.1] — Windows payload packaging
 
 - Assemble complete digest-verified PortableGit/bash and PowerShell 7 runtime packages instead of metadata-only pins; inject all three Windows x64 runtime dependencies in the publish artifact.
 - Add explicit-profile install/status/uninstall delegation to the official DSH manager; map tui to dsh-tui and use Desktop's installation-owned CLI.
 - Resolve the pwsh dependency from the plugin package under pnpm isolation.
 - Make the default README Chinese and add a concise English translation.
-- The maintainer authorized a publish attempt despite the previously reported source-delivery risk; npm rejected the first package with E403 (2FA or granular bypass token required). No package was published. Local payload builds are not license-compliance evidence.
+- Correct the npm credential selection: the initial E403 used an old local token, not the maintainer-provided bypass token. The explicitly selected bypass token was accepted for publication. Local payload builds are not license-compliance evidence.
 
 ## [Unreleased] — additive tool surface
 

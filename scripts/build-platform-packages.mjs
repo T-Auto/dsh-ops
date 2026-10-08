@@ -1016,6 +1016,17 @@ async function stepAssemble(context) {
         run(archive, [`-o${stage}`, '-y'])
       } else throw new Error(`Unsupported archive extractor: ${pin.extractor}`)
       if (await sha256File(path.join(stage, pkg.executable)) !== pin.entrySha256) throw new Error(`Executable digest mismatch: ${pkg.name}`)
+      // npm registry rejects tar hardlinks. Materialize each linked path as a
+      // regular independent file without changing its bytes or runtime layout.
+      for (const relative of treeFiles(stage)) {
+        const file = path.join(stage, relative)
+        if (fs.statSync(file).nlink > 1) {
+          const temporary = `${file}.dsh-ops-materialize`
+          fs.copyFileSync(file, temporary)
+          fs.unlinkSync(file)
+          fs.renameSync(temporary, file)
+        }
+      }
     }
 
     if (pkg.payload.type === 'cargo') {
