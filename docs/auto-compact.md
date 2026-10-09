@@ -5,7 +5,7 @@
 本地开发版在 **插件列表 → dsh-ops → 包含的组件** 中新增第四项「上下文自动压缩」
 （`dsh-ops-auto-compact` / `@dsh-ops/auto-compact`）。使用它旁边的配置入口进入设置，
 不是全局设置中的独立页面。新组件默认启用；原有 background 仍默认停用。
-当前源码尚未发布；已安装的 npm 0.2.4 不会自动出现此功能。
+`0.2.5-beta.1` 是待发布测试版候选；正式版 npm 0.2.4 不含此功能。是否发布以 registry 为准。
 
 | 配置 | 默认 | 范围 |
 | --- | --- | --- |
@@ -47,8 +47,8 @@
 The fourth component is in **Plugins → dsh-ops → Included components**. Its row
 configuration page uses the existing host forms, revision-fenced profile writes,
 and restore-default operations. The new component defaults to ON; background stays OFF.
-Only integer settings in the table above are accepted. This is unpublished source,
-not a feature already present in npm 0.2.4.
+Only integer settings in the table above are accepted. This feature belongs to the
+0.2.5-beta.1 prerelease candidate, not npm 0.2.4. Check the registry for publication status.
 
 The policy matches the rounded Web context meter and requires a value strictly
 above the threshold. It calls the same public idle-maintenance service as `/compact`

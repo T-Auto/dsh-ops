@@ -5,7 +5,7 @@ All notable changes to this package are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — Automatic context compaction
+## [0.2.5-beta.1] — Automatic context compaction (prerelease candidate)
 
 - Add the fourth independent marketplace row, `@dsh-ops/auto-compact`, enabled by default; background remains opt-in. Bundle its internal companion package with dsh-ops so rc.2 discovers its browser face through a package-root row, with no separate publishing requirement.
 - Add a settings control on this row in the existing Plugins component region: live threshold (50%), cooldown (120 seconds) and compaction deadline (120 seconds), with revision-fenced profile writes and restore defaults.

@@ -8,6 +8,16 @@ Routing: **file tools → bash → PowerShell 7**. Prefer bash for general comma
 use pwsh only for necessary Windows-native operations. Fix bash errors in bash.
 Windows x64 only; target DSH `0.2.0-rc.2`. [中文](README.md)
 
+## Beta candidate
+
+`0.2.5-beta.1` adds the fourth component and its row configuration page. It is
+intended for the npm `beta` tag, without changing `latest`. Registry metadata is
+the authority for publication status. Once published, explicitly install
+`dsh-ops@0.2.5-beta.1` from the official npm registry. Exact version selection does
+not bypass pnpm's minimum release age: wait or narrowly exempt this version,
+never delete the lockfile or disable global policy. Fully quit/restart the app
+and verify the installed main version and four components.
+
 ## Install, update and remove
 
 In the official marketplace, enter **`dsh-ops`**, install, then enable. This installs
@@ -83,7 +93,7 @@ PTC invokes the tools through its generated SDK with unchanged permission checks
 
 ## Configuration and tools
 
-**Unpublished development feature:** the fourth row's configuration control is in
+**Beta candidate feature:** the fourth row's configuration control is in
 Plugins → dsh-ops → Included components. Configure the threshold (default **50%**),
 cooldown (120 seconds) and timeout (120 seconds). The policy uses the Web meter,
 requires strictly more than the threshold, and waits for a non-cancelled idle turn.

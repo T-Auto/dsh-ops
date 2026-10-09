@@ -18,5 +18,6 @@ component reload and require inspection. Timeouts rely on cooperative cancellati
 Summarization may call the host's configured model and incur cost; it is not
 lossless. Missing samples/capacity and busy admission skip work.
 
-This is unpublished development source. See the main dsh-ops repository's
+This companion is carried by the dsh-ops 0.2.5-beta.1 prerelease candidate, not the
+stable 0.2.4. Check registry metadata for publication status. See the main repository's
 `docs/auto-compact.md` for safety limits and manual acceptance requirements.
