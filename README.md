@@ -10,7 +10,7 @@
 
 执行顺序：**工具包 → bash → PowerShell 7**。bash 报错在 bash 内修正，不随意换 shell，不混用两套语法。
 
-仅支持 **Windows x64**；目标宿主 DSH `0.2.0-rc.2`。
+仅支持 **Windows x64**，后续补充 Rust 工具后会支持 Linux 和 Mac（Linux 和 Mac 下不提供 bash 功能）。目标宿主 DSH `0.2.0-rc.2`。
 
 ## Beta 测试版候选
 

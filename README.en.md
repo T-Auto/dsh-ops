@@ -10,7 +10,7 @@ Reduce the tokens, time and model attention wasted on repeated PowerShell errors
 
 Routing: **toolkit → bash → PowerShell 7**. Fix bash errors in bash; do not arbitrarily switch shells or mix their syntax.
 
-Supports **Windows x64** only; target host DSH `0.2.0-rc.2`.
+Currently supports **Windows x64** only. Linux and Mac support will follow once the Rust tools are added for those platforms (bash functionality will not be provided on Linux or Mac). Target host DSH `0.2.0-rc.2`.
 
 ## Beta candidate
 
