@@ -19,9 +19,7 @@ Currently supports **Windows x64** only. Linux and Mac support will follow once 
 
 ### Official plugin marketplace
 
-In the target DSH application's plugin marketplace, enter the npm package name **`dsh-ops@0.2.4`**, install, then enable. Installation belongs to the currently running profile, which is `desktop` for the desktop app. The published package depends on complete FastCtx, bash and PowerShell 7 payloads; it does not download them through install scripts or change the system PATH.
-
-Note: explicitly specify dsh-ops@0.2.4 for the newly published version to prevent pnpm's release-age policy from selecting an older version for a bare package name.
+In the target DSH application's plugin marketplace, enter the npm package name **`dsh-ops`**, install, then enable. Installation belongs to the currently running profile, which is `desktop` for the desktop app. The published package depends on complete FastCtx, bash and PowerShell 7 payloads; it does not download them through install scripts or change the system PATH.
 
 ### One-command npm installation
 
@@ -47,7 +45,7 @@ The ordinary DSH CLI cannot manage the reserved `desktop` profile; do not confus
 
 **Update**: repeat the same `npx --yes dsh-ops@latest install --profile ...` command, or use the official CLI's `add dsh-ops@latest`. Reload as requested by the application; restart it when replacing already-loaded code.
 
-The current version, `0.2.4`, supports three independent components and retains the bash parameter schema fix and custom icon. The three binary dependencies remain at `0.2.1`; they install automatically without affecting the main plugin version. Newly published versions may be affected by desktop pnpm's 24-hour release-age policy: if the marketplace's analyzed version differs from the installed version, specify `dsh-ops@0.2.4` from the official npm registry, confirm the actual version, then fully quit and restart. See the original [payload release record](docs/release-0.2.1.md).
+The current version, `0.2.4`, supports three independent components and retains the bash parameter schema fix and custom icon. The three binary dependencies remain at `0.2.1`; they install automatically without affecting the main plugin version. See the original [payload release record](docs/release-0.2.1.md).
 
 **Remove and check status**:
 

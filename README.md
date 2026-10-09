@@ -19,9 +19,7 @@
 
 ### 官方插件市场
 
-在目标 DSH 应用的插件市场中输入 npm 包名 **`dsh-ops@0.2.4`**，安装后选择启用。安装归属于当前运行的 profile，桌面端为 `desktop`。发布包依赖完整 FastCtx、bash 和 PowerShell 7 载荷；不使用安装脚本下载，不改系统 PATH。
-
-注：新发布版本暂时明确写 dsh-ops@0.2.4，避免 pnpm 安全冷却期使裸包名选择旧版本。
+在目标 DSH 应用的插件市场中输入 npm 包名 **`dsh-ops`**，安装后选择启用。安装归属于当前运行的 profile，桌面端为 `desktop`。发布包依赖完整 FastCtx、bash 和 PowerShell 7 载荷；不使用安装脚本下载，不改系统 PATH。
 
 ### npm 一键安装
 
@@ -47,7 +45,7 @@ dsh plugin --profile dsh-tui add dsh-ops
 
 **更新**：重新运行相同的 `npx --yes dsh-ops@latest install --profile ...`，或用官方 CLI `add dsh-ops@latest`。按应用提示重载；替换已加载代码时重启应用。
 
-当前版本 `0.2.4` 支持三个独立组件；bash 参数 schema 修复和自定义图标保留。三个二进制依赖继续使用 `0.2.1`，它们会自动安装，不影响主插件版本。新发布版本可能受桌面 pnpm 的 24 小时安全冷却策略影响：如果市场分析版号与安装结果不一致，指定 `dsh-ops@0.2.4` 并选择 npm 官方源，确认实际版本后完全退出并重启。原始载荷记录见 [docs/release-0.2.1.md](docs/release-0.2.1.md)。
+当前版本 `0.2.4` 支持三个独立组件；bash 参数 schema 修复和自定义图标保留。三个二进制依赖继续使用 `0.2.1`，它们会自动安装，不影响主插件版本。原始载荷记录见 [docs/release-0.2.1.md](docs/release-0.2.1.md)。
 
 **卸载与查看状态**：
 
