@@ -30,6 +30,7 @@ import {
   renderToolingPolicy,
 } from '../lib/policy.js'
 import { DEFAULT_SERVER_NAME, resolveConfig } from '../lib/config.js'
+import { resolveAutoCompactConfig } from '../packages/auto-compact/lib/config.js'
 
 /** The repository root (`scripts/`'s parent). */
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -223,13 +224,17 @@ if (typeof patch === 'string' && fs.existsSync(path.join(PACKAGE_ROOT, patch))) 
     const rows = Array.isArray(document)
       ? document.flatMap((entry) => (Array.isArray(entry?.insert) ? entry.insert : []))
       : []
-    check(rows.length === 3, 'the bundle declares exactly three components')
-    for (const component of ['shell', 'file', 'background']) {
-      const row = rows.find(candidate => candidate?.name === `${pkg.name}/${component}`)
+    check(rows.length === 4, 'the bundle declares exactly four components')
+    for (const component of ['shell', 'file', 'background', 'auto-compact']) {
+      const moduleName = component === 'auto-compact' ? '@dsh-ops/auto-compact' : `${pkg.name}/${component}`
+      const row = rows.find(candidate => candidate?.name === moduleName)
       check(row?.id === `${pkg.name}-${component}`, `the ${component} component has a stable row id`)
       if (!row) continue
       check((row.disabled === true) === (component === 'background'), `${component} has its documented enablement default`)
-      try { resolveConfig(row.config); check(true, `${component} config is valid`) }
+      try {
+        const validate = component === 'auto-compact' ? resolveAutoCompactConfig : resolveConfig
+        validate(row.config); check(true, `${component} config is valid`)
+      }
       catch (error) { check(false, `${component} config is valid`, String(error?.message ?? error)) }
     }
   }

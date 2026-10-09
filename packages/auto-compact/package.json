@@ -1,0 +1,31 @@
+{
+  "name": "@dsh-ops/auto-compact",
+  "version": "0.1.0",
+  "description": "Idle-only automatic context compaction and row settings for dsh-ops.",
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-plugin-manager"
+      ]
+    }
+  },
+  "files": ["lib", "locale", "LICENSE", "README.md"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/T-Auto/dsh-ops.git",
+    "directory": "packages/auto-compact"
+  },
+  "publishConfig": { "access": "public" }
+}

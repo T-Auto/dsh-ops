@@ -109,6 +109,11 @@
         "id": "dsh-ops-background",
         "entry": "dsh-ops/background",
         "defaultEnabled": false
+      },
+      {
+        "id": "dsh-ops-auto-compact",
+        "entry": "@dsh-ops/auto-compact",
+        "defaultEnabled": true
       }
     ]
   },

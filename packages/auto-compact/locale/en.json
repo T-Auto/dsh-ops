@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Automatic context compaction",
+    "description": "Compact idle context above a configurable threshold (50% by default), without interrupting running tasks."
+  }
+}

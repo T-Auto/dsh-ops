@@ -5,6 +5,15 @@ All notable changes to this package are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Automatic context compaction
+
+- Add the fourth independent marketplace row, `@dsh-ops/auto-compact`, enabled by default; background remains opt-in. Bundle its internal companion package with dsh-ops so rc.2 discovers its browser face through a package-root row, with no separate publishing requirement.
+- Add a settings control on this row in the existing Plugins component region: live threshold (50%), cooldown (120 seconds) and compaction deadline (120 seconds), with revision-fenced profile writes and restore defaults.
+- Use the Web context-pressure projection and the same public `compactNow` API as `/compact`, only after a non-cancelled turn becomes idle; do not publish a model-callable compaction tool or modify the host's own automatic policy.
+- Serialize this component's compactions, suppress unchanged surfaces and self-generated replacements, back off failures, suspend sessions after commit/persistence failures, and abort/drain owned work on disable.
+- Keep host activation free of host value imports: a dependency-free Standard Schema descriptor and a scoped update hook retain validated live references. No Schemastery vendor impersonation.
+- Add targeted safety/lifecycle/schema/browser-registration regressions. Full historical gates still contain stale pre-0.2.4 expectations; no claim of a fully green legacy suite or live Desktop acceptance.
+
 ## [0.2.4] — Independently toggled components
 
 - Split the market bundle into shell (on), file (on), and background (off) rows with exported per-component titles, descriptions, icons and locales.

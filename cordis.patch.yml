@@ -1,5 +1,6 @@
-# Three independent market components; no unconditional host executor override.
-# Shell and file are enabled by default. Background is explicitly opt-in.
+# Four independent market components; no unconditional host executor override.
+# Shell, file and idle-only automatic compaction are enabled by default.
+# Background remains explicitly opt-in.
 - insert:
     - id: dsh-ops-shell
       name: dsh-ops/shell
@@ -23,3 +24,9 @@
         enableShellTools: true
         required: false
         toolCallTimeoutMs: 300000
+    - id: dsh-ops-auto-compact
+      name: '@dsh-ops/auto-compact'
+      config:
+        thresholdPercent: 50
+        cooldownSeconds: 120
+        timeoutSeconds: 120

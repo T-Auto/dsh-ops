@@ -67,6 +67,7 @@
   },
   "files": [
     "lib",
+    "packages/auto-compact",
     "bin",
     "cordis.patch.yml",
     "dsh-plugin.json",
@@ -113,8 +114,8 @@
     }
   },
   "optionalDependencies": {
-    "@dsh-ops/fastctx-win32-x64": "0.2.1",
     "@dsh-ops/bash-win32-x64": "0.2.1",
+    "@dsh-ops/fastctx-win32-x64": "0.2.1",
     "@dsh-ops/pwsh-win32-x64": "0.2.1"
   },
   "devDependencies": {
@@ -128,5 +129,11 @@
   },
   "engines": {
     "node": "^22.19 || >=24"
+  },
+  "bundleDependencies": [
+    "@dsh-ops/auto-compact"
+  ],
+  "dependencies": {
+    "@dsh-ops/auto-compact": "file:packages/auto-compact"
   }
 }

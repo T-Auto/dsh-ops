@@ -69,6 +69,7 @@ Lost ownership after disconnect and permission downgrade do not guarantee termin
 | dsh-ops-bash & powershell 7 | On | Prefer ops_bash for general commands; bundled PowerShell 7 for Windows-native work |
 | dsh-ops-file | On | Rust batch reads, search, path discovery and replacement |
 | dsh-ops-background | Off | Scientific simulations, model training and other long-running tasks |
+| Automatic context compaction | On | Idle-only host /compact service above a configurable Web context threshold; no additional model-facing tool |
 
 Each row owns its tools and runtime prompt section; OFF withdraws both. Nothing is
 appended to AGENTS.md. Shell ON adds a runtime-only configuration overlay for the
@@ -81,6 +82,15 @@ promise of lower task-total tokens. Minimal's complete persona excludes extra se
 PTC invokes the tools through its generated SDK with unchanged permission checks.
 
 ## Configuration and tools
+
+**Unpublished development feature:** the fourth row's configuration control is in
+Plugins → dsh-ops → Included components. Configure the threshold (default **50%**),
+cooldown (120 seconds) and timeout (120 seconds). The policy uses the Web meter,
+requires strictly more than the threshold, and waits for a non-cancelled idle turn.
+It uses revision-fenced host profile persistence and does not interrupt active tools.
+Summarization may call your model and incur cost. Disabling aborts/drains only owned
+compaction. Installed npm `0.2.4` does not yet include this feature. See
+[safety boundaries and validation](docs/auto-compact.md).
 
 Edit the corresponding dsh-ops/shell, dsh-ops/file or dsh-ops/background row's config.
 Unknown keys fail; normal component enablement is available in the marketplace.
