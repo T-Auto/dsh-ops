@@ -1,5 +1,7 @@
 # dsh-ops
 
+**中文** | [English](README.en.md)
+
 解决 Windows 下 DSH 反复使用 PowerShell 报错造成的 token、时间和模型注意力浪费。本插件的三个主要功能提供：
 
 - 提供独立 **bash 5.3.15** 并优先使用bash，让你的AI不再和PowerShell打架
@@ -8,7 +10,7 @@
 
 执行顺序：**工具包 → bash → PowerShell 7**。bash 报错在 bash 内修正，不随意换 shell，不混用两套语法。
 
-仅支持 **Windows x64**；目标宿主 DSH `0.2.0-rc.2`。[English](README.en.md)
+仅支持 **Windows x64**；目标宿主 DSH `0.2.0-rc.2`。
 
 ## Beta 测试版候选
 

@@ -1,28 +1,32 @@
 # dsh-ops
 
-Reduce tokens, time and model attention wasted on repeated PowerShell errors in
-Windows DSH. The bundle supplies independent **bash 5.3.15**, **PowerShell 7.6.6**,
-and high-performance Rust repository tools powered by FastCtx.
+[中文](README.md) | **English**
 
-Routing: **file tools → bash → PowerShell 7**. Prefer bash for general commands;
-use pwsh only for necessary Windows-native operations. Fix bash errors in bash.
-Windows x64 only; target DSH `0.2.0-rc.2`. [中文](README.md)
+Reduce the tokens, time and model attention wasted on repeated PowerShell errors in Windows DSH. The plugin provides three main capabilities:
+
+- Independent **bash 5.3.15**, preferred for general commands so your AI no longer has to fight PowerShell.
+- Independent **PowerShell 7.6.6** for necessary Windows-native operations through the host `pwsh` tool. PowerShell 7 also offers many improvements over the built-in PowerShell 5.
+- Faster, higher-performance Rust tools for reading, searching and replacing files, speeding up tasks and reducing unnecessary input/output. Because some tools do not use DSH's restricted terminal backend, command and background-task tools are enabled only with **full access**.
+
+Routing: **toolkit → bash → PowerShell 7**. Fix bash errors in bash; do not arbitrarily switch shells or mix their syntax.
+
+Supports **Windows x64** only; target host DSH `0.2.0-rc.2`.
 
 ## Beta candidate
 
-`0.2.5-beta.1` adds the fourth component and its row configuration page. It is
-intended for the npm `beta` tag, without changing `latest`. Registry metadata is
-the authority for publication status. Once published, explicitly install
-`dsh-ops@0.2.5-beta.1` from the official npm registry. Exact version selection does
-not bypass pnpm's minimum release age: wait or narrowly exempt this version,
-never delete the lockfile or disable global policy. Fully quit/restart the app
-and verify the installed main version and four components.
+`0.2.5-beta.1` adds automatic context compaction and its component configuration control, with a default threshold of 50%. It is intended only for npm's `beta` tag; `latest` remains the stable release, without automatically upgrading ordinary users. Registry metadata is the authority for publication status; this description does not mean the package is already published.
+
+Once published, explicitly select **`dsh-ops@0.2.5-beta.1`** in the plugin marketplace and use the official npm registry. Exact version selection **does not bypass** pnpm's minimum release age: wait for the cooldown to expire or have the user narrowly exempt this exact version. Do not delete the lockfile or disable global supply-chain checks. After installation, fully quit and restart the app, then verify the main package version and four components.
 
 ## Install, update and remove
 
-In the official marketplace, enter **`dsh-ops`**, install, then enable. This installs
-into the running application's profile. All three Windows runtime packages are
-installed as dependencies: no postinstall downloads and no system PATH changes.
+### Official plugin marketplace
+
+In the target DSH application's plugin marketplace, enter the npm package name **`dsh-ops@0.2.4`**, install, then enable. Installation belongs to the currently running profile, which is `desktop` for the desktop app. The published package depends on complete FastCtx, bash and PowerShell 7 payloads; it does not download them through install scripts or change the system PATH.
+
+Note: explicitly specify dsh-ops@0.2.4 for the newly published version to prevent pnpm's release-age policy from selecting an older version for a bare package name.
+
+### One-command npm installation
 
 ```console
 npx --yes dsh-ops@latest install --profile desktop
@@ -30,83 +34,59 @@ npx --yes dsh-ops@latest install --profile web
 npx --yes dsh-ops@latest install --profile tui
 ```
 
-An explicit profile is required. `tui` maps to the dsh-TUI product's **dsh-tui**
-profile, not the old tui directory. Initialize the target application first.
-The wrapper delegates locking, compatibility and rollback to the official DSH CLI.
+An explicit target profile is required. `tui` maps to the **dsh-TUI product's `dsh-tui` profile**, not the old `tui` directory. Initialize the target application first. This entry point delegates installation to the official DSH CLI rather than implementing separate profile locking and rollback logic.
 
-Desktop uses its own `resources/runtime/cli/bin/dsh.cmd`, auto-detected under
-`%LOCALAPPDATA%/Programs/DeepSeek Harness`. For another installation, pass
-`--dsh-cli "<installation>/resources/runtime/cli/bin/dsh.cmd"`. Ordinary DSH CLI
-cannot manage the reserved desktop profile. Web/TUI require an available DSH CLI;
-`--dsh-cli` can also specify that executable explicitly.
+Desktop must use the CLI bundled with the desktop application; the default auto-detected path is `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd`. For another installation location, add `--dsh-cli "<installation>\resources\runtime\cli\bin\dsh.cmd"`. Web/TUI require an available DSH CLI, which can also be specified explicitly.
 
-Equivalent official commands:
+You can also use the official commands directly:
 
 ```console
 dsh plugin --profile web add dsh-ops
 dsh plugin --profile dsh-tui add dsh-ops
-"<desktop installation>/resources/runtime/cli/bin/dsh.cmd" plugin --profile desktop add dsh-ops
+"<desktop installation>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add dsh-ops
 ```
 
-Update by repeating the npx install command, or official `add dsh-ops@latest`.
-Reload/restart as the application requests; replacing loaded code may require restart.
+The ordinary DSH CLI cannot manage the reserved `desktop` profile; do not confuse it with the desktop app's bundled entry point.
 
-Version `0.2.4` adds three independently toggled components and retains the bash
-object-root schema fix and custom icon. Runtime dependencies remain at `0.2.1` and
-install automatically. Desktop pnpm's 24-hour release-age policy may show new metadata
-but select an older package for a bare name: specify `dsh-ops@0.2.4` from the official
-npm registry, confirm the installed version, then fully quit/restart. See the original
-[payload release record](docs/release-0.2.1.md).
+**Update**: repeat the same `npx --yes dsh-ops@latest install --profile ...` command, or use the official CLI's `add dsh-ops@latest`. Reload as requested by the application; restart it when replacing already-loaded code.
+
+The current version, `0.2.4`, supports three independent components and retains the bash parameter schema fix and custom icon. The three binary dependencies remain at `0.2.1`; they install automatically without affecting the main plugin version. Newly published versions may be affected by desktop pnpm's 24-hour release-age policy: if the marketplace's analyzed version differs from the installed version, specify `dsh-ops@0.2.4` from the official npm registry, confirm the actual version, then fully quit and restart. See the original [payload release record](docs/release-0.2.1.md).
+
+**Remove and check status**:
 
 ```console
 npx --yes dsh-ops@latest status --profile desktop
 npx --yes dsh-ops@latest uninstall --profile desktop
 ```
 
-Use web/tui as appropriate. Marketplace uninstall and official `remove dsh-ops`
-also remove profile dependency references. Runtime files are package dependencies,
-not a new shared provisioned directory. System shells, other profiles and package
-manager caches are never manually deleted. Clean legacy provisioned files separately
-with `npx --yes dsh-ops@latest uninstall --yes`; `~/.fastctx/` is kept unless
-`--purge-fastctx` is explicit. Background OFF drains in-flight calls and attempts to
-kill only jobs remembered by this component on its current connection; failures warn.
-Lost ownership after disconnect and permission downgrade do not guarantee termination.
+Replace `desktop` with `web` or `tui` as appropriate. You can also uninstall in the marketplace or run the official `dsh plugin --profile ... remove dsh-ops`. Binaries are managed as profile plugin dependencies; uninstalling removes dependency references without deleting system shells, copies in other profiles or shared package-manager caches.
+
+Legacy explicitly provisioned `<DSH_HOME>/dsh-ops/` files must be cleaned separately with `npx --yes dsh-ops@latest uninstall --yes`. Persistent `~/.fastctx/` state is kept by default; add `--purge-fastctx` explicitly if needed. Disabling the background component waits for in-flight calls, then attempts to terminate only its own jobs remembered on the current connection; failures produce warnings. Old jobs whose ownership was lost after disconnect, and permission downgrades alone, do not guarantee termination; handle your own jobs first.
 
 ## Components and prompts
 
-| Component | Default | Capability |
-| --- | --- | --- |
-| dsh-ops-bash & powershell 7 | On | Prefer ops_bash for general commands; bundled PowerShell 7 for Windows-native work |
-| dsh-ops-file | On | Rust batch reads, search, path discovery and replacement |
-| dsh-ops-background | Off | Scientific simulations, model training and other long-running tasks |
-| Automatic context compaction | On | Idle-only host /compact service above a configurable Web context threshold; no additional model-facing tool |
+The official marketplace displays four independently toggled components. On first installation, shell, file and automatic compaction are enabled by default:
 
-Each row owns its tools and runtime prompt section; OFF withdraws both. Nothing is
-appended to AGENTS.md. Shell ON adds a runtime-only configuration overlay for the
-stock pwsh-sandbox path; OFF recomputes its latest owning raw configuration via the
-official lifecycle, without writing profile files. It does not change the OS default
-terminal or cancel already-running host commands. File/background share one owned
-FastCtx connection; turning one off does not stop the other. Default tool count is
-five; duplicate ops_run is no longer published. Reduced fixed schema cost is not a
-promise of lower task-total tokens. Minimal's complete persona excludes extra sections;
-PTC invokes the tools through its generated SDK with unchanged permission checks.
+| Component | Description | Default | Published tools |
+| --- | --- | --- | --- |
+| `dsh-ops-bash & powershell 7` | Prefer bash as the terminal, with PowerShell 7 for operations bash cannot cover | On | `ops_bash`; host `pwsh` uses bundled PowerShell 7 |
+| `dsh-ops-file` | Faster, higher-performance Rust file retrieval with more concise, token-efficient output | On | Four file tools |
+| `dsh-ops-background` | Managed background tasks for scientific simulations, model training and other long-running processes | Off | Start, read output, list and terminate background jobs |
+| `Automatic context compaction` | Call the host `/compact` service when idle after Web context usage exceeds a configurable threshold | On | Automatic policy; no additional model-facing tools |
+
+“Prefer bash as the terminal” means prompting the model to use `ops_bash` first; it **does not change the system default terminal, PATH or existing host shell tool names**. When the shell component is on, the official configuration lifecycle temporarily sets the PowerShell 7 path for `pwsh-sandbox`; when off, it restores the executor's latest original configuration without writing profile configuration. Switching executor configuration does not cancel already-running host commands.
+
+Prompts are registered as independent runtime sections, **not written to AGENTS.md**: shell OFF withdraws bash/pwsh routing; file OFF withdraws retrieval guidance; background OFF withdraws background tools and owned-job guidance. File and background share one plugin-owned FastCtx connection; disabling one does not stop the other. Only five tools are added by default; the duplicate foreground `ops_run` is not published. These changes reduce fixed declaration costs but **do not guarantee lower total tokens for every task**. The Minimal preset overrides additional system sections; PTC mode calls the underlying tools through the SDK with unchanged permission gates.
 
 ## Configuration and tools
 
-**Beta candidate feature:** the fourth row's configuration control is in
-Plugins → dsh-ops → Included components. Configure the threshold (default **50%**),
-cooldown (120 seconds) and timeout (120 seconds). The policy uses the Web meter,
-requires strictly more than the threshold, and waits for a non-cancelled idle turn.
-It uses revision-fenced host profile persistence and does not interrupt active tools.
-Summarization may call your model and incur cost. Disabling aborts/drains only owned
-compaction. Installed npm `0.2.4` does not yet include this feature. See
-[safety boundaries and validation](docs/auto-compact.md).
+**New beta component**: open the configuration control for “Automatic context compaction” under “Included components” above. Configure the threshold (default **50%**), cooldown (120 seconds) and timeout (120 seconds). It triggers only when usage is strictly above the threshold and a normal session becomes idle, without interrupting running tools; saving uses host profile persistence and version-conflict checks. Compaction may call the model and incur costs. Disabling the component cancels and waits for only the compaction it started, not user tasks. This component belongs to the `0.2.5-beta.1` candidate; the installed stable npm `0.2.4` does not include it. Check npm for publication status. See [safety boundaries and validation](docs/auto-compact.md).
 
-Edit the corresponding dsh-ops/shell, dsh-ops/file or dsh-ops/background row's config.
-Unknown keys fail; normal component enablement is available in the marketplace.
+In DSH's configuration editor, find the corresponding `dsh-ops/shell`, `dsh-ops/file` or `dsh-ops/background` row, adjust `config`, then save; unknown configuration keys cause errors naming the key. You can also toggle components directly in the marketplace. Main settings:
 
 ```yaml
 config:
+  # background component only; its market row is disabled by default
   enableShellTools: true
   publishBashTool: true
   promptPolicy: true
@@ -118,43 +98,38 @@ config:
   # bashPath: 'C:\tools\bash.exe'
 ```
 
-`enableShellTools` controls the background component's four run/job tools; file never
-publishes commands. `publishBashTool` controls bash. Both additionally require authoritative session `danger-full-access`; bash
-also requires the host subprocess service. `promptPolicy` controls compact routing;
-`extraGuidance` appends text. RPC wait timeout does not prove server termination.
-`required` fails activation on unavailable runtime. Explicit binary/bash paths are
-authoritative. `shellPolicy: deny-host-shell` blocks `deniedHostTools` (default
-`[pwsh, bash, pwsh_persistent]`), including the third-layer pwsh; use cautiously.
+- `enableShellTools`: deployment switch for the background component; enabling it still requires session `danger-full-access` to publish the four background tools. The file component never publishes command tools.
+- `publishBashTool`: whether to publish `ops_bash`; also requires full access and the host subprocess service.
+- `promptPolicy`: whether to inject the component's runtime guidance; use `extraGuidance` to append instructions.
+- `toolCallTimeoutMs`: FastCtx RPC wait timeout; it does not mean server-side work has terminated.
+- `required`: whether to reject activation when the runtime is unavailable.
+- `shellPolicy`: defaults to `advise`; `deny-host-shell` rejects host shells in `deniedHostTools` (default `[pwsh, bash, pwsh_persistent]`). This also disables third-layer pwsh; enable cautiously.
+- `binaryPath` / `bashPath`: optional explicit paths; unavailable paths cause an error rather than silently switching executors. Usually no configuration is needed.
 
-| Tools | Purpose | Full access |
+| Tool | Purpose | Full-access requirement |
 | --- | --- | --- |
-| ops_inspect_local_file | Batch text ranges, encoding, PDF text and hex | No command gate¹ |
-| ops_grep | Rust regex, file filters, counts/summaries | No command gate¹ |
-| ops_glob | Multiple path patterns and exclusions | No command gate¹ |
-| ops_replace | Mechanical cross-file replacement; host edit for precise edits | No command gate¹ |
-| ops_bash | Preferred general bash executor | Required |
-| ops_run_background | Start background jobs | Required |
-| ops_job_output / ops_job_list / ops_job_kill | Operate on this session's owned jobs | Required |
-| Host pwsh | Bundled PowerShell 7 Windows-native operations | Host policy |
+| `ops_inspect_local_file` | Batch text ranges, encoding, PDF text and hex | No command permission gate¹ |
+| `ops_grep` | Rust regex search, multiple file filters, counts/summaries | No command permission gate¹ |
+| `ops_glob` | Multiple path patterns with exclusions | No command permission gate¹ |
+| `ops_replace` | Mechanical cross-file replacement; use host edit for precise changes | No command permission gate¹ |
+| `ops_bash` | Preferred general bash command executor | Yes |
+| `ops_run_background` | Start background jobs | Yes |
+| `ops_job_output` / `ops_job_list` / `ops_job_kill` | Read, list and stop jobs started by the current session | Yes |
+| Host `pwsh` | Windows-native operations using bundled PowerShell 7 | Host policy |
 
-¹ File tools are **not host filesystem-confined**, including ops_replace. Do not
-use this bundle as a security boundary for untrusted restricted deployments.
-Images belong to host read_image. Permissions are reconciled dynamically and
-rechecked on execution; job ownership is per session and connection, lost on reconnect.
-See [manual validation](docs/manual-validation.md) and [schema measurements](docs/schema-measurement.md).
+¹ **File tools are not the host filesystem sandbox.** They do not use DSH's restricted file backend; in particular, `ops_replace` has no workspace confinement. Do not treat this plugin as a security solution for untrusted restricted environments. Images belong to host `read_image`; the plugin does not pretend to have inspected them.
+
+Command tools are published/withdrawn as session permissions change, with permissions rechecked before execution. Background jobs are isolated by session and current connection; old jobs cannot be reclaimed after disconnect. The [manual validation checklist](docs/manual-validation.md) and [schema measurements](docs/schema-measurement.md) document validation scope, not a guarantee of defect-free runtime behavior.
 
 ## License
 
-Plugin source: **MIT AND Apache-2.0**. Outside vendor/fastctx: MIT; vendored FastCtx:
-Apache-2.0. See [NOTICE](NOTICE), vendor/fastctx/LICENSE-APACHE and vendor/fastctx/NOTICE.
-The independent Windows payload packages retain upstream component licenses:
-Git for Windows includes GPL components; PowerShell includes MIT and third-party
-components. The plugin's MIT does not relicense them. See [PROVENANCE](PROVENANCE.md).
+Plugin source distribution uses **`MIT AND Apache-2.0`**: files outside `vendor/fastctx/` are MIT; vendored FastCtx is Apache-2.0. See [NOTICE](NOTICE), `vendor/fastctx/LICENSE-APACHE` and `vendor/fastctx/NOTICE`.
+
+Independent Windows payload packages are distributed under their upstream component licenses: Git for Windows includes GPL and other licensed components; PowerShell includes MIT and third-party components. Original licenses, notices and provenance records are retained with the payloads; the plugin's MIT license does not replace them. See [PROVENANCE.md](PROVENANCE.md).
 
 ## Acknowledgements
 
-The Rust tools use source from yc-duan's FastCtx Codex plugin. Distribution changes
-are recorded in vendor/fastctx/FORK.md and vendor/fastctx/UPSTREAM.md. Required notice:
+The Rust tools are based on [yc-duan](https://github.com/yc-duan)'s FastCtx Codex plugin and use its source code. Vendor identification and deletion-only distribution changes are recorded in [vendor/fastctx/FORK.md](vendor/fastctx/FORK.md) and [vendor/fastctx/UPSTREAM.md](vendor/fastctx/UPSTREAM.md). The required FastCtx notice follows:
 
 > This product includes FastCtx
 > (https://github.com/yc-duan/fastctx), Copyright (c) 2026 yc-duan,
