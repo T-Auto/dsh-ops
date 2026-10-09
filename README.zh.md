@@ -1,14 +1,19 @@
 # dsh-ops
 
-解决 Windows 下 DSH 反复使用 PowerShell 报错造成的 token、时间和模型注意力浪费。本插件的三个主要功能提供：
+**中文** | [English](README.en.md)
+
+解决 Windows 下 DSH 反复使用 PowerShell 报错造成的 token、时间和模型注意力浪费。本插件的三个主要功能：
 
 - 提供独立 **bash 5.3.15** 并优先使用bash，让你的AI不再和PowerShell打架
 - 独立 **PowerShell 7.6.6**，用于必要的 Windows 原生操作，沿用宿主 `pwsh` 工具。PowerShell 7 比自带的 PowerShell 5 也有不少优化
 - 一些 Rust 编写的性能更好的，更快的读取、查找、替换工具，加速任务运行，减少不必要的输入输出。由于部分工具不经过 DSH 的受限终端后端，命令与后台任务工具只在**完全权限**时启用。
+- 未来会加入一系列docx，pdf处理轻量化的好用的rust工具，均可开关，不占用上下文
 
-执行顺序：**工具包 → bash → PowerShell 7**。bash 报错在 bash 内修正，不随意换 shell，不混用两套语法。
+<img width="1603" height="1028" alt="247c1326cca5b66e60d330c3f32150e2" src="https://github.com/user-attachments/assets/7c9ba485-5323-42a2-b5a8-6dcda07f91c4" />
 
-仅支持 **Windows x64**；目标宿主 DSH `0.2.0-rc.2`。[English](README.en.md)
+执行顺序：**工具包 → bash → PowerShell 7**。
+
+仅支持 **Windows x64**，后续补充 Rust 工具后会支持 Linux 和 Mac（Linux 和 Mac 下不提供 bash 功能）。目标宿主 DSH `0.2.0-rc.2`。
 
 ## 安装、更新、卸载
 
@@ -67,7 +72,7 @@ npx --yes dsh-ops@latest uninstall --profile desktop
 
 “默认终端改为 bash”指模型提示优先使用 `ops_bash`，**不修改系统默认终端、PATH 或宿主原有 shell 工具名称**。Shell 组件开时，通过官方配置生命周期临时指定 `pwsh-sandbox` 的 PowerShell 7 路径；关时按执行器最新原配置恢复，不写 profile 配置。执行器配置切换不代表取消已在运行的宿主命令。
 
-提示词注册为独立运行时段，**不写 AGENTS.md**：Shell 关就撤销 bash/pwsh 路由；文件关就撤销检索说明；后台关就不发布后台工具及自有 job 指导。文件与后台共享一个插件拥有的 FastCtx 连接，关闭其中一个不关闭另一个。默认仅新增五个工具，不发布重复前台 `ops_run`。这些改变减少固定声明成本，**不保证任意任务总 token 降低**。极简预设会覆盖附加 system sections；PTC 模式经 SDK 调用底层工具，权限门不变。
+提示词注册为独立运行时段，**不写 AGENTS.md**：Shell 关就撤销 bash/pwsh 路由；文件关就撤销检索说明；后台关就不发布后台工具及自有 job 指导。文件与后台共享一个插件拥有的 FastCtx 连接，关闭其中一个不关闭另一个。默认仅新增五个工具，不发布重复前台 `ops_run`。这些改变减少固定声明成本。极简预设会覆盖附加 system sections；PTC 模式经 SDK 调用底层工具，权限门不变。
 
 ## 配置方式与工具列表
 
@@ -106,9 +111,7 @@ config:
 | `ops_job_output` / `ops_job_list` / `ops_job_kill` | 查看、列出、停止当前会话启动的任务 | 是 |
 | 宿主 `pwsh` | 使用随包 PowerShell 7 的 Windows 原生操作 | 沿用宿主策略 |
 
-¹ **文件工具不是宿主文件系统沙箱。** 它们未接入 DSH 的受限文件后端，尤其 `ops_replace` 没有 workspace confinement。不要把该插件视为不可信受限环境的安全方案。图片交给宿主 `read_image`，插件不会假装已看过图片。
-
-命令工具随会话权限变化发布/撤销，调用前重查权限。后台 job 按会话和当前连接隔离；断线后不能重新认领旧任务。[手动验证清单](docs/manual-validation.md)与[schema 测量](docs/schema-measurement.md)记录了验证范围，不构成运行时无缺陷保证。
+¹ **文件工具不是宿主文件系统沙箱。** 它们未接入 DSH 的受限文件后端，尤其 `ops_replace` 没有 workspace confinement。不要把该插件提供的部分工具视为不可信受任限环境的安全方案。
 
 ## 许可证
 

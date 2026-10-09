@@ -1,5 +1,7 @@
 # dsh-ops
 
+**中文** | [English](README.en.md)
+
 解决 Windows 下 DSH 反复使用 PowerShell 报错造成的 token、时间和模型注意力浪费。本插件的三个主要功能：
 
 - 提供独立 **bash 5.3.15** 并优先使用bash，让你的AI不再和PowerShell打架
@@ -9,7 +11,9 @@
 
 <img width="1603" height="1028" alt="247c1326cca5b66e60d330c3f32150e2" src="https://github.com/user-attachments/assets/7c9ba485-5323-42a2-b5a8-6dcda07f91c4" />
 
-执行顺序：**工具包 → bash → PowerShell 7**。目前仅支持 **Windows x64**——因为主要解决windows下powshell的问题。目标宿主 DSH `0.2.0-rc.2`。
+执行顺序：**工具包 → bash → PowerShell 7**。
+
+仅支持 **Windows x64**，后续补充 Rust 工具后会支持 Linux 和 Mac（Linux 和 Mac 下不提供 bash 功能）。目标宿主 DSH `0.2.0-rc.2`。
 
 ## 安装、更新、卸载
 
