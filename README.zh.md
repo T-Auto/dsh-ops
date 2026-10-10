@@ -45,7 +45,7 @@ dsh plugin --profile dsh-tui add dsh-ops
 
 **更新**：重新运行相同的 `npx --yes dsh-ops@latest install --profile ...`，或用官方 CLI `add dsh-ops@latest`。按应用提示重载；替换已加载代码时重启应用。
 
-当前版本 `0.2.6` 包含稳定安全修复和 FastCtx 客户端退出回收修复，保留三个独立组件，不含上下文压缩 beta。三个二进制依赖均固定为 `0.2.1`，无需随主包重复发版；明确版本映射见 [PROVENANCE.md](PROVENANCE.md)，载荷与 registry 校验和见 [docs/release-0.2.1.md](docs/release-0.2.1.md)。
+当前版本 `0.2.7` 增加了 Issue #7 的长脚本调用稳定性修复：长脚本使用 `script_path`，减少 JSON 转义压力；保留三个独立组件，不含上下文压缩 beta。三个二进制依赖均固定为 `0.2.1`，本次不重新发布 npm 载荷；明确版本映射见 [PROVENANCE.md](PROVENANCE.md)，载荷与 registry 校验和见 [docs/release-0.2.1.md](docs/release-0.2.1.md)。
 
 **卸载与查看状态**：
 
@@ -108,14 +108,19 @@ config:
 | `ops_grep` | Rust 正则搜索、多文件过滤、计数/摘要 | 无命令权限门¹ |
 | `ops_glob` | 多模式找路径，支持排除 | 无命令权限门¹ |
 | `ops_replace` | 跨文件批量替换；精确编辑仍用宿主 edit | 无命令权限门¹ |
-| `ops_bash` | 优先的通用 bash 命令执行器 | 是 |
+| `ops_bash` | 优先的通用 bash 命令执行器；短命令用 `command`，长脚本用 `script_path` | 是 |
 | `ops_run_background` | 启动后台任务 | 是 |
 | `ops_job_output` / `ops_job_list` / `ops_job_kill` | 查看、列出、停止当前会话启动的任务 | 是 |
 | 宿主 `pwsh` | 使用随包 PowerShell 7 的 Windows 原生操作 | 沿用宿主策略 |
 
 ¹ **文件工具不是宿主文件系统沙箱。** 它们未接入 DSH 的受限文件后端，尤其 `ops_replace` 没有 workspace confinement。不要把该插件提供的部分工具视为不可信受任限环境的安全方案。
 
-## 进程回收
+## 长脚本与 JSON 稳定性
+
+`ops_bash` 的 `command` 适合短命令和短管道。对于超过约 1 KB，或包含 heredoc、引号、反斜杠、中文等内容的多行脚本，请先用宿主的文件工具写入脚本文件，再传入 `script_path` 执行；不要把整段 heredoc 塞进 `command`。这样可以显著减少模型在工具调用 JSON 中进行多层转义的负担，降低整轮因 `MALFORMED_RESPONSE` 作废的概率。
+
+`script_path` 只接收脚本路径，脚本内容不会重复进入 `ops_bash` 的工具参数；`command` 与 `script_path` 必须二选一。该接口不会替模型修复非法 JSON，工具调用本身若未能解析，仍需由宿主或模型重试。
+
 
 插件只回收自己启动的 `fastctx serve` 客户端：组件最后一个连接引用释放、连接关闭、宿主正常退出或强制退出时均有回收路径。`runtime-host` 是上游可复用的共享进程，父进程已退出不等于泄漏；无客户端且空闲约十分钟后自行退出。不要按进程名批量杀它。新版不自动清理旧版本已留下的进程。
 

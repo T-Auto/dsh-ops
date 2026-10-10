@@ -3,6 +3,12 @@
 What this repository is, where its parts came from, what was verified, and what
 was not.
 
+## 0.2.7 Long-script tool-call stability
+
+Issue #7 showed that putting long heredoc-heavy scripts into one JSON `command` string can increase malformed tool-call risk and waste an entire model turn. This release adds `ops_bash.script_path`, keeps short commands on `command`, and updates the runtime guidance and documentation to steer long scripts through the file path.
+
+The main package version is `0.2.7`; the three Windows payload dependencies remain pinned to `0.2.1` and are not republished.
+
 ## 0.2.6 Owned client lifecycle
 
 Issue #1's latest controlled reproduction corrects the early orphan hypothesis:
@@ -28,15 +34,15 @@ not a claim of completed desktop/web upgrade or a ten-minute idle timing test.
 
 ## 0.2.5 Stable safety and verification
 
-The stable main package is `dsh-ops@0.2.6`; it deliberately excludes the
+The stable main package is `dsh-ops@0.2.7`; it deliberately excludes the
 context-compaction beta branch. Main-package patches and runtime payloads have
 independent versions. The exact dependency mapping is:
 
 | Main package | Payload dependency (unchanged) | Upstream runtime |
 | --- | --- | --- |
-| `dsh-ops@0.2.6` | `@dsh-ops/fastctx-win32-x64@0.2.1` | FastCtx 0.2.6, upstream revision `ccaa157790d02328a60786eb94ee5ad698995a5f`; built from `dd348254281bf5eea6c4d9d07c49d82c565666f4` |
-| `dsh-ops@0.2.6` | `@dsh-ops/bash-win32-x64@0.2.1` | PortableGit `v2.56.0.windows.2` (2.56.0.2), bash 5.3.15 |
-| `dsh-ops@0.2.6` | `@dsh-ops/pwsh-win32-x64@0.2.1` | PowerShell 7.6.6 |
+| `dsh-ops@0.2.7` | `@dsh-ops/fastctx-win32-x64@0.2.1` | FastCtx 0.2.6, upstream revision `ccaa157790d02328a60786eb94ee5ad698995a5f`; built from `dd348254281bf5eea6c4d9d07c49d82c565666f4` |
+| `dsh-ops@0.2.7` | `@dsh-ops/bash-win32-x64@0.2.1` | PortableGit `v2.56.0.windows.2` (2.56.0.2), bash 5.3.15 |
+| `dsh-ops@0.2.7` | `@dsh-ops/pwsh-win32-x64@0.2.1` | PowerShell 7.6.6 |
 
 The same payload mapping applies to main-package versions 0.2.2–0.2.5.
 Each payload includes `provenance.json` with its executable SHA-256 and upstream

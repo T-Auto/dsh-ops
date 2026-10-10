@@ -26,6 +26,7 @@ await test('shell routing prefers bash and names bundled pwsh only when availabl
   assert.match(text, /^# Shell routing: bash → PowerShell 7/)
   assert.match(text, /bundled PowerShell 7 via host/)
   assert.match(text, /fix bash errors in bash, do not switch shells/)
+  assert.match(text, /longer than about 1 KB.*script_path/)
   assert.equal(renderToolingPolicy({ published: ['pwsh'] }).includes('bundled PowerShell'), false)
   assert.equal(renderToolingPolicy({ published: ['pwsh'], shellComponent: false }), '')
 })

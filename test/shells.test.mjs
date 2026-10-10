@@ -663,7 +663,7 @@ await test('an available bash registers ops_bash, and the disposer removes it', 
     assert.equal(registrations.length, 1)
     assert.deepEqual([...live.keys()], [BASH_TOOL_NAME])
     assert.equal(registrations[0].name, BASH_TOOL_NAME)
-    assert.ok(registrations[0].parameters.required.includes('command'))
+    assert.ok(registrations[0].parameters.properties.script_path)
     assert.equal(typeof registrations[0].execute, 'function')
     assert.equal(typeof registrations[0].output.render, 'function')
 
@@ -848,6 +848,37 @@ await test('ops_bash forwards the terminal overrides and no credential-shaped na
   })
 })
 
+await test('ops_bash executes a script_path without embedding its contents in argv', async () => {
+  await withTempDir('shells-script-path', async (dir) => {
+    const bash = makeExecutable(path.join(dir, 'bash'))
+    const script = path.join(dir, 'long-script.sh')
+    makeExecutable(script)
+    const { service, specs, settle } = fakeSubprocess()
+    const definition = bashToolDefinition({ file: bash, source: 'config', subprocess: service })
+    const running = definition.execute({ script_path: script, workdir: 'D:\\work' }, { signal: new AbortController().signal })
+    settle()
+    await running
+
+    assert.deepEqual(specs[0].argv, [bash, script])
+    assert.equal(specs[0].cwd, 'D:\\work')
+    assert.equal(specs[0].stdio.stdin, 'ignore')
+  })
+})
+
+await test('ops_bash requires exactly one command input', async () => {
+  await withTempDir('shells-inputs', async (dir) => {
+    const bash = makeExecutable(path.join(dir, 'bash'))
+    const { service, specs } = fakeSubprocess()
+    const definition = bashToolDefinition({ file: bash, source: 'config', subprocess: service })
+    const exec = { signal: new AbortController().signal }
+
+    await assert.rejects(() => definition.execute({}, exec), /exactly one of command or script_path/)
+    await assert.rejects(() => definition.execute({ command: 'echo ok', script_path: 'x.sh' }, exec), /exactly one of command or script_path/)
+    await assert.rejects(() => definition.execute({ script_path: '   ' }, exec), /invalid script_path/)
+    assert.equal(specs.length, 0)
+  })
+})
+
 await test('ops_bash rejects a missing command and a bad timeout before spawning', async () => {
   await withTempDir('shells-args', async (dir) => {
     const bash = makeExecutable(path.join(dir, 'bash'))
@@ -855,7 +886,7 @@ await test('ops_bash rejects a missing command and a bad timeout before spawning
     const definition = bashToolDefinition({ file: bash, source: 'config', subprocess: service })
     const exec = { signal: new AbortController().signal }
 
-    await assert.rejects(() => definition.execute({}, exec), /invalid command/)
+    await assert.rejects(() => definition.execute({}, exec), /exactly one of command or script_path/)
     await assert.rejects(() => definition.execute({ command: '   ' }, exec), /invalid command/)
     await assert.rejects(() => definition.execute({ command: 'ls', timeoutMs: 0 }, exec), /invalid timeoutMs/)
     await assert.rejects(
