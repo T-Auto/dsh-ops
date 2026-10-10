@@ -148,3 +148,7 @@ The Rust tools are based on [yc-duan](https://github.com/yc-duan)'s FastCtx Code
 > supported by, and not attributable to the author of FastCtx, who
 > accepts no liability of any kind arising from this distribution or
 > from anything built on top of it.
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=T-Auto/dsh-ops&type=Date)](https://star-history.com/#T-Auto/dsh-ops&Date)
