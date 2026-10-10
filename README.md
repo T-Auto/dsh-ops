@@ -45,7 +45,7 @@ dsh plugin --profile dsh-tui add dsh-ops
 
 **更新**：重新运行相同的 `npx --yes dsh-ops@latest install --profile ...`，或用官方 CLI `add dsh-ops@latest`。按应用提示重载；替换已加载代码时重启应用。
 
-当前版本 `0.2.4` 支持三个独立组件；bash 参数 schema 修复和自定义图标保留。三个二进制依赖继续使用 `0.2.1`，它们会自动安装，不影响主插件版本。原始载荷记录见 [docs/release-0.2.1.md](docs/release-0.2.1.md)。
+当前版本 `0.2.5` 是稳定安全修复版，保留三个独立组件，不含上下文压缩 beta。三个二进制依赖均固定为 `0.2.1`，无需随主包重复发版；明确版本映射见 [PROVENANCE.md](PROVENANCE.md)，载荷与 registry 校验和见 [docs/release-0.2.1.md](docs/release-0.2.1.md)。
 
 **卸载与查看状态**：
 
@@ -85,7 +85,7 @@ config:
   toolCallTimeoutMs: 300000
   required: false
   shellPolicy: advise
-  allowSystemShellFallback: true
+  allowSystemShellFallback: false
   # binaryPath: 'C:\tools\fastctx.exe'
   # bashPath: 'C:\tools\bash.exe'
 ```
@@ -96,6 +96,8 @@ config:
 - `toolCallTimeoutMs`：FastCtx RPC 等待超时，不代表服务端工作已终止。
 - `required`：运行时不可用时是否拒绝激活。
 - `shellPolicy`：默认 `advise`；`deny-host-shell` 拒绝 `deniedHostTools` 列表中的宿主 shell（默认 `[pwsh, bash, pwsh_persistent]`）。这也会禁用第三层 pwsh，谨慎开启。
+- `allowSystemShellFallback`：默认 `false`，随包/已 provision 的 bash 缺失时不探测系统 PATH 或常见安装目录；后台组件也不绕过此选择调用 FastCtx 的自动探测。只有显式设 `true` 才使用未固定摘要的系统 bash，请自行信任与维护该执行器。显式 `bashPath` 是另一种操作者选择，并非自动回退。升级不会覆盖已有配置中显式的 `true`，请手动改为 `false`。
+- `shellPolicy` 与此开关独立：`deny-host-shell` 遮蔽/拒绝宿主工具；禁止系统回退只约束插件自己的 bash 解析，不关闭宿主 `pwsh`，也不提供文件系统沙箱。
 - `binaryPath` / `bashPath`：可选显式路径；不可用时报错，不悄悄换执行器。一般无需配置。
 
 | 工具 | 用途 | 完全权限要求 |

@@ -18,7 +18,7 @@
  * @module dsh-ops/test/run
  */
 
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -66,13 +66,26 @@ for (const suite of selected) {
   const home = mkdtempSync(path.join(tmpdir(), 'dsh-ops-test-home-'))
   const label = path.basename(suite)
   console.log(`\n=== ${label}`)
-  const child = spawnSync(process.execPath, [suite], {
+  const child = spawn(process.execPath, [suite], {
     cwd: root,
     env: { ...process.env, DSH_HOME: home },
     stdio: 'inherit',
   })
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    console.error(`--- ${label} exceeded the 120s suite deadline; stopping its owned process tree`)
+    if (process.platform === 'win32') {
+      spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', timeout: 10000 })
+    } else child.kill('SIGKILL')
+  }, 120000)
+  const status = await new Promise(resolve => {
+    child.once('error', error => { console.error(String(error)); resolve(null) })
+    child.once('close', code => resolve(code))
+  })
+  clearTimeout(timer)
   rmSync(home, { recursive: true, force: true })
-  if (child.status === SKIPPED_EXIT) {
+  if (status === SKIPPED_EXIT && !timedOut) {
     if (requireRuntime) {
       // A skip is the suite's way of saying "this environment cannot answer".
       // When the caller has said the runtime is required, that is a failure —
@@ -85,9 +98,9 @@ for (const suite of selected) {
     console.log(`--- ${label} skipped`)
     continue
   }
-  if (child.status !== 0) {
+  if (status !== 0 || timedOut) {
     failed += 1
-    console.error(`--- ${label} exited ${child.status}`)
+    console.error(`--- ${label} exited ${status}${timedOut ? ' (timeout)' : ''}`)
   }
 }
 

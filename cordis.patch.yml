@@ -7,7 +7,7 @@
         promptPolicy: true
         publishBashTool: true
         shellPolicy: advise
-        allowSystemShellFallback: true
+        allowSystemShellFallback: false
     - id: dsh-ops-file
       name: dsh-ops/file
       config:

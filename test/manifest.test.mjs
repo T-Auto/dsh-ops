@@ -10,6 +10,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import {
+  BACKGROUND_TOOLS,
   FILE_TOOLS,
   HOST_SHELL_SECTION,
   IN_PROCESS_TOOLS,
@@ -66,7 +67,7 @@ await test('every declared tool is one the policy actually names', () => {
   const hosted = namespaces[0]
   assert.deepEqual(
     [...hosted.tools].sort(),
-    [...FILE_TOOLS, ...SHELL_TOOLS].sort(),
+    [...FILE_TOOLS, ...BACKGROUND_TOOLS].sort(),
     'the hosted namespace declares every FastCtx tool and nothing else',
   )
   for (const tool of hosted.tools) {
@@ -113,7 +114,7 @@ await test('the declared namespace documents the upstream names and the public p
 
 await test('the declared prompt sections are the registered ones', () => {
   const declared = raw.contributes['x-prompt-sections'].map((section) => section.name)
-  assert.deepEqual([...declared].sort(), [HOST_SHELL_SECTION, TOOLING_SECTION].sort())
+  assert.deepEqual([...declared].sort(), ['file', 'shell', 'background'].map(name => `${TOOLING_SECTION}:${name}`).sort())
 })
 
 await test('the manifest license states the composite this repository ships', () => {
@@ -138,31 +139,27 @@ await test('the card text is translated, not one string repeated across locales'
   const english = read('en')
   const chinese = read('zh')
   assert.equal(english.title, display.title, 'the manifest and the English locale must not drift')
-  assert.notEqual(english.title, pkg.name, 'a card title is display copy, not the package name')
-  assert.notEqual(chinese.title, english.title, 'the Chinese card must not show the English title')
+  assert.equal(english.title, pkg.name, 'the shared brand title is intentionally not translated')
+  assert.equal(chinese.title, english.title)
   assert.notEqual(chinese.description, english.description, 'the Chinese card must not show the English description')
 })
 
-await test('the card icon is one self-contained SVG document', () => {
-  const icon = fs.readFileSync(path.join(PACKAGE_ROOT, display.icon), 'utf8')
-  assert.match(icon, /^<svg\b/u, 'the icon must be a single root SVG element')
-  const viewBox = /viewBox="([^"]+)"/u.exec(icon)?.[1].trim().split(/\s+/u).map(Number)
-  assert.equal(viewBox?.length, 4, 'the icon must declare a viewBox to scale into a card slot')
-  assert.ok(viewBox.every((value) => Number.isFinite(value) && value >= 0))
-  // The client inlines the icon as a data URL inside a card that owns the page
-  // styles: it may not depend on a stylesheet, a script, a font, or another file.
-  for (const forbidden of ['<style', '<script', '<image', '<text', 'href']) {
-    assert.equal(icon.includes(forbidden), false, `the icon must not carry ${forbidden}`)
-  }
+await test('the card icon is a self-contained PNG with bounded dimensions', () => {
+  const icon = fs.readFileSync(path.join(PACKAGE_ROOT, display.icon))
+  assert.equal(display.icon, './icon.png')
+  assert.deepEqual(icon.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  assert.equal(icon.toString('ascii', 12, 16), 'IHDR')
+  assert.equal(icon.readUInt32BE(16), 256)
+  assert.equal(icon.readUInt32BE(20), 256)
+  assert.ok(icon.length <= 256 * 1024)
 })
 
-await test('the card icon paints exactly one ink color, so it reads on either theme', () => {
-  const icon = fs.readFileSync(path.join(PACKAGE_ROOT, display.icon), 'utf8')
-  const colors = new Set()
-  for (const match of icon.matchAll(/(?:fill|stroke)="([^"]*)"/gu)) {
-    if (match[1] !== 'none') colors.add(match[1].toLowerCase())
+await test('the icon and all component entries are shipped in the package whitelist', () => {
+  assert.ok(pkg.files.includes('icon.png'))
+  for (const component of ['shell', 'file', 'background']) {
+    assert.ok(fs.existsSync(path.join(PACKAGE_ROOT, 'lib', 'components', component, 'index.js')))
+    assert.ok(pkg.exports[`./${component}`])
   }
-  assert.equal(colors.size, 1, `expected one ink color, got ${[...colors].join(', ') || '(none)'}`)
 })
 
 report('manifest')

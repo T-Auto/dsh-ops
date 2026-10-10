@@ -148,14 +148,14 @@ export function resolveRuntime(options = {}) {
  * @param {number} [options.expectTools] - how many `ops_` tools to wait for.
  * @returns {Promise<{fiber: any, tools: string[]}>} the plugin fiber and the published tool names.
  */
-export async function mountPlugin({ ctx, config = {}, timeoutMs = 60_000, expectTools = 1 }) {
+export async function mountPlugin({ ctx, config = {}, timeoutMs = 10_000, expectTools = 1 }) {
   const plugin = await loadPlugin()
   const fiber = await ctx.plugin(plugin, config)
   const deadline = Date.now() + timeoutMs
   for (;;) {
     const names = publicToolNames(ctx)
     if (names.length >= expectTools) return { fiber, tools: names }
-    if (Date.now() > deadline) return { fiber, tools: names }
+    if (Date.now() > deadline) throw new Error(`mount timed out after ${timeoutMs}ms: expected ${expectTools} tools, got ${names.join(', ')}`)
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
 }
@@ -247,8 +247,8 @@ export async function mountScopedToolPlugin(ctx, { scope, toolName, description 
  * @param {Context} ctx - the host context.
  * @returns {Promise<Map<string, string>>} the sections.
  */
-export async function renderSections(ctx) {
-  const assembly = await ctx.get('systemPrompt').assemble({})
+export async function renderSections(ctx, agent) {
+  const assembly = await ctx.get('systemPrompt').assemble({ agent })
   const sections = Array.isArray(assembly.sections) ? assembly.sections : []
   return new Map(sections.map((section) => [section.name, String(section.text ?? '')]))
 }

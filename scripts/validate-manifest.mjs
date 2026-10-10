@@ -342,8 +342,8 @@ if (display !== undefined) {
   const icon = typeof display.icon === 'string' ? display.icon : undefined
   const iconPath = icon === undefined ? undefined : icon.replace(/^\.\//u, '')
   check(
-    icon !== undefined && !path.isAbsolute(icon) && path.extname(icon).toLowerCase() === '.svg',
-    'the declared icon is a package-relative SVG',
+    icon !== undefined && !path.isAbsolute(icon) && ['.svg', '.png'].includes(path.extname(icon).toLowerCase()),
+    'the declared icon is a package-relative SVG or PNG',
     `got ${JSON.stringify(display.icon)}`,
   )
 
@@ -366,7 +366,14 @@ if (display !== undefined) {
       'the declared icon stays inside the package directory',
       `resolves to ${withinPackage}`,
     )
-    if (iconStat?.isFile() === true) {
+    if (iconStat?.isFile() === true && path.extname(iconFile).toLowerCase() === '.png') {
+      const png = fs.readFileSync(iconFile)
+      check(png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+        && png.length >= 33 && png.toString('ascii', 12, 16) === 'IHDR'
+        && png.readUInt32BE(16) > 0 && png.readUInt32BE(20) > 0,
+      'the declared PNG has a valid signature and nonzero dimensions')
+    }
+    if (iconStat?.isFile() === true && path.extname(iconFile).toLowerCase() === '.svg') {
       const svg = fs.readFileSync(iconFile, 'utf8')
       // A card icon is inlined as a data URL and rendered on both light and dark
       // surfaces: it must carry its own monochrome ink and reach nothing outside

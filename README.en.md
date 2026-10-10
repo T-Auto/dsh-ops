@@ -45,7 +45,7 @@ The ordinary DSH CLI cannot manage the reserved `desktop` profile; do not confus
 
 **Update**: repeat the same `npx --yes dsh-ops@latest install --profile ...` command, or use the official CLI's `add dsh-ops@latest`. Reload as requested by the application; restart it when replacing already-loaded code.
 
-The current version, `0.2.4`, supports three independent components and retains the bash parameter schema fix and custom icon. The three binary dependencies remain at `0.2.1`; they install automatically without affecting the main plugin version. See the original [payload release record](docs/release-0.2.1.md).
+The current version, `0.2.5`, is a stable safety hotfix retaining three independent components, with no context-compaction beta. All three binary dependencies are pinned to `0.2.1` and need not be republished with each main-package patch. See [PROVENANCE.md](PROVENANCE.md) for the explicit version mapping and [docs/release-0.2.1.md](docs/release-0.2.1.md) for payload and registry checksums.
 
 **Remove and check status**:
 
@@ -85,7 +85,7 @@ config:
   toolCallTimeoutMs: 300000
   required: false
   shellPolicy: advise
-  allowSystemShellFallback: true
+  allowSystemShellFallback: false
   # binaryPath: 'C:\tools\fastctx.exe'
   # bashPath: 'C:\tools\bash.exe'
 ```
@@ -96,6 +96,8 @@ config:
 - `toolCallTimeoutMs`: FastCtx RPC wait timeout; it does not mean server-side work has terminated.
 - `required`: whether to reject activation when the runtime is unavailable.
 - `shellPolicy`: defaults to `advise`; `deny-host-shell` rejects host shells in `deniedHostTools` (default `[pwsh, bash, pwsh_persistent]`). This also disables third-layer pwsh; enable cautiously.
+- `allowSystemShellFallback`: defaults to `false`. Without a bundled/provisioned bash, do not discover system PATH or well-known installations; background commands cannot bypass this through FastCtx discovery either. Explicit `true` opts into an unpinned system bash that the operator must trust and maintain. Explicit `bashPath` is a separate operator selection, not an automatic fallback. Updates do not overwrite an existing explicit `true`; change it to `false` manually.
+- `shellPolicy` is independent: `deny-host-shell` masks/refuses host tools; disabling fallback constrains the plugin's bash resolver, not the host's own `pwsh`, and is not a filesystem sandbox.
 - `binaryPath` / `bashPath`: optional explicit paths; unavailable paths cause an error rather than silently switching executors. Usually no configuration is needed.
 
 | Tool | Purpose | Full-access requirement |

@@ -1,6 +1,14 @@
 # dsh-ops 手动验收清单
 
-本轮按风雪要求：不补/改回归测试，不加 CI，不运行旧套件。本清单是操作者步骤，不是自动化门禁。替换源码后先重启 DSH。
+0.2.5 已恢复 `npm run verify` 自动门禁：安装 devDependencies 后运行 `DSH_OPS_REQUIRE_RUNTIME=1 npm run verify`（PowerShell 用 `$env:DSH_OPS_REQUIRE_RUNTIME='1'; npm run verify`）。以下清单是另行人工验收，不等于这些操作都已执行。0.2.4 时“不补/改测试、不运行旧套件”的要求与记录仅属历史，现已被此次修复替代。替换已加载源码后按宿主要求重载/重启。
+
+## 系统 shell 回退与载荷
+
+- 默认 `allowSystemShellFallback=false`；临时隔离测试中缺少随包/provisioned bash、但 PATH/常见目录有 bash 时，插件不执行该系统副本，后台工具也不通过 FastCtx 自动探测绕过。
+- `true` 是显式信任系统 bash 的选择；`bashPath` 是另一种显式选择。更新不覆盖旧 profile 的显式 `true`，需手动改成 `false`。
+- 此开关不控制宿主工具；`shellPolicy=deny-host-shell` 才拒绝宿主 pwsh/bash/pwsh_persistent，即使没有 ops 命令组也生效。它也不是文件系统沙箱。
+- 主包 0.2.5 固定复用三个 0.2.1 载荷；逐个核对 `provenance.json` 与真实二进制哈希。对应表见 PROVENANCE；registry tarball 校验和见 release-0.2.1 文档。
+- issue #4 的外部贡献者报告：DSH 0.2.0-rc.2 desktop / Windows x64 的 0.2.4 真实 profile 安装及无需重启热加载成功。属于外部观测，不冒充维护者本机 0.2.5 的端到端验收。
 
 ## 工具发布与提示词
 

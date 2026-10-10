@@ -233,36 +233,15 @@ function printedRungs(stdout) {
  */
 function assertLadder(report_) {
   const { levels, rungs } = report_
-  assert.deepEqual(
-    rungs.map((rung) => rung.number),
-    rungs.map((_, index) => index + 1),
-    'the rendered rungs are numbered 1..N with no gap',
-  )
-  assert.equal(
-    rungs.length,
-    1 + (levels.bash ? 1 : 0) + (levels.pwsh ? 1 : 0) + 1,
-    'FastCtx, each live shell, and the host shell',
-  )
-  const host = rungs.at(-1)
-  assert.match(host.title, /^the host's own shell tools/u)
-  assert.equal(host.number, 2 + (levels.bash ? 1 : 0) + (levels.pwsh ? 1 : 0))
-  assert.equal(
-    rungs.some((rung) => rung.title.includes('`ops_bash`')),
-    levels.bash,
-    'the ops_bash heading follows the bash rung alone',
-  )
-  assert.equal(
-    rungs.some((rung) => rung.title.includes('PowerShell 7')),
-    levels.pwsh,
-    'the PowerShell heading follows the bundled pwsh alone',
-  )
-  const text = renderToolingPolicy({ enableShellTools: true, extraGuidance: '', levels })
-  for (const rung of rungs) {
-    assert.ok(
-      text.includes(`## Rung ${rung.number} — ${rung.title}`),
-      `the renderer emits no heading "${rung.number} — ${rung.title}"`,
-    )
-  }
+  assert.deepEqual(rungs, [], 'the retired numbered ladder is empty')
+  const published = [
+    ...(levels.fastctx ? ['glob', 'grep', 'inspect_local_file', 'replace'].map(name => `ops_${name}`) : []),
+    ...(levels.bash ? ['ops_bash'] : []),
+    ...(levels.pwsh ? ['pwsh'] : []),
+  ]
+  assert.equal(report_.policy, renderToolingPolicy({ published, extraGuidance: '' }))
+  assert.equal(report_.policy.includes('| General commands'), levels.bash)
+  assert.equal(report_.policy.includes('bundled PowerShell 7'), false, 'resolution-only CLI must not claim a mounted pwsh overlay')
 }
 
 await test('ladder --json has a stable shape and lists exactly the rungs the renderer emits', async () => {
@@ -279,7 +258,7 @@ await test('ladder --json has a stable shape and lists exactly the rungs the ren
     assert.equal(run.status, 0, `expected a report, got ${run.status}: ${run.stderr}`)
     const parsed = JSON.parse(run.stdout)
 
-    assert.deepEqual(Object.keys(parsed), ['fastctx', 'shells', 'levels', 'rungs'])
+    assert.deepEqual(Object.keys(parsed), ['fastctx', 'shells', 'levels', 'rungs', 'policy'])
     assert.deepEqual(Object.keys(parsed.fastctx), ['resolved', 'executable', 'source', 'error', 'tried'])
     assert.deepEqual(Object.keys(parsed.shells), ['bash', 'pwsh'])
     for (const kind of ['bash', 'pwsh']) {
@@ -291,7 +270,7 @@ await test('ladder --json has a stable shape and lists exactly the rungs the ren
       )
       assert.equal(typeof parsed.shells[kind].detail, 'string')
     }
-    assert.deepEqual(Object.keys(parsed.levels), ['fastctx', 'bash', 'pwsh'])
+    assert.deepEqual(Object.keys(parsed.levels), ['fastctx', 'run', 'bash', 'pwsh'])
 
     assert.equal(parsed.fastctx.resolved, true)
     assert.equal(parsed.fastctx.executable, runtime, 'the configured path is reported verbatim')
@@ -362,7 +341,7 @@ await test('a shell the deployment does not have is reported as missing, with th
         )
       }
     }
-    assert.equal(parsed.levels.bash, false, 'no bash anywhere means no bash rung')
+    assert.equal(parsed.levels.bash, resolved.bash.available, 'bundled payloads remain available even with an empty system PATH')
     assertLadder(parsed)
   })
 })

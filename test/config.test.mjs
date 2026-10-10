@@ -26,7 +26,7 @@ await test('an absent config resolves to the documented defaults', () => {
     // mounted, so such a key could never reach the host's `pwsh-sandbox` row.
     assert.equal(config.bashPath, undefined)
     assert.equal(config.publishBashTool, true)
-    assert.equal(config.allowSystemShellFallback, true)
+    assert.equal(config.allowSystemShellFallback, false)
   }
 })
 
@@ -43,7 +43,7 @@ await test('an explicit config overrides every default', () => {
     extraGuidance: 'Never touch the vendored tree.',
     bashPath: 'C:\\Program Files\\Git\\bin\\bash.exe',
     publishBashTool: false,
-    allowSystemShellFallback: false,
+    allowSystemShellFallback: true,
   })
   assert.equal(config.binaryPath, 'C:\\tools\\fastctx.exe')
   assert.equal(config.serverName, 'ops-tools')
@@ -56,7 +56,7 @@ await test('an explicit config overrides every default', () => {
   assert.equal(config.extraGuidance, 'Never touch the vendored tree.')
   assert.equal(config.bashPath, 'C:\\Program Files\\Git\\bin\\bash.exe')
   assert.equal(config.publishBashTool, false)
-  assert.equal(config.allowSystemShellFallback, false)
+  assert.equal(config.allowSystemShellFallback, true)
 })
 
 await test('the dropped shell keys stay unknown keys, so a stale config fails loud', () => {

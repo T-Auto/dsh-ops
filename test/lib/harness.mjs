@@ -163,6 +163,6 @@ export function report(label) {
   process.once('beforeExit', () => process.exit(failures === 0 ? 0 : 1))
   REAL_TIMERS.setTimeout(() => {
     console.error(`dsh-ops ${label}: did not terminate after report(); forcing exit (leaked handle?)`)
-    process.exit(failures === 0 ? 0 : 1)
+    process.exit(1)
   }, 5_000).unref?.()
 }
