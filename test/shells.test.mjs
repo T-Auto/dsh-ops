@@ -865,6 +865,19 @@ await test('ops_bash executes a script_path without embedding its contents in ar
   })
 })
 
+await test('ops_bash turns a missing executable into a concise retryable result', async () => {
+  const spawnError = Object.assign(new Error('spawn missing bash'), { code: 'ENOENT' })
+  const service = { spawn() { throw spawnError } }
+  const definition = bashToolDefinition({ file: 'C:\\missing\\bash.exe', source: 'bundled', subprocess: service })
+  const value = await definition.execute({ command: 'echo hi' }, { signal: new AbortController().signal })
+
+  assert.equal(value.error, 'bash executable is unavailable (ENOENT): C:\\missing\\bash.exe. The bundled bash payload may be missing; repair the profile installation and retry.')
+  assert.equal(value.timedOut, false)
+  assert.deepEqual(value.stdout, { text: '', truncated: false })
+  assert.deepEqual(value.stderr, { text: '', truncated: false })
+  assert.match(definition.output.render({}, value)[0].text, /repair the profile installation and retry/)
+})
+
 await test('ops_bash requires exactly one command input', async () => {
   await withTempDir('shells-inputs', async (dir) => {
     const bash = makeExecutable(path.join(dir, 'bash'))

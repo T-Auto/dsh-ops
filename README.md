@@ -47,7 +47,7 @@ dsh plugin --profile dsh-tui add dsh-ops
 
 **更新**：重新运行相同的 `npx --yes dsh-ops@latest install --profile ...`，或用官方 CLI `add dsh-ops@latest`。按应用提示重载；替换已加载代码时重启应用。
 
-当前版本 `0.2.7` 增加了 Issue #7 的长脚本调用稳定性修复：长脚本使用 `script_path`，减少 JSON 转义压力；保留三个独立组件，不含上下文压缩 beta。三个二进制依赖均固定为 `0.2.1`，本次不重新发布 npm 载荷；明确版本映射见 [PROVENANCE.md](PROVENANCE.md)，载荷与 registry 校验和见 [docs/release-0.2.1.md](docs/release-0.2.1.md)。
+当前版本 `0.2.8` 在 0.2.7 长脚本稳定性修复基础上，增加随包 bash 载荷缺失时的可读 `ENOENT` 诊断，不会静默切换到未授权系统 bash。Electron `workspace-write` 下的 `0xC0000142` 属于 DSH 宿主 Windows ACL runner 问题，不由本插件的 subprocess API 控制；本版本不宣称修复该宿主问题。三个二进制依赖均固定为 `0.2.1`，本次不重新发布 npm 载荷。
 
 **卸载与查看状态**：
 
@@ -120,6 +120,8 @@ config:
 ## 长脚本与 JSON 稳定性
 
 `ops_bash` 的 `command` 适合短命令和短管道。对于超过约 1 KB，或包含 heredoc、引号、反斜杠、中文等内容的多行脚本，请先用宿主的文件工具写入脚本文件，再传入 `script_path` 执行；不要把整段 heredoc 塞进 `command`。这样可以显著减少模型在工具调用 JSON 中进行多层转义的负担，降低整轮因 `MALFORMED_RESPONSE` 作废的概率。
+
+当随包 bash 载荷在 profile 的声明/lockfile 中存在、但实际 `node_modules` 已被宿主包管理器清理时，`ops_bash` 会返回可读的 `ENOENT` 诊断，而不是把裸的 `spawn` 异常抛给模型。此时应使用 profile 的 frozen install 或官方插件管理器恢复依赖；不会静默切换到未授权的系统 bash。
 
 `script_path` 只接收脚本路径，脚本内容不会重复进入 `ops_bash` 的工具参数；`command` 与 `script_path` 必须二选一。该接口不会替模型修复非法 JSON，工具调用本身若未能解析，仍需由宿主或模型重试。
 

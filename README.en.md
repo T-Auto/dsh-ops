@@ -45,7 +45,7 @@ The ordinary DSH CLI cannot manage the reserved `desktop` profile; do not confus
 
 **Update**: repeat the same `npx --yes dsh-ops@latest install --profile ...` command, or use the official CLI's `add dsh-ops@latest`. Reload as requested by the application; restart it when replacing already-loaded code.
 
-The current version, `0.2.7`, adds the Issue #7 long-script tool-call stability fix: use `script_path` for long scripts to reduce JSON escaping pressure. It retains three independent components and no context-compaction beta. All three binary dependencies remain pinned to `0.2.1`; this release does not republish npm payloads. See [PROVENANCE.md](PROVENANCE.md) for the explicit version mapping and [docs/release-0.2.1.md](docs/release-0.2.1.md) for payload and registry checksums.
+The current version, `0.2.8`, builds on the 0.2.7 long-script stability fix and adds a readable `ENOENT` diagnostic when the bundled bash payload is missing. It does not silently switch to an unauthorized system bash. The Electron `workspace-write` `0xC0000142` failure belongs to the DSH host's Windows ACL runner and is outside this plugin's subprocess API; this release does not claim to repair that host issue. All three binary dependencies remain pinned to `0.2.1`, and npm payloads are not republished.
 
 **Remove and check status**:
 
@@ -118,6 +118,8 @@ config:
 ## Long scripts and JSON stability
 
 Use `command` for short commands and pipelines. For scripts longer than about 1 KB, or containing heredocs, quotes, backslashes or non-ASCII text, write the script with the host file tools first, then execute it with `script_path`; do not put the entire heredoc in `command`. This substantially reduces multi-layer escaping in tool-call JSON and lowers the chance that a turn is discarded as `MALFORMED_RESPONSE`.
+
+When the bundled bash payload remains declared in the profile lockfile but its package directory has been removed by the host package manager, `ops_bash` returns a readable `ENOENT` diagnostic instead of exposing a raw `spawn` exception to the model. Restore the dependency with the profile's frozen install or official plugin manager; it does not silently switch to an unauthorized system bash.
 
 `script_path` accepts only the script path, so the script body is not repeated in the `ops_bash` arguments. `command` and `script_path` are mutually exclusive and exactly one is required. This interface cannot repair JSON that the model or host failed to parse; an unparseable tool call still requires a host/model retry.
 
