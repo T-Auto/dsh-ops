@@ -3,19 +3,42 @@
 What this repository is, where its parts came from, what was verified, and what
 was not.
 
+## 0.2.6 Owned client lifecycle
+
+Issue #1's latest controlled reproduction corrects the early orphan hypothesis:
+`runtime-host` is a deliberately detached per-user singleton reused by clients;
+its normal idle timeout is ten minutes. A dead-parent PID alone does not prove
+it leaked. Leaked `serve` clients keep it active, so this release targets only
+clients the plugin owns, not shared runtime-host or durable job supervisors.
+
+`lib/handshake.js` tracks exact clients for Node's synchronous exit hook, forces
+`FASTCTX_NO_PARENT_WATCH=0` on spawned proxies, rejects pending requests on close,
+shares one closing promise, closes lost reply transports, and bounds shutdown
+escalation. The existing Rust watcher checks PID plus process creation identity
+(`src/process_identity.rs:251`, `src/runtime/session.rs:477`); no Rust files or
+0.2.1 payloads were changed. Shared client leases still close only at zero owners.
+Existing clients launched by older versions are not automatically swept or adopted.
+
+Windows x64 / Node 24.18.0 acceptance against the published FastCtx payload:
+50 manifest checks, 9 suites, 132 checks, no skips. The lifecycle suite covers
+pending-call cancellation, concurrent close, reply EOF, real stdin EOF, final
+lease release, repeated explicit owner exit and forced owner termination with
+an inherited no-parent-watch escape hatch. This is isolated process evidence,
+not a claim of completed desktop/web upgrade or a ten-minute idle timing test.
+
 ## 0.2.5 Stable safety and verification
 
-The stable main package is `dsh-ops@0.2.5`; it deliberately excludes the
+The stable main package is `dsh-ops@0.2.6`; it deliberately excludes the
 context-compaction beta branch. Main-package patches and runtime payloads have
 independent versions. The exact dependency mapping is:
 
 | Main package | Payload dependency (unchanged) | Upstream runtime |
 | --- | --- | --- |
-| `dsh-ops@0.2.5` | `@dsh-ops/fastctx-win32-x64@0.2.1` | FastCtx 0.2.6, upstream revision `ccaa157790d02328a60786eb94ee5ad698995a5f`; built from `dd348254281bf5eea6c4d9d07c49d82c565666f4` |
-| `dsh-ops@0.2.5` | `@dsh-ops/bash-win32-x64@0.2.1` | PortableGit `v2.56.0.windows.2` (2.56.0.2), bash 5.3.15 |
-| `dsh-ops@0.2.5` | `@dsh-ops/pwsh-win32-x64@0.2.1` | PowerShell 7.6.6 |
+| `dsh-ops@0.2.6` | `@dsh-ops/fastctx-win32-x64@0.2.1` | FastCtx 0.2.6, upstream revision `ccaa157790d02328a60786eb94ee5ad698995a5f`; built from `dd348254281bf5eea6c4d9d07c49d82c565666f4` |
+| `dsh-ops@0.2.6` | `@dsh-ops/bash-win32-x64@0.2.1` | PortableGit `v2.56.0.windows.2` (2.56.0.2), bash 5.3.15 |
+| `dsh-ops@0.2.6` | `@dsh-ops/pwsh-win32-x64@0.2.1` | PowerShell 7.6.6 |
 
-The same payload mapping applies to main-package versions 0.2.2–0.2.4.
+The same payload mapping applies to main-package versions 0.2.2–0.2.5.
 Each payload includes `provenance.json` with its executable SHA-256 and upstream
 identity; published tarball checksums are in [docs/release-0.2.1.md](docs/release-0.2.1.md).
 No payload was rebuilt for 0.2.5. GitHub v0.2.1/0.2.3/0.2.4 Releases are notes-only;
@@ -38,7 +61,7 @@ Loader APIs were read at `vendor/loader/src/config/entry.ts:116`,
 `vendor/include/src/index.ts:365` in DSH 0.2.0-rc.2; tests cover raw-node preservation,
 per-row markers, retries, cancellation and real Cordis remount/publication.
 
-Current automated acceptance on Windows x64 / Node 24.18.0 uses
+The 0.2.5 automated acceptance on Windows x64 / Node 24.18.0 used
 `DSH_OPS_REQUIRE_RUNTIME=1 npm run verify`: 50 manifest checks, 8 suites,
 125 checks, no skips. Integration covers real registry scopes, file calls/error
 results, component prompt/unload, dynamic session command authority, inherited

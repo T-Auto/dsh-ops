@@ -45,7 +45,7 @@ dsh plugin --profile dsh-tui add dsh-ops
 
 **更新**：重新运行相同的 `npx --yes dsh-ops@latest install --profile ...`，或用官方 CLI `add dsh-ops@latest`。按应用提示重载；替换已加载代码时重启应用。
 
-当前版本 `0.2.5` 是稳定安全修复版，保留三个独立组件，不含上下文压缩 beta。三个二进制依赖均固定为 `0.2.1`，无需随主包重复发版；明确版本映射见 [PROVENANCE.md](PROVENANCE.md)，载荷与 registry 校验和见 [docs/release-0.2.1.md](docs/release-0.2.1.md)。
+当前版本 `0.2.6` 包含稳定安全修复和 FastCtx 客户端退出回收修复，保留三个独立组件，不含上下文压缩 beta。三个二进制依赖均固定为 `0.2.1`，无需随主包重复发版；明确版本映射见 [PROVENANCE.md](PROVENANCE.md)，载荷与 registry 校验和见 [docs/release-0.2.1.md](docs/release-0.2.1.md)。
 
 **卸载与查看状态**：
 
@@ -114,6 +114,10 @@ config:
 | 宿主 `pwsh` | 使用随包 PowerShell 7 的 Windows 原生操作 | 沿用宿主策略 |
 
 ¹ **文件工具不是宿主文件系统沙箱。** 它们未接入 DSH 的受限文件后端，尤其 `ops_replace` 没有 workspace confinement。不要把该插件提供的部分工具视为不可信受任限环境的安全方案。
+
+## 进程回收
+
+插件只回收自己启动的 `fastctx serve` 客户端：组件最后一个连接引用释放、连接关闭、宿主正常退出或强制退出时均有回收路径。`runtime-host` 是上游可复用的共享进程，父进程已退出不等于泄漏；无客户端且空闲约十分钟后自行退出。不要按进程名批量杀它。新版不自动清理旧版本已留下的进程。
 
 ## 更新配置修改区
 
