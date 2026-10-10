@@ -5,6 +5,16 @@ All notable changes to this package are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Unknown-argument guard for `ops_bash`
+
+Issue #10: `ops_bash` declared `additionalProperties: false` but never enforced it. Arguments reached `execute` verbatim and reading the known fields with `args?.name` dropped an undeclared key in silence, so the call reported success while ignoring what the caller asked for.
+
+- Refuse any argument the `ops_bash` schema does not declare, naming the unknown keys and the accepted ones. The guard runs before the spawn, so nothing is started.
+- Name `run_in_background` in the tool description as unsupported, and point at the host `pwsh` tool's own `run_in_background` for long-lived processes. This is the key that matters: the host's `bash` and `pwsh` tools both accept it, so a model that expects a job id previously got a foreground call occupying the whole `timeoutMs` (up to `MAX_BASH_TIMEOUT_MS`) instead.
+- Pin the enforced argument list against `parameters.properties` so the two cannot drift apart.
+
+Why a runtime guard and not only prompt guidance: 0.2.3 added `ops_* arguments are strict: pass only declared fields.` to the routing section, and the model that hit this still passed `run_in_background` — the reminder was present in that session's prompt. The prompt stays, but it cannot be the only line of defence.
+
 ## [0.2.6] — Owned MCP client lifecycle
 
 - Track only plugin-owned MCP clients and terminate their exact serve processes on explicit Node process exit; never enumerate or kill shared runtime-host processes.

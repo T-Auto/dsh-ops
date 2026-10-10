@@ -22,6 +22,7 @@ import { mountBundledPwsh } from '../lib/session-pwsh.js'
 import { parseDocument } from 'yaml'
 import { resolveConfig } from '../lib/config.js'
 import {
+  BASH_ARGUMENTS,
   BASH_TOOL_NAME,
   DEFAULT_BASH_TIMEOUT_MS,
   ENV_OVERRIDES,
@@ -30,6 +31,7 @@ import {
   PWSH_LAYOUT_ORDER,
   SHELL_UPSTREAM_PINS,
   bashToolDefinition,
+  bashToolDescription,
   bundledShell,
   bundledShellPath,
   provisionedShell,
@@ -909,6 +911,86 @@ await test('ops_bash rejects a missing command and a bad timeout before spawning
     await assert.rejects(() => definition.execute({ command: 'ls', graceMs: -1 }, exec), /invalid graceMs/)
     assert.equal(specs.length, 0)
   })
+})
+
+await test('ops_bash refuses an argument its schema does not declare', async () => {
+  // The host validates a `defineTool` body's arguments before it runs, but
+  // `ctx.tools.register` — the path this plugin uses to avoid an
+  // `@deepseek-ai/*` value import — validates only `output.schema`. Arguments
+  // therefore reach `execute` verbatim, and reading known fields with `args?.x`
+  // drops an undeclared key silently. `run_in_background` is the case that
+  // hurts: the host's own bash/pwsh tools accept it, so a model that expects a
+  // job id gets a foreground call that occupies the whole `timeoutMs`.
+  await withTempDir('shells-unknown-args', async (dir) => {
+    const bash = makeExecutable(path.join(dir, 'bash'))
+    const { service, specs, settle } = fakeSubprocess()
+    // Settle up front: if the guard were missing, the call would otherwise hang
+    // on this fake forever and the suite would die of an unsettled await instead
+    // of reporting which assertion failed.
+    settle()
+    const definition = bashToolDefinition({ file: bash, source: 'config', subprocess: service })
+    const exec = { signal: new AbortController().signal }
+
+    await assert.rejects(
+      () => definition.execute({ command: 'node server.js', run_in_background: true }, exec),
+      /unknown key "run_in_background"/,
+    )
+    // The refusal names what IS accepted, so a retry does not need a second guess.
+    await assert.rejects(
+      () => definition.execute({ command: 'ls', run_in_background: true }, exec),
+      new RegExp(BASH_ARGUMENTS.join(', ')),
+    )
+    // Several unknown keys are reported together, in argument order.
+    await assert.rejects(
+      () => definition.execute({ command: 'ls', bogus: 1, other: 2 }, exec),
+      /unknown keys "bogus", "other"/,
+    )
+    // A non-object body is refused for the same reason, not coerced.
+    await assert.rejects(() => definition.execute([], exec), /expected an object/)
+    // Nothing reached the subprocess service: the guard runs before the spawn.
+    assert.equal(specs.length, 0)
+
+    // Every declared argument still passes, and each reaches the spawn spec.
+    const { service: ok, specs: okSpecs, settle: settleOk } = fakeSubprocess({ stdout: 'ok\n' })
+    const passing = bashToolDefinition({ file: bash, source: 'config', subprocess: ok })
+    const running = passing.execute(
+      { command: 'echo hi', workdir: dir, timeoutMs: 5_000, graceMs: 250 },
+      { signal: new AbortController().signal },
+    )
+    settleOk()
+    await running
+    assert.equal(okSpecs.length, 1)
+    assert.equal(okSpecs[0].cwd, dir)
+    assert.equal(okSpecs[0].graceMs, 250)
+  })
+})
+
+await test('the ops_bash argument guard and its schema cannot drift apart', async () => {
+  // `BASH_ARGUMENTS` is what `execute` enforces; `parameters.properties` is what
+  // the model is told. A name in one but not the other would either refuse a
+  // documented argument or silently accept an undeclared one.
+  await withTempDir('shells-args-drift', async (dir) => {
+    const bash = makeExecutable(path.join(dir, 'bash'))
+    const { service } = fakeSubprocess()
+    const definition = bashToolDefinition({ file: bash, source: 'config', subprocess: service })
+
+    assert.deepEqual(Object.keys(definition.parameters.properties), [...BASH_ARGUMENTS])
+    assert.equal(definition.parameters.additionalProperties, false)
+    // Neither input is `required`: exactly one of command/script_path must be
+    // present, which a JSON Schema `required` list cannot express. The guard
+    // deliberately does not add a required-check the schema does not state.
+    assert.equal(Object.hasOwn(definition.parameters, 'required'), false)
+  })
+})
+
+await test('the ops_bash description says the tool has no background mode', async () => {
+  // The prompt is the reliable correction channel: a model that has learned
+  // "shell tools can run in the background" from the host's pwsh tool must be
+  // told otherwise where it will read it.
+  const description = bashToolDescription()
+  assert.match(description, /Foreground only/)
+  assert.match(description, /no run_in_background/)
+  assert.match(description, /pwsh/)
 })
 
 // A definition whose subprocess service is missing cannot exist in a real
