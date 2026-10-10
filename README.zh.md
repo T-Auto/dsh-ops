@@ -123,6 +123,8 @@ config:
 
 `script_path` 只接收脚本路径，脚本内容不会重复进入 `ops_bash` 的工具参数；`command` 与 `script_path` 必须二选一。该接口不会替模型修复非法 JSON，工具调用本身若未能解析，仍需由宿主或模型重试。
 
+`ops_bash` 的参数是**严格**的：传入 schema 未声明的键会在执行前被拒绝，错误信息同时点出未知键与可接受的键，不会静默忽略。**本工具没有 `run_in_background`，也没有 job id**，命令一律前台执行。宿主 `bash` / `pwsh` 工具接受 `run_in_background`，因此模型容易把该参数套到 `ops_bash` 上；这样调用会被明确拒绝而不是静默当前台执行。服务、监听器、watch 等常驻进程请改用宿主 `pwsh` 工具的 `run_in_background`，或在命令内部自行脱离（例如 `nohup ... & disown`）。否则该次调用会一直占用到 `timeoutMs`（上限 `MAX_BASH_TIMEOUT_MS`，约 24.9 天）。
+
 
 插件只回收自己启动的 `fastctx serve` 客户端：组件最后一个连接引用释放、连接关闭、宿主正常退出或强制退出时均有回收路径。`runtime-host` 是上游可复用的共享进程，父进程已退出不等于泄漏；无客户端且空闲约十分钟后自行退出。不要按进程名批量杀它。新版不自动清理旧版本已留下的进程。
 
