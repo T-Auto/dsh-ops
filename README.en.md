@@ -86,6 +86,8 @@ config:
   required: false
   shellPolicy: advise
   allowSystemShellFallback: false
+  # Managed update metadata; do not remove after the first startup self-check
+  # configUpdateVersion: 1
   # binaryPath: 'C:\tools\fastctx.exe'
   # bashPath: 'C:\tools\bash.exe'
 ```
@@ -96,7 +98,7 @@ config:
 - `toolCallTimeoutMs`: FastCtx RPC wait timeout; it does not mean server-side work has terminated.
 - `required`: whether to reject activation when the runtime is unavailable.
 - `shellPolicy`: defaults to `advise`; `deny-host-shell` rejects host shells in `deniedHostTools` (default `[pwsh, bash, pwsh_persistent]`). This also disables third-layer pwsh; enable cautiously.
-- `allowSystemShellFallback`: defaults to `false`. Without a bundled/provisioned bash, do not discover system PATH or well-known installations; background commands cannot bypass this through FastCtx discovery either. Explicit `true` opts into an unpinned system bash that the operator must trust and maintain. Explicit `bashPath` is a separate operator selection, not an automatic fallback. Updates do not overwrite an existing explicit `true`; change it to `false` manually.
+- `allowSystemShellFallback`: defaults to `false`. Without a bundled/provisioned bash, do not discover system PATH or well-known installations; background commands cannot bypass this through FastCtx discovery either. Explicit `true` opts into an unpinned system bash that the operator must trust and maintain. Explicit `bashPath` is a separate operator selection, not an automatic fallback. See the update configuration modification area below for the first-start migration.
 - `shellPolicy` is independent: `deny-host-shell` masks/refuses host tools; disabling fallback constrains the plugin's bash resolver, not the host's own `pwsh`, and is not a filesystem sandbox.
 - `binaryPath` / `bashPath`: optional explicit paths; unavailable paths cause an error rather than silently switching executors. Usually no configuration is needed.
 
@@ -112,6 +114,15 @@ config:
 | Host `pwsh` | Windows-native operations using bundled PowerShell 7 | Host policy |
 
 ¹ **File tools are not the host filesystem sandbox.** They do not use DSH's restricted file backend; in particular, `ops_replace` has no workspace confinement. Do not treat the tools provided by this plugin as a security solution for untrusted restricted environments.
+
+## Update configuration modification area
+
+`lib/config-updates.js` centralizes one-time config migrations. On first startup with 0.2.5, each owning component row runs a self-check:
+
+- With no `configUpdateVersion` (or `0`), change legacy `allowSystemShellFallback: true` to `false` before resolving executors or publishing tools.
+- Submit the raw owning row through the official loader lifecycle with `configUpdateVersion: 1`. Preserve other fields; never change foreign plugins, PATH or global config. Disabled components migrate when first started.
+- After completion, restarts/hot reload do not overwrite a later manual `true`. Do not remove the marker unless you intend to repeat the self-check.
+- Without an owning loader row, apply the safe value for this activation and warn. Migration/loader logs report write failures; a marker not persisted to disk cannot guarantee once-only behavior across restarts.
 
 ## License
 

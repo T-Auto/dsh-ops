@@ -28,11 +28,19 @@ disabled sentinel when none exists; background commands are not published in the
 latter case. Shared runtime identity includes the executor choice. Explicit
 `bashPath`, legacy provisioned copies and packaged payloads remain operator-controlled
 inputs; this does not make host shell tools or file tools a sandbox.
-Existing profiles with explicit `true` require manual config adjustment.
+On first activation, `lib/config-updates.js` disables legacy explicit `true`
+before resolution and submits the owning raw loader row for persistence with
+`configUpdateVersion: 1`. Subsequent manual opt-ins are retained. Disabled rows
+migrate when activated; no-loader mounts warn and use the safe value in memory.
+Include.write schedules asynchronous IO, so later disk failures are reported by
+the loader rather than claimed as confirmed persistence by the plugin.
+Loader APIs were read at `vendor/loader/src/config/entry.ts:116`,
+`vendor/include/src/index.ts:365` in DSH 0.2.0-rc.2; tests cover raw-node preservation,
+per-row markers, retries, cancellation and real Cordis remount/publication.
 
 Current automated acceptance on Windows x64 / Node 24.18.0 uses
-`DSH_OPS_REQUIRE_RUNTIME=1 npm run verify`: 50 manifest checks, 7 suites,
-116 checks, no skips. Integration covers real registry scopes, file calls/error
+`DSH_OPS_REQUIRE_RUNTIME=1 npm run verify`: 50 manifest checks, 8 suites,
+125 checks, no skips. Integration covers real registry scopes, file calls/error
 results, component prompt/unload, dynamic session command authority, inherited
 restrictions, shared leases and reconnect. The packaged 0.2.1 FastCtx executable
 is used for final release acceptance. No live desktop upgrade or model request

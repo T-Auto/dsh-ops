@@ -86,6 +86,8 @@ config:
   required: false
   shellPolicy: advise
   allowSystemShellFallback: false
+  # Managed update metadata; do not remove after the first startup self-check
+  # configUpdateVersion: 1
   # binaryPath: 'C:\tools\fastctx.exe'
   # bashPath: 'C:\tools\bash.exe'
 ```
@@ -96,7 +98,7 @@ config:
 - `toolCallTimeoutMs`：FastCtx RPC 等待超时，不代表服务端工作已终止。
 - `required`：运行时不可用时是否拒绝激活。
 - `shellPolicy`：默认 `advise`；`deny-host-shell` 拒绝 `deniedHostTools` 列表中的宿主 shell（默认 `[pwsh, bash, pwsh_persistent]`）。这也会禁用第三层 pwsh，谨慎开启。
-- `allowSystemShellFallback`：默认 `false`，随包/已 provision 的 bash 缺失时不探测系统 PATH 或常见安装目录；后台组件也不绕过此选择调用 FastCtx 的自动探测。只有显式设 `true` 才使用未固定摘要的系统 bash，请自行信任与维护该执行器。显式 `bashPath` 是另一种操作者选择，并非自动回退。升级不会覆盖已有配置中显式的 `true`，请手动改为 `false`。
+- `allowSystemShellFallback`：默认 `false`，随包/已 provision 的 bash 缺失时不探测系统 PATH 或常见安装目录；后台组件也不绕过此选择调用 FastCtx 的自动探测。只有显式设 `true` 才使用未固定摘要的系统 bash，请自行信任与维护该执行器。显式 `bashPath` 是另一种操作者选择，并非自动回退。首次升级启动的迁移见下方“更新配置修改区”。
 - `shellPolicy` 与此开关独立：`deny-host-shell` 遮蔽/拒绝宿主工具；禁止系统回退只约束插件自己的 bash 解析，不关闭宿主 `pwsh`，也不提供文件系统沙箱。
 - `binaryPath` / `bashPath`：可选显式路径；不可用时报错，不悄悄换执行器。一般无需配置。
 
@@ -112,6 +114,15 @@ config:
 | 宿主 `pwsh` | 使用随包 PowerShell 7 的 Windows 原生操作 | 沿用宿主策略 |
 
 ¹ **文件工具不是宿主文件系统沙箱。** 它们未接入 DSH 的受限文件后端，尤其 `ops_replace` 没有 workspace confinement。不要把该插件提供的部分工具视为不可信受任限环境的安全方案。
+
+## 更新配置修改区
+
+`lib/config-updates.js` 集中维护一次性配置迁移。0.2.5 首次启动时逐个自有配置行执行自检：
+
+- 未完成迁移（无 `configUpdateVersion` 或值为 `0`）：把旧 `allowSystemShellFallback: true` 改为 `false`，在任何执行器解析/工具发布前生效。
+- 通过官方 loader 的配置生命周期写回该行，并加入 `configUpdateVersion: 1`；保留其它字段，不修改外来插件、PATH 或全局配置。未启用的组件在它首次启动时迁移。
+- 完成后重启/热加载不再覆盖；你之后主动改回 `true` 会被保留。不要删除迁移标记，否则会重新自检。
+- 没有 loader 配置行时只应用本次运行的安全值并告警；写入失败由迁移/loader 日志报告，未落盘的标记不能保证跨重启一次性。
 
 ## 许可证
 
