@@ -50,12 +50,27 @@ async function agent(ctx, id, mode = 'danger-full-access', parent, header = { cw
 async function callWithAgent(ctx, name, args, currentAgent) {
   // `callTool` in test/lib/host.mjs sends no agent, and this task does not own
   // that file; this is the same call the loop makes, with the session attached.
-  const definition = ctx.get('tools').get(name)
+  // The lookup resolves through that session's own scope chain, because the
+  // command tools are published per session rather than into the root registry.
+  const definition = ctx.get('tools').get(name, currentAgent)
   if (definition === undefined) throw new Error(`tool "${name}" is not registered`)
   const exec = { callId: 'test', name, arguments: args, signal: new AbortController().signal, agent: currentAgent }
   const value = await definition.execute(args, exec)
   const content = definition.output.render(args, value)
   return { value, content, text: content.filter((block) => block.type === 'text').map((block) => block.text).join('\n') }
+}
+/**
+ * The job's own output, without the server's trailing status decoration.
+ *
+ * `job_output` appends a `(Complete: job j-xxxxxx exited 0; …)` line that names
+ * the job, so two runs of the same command can never be compared verbatim until
+ * it is removed. The command's output is what a caller reads as the job's
+ * effect, so that is what a reading comparison compares.
+ * @param {string} text - the rendered `job_output` text.
+ * @returns {string} the job's output alone.
+ */
+function jobPayload(text) {
+  return text.replace(/\s*\((?:Complete|Partial|Killed):[^)]*\)\s*$/, '').trim()
 }
 async function sections(ctx, currentAgent) { return renderSections(ctx, currentAgent) }
 async function visible(ctx, currentAgent, expected) {
@@ -203,6 +218,33 @@ await test('an omitted path without a session working directory fails, not an em
     })
   } finally { await shutdown(ctx) }
 })
+await test('a non-string or blank session root fails an omitted path, and never becomes that path', async () => {
+  const { ctx } = await bootHost()
+  try {
+    await fileMount(ctx)
+    // Only a usable string root may be substituted for an omitted path. A
+    // number, an empty string and an all-whitespace string all reach the same
+    // fail-closed branch: the caller is told the cause and both ways out, and
+    // the unusable value is never forwarded to FastCtx as the argument.
+    const unusable = [['a numeric cwd', { cwd: 42 }], ['an empty cwd', { cwd: '' }],
+      ['a blank cwd', { cwd: '   ' }], ['a null cwd', { cwd: null }]]
+    for (const [index, [label, header]] of unusable.entries()) {
+      const session = await agent(ctx, `unusable-root-${index}`, 'danger-full-access', undefined, header)
+      for (const [rawName, args] of [['glob', { pattern: ['**/*'] }], ['grep', { pattern: 'anything' }]]) {
+        await assert.rejects(
+          () => callWithAgent(ctx, publicToolName(rawName), args, session),
+          (error) => {
+            assert.match(error.message, /cannot resolve an omitted path/, `${label}: ${rawName} must fail closed`)
+            assert.match(error.message, /no working directory/, `${label}: ${rawName} must name the cause`)
+            assert.match(error.message, /Pass path explicitly/, `${label}: ${rawName} must offer the first next step`)
+            assert.match(error.message, /fileToolRoot/, `${label}: ${rawName} must offer the second next step`)
+            return true
+          },
+        )
+      }
+    }
+  } finally { await shutdown(ctx) }
+})
 await test('the file component renders its live tools and retires both legacy sections', async () => {
   const { ctx } = await bootHost()
   try {
@@ -318,6 +360,41 @@ await test('file/background share runtime, but command tools never leak into glo
     await background.dispose()
     assert.equal(jobs.some(name => scopedToolNames(ctx, full).includes(name)), false)
     assert.equal((await sections(ctx, full)).has(BG_SECTION), false)
+  } finally { await shutdown(ctx) }
+})
+await test('an omitted run_background cwd starts the job in the calling session working directory', async () => {
+  const { ctx } = await bootHost()
+  try {
+    await executor(ctx)
+    await fileMount(ctx)
+    // Each reading waits for its job to finish inside the per-call deadline, so
+    // that deadline has to outlast the wait below.
+    const background = await component(ctx, 'background', { toolCallTimeoutMs: 15_000 })
+    const full = await agent(ctx, 'background-cwd-full')
+    const jobs = BACKGROUND_TOOLS.map(publicToolName)
+    await visible(ctx, full, jobs)
+    await withTempDir('background-cwd', async dir => {
+      const session = await agent(ctx, 'background-cwd', 'danger-full-access', full, { cwd: dir })
+      await waitFor(() => jobs.every(name => scopedToolNames(ctx, session).includes(name)),
+        { timeoutMs: 5000, what: 'the session command tools' })
+      // `pwd` is short-lived and prints its own working directory, so the
+      // reading is a pure function of the directory the job started in — the
+      // same command makes the two directories comparable without naming them.
+      const reading = async (args) => {
+        const started = await callWithAgent(ctx, publicToolName('run_background'), args, session)
+        const id = /job (j-[a-z0-9]{6}) started/.exec(started.text)?.[1]
+        assert.ok(id, `run_background must return a job ID, got: ${started.text}`)
+        const output = await callWithAgent(ctx, publicToolName('job_output'), { job_id: id, wait_ms: 15000 }, session)
+        return jobPayload(output.text)
+      }
+      const omitted = await reading({ command: 'pwd' })
+      const explicit = await reading({ command: 'pwd', cwd: dir })
+      // The contract lib/presentation.js states for an omitted `cwd`: it means
+      // the calling session's working directory, not FastCtx's own.
+      assert.equal(omitted, explicit, 'an omitted cwd must read exactly like the session working directory')
+      const processRoot = await reading({ command: 'pwd', cwd: process.cwd() })
+      assert.notEqual(omitted, processRoot, 'an omitted cwd must not fall back to the FastCtx process directory')
+    })
   } finally { await shutdown(ctx) }
 })
 await test('a dead server withdraws and republishes real file tools', async () => {
