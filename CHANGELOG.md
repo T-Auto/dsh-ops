@@ -5,6 +5,24 @@ All notable changes to this package are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Add the `fileToolRoot` configuration key for the file component: `'session'` (default) or `'process'`. When `ops_glob` / `ops_grep` omit `path` (or pass `null`, which FastCtx treats as omitted), `'session'` resolves the root from the calling session's working directory, and `'process'` resolves the FastCtx process directory. An unavailable session directory is an error naming the cause and both ways out, not an empty result set. The key has a code default only and is not written into `cordis.patch.yml`.
+
+### Changed
+
+- An omitted file-tool `path` now really means the calling session's working directory instead of the dsh host process cwd. The previous reading, `(Complete: no files matched.)`, looked like a finished search with no matches while the wrong root had been searched, so callers could conclude that a file does not exist. Set `fileToolRoot: 'process'` for a byte-for-byte rollback. The key governs `ops_glob` / `ops_grep` only; `ops_run_background`'s `cwd` and `ops_bash`'s `workdir` are unaffected.
+
+### Fixed
+
+- Correct two parameter descriptions: the `path` shared by `ops_glob` / `ops_grep` / `ops_replace` no longer claims a "connection directory" and now names the calling session plus the `fileToolRoot` fallback, and `ops_run_background`'s `cwd` no longer says an omitted value is something other than the calling session.
+
+### Measurement and validation
+
+- The parameter-description text changed; re-measure `docs/schema-current.json` with `scripts/measure-schemas.mjs`.
+
 ## 0.2.9 — Bug fixes
 
 Bug-fix-only release for issues reported against 0.2.8 and the 0.2.6/DSH 0.2.0-rc.2 combination:

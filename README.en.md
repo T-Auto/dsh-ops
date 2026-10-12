@@ -86,6 +86,8 @@ config:
   required: false
   shellPolicy: advise
   allowSystemShellFallback: false
+  # dsh-ops/file component: root for an omitted ops_glob/ops_grep `path`
+  fileToolRoot: session
   # Managed update metadata; do not remove after the first startup self-check
   # configUpdateVersion: 1
   # binaryPath: 'C:\tools\fastctx.exe'
@@ -101,6 +103,9 @@ config:
 - `allowSystemShellFallback`: defaults to `false`. Without a bundled/provisioned bash, do not discover system PATH or well-known installations; background commands cannot bypass this through FastCtx discovery either. Explicit `true` opts into an unpinned system bash that the operator must trust and maintain. Explicit `bashPath` is a separate operator selection, not an automatic fallback. See the update configuration modification area below for the first-start migration.
 - `shellPolicy` is independent: `deny-host-shell` masks/refuses host tools; disabling fallback constrains the plugin's bash resolver, not the host's own `pwsh`, and is not a filesystem sandbox.
 - `binaryPath` / `bashPath`: optional explicit paths; unavailable paths cause an error rather than silently switching executors. Usually no configuration is needed.
+- `fileToolRoot`: file component only; defaults to `session`. When `ops_glob` / `ops_grep` omit `path` (or pass `null`, which FastCtx treats as omitted), `session` resolves the calling session's working directory (an unavailable directory errors with the cause and both ways out instead of returning an empty set) and `process` resolves the FastCtx process directory. This is a **behaviour change**: an omitted `path` now really means the calling session's workspace rather than the dsh host process cwd, whose `(Complete: no files matched.)` reading looked like a finished empty search while the wrong root had been searched; set `fileToolRoot: 'process'` for a byte-for-byte rollback.
+- `fileToolRoot` governs the omitted root of those two file-search tools only: `ops_run_background`'s `cwd` (always injected with the calling session's working directory) and `ops_bash`'s `workdir` keep their own defaults, and `ops_replace` requires `path`, so it has no omitted case.
+- `fileToolRoot` has a code default only, like `deniedHostTools` / `bashPath` / `serverName`, and is **not written into the `cordis.patch.yml` mount declaration**; do not look for it there.
 
 | Tool | Purpose | Full-access requirement |
 | --- | --- | --- |

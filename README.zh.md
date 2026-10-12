@@ -86,6 +86,8 @@ config:
   required: false
   shellPolicy: advise
   allowSystemShellFallback: false
+  # dsh-ops/file component: root for an omitted ops_glob/ops_grep `path`
+  fileToolRoot: session
   # Managed update metadata; do not remove after the first startup self-check
   # configUpdateVersion: 1
   # binaryPath: 'C:\tools\fastctx.exe'
@@ -101,6 +103,9 @@ config:
 - `allowSystemShellFallback`：默认 `false`，随包/已 provision 的 bash 缺失时不探测系统 PATH 或常见安装目录；后台组件也不绕过此选择调用 FastCtx 的自动探测。只有显式设 `true` 才使用未固定摘要的系统 bash，请自行信任与维护该执行器。显式 `bashPath` 是另一种操作者选择，并非自动回退。首次升级启动的迁移见下方“更新配置修改区”。
 - `shellPolicy` 与此开关独立：`deny-host-shell` 遮蔽/拒绝宿主工具；禁止系统回退只约束插件自己的 bash 解析，不关闭宿主 `pwsh`，也不提供文件系统沙箱。
 - `binaryPath` / `bashPath`：可选显式路径；不可用时报错，不悄悄换执行器。一般无需配置。
+- `fileToolRoot`：文件组件专用，默认 `session`；`ops_glob` / `ops_grep` 省略 `path`（或传 `null`，FastCtx 视同省略）时，`session` 解析为调用会话的工作目录（不可得时点名成因并给出两条出路后报错，不返回空集），`process` 解析为 FastCtx 服务进程的 cwd。这是**行为变更**：省略 `path` 现在真的等于调用会话工作区，此前落在 dsh 宿主进程 cwd，旧读数 `(Complete: no files matched.)` 读起来像“搜完了确实没有”，实际是搜错了根；需要逐字节回退时显式设 `fileToolRoot: 'process'`。
+- `fileToolRoot` 只约束这两个文件检索工具的省略根：`ops_run_background` 的 `cwd`（一直注入调用会话工作目录）与 `ops_bash` 的 `workdir` 有各自的默认值，不受该键影响；`ops_replace` 的 `path` 必填，没有省略情形。
+- `fileToolRoot` 只有代码内置默认值，与 `deniedHostTools` / `bashPath` / `serverName` 同类，**不写进 `cordis.patch.yml` 的挂载声明**，别去挂载声明里找它。
 
 | 工具 | 用途 | 完全权限要求 |
 | --- | --- | --- |
