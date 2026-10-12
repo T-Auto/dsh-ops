@@ -65,11 +65,12 @@ async function callWithAgent(ctx, name, args, currentAgent) {
  * `job_output` appends a `(Complete: job j-xxxxxx exited 0; …)` line that names
  * the job, so two runs of the same command can never be compared verbatim until
  * it is removed. The command's output is what a caller reads as the job's
- * effect, so that is what a reading comparison compares.
+ * effect, so that is what a reading comparison compares. `payload` is this
+ * project's word for a platform binary package, so the job's text is not one.
  * @param {string} text - the rendered `job_output` text.
  * @returns {string} the job's output alone.
  */
-function jobPayload(text) {
+function jobOutput(text) {
   return text.replace(/\s*\((?:Complete|Partial|Killed):[^)]*\)\s*$/, '').trim()
 }
 async function sections(ctx, currentAgent) { return renderSections(ctx, currentAgent) }
@@ -377,6 +378,11 @@ await test('an omitted run_background cwd starts the job in the calling session 
       const session = await agent(ctx, 'background-cwd', 'danger-full-access', full, { cwd: dir })
       await waitFor(() => jobs.every(name => scopedToolNames(ctx, session).includes(name)),
         { timeoutMs: 5000, what: 'the session command tools' })
+      // The premise the negative assertion rests on: the session directory and
+      // the process directory are different places, so a reading of one cannot
+      // be a reading of the other.
+      assert.notEqual(fs.realpathSync(dir).toLowerCase(), fs.realpathSync(process.cwd()).toLowerCase(),
+        'the fixture needs a session root outside the process root')
       // `pwd` is short-lived and prints its own working directory, so the
       // reading is a pure function of the directory the job started in — the
       // same command makes the two directories comparable without naming them.
@@ -385,7 +391,7 @@ await test('an omitted run_background cwd starts the job in the calling session 
         const id = /job (j-[a-z0-9]{6}) started/.exec(started.text)?.[1]
         assert.ok(id, `run_background must return a job ID, got: ${started.text}`)
         const output = await callWithAgent(ctx, publicToolName('job_output'), { job_id: id, wait_ms: 15000 }, session)
-        return jobPayload(output.text)
+        return jobOutput(output.text)
       }
       const omitted = await reading({ command: 'pwd' })
       const explicit = await reading({ command: 'pwd', cwd: dir })
