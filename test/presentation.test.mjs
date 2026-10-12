@@ -14,13 +14,27 @@
  * This suite pins both replacements so the wording and the implementation
  * cannot drift apart again (the PR #11 precedent: the contract is held still by
  * a test, not by the reviewer's memory).
+ *
+ * The fixtures here are synthetic. Every raw tool descriptor below is
+ * hand-written; its parameter names and shapes follow the schema captured in
+ * `.specs/dsh-ops-file-tool-session-root/probe/readings/upstream-schema.txt`,
+ * while what this suite guards is the projection's own logic — which field name
+ * receives which text, and that every carrier of a shared field receives the
+ * same string. It does not bind the upstream FastCtx schema, so a change there
+ * is not something these checks can catch.
  */
 
 import { publicToolName } from '../lib/policy.js'
 import { projectTool } from '../lib/presentation.js'
 import { assert, report, test } from './lib/harness.mjs'
 
-/** The three tools that carry `FIELDS.path`, raw names as FastCtx emits them. */
+/**
+ * The tool-level carriers of `FIELDS.path` this fixture declares, raw names as
+ * FastCtx emits them. `FIELDS.path` has four carriers in all: these three
+ * top-level `path` parameters, plus the nested `files[].path` of
+ * `ops_inspect_local_file` — the same field-name lookup rewrites it, and it
+ * cannot appear in this list because it is an array entry, not a parameter.
+ */
 const PATH_TOOLS = ['glob', 'grep', 'replace']
 
 /**
