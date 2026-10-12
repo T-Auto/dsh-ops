@@ -6,7 +6,7 @@
  * where a number belongs must see its own key in the failure.
  */
 
-import { ConfigError, DEFAULT_DENIED_HOST_TOOLS, DEFAULT_SERVER_NAME, DEFAULT_TOOL_CALL_TIMEOUT_MS, resolveConfig } from '../lib/config.js'
+import { ConfigError, DEFAULT_DENIED_HOST_TOOLS, DEFAULT_SERVER_NAME, DEFAULT_TOOL_CALL_TIMEOUT_MS, FILE_TOOL_ROOTS, resolveConfig } from '../lib/config.js'
 import { assert, report, test } from './lib/harness.mjs'
 
 await test('an absent config resolves to the documented defaults', () => {
@@ -17,6 +17,10 @@ await test('an absent config resolves to the documented defaults', () => {
     assert.equal(config.toolCallTimeoutMs, DEFAULT_TOOL_CALL_TIMEOUT_MS)
     assert.equal(config.required, false)
     assert.equal(config.shellPolicy, 'advise')
+    // Where an omitted file-tool `path` resolves from. The default is the
+    // calling session's working directory: FastCtx's own default is the process
+    // it happens to run in, which is not the session the model is working in.
+    assert.equal(config.fileToolRoot, 'session')
     assert.deepEqual(config.deniedHostTools, DEFAULT_DENIED_HOST_TOOLS)
     assert.equal(config.promptPolicy, true)
     assert.equal(config.extraGuidance, '')
@@ -38,6 +42,7 @@ await test('an explicit config overrides every default', () => {
     toolCallTimeoutMs: 1_000,
     required: true,
     shellPolicy: 'deny-host-shell',
+    fileToolRoot: 'process',
     deniedHostTools: ['pwsh'],
     promptPolicy: false,
     extraGuidance: 'Never touch the vendored tree.',
@@ -51,6 +56,7 @@ await test('an explicit config overrides every default', () => {
   assert.equal(config.toolCallTimeoutMs, 1_000)
   assert.equal(config.required, true)
   assert.equal(config.shellPolicy, 'deny-host-shell')
+  assert.equal(config.fileToolRoot, 'process')
   assert.deepEqual(config.deniedHostTools, ['pwsh'])
   assert.equal(config.promptPolicy, false)
   assert.equal(config.extraGuidance, 'Never touch the vendored tree.')
@@ -90,6 +96,9 @@ await test('a wrong-typed value is rejected with its own key', () => {
     [{ toolCallTimeoutMs: -5 }, 'toolCallTimeoutMs'],
     [{ toolCallTimeoutMs: Number.POSITIVE_INFINITY }, 'toolCallTimeoutMs'],
     [{ shellPolicy: 'forbid' }, 'shellPolicy'],
+    [{ fileToolRoot: 'cwd' }, 'fileToolRoot'],
+    [{ fileToolRoot: 7 }, 'fileToolRoot'],
+    [{ fileToolRoot: '' }, 'fileToolRoot'],
     [{ deniedHostTools: 'pwsh' }, 'deniedHostTools'],
     [{ deniedHostTools: [''] }, 'deniedHostTools'],
     [{ extraGuidance: 42 }, 'extraGuidance'],
@@ -104,6 +113,18 @@ await test('a wrong-typed value is rejected with its own key', () => {
       `expected ${JSON.stringify(raw)} to be rejected naming ${key}`,
     )
   }
+})
+
+await test('an unsupported fileToolRoot lists the roots it does accept', () => {
+  // The operator reading this failure has to learn the two legal roots from the
+  // error itself: the key is new, so "one of ..." is the whole documentation a
+  // deployment row gets at the moment it is wrong.
+  assert.throws(
+    () => resolveConfig({ fileToolRoot: 'cwd' }),
+    (error) => error instanceof ConfigError
+      && FILE_TOOL_ROOTS.every(root => error.message.includes(JSON.stringify(root))),
+    'expected the failure to list every accepted fileToolRoot',
+  )
 })
 
 await test('a non-object config is rejected', () => {
