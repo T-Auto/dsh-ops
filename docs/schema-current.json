@@ -5,18 +5,18 @@
   "tools": [
     {
       "name": "ops_glob",
-      "bytes": 1226,
-      "approximateTokens": 307
+      "bytes": 1265,
+      "approximateTokens": 317
     },
     {
       "name": "ops_grep",
-      "bytes": 2019,
-      "approximateTokens": 505
+      "bytes": 2058,
+      "approximateTokens": 515
     },
     {
       "name": "ops_inspect_local_file",
-      "bytes": 1968,
-      "approximateTokens": 492
+      "bytes": 2007,
+      "approximateTokens": 502
     },
     {
       "name": "ops_job_kill",
@@ -35,50 +35,50 @@
     },
     {
       "name": "ops_replace",
-      "bytes": 1511,
-      "approximateTokens": 378
+      "bytes": 1550,
+      "approximateTokens": 388
     },
     {
       "name": "ops_run_background",
-      "bytes": 635,
-      "approximateTokens": 159
+      "bytes": 616,
+      "approximateTokens": 154
     }
   ],
   "total": {
-    "bytes": 8988,
-    "approximateTokens": 2247
+    "bytes": 9125,
+    "approximateTokens": 2282
   },
   "fileOnly": {
-    "bytes": 6724,
-    "approximateTokens": 1681
+    "bytes": 6880,
+    "approximateTokens": 1720
   },
   "fileOnlyPrompt": {
     "bytes": 498,
     "approximateTokens": 125
   },
   "bashSchema": {
-    "bytes": 961,
-    "approximateTokens": 241
+    "bytes": 1477,
+    "approximateTokens": 370
   },
   "defaultWithBash": {
-    "bytes": 7685,
-    "approximateTokens": 1922
+    "bytes": 8357,
+    "approximateTokens": 2090
   },
   "fullWithBash": {
-    "bytes": 9949,
-    "approximateTokens": 2488
+    "bytes": 10602,
+    "approximateTokens": 2651
   },
   "shellPrompt": {
-    "bytes": 492,
-    "approximateTokens": 123
+    "bytes": 698,
+    "approximateTokens": 175
   },
   "backgroundPrompt": {
     "bytes": 269,
     "approximateTokens": 68
   },
   "toolingPrompt": {
-    "bytes": 878,
-    "approximateTokens": 220
+    "bytes": 1084,
+    "approximateTokens": 271
   },
   "publishedServerInstructions": {
     "bytes": 0,
