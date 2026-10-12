@@ -16,12 +16,12 @@
  * a test, not by the reviewer's memory).
  *
  * The fixtures here are synthetic. Every raw tool descriptor below is
- * hand-written; its parameter names and shapes follow the schema captured in
- * `.specs/dsh-ops-file-tool-session-root/probe/readings/upstream-schema.txt`,
- * while what this suite guards is the projection's own logic — which field name
- * receives which text, and that every carrier of a shared field receives the
- * same string. It does not bind the upstream FastCtx schema, so a change there
- * is not something these checks can catch.
+ * hand-written, with parameter names and shapes mirroring the descriptors the
+ * runtime publishes for these four tools, while what this suite guards is the
+ * projection's own logic — which field name receives which text, and that every
+ * carrier of a shared field receives the same string. It does not bind the
+ * upstream FastCtx schema, so a change there is not something these checks can
+ * catch.
  */
 
 import { publicToolName } from '../lib/policy.js'
@@ -41,9 +41,8 @@ const PATH_TOOLS = ['glob', 'grep', 'replace']
  * A raw FastCtx tool, shaped like the one `toolDefinition` receives. `name` is
  * the runtime's own (`glob`, not `ops_glob`) — the `ops_` prefix belongs to
  * `toolDefinition`, not to the projection. Parameter names and shapes mirror
- * the schema captured in
- * `.specs/dsh-ops-file-tool-session-root/probe/readings/upstream-schema.txt`;
- * the descriptions are synthetic because the projection replaces them wholesale.
+ * the descriptors the runtime publishes; the descriptions are synthetic because
+ * the projection replaces them wholesale.
  * @param {string} name - the runtime tool name.
  * @param {Record<string, unknown>} properties - the parameter schemas.
  * @param {string[]} required - the required parameter names.
