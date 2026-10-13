@@ -211,7 +211,7 @@ try {
   assert.ok(resolveWorker({}, {packageRoot:isolatedPackage}).startsWith(isolatedPackage))
   console.log('ok: installed runtime resolves without binaryPath or source build tree')
   const real = new Context(); real.logger.level = 0
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(),'ops-outside-'))
+  const outside = fs.mkdtempSync(path.join(path.resolve('.'),'.tmp-outside-'))
   const external = path.join(outside,'protected.txt'); fs.writeFileSync(external,'keep')
   try {
     await real.plugin(Subprocess)

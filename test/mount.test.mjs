@@ -233,7 +233,7 @@ await test('file/background share runtime, but command tools never leak into glo
   try {
     await executor(ctx)
     const file = await fileMount(ctx)
-    const background = await component(ctx, 'background')
+    const background = await component(ctx, 'background', { bashPath: process.execPath })
     const full = await agent(ctx, 'background-full')
     const jobs = BACKGROUND_TOOLS.map(publicToolName)
     await visible(ctx, full, jobs)

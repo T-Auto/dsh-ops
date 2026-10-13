@@ -398,8 +398,9 @@ await test('the pin table names one upstream release per shell, and nothing is s
   assert.equal(bash?.executableRelativePath, 'bin/bash.exe')
   // The one published layout each archive has, and the store path both sides of
   // the L3 contract compute.
-  assert.equal(provisionedShellVersionDir({ kind: 'pwsh', version: '7.6.6', env: { DSH_HOME: 'C:\\home' } }),
-    path.join('C:\\home', 'dsh-ops', 'shells', 'pwsh', '7.6.6'))
+  const storeHome = process.platform === 'win32' ? 'C:\\home' : '/srv/home'
+  assert.equal(provisionedShellVersionDir({ kind: 'pwsh', version: '7.6.6', env: { DSH_HOME: storeHome } }),
+    path.join(storeHome, 'dsh-ops', 'shells', 'pwsh', '7.6.6'))
 })
 
 await test('a platform the pins do not cover has no pin, and the store still resolves layout-only', () => {
