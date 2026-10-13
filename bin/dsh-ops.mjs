@@ -466,7 +466,12 @@ async function commandProvision({ force, from, noBuild }) {
 
   const installed = probeBinary(target)
   if (!installed.ok) {
-    console.error(`the installed copy does not run: ${target} (${installed.detail})`)
+    // Resolution prefers the managed copy over every other rung, so a copy that
+    // does not run would shadow a working build on every later activation.
+    let removed = true
+    try { fs.rmSync(target, { force: true }) } catch { removed = false }
+    console.error(`the installed copy does not run: ${target} (${installed.detail})`
+      + (removed ? '; it was removed, so the next resolve falls through' : '; it could not be removed and will shadow the other rungs'))
     return 1
   }
 

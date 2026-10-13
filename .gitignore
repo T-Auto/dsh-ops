@@ -1,5 +1,14 @@
 # Local release artifacts and credentials
 dist/
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+credentials.json
+service-account*.json
 
 # Native worker build output and local audit stores
 runtime/

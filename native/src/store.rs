@@ -144,9 +144,16 @@ impl Store {
         drop(f);
         self.dir
             .rename(&temporary, &self.dir, format!("{id}.{generation:06}.json"))?;
-        // Persist directory entries where the platform supports directory fsync.
         #[cfg(unix)]
-        self.dir.try_clone()?.into_std_file().sync_all()?;
+        {
+            let synced = self.dir.try_clone()?.into_std_file().sync_all();
+            if let Err(error) = synced {
+                const EBADF: i32 = 9;
+                if error.raw_os_error() != Some(EBADF) {
+                    return Err(error.into());
+                }
+            }
+        }
         Ok(())
     }
     pub fn release(&self, id: &str) -> Result<()> {

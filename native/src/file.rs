@@ -297,6 +297,14 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     drop(file);
     parent.rename(&temporary, &parent, &name)?;
     #[cfg(unix)]
-    parent.try_clone()?.into_std_file().sync_all()?;
+    {
+        let synced = parent.try_clone()?.into_std_file().sync_all();
+        if let Err(error) = synced {
+            const EBADF: i32 = 9;
+            if error.raw_os_error() != Some(EBADF) {
+                return Err(error.into());
+            }
+        }
+    }
     Ok(())
 }
