@@ -256,16 +256,24 @@ export async function renderSections(ctx, agent) {
 /**
  * Call one registered tool the way the loop does: run the definition's body,
  * then render its canonical value into model-facing content.
+ *
+ * Pass `agent` when the call belongs to a session: the registry then resolves
+ * the tool through that session's own scope chain (the command tools are
+ * published per session rather than into the root registry), and the session
+ * rides along on the execution the way the model loop sends it.
  * @param {Context} ctx - the host context.
  * @param {string} name - the tool name.
  * @param {Record<string, unknown>} args - the arguments.
+ * @param {object} [agent] - the calling session, when there is one.
  * @param {AbortSignal} [signal] - the caller's signal.
  * @returns {Promise<{value: unknown, text: string, content: {type: string, text?: string}[]}>} the outcome.
  */
-export async function callTool(ctx, name, args, signal = new AbortController().signal) {
-  const definition = ctx.get('tools').get(name)
+export async function callTool(ctx, name, args, agent, signal = new AbortController().signal) {
+  const definition = ctx.get('tools').get(name, agent)
   if (definition === undefined) throw new Error(`tool "${name}" is not registered`)
-  const value = await definition.execute(args, { callId: 'test', name, arguments: args, signal })
+  const execution = { callId: 'test', name, arguments: args, signal }
+  if (agent !== undefined) execution.agent = agent
+  const value = await definition.execute(args, execution)
   const content = definition.output.render(args, value)
   return {
     value,

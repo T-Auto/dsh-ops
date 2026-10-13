@@ -47,18 +47,6 @@ async function agent(ctx, id, mode = 'danger-full-access', parent, header = { cw
   await ctx.serial('agent/created', { agent: result, source: 'startup' })
   return result
 }
-async function callWithAgent(ctx, name, args, currentAgent) {
-  // `callTool` in test/lib/host.mjs sends no agent, and this task does not own
-  // that file; this is the same call the loop makes, with the session attached.
-  // The lookup resolves through that session's own scope chain, because the
-  // command tools are published per session rather than into the root registry.
-  const definition = ctx.get('tools').get(name, currentAgent)
-  if (definition === undefined) throw new Error(`tool "${name}" is not registered`)
-  const exec = { callId: 'test', name, arguments: args, signal: new AbortController().signal, agent: currentAgent }
-  const value = await definition.execute(args, exec)
-  const content = definition.output.render(args, value)
-  return { value, content, text: content.filter((block) => block.type === 'text').map((block) => block.text).join('\n') }
-}
 /**
  * The job's own output, without the server's trailing status decoration.
  *
@@ -139,7 +127,7 @@ await test('an omitted glob path searches the calling session working directory'
       assert.notEqual(fs.realpathSync(dir).toLowerCase(), fs.realpathSync(process.cwd()).toLowerCase(),
         'the fixture needs a session root outside the process root')
       const session = await agent(ctx, 'session-root', 'danger-full-access', undefined, { cwd: dir })
-      const result = await callWithAgent(ctx, publicToolName('glob'), { pattern: ['**/file-tool-root-probe.txt'] }, session)
+      const result = await callTool(ctx, publicToolName('glob'), { pattern: ['**/file-tool-root-probe.txt'] }, session)
       assert.match(result.text, /file-tool-root-probe\.txt/, 'an omitted path must find the session root file')
       assert.equal(result.text.includes('no files matched'), false, 'an omitted path must not report the process root')
     })
@@ -152,7 +140,7 @@ await test('an omitted grep path searches the calling session working directory'
     await withTempDir('session-grep', async dir => {
       fs.writeFileSync(path.join(dir, 'session-grep-probe.txt'), 'dsh-ops-session-root-marker\n')
       const session = await agent(ctx, 'session-grep', 'danger-full-access', undefined, { cwd: dir })
-      const result = await callWithAgent(ctx, publicToolName('grep'), { pattern: 'dsh-ops-session-root-marker' }, session)
+      const result = await callTool(ctx, publicToolName('grep'), { pattern: 'dsh-ops-session-root-marker' }, session)
       assert.match(result.text, /session-grep-probe\.txt/, 'an omitted path must search the session root')
     })
   } finally { await shutdown(ctx) }
@@ -165,10 +153,10 @@ await test('a null file-tool path is treated as an omitted path', async () => {
       fs.writeFileSync(path.join(dir, 'file-tool-root-probe.txt'), 'the null-root probe\n')
       const session = await agent(ctx, 'null-root', 'danger-full-access', undefined, { cwd: dir })
       const args = { pattern: ['**/file-tool-root-probe.txt'] }
-      const omitted = await callWithAgent(ctx, publicToolName('glob'), args, session)
+      const omitted = await callTool(ctx, publicToolName('glob'), args, session)
       // FastCtx normalises `path: null` to "absent" itself, so a plugin that
       // only tested for `undefined` would leave this argument as the bypass.
-      const explicitNull = await callWithAgent(ctx, publicToolName('glob'), { ...args, path: null }, session)
+      const explicitNull = await callTool(ctx, publicToolName('glob'), { ...args, path: null }, session)
       assert.match(explicitNull.text, /file-tool-root-probe\.txt/, 'a null path must still reach the session root')
       assert.equal(explicitNull.text, omitted.text, 'a null path must read exactly like an omitted path')
     })
@@ -182,15 +170,15 @@ await test('fileToolRoot process keeps the pre-change FastCtx process reading', 
       fs.writeFileSync(path.join(dir, 'file-tool-root-probe.txt'), 'unreachable from the process root\n')
       const session = await agent(ctx, 'process-root', 'danger-full-access', undefined, { cwd: dir })
       const args = { pattern: ['**/file-tool-root-probe.txt'] }
-      const omitted = await callWithAgent(ctx, publicToolName('glob'), args, session)
+      const omitted = await callTool(ctx, publicToolName('glob'), args, session)
       // The old reading, byte for byte: FastCtx inherits this host process's
       // directory, and the probe file lives outside it.
-      const processRoot = await callWithAgent(ctx, publicToolName('glob'), { ...args, path: process.cwd() }, session)
+      const processRoot = await callTool(ctx, publicToolName('glob'), { ...args, path: process.cwd() }, session)
       assert.equal(omitted.text, processRoot.text, 'fileToolRoot "process" must keep the process-root reading verbatim')
       assert.equal(omitted.text.includes('file-tool-root-probe.txt'), false,
         'fileToolRoot "process" must not search the session root')
       // The key governs the omitted default only: an explicit path still works.
-      const explicit = await callWithAgent(ctx, publicToolName('glob'), { ...args, path: dir }, session)
+      const explicit = await callTool(ctx, publicToolName('glob'), { ...args, path: dir }, session)
       assert.match(explicit.text, /file-tool-root-probe\.txt/, 'an explicit path is unaffected by the key')
     })
   } finally { await shutdown(ctx) }
@@ -202,7 +190,7 @@ await test('an omitted path without a session working directory fails, not an em
     const rootless = await agent(ctx, 'no-session-root', 'danger-full-access', undefined, {})
     for (const [rawName, args] of [['glob', { pattern: ['**/*'] }], ['grep', { pattern: 'anything' }]]) {
       await assert.rejects(
-        () => callWithAgent(ctx, publicToolName(rawName), args, rootless),
+        () => callTool(ctx, publicToolName(rawName), args, rootless),
         (error) => {
           assert.match(error.message, /no working directory/, 'the failure names the cause')
           assert.match(error.message, /Pass path explicitly/, 'the failure offers the first next step')
@@ -214,7 +202,7 @@ await test('an omitted path without a session working directory fails, not an em
     // A missing session root never blocks a call that names its own path.
     await withTempDir('rootless', async dir => {
       fs.writeFileSync(path.join(dir, 'rootless-probe.txt'), 'explicit path\n')
-      const explicit = await callWithAgent(ctx, publicToolName('glob'), { pattern: ['*.txt'], path: dir }, rootless)
+      const explicit = await callTool(ctx, publicToolName('glob'), { pattern: ['*.txt'], path: dir }, rootless)
       assert.match(explicit.text, /rootless-probe\.txt/, 'a missing session root never blocks an explicit path')
     })
   } finally { await shutdown(ctx) }
@@ -233,7 +221,7 @@ await test('a non-string or blank session root fails an omitted path, and never 
       const session = await agent(ctx, `unusable-root-${index}`, 'danger-full-access', undefined, header)
       for (const [rawName, args] of [['glob', { pattern: ['**/*'] }], ['grep', { pattern: 'anything' }]]) {
         await assert.rejects(
-          () => callWithAgent(ctx, publicToolName(rawName), args, session),
+          () => callTool(ctx, publicToolName(rawName), args, session),
           (error) => {
             assert.match(error.message, /cannot resolve an omitted path/, `${label}: ${rawName} must fail closed`)
             assert.match(error.message, /no working directory/, `${label}: ${rawName} must name the cause`)
@@ -387,10 +375,10 @@ await test('an omitted run_background cwd starts the job in the calling session 
       // reading is a pure function of the directory the job started in — the
       // same command makes the two directories comparable without naming them.
       const reading = async (args) => {
-        const started = await callWithAgent(ctx, publicToolName('run_background'), args, session)
+        const started = await callTool(ctx, publicToolName('run_background'), args, session)
         const id = /job (j-[a-z0-9]{6}) started/.exec(started.text)?.[1]
         assert.ok(id, `run_background must return a job ID, got: ${started.text}`)
-        const output = await callWithAgent(ctx, publicToolName('job_output'), { job_id: id, wait_ms: 15000 }, session)
+        const output = await callTool(ctx, publicToolName('job_output'), { job_id: id, wait_ms: 15000 }, session)
         return jobOutput(output.text)
       }
       const omitted = await reading({ command: 'pwd' })
