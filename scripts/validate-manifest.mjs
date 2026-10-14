@@ -488,11 +488,15 @@ const ptc = manifestRaw.contributes?.['x-components']?.find(c => c.id === 'dsh-o
 check(ptc?.entry === 'dsh-ops/ptc' && ptc?.defaultEnabled === false, 'native PTC component is opt-in')
 check(JSON.stringify(ptc?.tools) === JSON.stringify(PTC_TOOLS.map(publicToolName)), 'PTC declaration matches the generated tool contract')
 check(PTC_TOOLS.every(t => definition(t, () => {}).parameters.type === 'object'), 'PTC schemas remain structured')
-check(['win32', 'darwin', 'linux'].every(p => pkg.os.includes(p) && ptc?.platforms?.includes(p)), 'PTC package supports all native platform families')
+check(JSON.stringify(pkg.os) === '["win32"]' && JSON.stringify(pkg.cpu) === '["x64"]' &&
+  JSON.stringify(ptc?.platforms) === '["win32"]' && JSON.stringify(ptc?.architectures) === '["x64"]',
+  '0.3.0 package and PTC declarations support Windows x64 only')
 const REQUIRED_ENTRIES = [
   'native/Cargo.toml',
   'native/Cargo.lock',
   'native/src',
+  'native/bash-ipc',
+  'runtime',
   'lib',
   'bin',
   'cordis.patch.yml',

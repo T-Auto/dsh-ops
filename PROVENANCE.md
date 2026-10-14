@@ -3,14 +3,49 @@
 What this repository is, where its parts came from, what was verified, and what
 was not.
 
-## 0.3.0 Native file component
+## 0.3.0 release scope and verification
+
+0.3.0 is Windows x64 only, explicitly approved by the maintainer for this release.
+Package os/cpu, component declarations and native target checks agree. Linux,
+macOS and ARM64 are future work; prior cross-compile checks are not release claims.
+
+The fixed file worker implements inspect/glob/grep/replace, receives session-cwd
+paths plus authoritative DSH write policy, and rechecks the writable-root allowlist
+in Rust before replacement. It uses the trusted-operation threat model of DSH
+fs-sandbox, with no-follow paths, revision checks and host subprocess governance.
+Arbitrary Bash/PTC code still uses the original DSH OS confinement; Windows
+partial enforcement is reported unchanged.
+
+Windows owned workspace roots get backed-up directory-only WRITE_OWNER before
+outer run_code/pwsh launch, with no recursive grants/owner changes/denial removal.
+Restricted Bash uses an installation-relative private MSYS copy: only import DLL
+names are redirected to original MIT IPC proxies, preserving the token and disk
+API paths. Original payload/proxy/source hashes are recorded and checked.
+Only the original GPL payload is an existing dependency; no modified MSYS DLL
+or complete private copy is included in the 0.3.0 tarball. Runtime modifications
+are identified in the local receipt; original licenses remain in the copy.
+This does not attest source-delivery closure for the historical PortableGit
+payload dependency (see the 0.2.1 historical limitation below).
+
+The Windows x64 Rust worker and two IPC proxies are staged with hash receipts.
+`npm run verify:release` includes 58 manifest checks, 13 test suites, worker
+PE/version/hash checks and IPC binary/source closure. Real Node PTC runtime and
+SDK coverage includes Bash command/script/pipeline, workspace write, outside-write
+denial and downgrade to read-only. Native PTC copy/move/remove, read-only result
+pages and full-access external roots pass with original DSH providers. No Linux,
+macOS or ARM64 binary/runtime acceptance is claimed. No benchmark is inferred
+from these gates. The npm tarball is built and checked after the GitHub Release;
+publication itself is performed separately by the maintainer.
+
+## Historical development evidence
 
 The file component is no longer a FastCtx client. `native/src/file.rs` implements
 bounded inspect, glob, grep and replace; `native/src/file_path.rs` implements
 absolute host-resolved path validation and component-by-component no-follow
 checks. The host adapter in `lib/file/` obtains the authoritative DSH session
-cwd and sandbox policy, confines the exact worker argv, forwards cancellation,
-and maps worker JSON into the DSH structured output contract.
+cwd and sandbox policy, forwards cancellation, and maps worker JSON into the DSH
+structured output contract. The initial exact-argv file confinement below was
+superseded by the fixed trusted-operation fence described above.
 
 The Windows x64 worker was built with the managed Rust `1.97.1` toolchain and
 staged under `runtime/win32-x64` with a version/target/executable/SHA-256 receipt.

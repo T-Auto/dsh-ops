@@ -280,7 +280,16 @@ fn replace(request: &Request) -> Result<Value> {
     if total > args.max_replacements { return Err(Failure::new("OUTPUT_LIMIT", "maxReplacements exceeded; no files were changed")); }
     let mut items=Vec::new(); for (file, original, text, count) in plans { let revision=hash_file(&file)?; let next=text.replace(&args.pattern,&args.replacement); items.push(json!({"path":file,"replacements":count,"revision":revision,"bytesBefore":original.len(),"bytesAfter":next.len()})); }
     if args.dry_run { return Ok(json!({"status":"completed","phase":"observe","changed":0,"matched":total,"skipped":0,"failed":0,"complete":true,"omitted":0,"dryRun":true,"items":items})); }
-    let mut changed=0usize; for item in &items { let file=PathBuf::from(item["path"].as_str().unwrap_or("")); let expected=item["revision"].as_str().unwrap_or(""); if hash_file(&file)? != expected { return Err(Failure::new("REVISION_CONFLICT", "file changed between observe and execute")); } let bytes=read_bytes(&file)?; let text=String::from_utf8(bytes).map_err(|_| Failure::new("INVALID_ARGUMENT", "replace only supports UTF-8 files"))?; let next=text.replace(&args.pattern,&args.replacement); atomic_write(&file,next.as_bytes())?; changed += item["replacements"].as_u64().unwrap_or(0) as usize; }
+    let mut changed=0usize; for item in &items { let file=PathBuf::from(item["path"].as_str().unwrap_or(""));
+        // Trusted transport owns this allowlist. Re-check every selected file,
+        // not only the initial search root, immediately before publication.
+        if let Some(roots) = &request.write_roots {
+            let canonical = std::fs::canonicalize(&file)?;
+            if !roots.iter().any(|root| std::fs::canonicalize(root).is_ok_and(|r| canonical.starts_with(r))) {
+                return Err(Failure::new("POLICY_DENIED", "User authorized workspace writes only; target is outside DSH writable roots. Ask the user to select full access; do not retry or bypass."));
+            }
+        }
+        let expected=item["revision"].as_str().unwrap_or(""); if hash_file(&file)? != expected { return Err(Failure::new("REVISION_CONFLICT", "file changed between observe and execute")); } let bytes=read_bytes(&file)?; let text=String::from_utf8(bytes).map_err(|_| Failure::new("INVALID_ARGUMENT", "replace only supports UTF-8 files"))?; let next=text.replace(&args.pattern,&args.replacement); atomic_write(&file,next.as_bytes())?; changed += item["replacements"].as_u64().unwrap_or(0) as usize; }
     Ok(json!({"status":"completed","phase":"verify","changed":changed,"matched":total,"skipped":0,"failed":0,"complete":true,"omitted":0,"items":items}))
 }
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -291,11 +300,16 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let temporary = format!(".{name}.dsh-ops-{}", uuid::Uuid::new_v4());
     let mut options = cap_std::fs::OpenOptions::new();
     options.write(true).create_new(true).follow(FollowSymlinks::No);
-    let mut file = parent.open_with(&temporary, &options)?;
+    let mut file = parent.open_with(&temporary, &options).map_err(|e| Failure::new("ACCESS_DENIED", format!("Atomic replacement create: {e}")))?;
     file.write_all(bytes)?;
     file.sync_all()?;
     drop(file);
-    parent.rename(&temporary, &parent, &name)?;
+    // Publication stays handle-relative and does not traverse links.
+    let publish = parent.rename(&temporary, &parent, &name);
+    if let Err(error) = publish {
+        let _ = parent.remove_file(&temporary);
+        return Err(Failure::new("ACCESS_DENIED", format!("Atomic replacement publish: {error}")));
+    }
     #[cfg(unix)]
     {
         let synced = parent.try_clone()?.into_std_file().sync_all();

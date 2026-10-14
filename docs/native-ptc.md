@@ -1,57 +1,48 @@
-# Native PTC enhancement — 0.3.0 development delivery
+# Native PTC enhancement — 0.3.0 Windows x64
 
 Issues: [#3](https://github.com/T-Auto/dsh-ops/issues/3), [#8](https://github.com/T-Auto/dsh-ops/issues/8).
-This component is independent of FastCtx. Existing file/shell/background components
-remain unchanged backends; this is not a claim that their migration is complete.
+The file and PTC components use an independent Rust worker. FastCtx remains only
+behind the explicitly enabled background component.
 
 ## Runtime-bearing installation and original DSH permission linkage
 
-Published packages must carry `runtime/<platform>-<arch>/dsh-ops-worker[.exe]`
-plus checksum/version provenance for all six supported platform/architecture pairs.
-The release assembler refuses an incomplete matrix; `bin/native-runtime.mjs`
-stages native builds, and runtime discovery checks the installed target's receipt.
-No postinstall download, ACL modification or hand-written binaryPath is required.
-Source users run `npm run build:ptc` once; it builds and stages their native target
-without requiring a profile override. Explicit binary selections remain authoritative.
-The six-target release matrix is implemented but has not been run/published here;
-this checkout currently contains a staged Windows x64 worker only.
+0.3.0 ships Windows x64 only: `runtime/win32-x64/dsh-ops-worker.exe`, its
+version/checksum receipt, and Bash IPC compatibility proxies. Package os/cpu,
+manifest and release checks agree on that scope. `npm run verify:release`
+rejects missing/corrupt worker or proxy artifacts. Linux/macOS/ARM64 are not
+supported by this release. No postinstall download/build or binaryPath override
+is required. Source builds use `npm run build:ptc` and `npm run build:bash-ipc`.
 
-Permission corrections supersede the original v1 notes below:
-
-- Normal modes use the original per-call `sandboxPolicy` and `sandbox.confine`.
-  Both `full` and `partial` enforcement are accepted and accurately reported,
-  exactly as DSH does; Windows ACL is intentionally reported as partial.
-- `read-only` can page existing references through an existing read-only shared
-  lock without creating directories, records or lockfiles. Other actions are denied.
-- Optional absolute `root` selects the operation/data root, not the permission
-  root. `workspace-write` always confines with the original session workspace.
-  `danger-full-access` uses no confinement and allows roots outside the workspace.
-- No extra plugin permission system, chmod/ACL repair, self-escalation or automatic
-  full-access fallback. No-follow/protection/no-overwrite are operation semantics,
-  not another sandbox. Full access does not remove those integrity checks.
-- Acceptance now includes original installed DSH sandbox-local and subprocess-local
-  providers: real confined copy, read-only page, external-root denial and unrestricted
-  external-root remove in disposable fixtures. These run on Windows x64 and pass.
-  No user-workspace permissions were changed by the test.
-
-An original `run_code` failure at `grantWrite(workspace)` happens before any SDK
-call. A plugin cannot repair that by registering tools differently; npm packaging
-cannot confer missing Windows security-descriptor rights. That host failure remains
-a host prerequisite/blocker, not a reason to weaken the plugin's confinement.
+PTC/Bash use original per-call sandboxPolicy and sandbox.confine, reporting the
+host's full/partial enforcement honestly. Read-only permits existing result pages
+but rejects mutations/new audit records. Absolute operation roots are selections,
+not new authority; full access permits external roots without confinement.
+No-follow/protection/no-overwrite remain operation integrity semantics.
+Windows owned Modify-only workspaces receive a backed-up, directory-only
+WRITE_OWNER prerequisite automatically before outer run_code/pwsh launch. This
+is not recursive repair, ownership change, self-escalation or unconfined fallback.
+Real Windows provider and pure PTC SDK acceptance is covered in the release gates.
 
 ## Native file component and release scope
 
-The file component is now independent of FastCtx. The shipped native worker is
-currently validated on Windows x64; the six-platform runtime matrix and
-Linux/macOS on-platform sandbox acceptance remain release gates. Do not publish
-or describe a complete cross-platform release until every advertised runtime
-has a provenance receipt and its real DSH composition checks pass.
+The fixed file component follows DSH fs-sandbox's trusted-operation policy fence,
+not arbitrary-code isolation; shell and PTC code still require confinement.
+Only Windows x64 runtime/proxy binaries are shipped and claimed by 0.3.0.
 
-In `workspace-write`, `ops_batch`/`ops_result` mutations and new audit records
-remain intentionally denied because their durable records are outside the
-session workspace. Existing read-only pages are permitted only when the host
-and worker can open the existing store without creating files. This is a DSH
-policy boundary, not a plugin fallback condition.
+In `workspace-write`, native batch/result operations and their audit records are
+permitted under the selected workspace root through DSH confinement. Read-only
+permits existing result pages only, not new records or mutations. Windows owned
+Modify-only roots are prepared automatically with directory-only WRITE_OWNER,
+not FullControl, before the outer run_code transport starts. Existing DACLs are
+backed up under DSH_HOME/dsh-ops/acl-backups; descendants, owners and explicit
+denials are never rewritten. Matching Windows x64 Bash payloads use a private
+IPC-compatible MSYS copy, with the original DSH token/confinement unchanged.
+Only new MSYS signal/anonymous/data pipes and pagefile-backed process-tracker
+sections get compatible object ACLs/labels. No disk or token APIs are hooked.
+The runtime pins original DLL and proxy hashes; unsupported versions fail closed.
+Build proxies with npm run build:bash-ipc (MSVC, DSH_OPS_VCVARS64 when needed).
+Real pure-PTC SDK command/script/pipeline and permission downgrade tests pass;
+GUI acceptance still requires a Desktop restart.
 
 
 ```console
@@ -67,10 +58,7 @@ session toolchain before building; do not add multi-version toolchains to global
 Enable the opt-in `dsh-ops/ptc` bundle row. Its only config keys are `required`
 (default false) and an optional absolute `binaryPath`. `DSH_OPS_WORKER_BIN` can
 select a build; otherwise the component uses `runtime/<platform>-<arch>/dsh-ops-worker[.exe]` before `native/target/release`.
-Published packages include runtime bytes; source checkouts stage them by building. A missing worker warns and publishes nothing; `required: true`
-rejects activation. No install-time compilation or download is used.
-Release assembler requires every advertised target; prebuilt payloads have not
-been published during this development session.
+The component remains opt-in. Published 0.3.0 packages include Windows x64 runtime bytes; source checkouts stage them explicitly. There is no automatic compilation or download during installation.
 
 The session must already use DSH's **PTC-only** presentation. The component does
 not force presentation, replace the registry, or create a REPL. It recognizes the
@@ -84,8 +72,12 @@ or dynamic plan IDs are added to the system prefix.
 
 The migrated `ops_glob`, `ops_grep`, `ops_inspect_local_file` and `ops_replace`
 capabilities use one `path` resolved against the current DSH session cwd. `.`
-means that cwd. In `workspace-write`, DSH rejects paths outside its workspace;
-explicit external absolute paths require `danger-full-access`.
+means that cwd. Reads are permitted wherever the OS permits them, matching DSH
+fs-sandbox. Replacement is denied in read-only; workspace-write fences writes to
+the workspace and DSH temporary areas; other writes require danger-full-access.
+These fixed trusted operations run through the host subprocess with native
+no-follow path checks, not an arbitrary-code confinement runner. Shell and PTC
+code continue to require OS confinement.
 
 `ops_glob.pattern` and `ops_grep.glob` are arrays of include/exclude patterns;
 `!` entries exclude matches. `ops_grep.pattern` and `ops_replace.pattern` are

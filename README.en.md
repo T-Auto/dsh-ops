@@ -12,8 +12,7 @@ traversal, hidden files and `.git` traversal, uses Rust regex for grep, and
 performs replacement with a preflight count, hard replacement limit, content
 revision check, temporary-file write, fsync, and atomic replacement. `dryRun`
 never writes. A read-only DSH session can inspect/search but cannot replace.
-All process execution still goes through `sandboxPolicy`, `sandbox.confine`,
-and `subprocess.spawn`; missing host services fail closed. FastCtx remains only
+Fixed trusted file operations use `sandboxPolicy` checks and host subprocess governance; they never execute model code. Arbitrary Bash/PTC code still requires `sandbox.confine`, with no unconfined fallback. FastCtx remains only
 behind the disabled background component.
 
 Build and stage the current Windows worker from the source checkout:
@@ -24,9 +23,7 @@ node bin/native-runtime.mjs stage --platform win32-x64 --input native/target/rel
 node bin/native-runtime.mjs check --platform win32-x64
 ```
 
-The six-platform runtime matrix and on-platform Linux/macOS sandbox acceptance
-remain release gates; a Windows build and the real DSH composition suite are
-covered locally. No FastCtx file-tool fallback exists.
+**This 0.3.0 release supports Windows x64 only.** The native worker and Bash IPC proxies are included. Other platforms/architectures are not shipped or supported by this release. No FastCtx file-tool fallback exists.
 
 
 [中文](README.md) | **English**
@@ -35,14 +32,14 @@ Reduce the tokens, time and model attention wasted on repeated PowerShell errors
 
 - Independent **bash 5.3.15**, preferred for general commands so your AI no longer has to fight PowerShell.
 - Independent **PowerShell 7.6.6** for necessary Windows-native operations through the host `pwsh` tool. PowerShell 7 also offers many improvements over the built-in PowerShell 5.
-- Faster, higher-performance Rust tools for reading, searching and replacing files, speeding up tasks and reducing unnecessary input/output. Because some tools do not use DSH's restricted terminal backend, command and background-task tools are enabled only with **full access**.
+- Faster fixed Rust file operations follow DSH filesystem policy. Bash uses the host sandbox in restricted modes; the optional FastCtx background component remains full-access-only. Matching Windows x64 MSYS payloads use a verified private IPC-compatible copy. Real PTC command/script/pipeline and permission-switch acceptance passes locally; Desktop GUI restart acceptance remains required.
 - A range of lightweight, easy-to-use Rust tools for DOCX and PDF processing will be added in the future; each can be toggled without taking up context.
 
 <img width="1603" height="1028" alt="247c1326cca5b66e60d330c3f32150e2" src="https://github.com/user-attachments/assets/7c9ba485-5323-42a2-b5a8-6dcda07f91c4" />
 
 Routing: **toolkit → bash → PowerShell 7**.
 
-Legacy components remain **Windows x64**. The new opt-in **0.3.0 PTC component** uses independent native Rust for Windows, macOS and Linux (x64/arm64 package eligibility); Linux x64 and macOS arm64 compile-checks pass, with on-platform runtime/sandbox acceptance still pending. Target host DSH `0.2.0-rc.2`. See [Native PTC](docs/native-ptc.md).
+**0.3.0 supports Windows x64 only**, targeting DSH `0.2.0-rc.2`. The independent Rust file/PTC worker is included; PTC remains opt-in. Linux/macOS/ARM64 are future work, not release claims. See [Native PTC](docs/native-ptc.md).
 
 ## Install, update and remove
 
@@ -74,7 +71,7 @@ The ordinary DSH CLI cannot manage the reserved `desktop` profile; do not confus
 
 **Update**: repeat the same `npx --yes dsh-ops@latest install --profile ...` command, or use the official CLI's `add dsh-ops@latest`. Reload as requested by the application; restart it when replacing already-loaded code.
 
-The local `0.3.0` development version adds independent native Rust PTC enhancement: `ops_batch` and `ops_result`, DSH-native confinement, durable per-item recovery, bounded references and compact projection. Legacy Windows payloads remain pinned to `0.2.1`; this is not a published release or a complete FastCtx migration. Build and opt-in instructions: [Native PTC](docs/native-ptc.md).
+`0.3.0` adds independent native Rust PTC enhancement: `ops_batch` and `ops_result`, DSH confinement, durable recovery, bounded references and projection. Three Windows payload dependencies remain pinned to `0.2.1`; no payload republish is needed. PTC is opt-in and the Windows x64 worker is included. See [Native PTC](docs/native-ptc.md).
 
 **Remove and check status**:
 
@@ -86,6 +83,42 @@ npx --yes dsh-ops@latest uninstall --profile desktop
 Replace `desktop` with `web` or `tui` as appropriate. You can also uninstall in the marketplace or run the official `dsh plugin --profile ... remove dsh-ops`. Binaries are managed as profile plugin dependencies; uninstalling removes dependency references without deleting system shells, copies in other profiles or shared package-manager caches.
 
 Legacy explicitly provisioned `<DSH_HOME>/dsh-ops/` files must be cleaned separately with `npx --yes dsh-ops@latest uninstall --yes`. Persistent `~/.fastctx/` state is kept by default; add `--purge-fastctx` explicitly if needed. Disabling the background component waits for in-flight calls, then attempts to terminate only its own jobs remembered on the current connection; failures produce warnings. Old jobs whose ownership was lost after disconnect, and permission downgrades alone, do not guarantee termination; handle your own jobs first.
+
+## Known issues
+
+**A missing `bash-win32-x64` under `node_modules/@dsh-ops/` is not a broken installation.** The three payloads are exact-versioned **optional dependencies** (`optionalDependencies`): if your registry has not synced that platform package at the pinned version, the package manager **skips it silently** — the install still exits 0 and prints no warning that names the missing payload.
+
+Measured on 2026-10-12: on `registry.npmmirror.com`, `@dsh-ops/bash-win32-x64` reports `dist-tags.latest = 0.0.0-stage` with `versions` holding only `0.0.0-stage`; the official `registry.npmjs.org` reports `0.2.1`. `npm view @dsh-ops/bash-win32-x64 version` through the mirror therefore prints a misleading old version — do not use it to decide whether the payload is available. This section expires by itself once the mirror catches up; below is how to verify and how to work around it.
+
+**Preferred remedy**: `provision-shells` bypasses the registry, fetches the pinned asset from the upstream GitHub Release, checks its sha256, unpacks it and writes a `.provisioned.json` receipt.
+
+```console
+npx --yes dsh-ops@latest provision-shells --bash
+```
+
+Behind a proxy (`HTTPS_PROXY` is handed to curl explicitly as `--proxy` and is inherited through the environment as well):
+
+```console
+:: cmd
+set HTTPS_PROXY=http://127.0.0.1:<clash-port>
+npx --yes dsh-ops@latest provision-shells --bash
+```
+
+```console
+# PowerShell
+$env:HTTPS_PROXY = 'http://127.0.0.1:<clash-port>'
+npx --yes dsh-ops@latest provision-shells --bash
+```
+
+**To check the result, run the profile's own copy**: `ladder` reports the bundled rung of **the copy that runs it**, so `npx … ladder` inspects the npx cache copy and its answer has nothing to do with your profile.
+
+```console
+node "%USERPROFILE%\.dsh\profiles\<profile>\node_modules\dsh-ops\bin\dsh-ops.mjs" ladder
+```
+
+The provisioned copy lives in `<DSH_HOME>/dsh-ops/shells` (shared across profiles, so one provision covers every profile on the machine) and outranks the bundled copy when the shells are resolved; `ladder` reports `source: provisioned`.
+
+**Do not** work around a missing payload with `allowSystemShellFallback: true`: that lowers the security posture (it uses a system bash with no pinned digest), and the one-time startup configuration migration sets it back to `false`.
 
 ## Components and prompts
 
@@ -123,7 +156,7 @@ config:
 ```
 
 - `enableShellTools`: deployment switch for the background component; enabling it still requires session `danger-full-access` to publish the four background tools. The file component never publishes command tools.
-- `publishBashTool`: whether to publish `ops_bash`; also requires full access and the host subprocess service.
+- `publishBashTool`: publish `ops_bash` using current session policy; restricted modes require the host sandbox, full access uses the host subprocess service.
 - `promptPolicy`: whether to inject the component's runtime guidance; use `extraGuidance` to append instructions.
 - `toolCallTimeoutMs`: FastCtx RPC wait timeout; it does not mean server-side work has terminated.
 - `required`: whether to reject activation when the runtime is unavailable.
@@ -138,12 +171,12 @@ config:
 | `ops_grep` | Rust regex search, multiple file filters, counts/summaries | No command permission gate¹ |
 | `ops_glob` | Multiple path patterns with exclusions | No command permission gate¹ |
 | `ops_replace` | Mechanical cross-file replacement; use host edit for precise changes | No command permission gate¹ |
-| `ops_bash` | Preferred general bash command executor; use `command` for short commands and `script_path` for long scripts | Yes |
+| `ops_bash` | Preferred general bash command executor; use `command` for short commands and `script_path` for long scripts | Confined in restricted modes; matched Windows x64 private IPC runtime |
 | `ops_run_background` | Start background jobs | Yes |
 | `ops_job_output` / `ops_job_list` / `ops_job_kill` | Read, list and stop jobs started by the current session | Yes |
 | Host `pwsh` | Windows-native operations using bundled PowerShell 7 | Host policy |
 
-¹ **File tools use the DSH-native sandbox/subprocess boundary.** The host owns session-cwd resolution, policy lookup, exact worker-argv confinement, cancellation and result mapping; the Rust core additionally rejects links/reparse/special objects and enforces budgets and CAS integrity. `workspace-write` permits paths only inside the active workspace root; external absolute paths require `danger-full-access`.
+¹ **Fixed file operations use a trusted-operation policy fence, matching DSH fs-sandbox, not arbitrary-code isolation.** OS-readable paths are readable in all modes; read-only rejects replacement, workspace-write permits writes under the workspace and DSH temporary areas, and full access adds no write fence. The fixed Rust worker uses host subprocess governance plus no-follow traversal, budgets and CAS. Bash/run_code still require OS confinement; no unconfined fallback exists. On Windows, owned workspaces automatically receive directory-only WRITE_OWNER for the host grant prerequisite, with DACL backups; no recursive ACL edits or ownership changes.
 
 ## Long scripts and JSON stability
 

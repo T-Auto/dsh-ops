@@ -23,7 +23,7 @@
     {
       "name": "dsh-ops.process.spawn",
       "scope": "subprocess",
-      "reason": "Start the independent native file worker through DSH subprocess and confinement, or start the FastCtx background backend when that component is explicitly enabled."
+      "reason": "Start fixed trusted native file operations through DSH subprocess and policy checks, or confined Bash/PTC execution; FastCtx background is explicitly opt-in and full-access-only."
     },
     {
       "name": "dsh-ops.fs.read",
@@ -100,7 +100,7 @@
         "tools": [
           "bash"
         ],
-        "shellPermission": "shell component enabled AND publishBashTool AND per-session sandboxPolicy danger-full-access"
+        "shellPermission": "shell component enabled AND publishBashTool AND authoritative per-session DSH policy; restricted modes require host confinement"
       }
     ],
     "x-components": [
@@ -108,7 +108,8 @@
         "id": "dsh-ops-ptc",
         "entry": "dsh-ops/ptc",
         "defaultEnabled": false,
-        "platforms": ["win32", "darwin", "linux"],
+        "platforms": ["win32"],
+        "architectures": ["x64"],
         "presentation": "PTC-only",
         "runtime": "independent native Rust file worker; no FastCtx dependency",
         "tools": ["ops_batch", "ops_result"],

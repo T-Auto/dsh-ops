@@ -99,6 +99,8 @@ pub struct Request {
     #[serde(default)]
     pub read_only: bool,
     #[serde(default)]
+    pub write_roots: Option<Vec<String>>,
+    #[serde(default)]
     pub root_identity: String,
     pub scope: String,
     pub tool: String,

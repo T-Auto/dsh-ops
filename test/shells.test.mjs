@@ -365,6 +365,85 @@ await test('the package-missing reason reaches the rung it belongs to', async ()
   })
 })
 
+await test('a package the registry never carried and a broken tree get different advice', async () => {
+  // AC-1 / AC-2. Both shapes end in `available: false`, and one sentence used
+  // to serve both — but only one of them is repaired by reinstalling the
+  // profile's dependencies. A package the registry never carried (the mirror
+  // shape) cannot be conjured by any local repair, so that line points at the
+  // registry-free provisioner instead and does not use the word at all.
+  /**
+   * Resolve the bash rung against one staged platform-package shape.
+   * @param {string} dir - the temporary root.
+   * @param {{install: boolean, binary: boolean}} shape - how the package is present.
+   * @returns {string} the rung's detail.
+   */
+  const detailFor = (dir, shape) => resolveShells(config({ allowSystemShellFallback: false }), {
+    bundleRoot: stagePlatformPackage(path.join(dir, 'plugin'), 'bash', shape),
+    env: { DSH_HOME: TEST_HOME, PATH: '' },
+    platform: process.platform,
+    arch: process.arch,
+  }).bash.detail
+
+  let missing
+  await withTempDir('shells-cause-missing', async (dir) => {
+    missing = detailFor(dir, { install: false, binary: false })
+    assert.ok(missing.includes('is declared but not installed'), missing)
+    assert.ok(missing.includes('may not carry that platform package'), missing)
+    assert.ok(missing.includes('provision-shells --bash'), missing)
+    assert.equal(/\brepair(s|ing)?\b/u.test(missing), false, missing)
+  })
+
+  let corrupt
+  await withTempDir('shells-cause-corrupt', async (dir) => {
+    corrupt = detailFor(dir, { install: true, binary: false })
+    assert.ok(corrupt.includes('is installed without bin/bash.exe'), corrupt)
+    assert.match(corrupt, /repairs that/u)
+    assert.ok(corrupt.includes('provision-shells --bash'), corrupt)
+  })
+
+  assert.notEqual(missing, corrupt)
+})
+
+await test('bundledShell names the machine-readable cause of every miss', async () => {
+  // D1: the advice above is chosen by `cause`, never by matching words inside
+  // the detail, so each way of missing has to name itself. These four values
+  // are the whole domain; anything a future version adds lands on the default
+  // remedy until it is mapped, and this check is where that shows up.
+  /**
+   * Resolve the plugin's own bash out of one staged root.
+   * @param {string} bundleRoot - the plugin root.
+   * @returns {{file: string|undefined, detail: string|undefined, cause: string|undefined}} the probe.
+   */
+  const causeOf = (bundleRoot) => bundledShell({
+    kind: 'bash', bundleRoot, platform: process.platform, arch: process.arch,
+  })
+
+  await withTempDir('shells-cause-manifest', async (dir) => {
+    const bare = path.join(dir, 'bare')
+    fs.mkdirSync(bare, { recursive: true })
+    assert.equal(causeOf(bare).cause, 'no-manifest')
+  })
+
+  await withTempDir('shells-cause-undeclared', async (dir) => {
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'dsh-ops', version: '0.1.0' }))
+    assert.equal(causeOf(dir).cause, 'not-declared')
+  })
+
+  await withTempDir('shells-cause-absent', async (dir) => {
+    assert.equal(causeOf(stagePlatformPackage(dir, 'bash', { install: false, binary: false })).cause, 'not-installed')
+  })
+
+  await withTempDir('shells-cause-partial', async (dir) => {
+    assert.equal(causeOf(stagePlatformPackage(dir, 'bash', { install: true, binary: false })).cause, 'incomplete-tree')
+  })
+
+  await withTempDir('shells-cause-found', async (dir) => {
+    const found = causeOf(stagePlatformPackage(dir, 'bash', { install: true, binary: true }))
+    assert.equal(found.file !== undefined, true)
+    assert.equal(found.cause, undefined, 'a cause only explains a miss')
+  })
+})
+
 // --- the upstream pins (phase C: pointers, not distributed binaries)
 
 await test('the pin table names one upstream release per shell, and nothing is spelled twice', () => {
@@ -613,6 +692,15 @@ await test('a missing bash publishes nothing and warns instead of failing', asyn
     assert.equal(registrations.length, 0)
     assert.equal(warnings.length, 1)
     assert.match(warnings[0], /bash is unavailable/)
+    // AC-7's assembly channel, pinned at the unit level: the logger receives
+    // the same detail the ladder reports, and that detail carries the action.
+    // This root has no manifest at all, so the wording comes from the default
+    // branch of the cause mapping (D8) — never a bare statement of the problem.
+    assert.ok(warnings[0].includes('provision-shells --bash'), warnings[0])
+    assert.ok(
+      warnings[0].includes('run `dsh-ops provision-shells --bash` to install the pinned upstream copy'),
+      warnings[0],
+    )
     assert.equal(typeof dispose, 'function')
     dispose()
     dispose()
@@ -868,17 +956,55 @@ await test('ops_bash executes a script_path without embedding its contents in ar
   })
 })
 
-await test('ops_bash turns a missing executable into a concise retryable result', async () => {
+await test('ops_bash turns a missing executable into the remedy its source deserves', async () => {
   const spawnError = Object.assign(new Error('spawn missing bash'), { code: 'ENOENT' })
   const service = { spawn() { throw spawnError } }
-  const definition = bashToolDefinition({ file: 'C:\\missing\\bash.exe', source: 'bundled', subprocess: service })
-  const value = await definition.execute({ command: 'echo hi' }, { signal: new AbortController().signal })
+  /**
+   * Run one ENOENT spawn through a tool bound to `source`.
+   * @param {string} source - the rung the executable came from.
+   * @returns {Promise<{value: object, definition: object}>} the settled result.
+   */
+  const runFor = async (source) => {
+    const definition = bashToolDefinition({ file: 'C:\\missing\\bash.exe', source, subprocess: service })
+    const value = await definition.execute({ command: 'echo hi' }, { signal: new AbortController().signal })
+    return { value, definition }
+  }
+  const head = 'bash executable is unavailable (ENOENT): C:\\missing\\bash.exe. '
 
-  assert.equal(value.error, 'bash executable is unavailable (ENOENT): C:\\missing\\bash.exe. The bundled bash payload may be missing; repair the profile installation and retry.')
-  assert.equal(value.timedOut, false)
-  assert.deepEqual(value.stdout, { text: '', truncated: false })
-  assert.deepEqual(value.stderr, { text: '', truncated: false })
-  assert.match(definition.output.render({}, value)[0].text, /repair the profile installation and retry/)
+  // AC-3: each source is told what would actually restore that copy. The old
+  // single line sent all of them to "repair the profile installation", which is
+  // the wrong move for a configured path and for a system bash.
+  const bundled = await runFor('bundled')
+  assert.equal(bundled.value.error, `${head}The bundled bash left the profile after it was resolved; restore the profile's dependencies, or run \`dsh-ops provision-shells --bash\` to fetch the pinned copy from upstream releases instead.`)
+  assert.equal(bundled.value.timedOut, false)
+  assert.deepEqual(bundled.value.stdout, { text: '', truncated: false })
+  assert.deepEqual(bundled.value.stderr, { text: '', truncated: false })
+  assert.match(bundled.definition.output.render({}, bundled.value)[0].text, /The bundled bash left the profile after it was resolved/)
+
+  const provisioned = await runFor('provisioned')
+  assert.equal(provisioned.value.error, `${head}The provisioned copy under this DSH_HOME is gone; run \`dsh-ops provision-shells --bash\` again to reinstall the pinned upstream copy.`)
+
+  const config = await runFor('config')
+  assert.equal(config.value.error, `${head}The configured bashPath no longer exists; point bashPath at a real executable, or clear it and run \`dsh-ops provision-shells --bash\`.`)
+
+  const errors = [bundled.value.error, provisioned.value.error, config.value.error]
+  assert.equal(new Set(errors).size, 3, 'one wording per source')
+  for (const error of errors) {
+    assert.equal(/repair the profile installation/u.test(error), false, error)
+  }
+
+  // The two system sources share the one remedy that cannot be a registry
+  // fetch, and a source this table has never seen still gets a usable line
+  // rather than nothing (D8).
+  const system = 'The system bash this deployment fell back to is gone; reinstall it, or run `dsh-ops provision-shells --bash` for a copy the registry cannot take away.'
+  for (const source of ['path', 'well-known']) {
+    assert.equal((await runFor(source)).value.error, `${head}${system}`, `${source}: the system bash remedy`)
+  }
+  assert.equal(
+    (await runFor('a-source-added-later')).value.error,
+    `${head}run \`dsh-ops provision-shells --bash\` to install the pinned upstream copy.`,
+    'an unmapped source still gets the generic remedy',
+  )
 })
 
 await test('ops_bash requires exactly one command input', async () => {
@@ -1099,7 +1225,7 @@ await test('the manifest declares the plugin\'s own shell tools as their own nam
     source: "the plugin's bash layer via host subprocess",
     publicPrefix: 'ops_',
     tools: ['bash'],
-    shellPermission: 'shell component enabled AND publishBashTool AND per-session sandboxPolicy danger-full-access',
+    shellPermission: 'shell component enabled AND publishBashTool AND authoritative per-session DSH policy; restricted modes require host confinement',
   })
   // The declared name is the name the tool actually registers under.
   assert.equal(BASH_TOOL_NAME, `${namespaces[2].publicPrefix}${namespaces[2].tools[0]}`)

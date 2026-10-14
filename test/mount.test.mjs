@@ -45,7 +45,8 @@ async function component(ctx, name, config = {}) {
 async function executor(ctx) {
   await ctx.plugin(inner => {
     inner.provide('subprocess', { spawn() { throw new Error('fixture does not execute commands') } })
-    inner.provide('sandboxPolicy', { resolve({ session }) { return { mode: session.mode } } })
+    inner.provide('sandboxPolicy', { resolve({ session }) { return { mode: session.mode, workspaceRoot: session.header.cwd } } })
+    inner.provide('sandbox', { async confine(argv) { return { argv, enforcement: 'full' } } })
   })
 }
 async function agent(ctx, id, mode = 'danger-full-access', parent) {
@@ -126,9 +127,14 @@ await test('native file paths resolve from session cwd and enforce workspace-wri
       const outside = path.join(path.dirname(dir), 'outside-native.txt')
       fs.writeFileSync(outside, 'outside\n')
       try {
-        const denied = await callTool(ctx, publicToolName('inspect_local_file'), { path: outside }, undefined, workspace)
+        const read = await callTool(ctx, publicToolName('inspect_local_file'), { path: outside }, undefined, workspace)
+        assert.equal(read.value.status, 'completed')
+        const readonly = await agentForCall(ctx, dir, 'read-only')
+        const denied = await callTool(ctx, publicToolName('replace'), { path: outside, pattern: 'outside', replacement: 'changed' }, undefined, readonly)
         assert.equal(denied.value.error.code, 'POLICY_DENIED')
-        assert.ok(denied.value.error.message.includes(dir))
+        assert.match(denied.value.error.message, /User authorization/)
+        assert.match(denied.value.error.nextAction, /Ask the user/)
+        assert.equal(fs.readFileSync(outside, 'utf8'), 'outside\n')
       } finally { fs.rmSync(outside, { force: true }) }
     })
   } finally { await shutdown(ctx) }
@@ -172,16 +178,22 @@ await test('bash is scoped to authorized sessions, responds to mode changes, and
     const full = await agent(ctx, 'full')
     await visible(ctx, full, [BASH_TOOL])
     const restricted = await agent(ctx, 'restricted', 'workspace-write', full)
-    await waitFor(() => !scopedToolNames(ctx, restricted).includes(BASH_TOOL), { timeoutMs: 5000 })
+    await visible(ctx, restricted, [BASH_TOOL])
     assert.equal(registryNames(ctx).includes(BASH_TOOL), false)
     const text = (await sections(ctx, full)).get(SHELL_SECTION)
     assert.ok(text.includes(BASH_TOOL))
-    assert.equal(((await sections(ctx, restricted)).get(SHELL_SECTION) ?? '').includes(BASH_TOOL), false)
+    assert.equal(((await sections(ctx, restricted)).get(SHELL_SECTION) ?? '').includes(BASH_TOOL), true)
     const definition = ctx.get('tools').get(BASH_TOOL, full)
     full.session.mode = 'read-only'
     await ctx.serial('session/event', full.session, { type: 'sandbox/mode' })
-    assert.equal(scopedToolNames(ctx, full).includes(BASH_TOOL), false)
-    await assert.rejects(async () => definition.execute({ command: 'echo no' }, { agent: full }), /authoritative danger-full-access/)
+    await visible(ctx, full, [BASH_TOOL])
+    if (process.platform === 'win32') {
+      await assert.rejects(() => definition.execute({ command: 'echo no' }, { agent: full }), /supported MSYS payload layout/)
+    } else {
+      const value = await definition.execute({ command: 'echo no' }, { agent: full, signal: new AbortController().signal })
+      assert.equal(value.sandbox.mode, 'read-only')
+      assert.match(value.error, /fixture does not execute/)
+    }
     full.session.mode = 'danger-full-access'
     await ctx.serial('session/event', full.session, { type: 'sandbox/mode' })
     await visible(ctx, full, [BASH_TOOL])
