@@ -121,7 +121,7 @@ await test('the declared namespace documents the upstream names and the public p
 
 await test('the declared prompt sections are the registered ones', () => {
   const declared = raw.contributes['x-prompt-sections'].map((section) => section.name)
-  assert.deepEqual([...declared].sort(), ['file', 'shell', 'background'].map(name => `${TOOLING_SECTION}:${name}`).sort())
+  assert.deepEqual([...declared].sort(), ['file', 'shell', 'background', 'linux'].map(name => `${TOOLING_SECTION}:${name}`).sort())
 })
 
 await test('the manifest license states the composite this repository ships', () => {

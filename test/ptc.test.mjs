@@ -208,12 +208,15 @@ try {
   fs.copyFileSync('package.json',path.join(isolatedPackage,'package.json'))
   const runtimeDir = path.resolve('runtime',`${process.platform}-${process.arch}`)
   fs.cpSync(runtimeDir,path.join(isolatedPackage,'runtime',`${process.platform}-${process.arch}`),{recursive:true})
-  assert.throws(() => resolveWorker({}, {platform:'linux',arch:'x64'}), /Windows x64 only/)
-  assert.throws(() => resolveWorker({}, {platform:'win32',arch:'arm64'}), /Windows x64 only/)
+  assert.throws(() => resolveWorker({}, {platform:'win32',arch:'arm64'}), /unsupported runtime target/)
+  assert.throws(() => resolveWorker({}, {platform:'darwin',arch:'arm64'}), /unsupported runtime target/)
   assert.ok(resolveWorker({}, {packageRoot:isolatedPackage}).startsWith(isolatedPackage))
   console.log('ok: installed runtime resolves without binaryPath or source build tree')
   const real = new Context(); real.logger.level = 0
-  const outside = fs.mkdtempSync(path.join(os.tmpdir(),'ops-outside-'))
+  // The host fence deliberately allows the DSH temporary areas on Linux, so a
+  // root beside the temp workspace would not exercise the outside-root denial.
+  const outsideBase = os.tmpdir() === '/tmp' ? '/var/tmp' : os.tmpdir()
+  const outside = fs.mkdtempSync(path.join(outsideBase,'ops-outside-'))
   const external = path.join(outside,'protected.txt'); fs.writeFileSync(external,'keep')
   try {
     await real.plugin(Subprocess)
@@ -231,7 +234,7 @@ try {
     assert.deepEqual(fs.readdirSync(path.join(dir,'.dsh-ops')).sort(),beforeStore)
     agent.session.mode='workspace-write'
     const denied=await call('batch',{root:outside,action:'run',operations:[{op:'remove',path:'protected.txt'}]})
-    assert.equal(denied.status,'error',JSON.stringify(denied)); assert.ok(fs.existsSync(external))
+    assert.equal(denied.error.code,'POLICY_DENIED',JSON.stringify(denied)); assert.ok(fs.existsSync(external))
     agent.session.mode='danger-full-access'
     const unrestricted=await call('batch',{root:outside,action:'run',operations:[{op:'remove',path:'protected.txt'}]})
     assert.equal(unrestricted.status,'completed',JSON.stringify(unrestricted)); assert.equal(fs.existsSync(external),false)

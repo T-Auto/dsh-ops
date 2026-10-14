@@ -19,6 +19,8 @@ import * as urlHelpers from 'node:url'
 import fs from 'node:fs'
 import path from 'node:path'
 import { mountBundledPwsh } from '../lib/session-pwsh.js'
+import { mountSessionBash } from '../lib/session-shells.js'
+import { confinedBash } from '../lib/bash-ipc.js'
 import { parseDocument } from 'yaml'
 import { resolveConfig } from '../lib/config.js'
 import {
@@ -28,6 +30,7 @@ import {
   ENV_OVERRIDES,
   MAX_BASH_TIMEOUT_MS,
   PLATFORM_PACKAGES,
+  POSIX_BASH_WELL_KNOWN,
   PWSH_LAYOUT_ORDER,
   SHELL_UPSTREAM_PINS,
   bashToolDefinition,
@@ -476,9 +479,12 @@ await test('the pin table names one upstream release per shell, and nothing is s
   assert.equal(bash?.extractTo, '.')
   assert.equal(bash?.executableRelativePath, 'bin/bash.exe')
   // The one published layout each archive has, and the store path both sides of
-  // the L3 contract compute.
-  assert.equal(provisionedShellVersionDir({ kind: 'pwsh', version: '7.6.6', env: { DSH_HOME: 'C:\\home' } }),
-    path.join('C:\\home', 'dsh-ops', 'shells', 'pwsh', '7.6.6'))
+  // the L3 contract compute. The home is spelled in the host's own syntax: a
+  // drive-letter home is only absolute on Windows, and asking Linux to resolve
+  // one would test `path.resolve` on a foreign path, not this module's layout.
+  const home = process.platform === 'win32' ? 'C:\\home' : path.join(path.sep, 'home', 'dsh-ops-test')
+  assert.equal(provisionedShellVersionDir({ kind: 'pwsh', version: '7.6.6', env: { DSH_HOME: home } }),
+    path.join(home, 'dsh-ops', 'shells', 'pwsh', '7.6.6'))
 })
 
 await test('a platform the pins do not cover has no pin, and the store still resolves layout-only', () => {
@@ -860,7 +866,9 @@ await test('ops_bash runs the resolved bash as `bash -c <command>` through ctx.s
     const definition = bashToolDefinition({ file: shells.bash.file, source: shells.bash.source, subprocess: service })
 
     const controller = new AbortController()
-    const spec = { cwd: 'D:\\work' }
+    // The workdir is resolved before spawning on every platform, so the fixture
+    // passes a real directory rather than a shape the resolver would reject.
+    const spec = { cwd: dir }
     const running = definition.execute(
       { command: 'echo $BASH_VERSION', workdir: spec.cwd, timeoutMs: 5_000, graceMs: 250 },
       { signal: controller.signal },
@@ -871,7 +879,7 @@ await test('ops_bash runs the resolved bash as `bash -c <command>` through ctx.s
     assert.equal(specs.length, 1)
     const [spawned] = specs
     assert.deepEqual(spawned.argv, [bash, '-c', 'echo $BASH_VERSION'])
-    assert.equal(spawned.cwd, 'D:\\work')
+    assert.equal(spawned.cwd, spec.cwd)
     assert.equal(spawned.graceMs, 250)
     assert.equal(spawned.signal.aborted, false)
     assert.deepEqual(spawned.env, { ...ENV_OVERRIDES })
@@ -945,14 +953,39 @@ await test('ops_bash executes a script_path without embedding its contents in ar
     makeExecutable(script)
     const { service, specs, settle } = fakeSubprocess()
     const definition = bashToolDefinition({ file: bash, source: 'config', subprocess: service })
-    const running = definition.execute({ script_path: script, workdir: 'D:\\work' }, { signal: new AbortController().signal })
+    const workdir = dir
+    const running = definition.execute({ script_path: script, workdir }, { signal: new AbortController().signal })
     settle()
     await running
 
     assert.deepEqual(specs[0].argv, [bash, script])
-    assert.equal(specs[0].cwd, 'D:\\work')
+    assert.equal(specs[0].cwd, workdir)
     assert.equal(specs[0].stdio.stdin, 'ignore')
   })
+})
+
+await test('ops_bash names a missing working directory instead of blaming the executable', async () => {
+  // A Windows report showed a missing workdir being answered with "the bundled
+  // bash left the profile": both causes are ENOENT at spawn time, and only one
+  // of them is fixed by reinstalling bash. The directory is resolved first, on
+  // every platform, and the executable is never blamed for it.
+  const { service, specs, settle } = fakeSubprocess()
+  const definition = bashToolDefinition({ file: '/usr/bin/bash', source: 'path', subprocess: service })
+  if (process.platform !== 'linux') {
+    // The guard is part of the Linux adaptation; Windows keeps its own flow.
+    const running = definition.execute({ command: 'echo hi', workdir: TEST_HOME }, { signal: new AbortController().signal })
+    settle()
+    await running
+    assert.equal(specs.length, 1, 'Windows still spawns with the workdir it was given')
+    return
+  }
+  const missing = path.join(TEST_HOME, 'definitely-missing-workdir')
+  const value = await definition.execute({ command: 'echo hi', workdir: missing }, { signal: new AbortController().signal })
+  assert.equal(value.error, `workdir is not a directory: ${missing}. Create it, or pass the session's own cwd.`)
+  assert.equal(value.timedOut, false)
+  assert.equal(specs.length, 0, 'nothing may be spawned when the workdir cannot be used')
+  assert.equal(value.stdout.text, '')
+  assert.equal(value.stderr.text, '')
 })
 
 await test('ops_bash turns a missing executable into the remedy its source deserves', async () => {
@@ -1233,9 +1266,14 @@ await test('the manifest declares the plugin\'s own shell tools as their own nam
 await test('the bundle patch declares independent components, with no persistent pwsh override', () => {
   const entries = patchEntries()
   assert.equal(entries.length, 1)
-  assert.deepEqual(entries[0].insert.map(row => row.id), ['dsh-ops-shell', 'dsh-ops-file', 'dsh-ops-background', 'dsh-ops-ptc'])
+  assert.deepEqual(entries[0].insert.map(row => row.id),
+    ['dsh-ops-shell', 'dsh-ops-file', 'dsh-ops-background', 'dsh-ops-ptc', 'dsh-ops-linux'])
   assert.equal(entries[0].insert[2].disabled, true)
   assert.equal(entries[0].insert[3].disabled, true)
+  // The Linux row is opt-in for the same reason the background row is: it is a
+  // second surface over the same machine, and enabling it is the operator's
+  // decision, not a side effect of installing the plugin on Linux.
+  assert.equal(entries[0].insert[4].disabled, true)
 })
 
 await test('the shipped dsh-ops row states the documented shell defaults', () => {
@@ -1473,6 +1511,179 @@ await test('runtime pwsh overlay targets only the owning row and restores latest
   assert.deepEqual(updates[1], { config: target.options.config, noSave: true })
   cleanup()
   assert.equal(updates.length, 2, 'cleanup is idempotent')
+})
+
+// ---------------------------------------------------------------------------
+// 6. The Linux (non-Windows) policy
+// ---------------------------------------------------------------------------
+
+await test('a POSIX target keeps the distribution bash locations behind PATH', () => {
+  assert.deepEqual([...POSIX_BASH_WELL_KNOWN], ['/bin/bash', '/usr/bin/bash', '/usr/local/bin/bash'])
+  for (const candidate of POSIX_BASH_WELL_KNOWN) {
+    // Absolute POSIX paths whatever host runs this suite: the candidates must
+    // not inherit a drive letter or a backslash from the host's own `path`.
+    assert.equal(path.posix.isAbsolute(candidate), true, candidate)
+    assert.equal(candidate.includes('\\'), false, candidate)
+  }
+  const resolved = resolveShells(config({ allowSystemShellFallback: true }), {
+    bundleRoot: path.join(TEST_HOME, 'posix-no-plugin'),
+    env: { DSH_HOME: TEST_HOME, PATH: '' },
+    platform: 'linux',
+    arch: 'x64',
+  })
+  if (resolved.bash.available) {
+    // The machine has one: it came from the well-known rung, because PATH was
+    // empty, and it is one of the candidates named above.
+    assert.equal(resolved.bash.source, 'well-known')
+    assert.ok(POSIX_BASH_WELL_KNOWN.includes(resolved.bash.file), resolved.bash.file)
+  } else {
+    assert.equal(resolved.bash.source, 'missing')
+  }
+})
+
+await test('a Linux target reports the pwsh rung unavailable for the Linux reason', () => {
+  const probe = allowSystemShellFallback => resolveShells(config({ allowSystemShellFallback }), {
+    bundleRoot: path.join(TEST_HOME, 'linux-no-plugin'),
+    env: { DSH_HOME: TEST_HOME, PATH: '' },
+    platform: 'linux',
+    arch: 'x64',
+  }).pwsh
+  const fallback = probe(true)
+  assert.equal(fallback.available, false)
+  assert.equal(fallback.source, 'missing')
+  assert.equal(fallback.file, undefined)
+  assert.match(fallback.detail, /Windows-only/)
+  assert.match(fallback.detail, /host's own pwsh tool is the ladder's last rung/)
+  // The Windows remedy must not be offered where no pinned copy can exist.
+  assert.doesNotMatch(fallback.detail, /provision-shells/)
+  const confined = probe(false)
+  assert.equal(confined.available, false)
+  assert.equal(confined.source, 'missing')
+  assert.match(confined.detail, /no PowerShell rung/)
+  // A platform with no pin at all resolves the same way, and never throws.
+  const darwin = resolveShells(config(), {
+    bundleRoot: path.join(TEST_HOME, 'darwin-no-plugin'),
+    env: { DSH_HOME: TEST_HOME, PATH: '' },
+    platform: 'darwin',
+    arch: 'arm64',
+  })
+  assert.equal(darwin.pwsh.available, false)
+  assert.equal(darwin.bash.available, false)
+})
+
+await test('confined bash is the host bash itself where there is no MSYS layer', () => {
+  if (process.platform === 'win32') return
+  // The private runtime exists because PortableGit carries its own MSYS. Every
+  // other host runs the machine's own bash unchanged, and the fence is the host
+  // sandbox's alone (ctx.sandbox.confine), never a second shell layer.
+  assert.deepEqual(confinedBash(process.execPath), { file: process.execPath })
+  assert.deepEqual(confinedBash('/approved/bash', { platform: 'linux' }), { file: '/approved/bash' })
+})
+
+/**
+ * The smallest context `mountSessionBash` needs: a service locator, the
+ * lifecycle hooks it subscribes to, and an injectable authority scope.
+ * @param {Map<string, unknown>} services - the host services, by name.
+ * @param {string[]} warnings - the messages the fake logger collected.
+ * @returns {{ctx: object, handlers: Record<string, (payload: object) => void>}} the fake.
+ */
+function fakeSessionHost(services, warnings) {
+  const handlers = {}
+  return {
+    ctx: {
+      logger: { warn: message => warnings.push(message), error() {}, info() {} },
+      get: name => services.get(name),
+      effect: () => {},
+      on: (name, handler) => { handlers[name] = handler },
+      inject: (_deps, body) => { body({ get: name => services.get(name), effect: () => {} }) },
+    },
+    handlers,
+  }
+}
+
+/**
+ * One agent whose own scope carries a tool registry, the way a real agent fiber
+ * does, so the registrations and restrictions `mountSessionBash` makes are
+ * observable.
+ * @param {string} cwd - the session workspace.
+ * @returns {{agent: object, registrations: object[], restrictions: object[]}} the fixture.
+ */
+function fakeAgentScope(cwd) {
+  const registrations = []
+  const restrictions = []
+  const scope = {
+    get: name => (name === 'tools' ? scope.tools : undefined),
+    tools: {
+      register(definition) { registrations.push(definition); return () => {} },
+      restrict(spec) { restrictions.push(spec); return () => {} },
+      schemas: () => registrations.map(definition => ({ name: definition.name })),
+    },
+  }
+  const agent = {
+    session: { id: 'session-1', mode: 'workspace-write', header: { cwd } },
+    ctx: {
+      plugin(body) {
+        body({ inject: (_deps, callback) => { callback(scope); return () => {} } })
+        return { dispose() {} }
+      },
+    },
+  }
+  return { agent, registrations, restrictions }
+}
+
+await test('a restricted session without host confinement is never given bash', () => {
+  const warnings = []
+  const services = new Map([
+    ['sandboxPolicy', { resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: session.header.cwd, sessionId: session.id }) }],
+    // The confinement provider is missing: `confine` is undefined.
+    ['sandbox', {}],
+    ['subprocess', { spawn() { throw new Error('must not spawn') } }],
+    // An ops_bash the agent already inherited from an ancestor scope.
+    ['tools', { schemas: () => [{ name: BASH_TOOL_NAME }] }],
+  ])
+  const { ctx, handlers } = fakeSessionHost(services, warnings)
+  const { agent, registrations, restrictions } = fakeAgentScope(TEST_HOME)
+  mountSessionBash(ctx, { publishBashTool: true }, {
+    bash: { available: true, file: process.execPath, source: 'path', detail: 'test bash' },
+  })
+  handlers['agent/created']({ agent })
+
+  // Fail closed at publication: nothing is registered for the restricted agent,
+  // and the inherited tool is masked instead of being left runnable.
+  assert.equal(registrations.length, 0)
+  assert.deepEqual(restrictions, [{ deny: [BASH_TOOL_NAME] }])
+  assert.ok(warnings.some(message => message.includes('never runs unconfined')), warnings.join('\n'))
+})
+
+await test('a published bash refuses to run once host confinement is gone', async () => {
+  if (process.platform === 'win32') return
+  const warnings = []
+  const spawns = []
+  const sandbox = { confine: async argv => ({ argv, enforcement: 'full' }) }
+  const services = new Map([
+    ['sandboxPolicy', { resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: session.header.cwd, sessionId: session.id }) }],
+    ['sandbox', sandbox],
+    ['subprocess', { spawn() { spawns.push('spawn'); throw new Error('must not spawn') } }],
+    ['tools', { schemas: () => [] }],
+  ])
+  const { ctx, handlers } = fakeSessionHost(services, warnings)
+  const { agent, registrations } = fakeAgentScope(TEST_HOME)
+  mountSessionBash(ctx, { publishBashTool: true }, {
+    bash: { available: true, file: process.execPath, source: 'path', detail: 'test bash' },
+  })
+  handlers['agent/created']({ agent })
+  assert.equal(registrations.length, 1, 'the provider is present, so the tool is published')
+
+  // The provider disappears between publication and the call: the confined path
+  // must refuse instead of degrading to an unconfined spawn.
+  sandbox.confine = undefined
+  const value = await registrations[0].execute({ command: 'printf never' }, {
+    agent: { session: agent.session },
+    signal: new AbortController().signal,
+  })
+  assert.deepEqual(spawns, [])
+  assert.match(String(value.error), /EXECUTOR_UNAVAILABLE/)
+  assert.equal(value.exitCode, undefined)
 })
 
 report('shells')

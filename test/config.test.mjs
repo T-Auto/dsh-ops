@@ -27,6 +27,8 @@ await test('an absent config resolves to the documented defaults', () => {
     assert.equal(config.bashPath, undefined)
     assert.equal(config.publishBashTool, true)
     assert.equal(config.allowSystemShellFallback, false)
+    // The credential fence is on unless a row turns it off.
+    assert.equal(config.denyCredentialReads, true)
   }
 })
 
@@ -44,6 +46,7 @@ await test('an explicit config overrides every default', () => {
     bashPath: 'C:\\Program Files\\Git\\bin\\bash.exe',
     publishBashTool: false,
     allowSystemShellFallback: true,
+    denyCredentialReads: false,
   })
   assert.equal(config.binaryPath, 'C:\\tools\\fastctx.exe')
   assert.equal(config.serverName, 'ops-tools')
@@ -57,6 +60,7 @@ await test('an explicit config overrides every default', () => {
   assert.equal(config.bashPath, 'C:\\Program Files\\Git\\bin\\bash.exe')
   assert.equal(config.publishBashTool, false)
   assert.equal(config.allowSystemShellFallback, true)
+  assert.equal(config.denyCredentialReads, false)
 })
 
 await test('the dropped shell keys stay unknown keys, so a stale config fails loud', () => {
