@@ -92,6 +92,18 @@ impl From<serde_json::Error> for Failure {
 }
 pub type Result<T> = std::result::Result<T, Failure>;
 
+impl Request {
+    /// The workspace root as a path, for rendering a relative display path.
+    pub fn root_path(&self) -> std::path::PathBuf {
+        std::path::PathBuf::from(&self.root)
+    }
+
+    /// The denied roots as paths, in the lexical form the traversal compares
+    /// against. The host sends absolute, canonicalized paths.
+    pub fn deny_roots_paths(&self) -> Vec<std::path::PathBuf> {
+        self.deny_roots.iter().map(std::path::PathBuf::from).collect()
+    }
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
@@ -100,6 +112,11 @@ pub struct Request {
     pub read_only: bool,
     #[serde(default)]
     pub write_roots: Option<Vec<String>>,
+    /// Absolute roots the traversal must not descend into or report. The host
+    /// fills this with credential locations; the worker never reads them, so a
+    /// glob or grep cannot even name them.
+    #[serde(default)]
+    pub deny_roots: Vec<String>,
     #[serde(default)]
     pub root_identity: String,
     pub scope: String,

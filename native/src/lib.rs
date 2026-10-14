@@ -35,7 +35,7 @@ pub fn dispatch(request: Request) -> Result<Value> {
         request.root_identity = String::new();
         return file::dispatch(&request);
     }
-    let dir = Dir::open_ambient_dir(root, ambient_authority())?;
+    let dir = Dir::open_ambient_dir(&root, ambient_authority())?;
     use cap_fs_ext::MetadataExt;
     let metadata = dir.dir_metadata()?;
     request.root_identity = format!("{}:{}", metadata.dev(), metadata.ino());
@@ -48,7 +48,8 @@ pub fn dispatch(request: Request) -> Result<Value> {
             "Read-only requests cannot mutate audit or result storage",
         ));
     }
-    let store = store::Store::open(&dir, request.read_only)?;
+    let audit = root.join(paths::STORE);
+    let store = store::Store::open_at(&dir, request.read_only, Some(audit))?;
     match request.tool.as_str() {
         "batch" => batch::run(&dir, &store, &request),
         "result" => results::run(&store, &request),

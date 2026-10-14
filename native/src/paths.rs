@@ -10,6 +10,18 @@ use std::{
 
 pub const STORE: &str = ".dsh-ops";
 const MAX_ENTRIES: u64 = 100_000;
+
+/// Persist one directory's entries after a rename.
+///
+/// The cap_std Dir type has no sync method, and a descriptor cloned from it is
+/// not fsyncable on Linux (EBADF), so the directory is opened through the
+/// standard library. The path is the caller's own canonical directory, never a
+/// model-supplied one.
+#[cfg(unix)]
+pub fn sync_directory(path: &Path) -> Result<()> {
+    std::fs::File::open(path)?.sync_all()?;
+    Ok(())
+}
 const MAX_DEPTH: usize = 128;
 
 pub fn relative(raw: &str) -> Result<String> {
