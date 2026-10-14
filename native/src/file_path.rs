@@ -30,12 +30,41 @@ pub fn checked(raw: &str) -> Result<Target> {
             _ => return Err(Failure::new("INVALID_ARGUMENT", "Worker paths must be lexically normalized")),
         }
     }
-    let mut parent = Dir::open_ambient_dir(&anchor, ambient_authority())?;
     let name = names.pop().unwrap_or_else(|| ".".into());
+    // OHOS (target_env = "ohos") denies opening "/" and "/storage" outright
+    // (EACCES/EPERM), so the upstream root anchor fails for every request. Walk from
+    // the deepest openable ancestor prefix instead and continue the usual no-follow
+    // checks on the remaining components. Every other target compiles the upstream
+    // statements verbatim below; the fallback is compiled on OHOS targets only.
+    #[cfg(not(target_env = "ohos"))]
+    let mut parent = Dir::open_ambient_dir(&anchor, ambient_authority())?;
+    #[cfg(not(target_env = "ohos"))]
     for component in names {
         regular(&parent.symlink_metadata(&component)?, true)?;
         parent = parent.open_dir_nofollow(&component)?;
     }
+    #[cfg(target_env = "ohos")]
+    let parent = {
+        let mut opened: Option<(Dir, usize)> = None;
+        let mut last_error: Option<std::io::Error> = None;
+        for split in 0..=names.len() {
+            let mut probe = anchor.clone();
+            for component in names.iter().take(split) { probe.push(component); }
+            match Dir::open_ambient_dir(&probe, ambient_authority()) {
+                Ok(dir) => { opened = Some((dir, split)); break }
+                Err(error) => last_error = Some(error),
+            }
+        }
+        let (mut dir, split) = match opened {
+            Some(value) => value,
+            None => return Err(last_error.expect("at least one candidate anchor").into()),
+        };
+        for component in names.into_iter().skip(split) {
+            regular(&dir.symlink_metadata(&component)?, true)?;
+            dir = dir.open_dir_nofollow(&component)?;
+        }
+        dir
+    };
     regular(&parent.dir_metadata()?, true)?;
     regular(&parent.symlink_metadata(&name)?, false)?;
     Ok(Target { parent, name, display: path.to_path_buf() })
