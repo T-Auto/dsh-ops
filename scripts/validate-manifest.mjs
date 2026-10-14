@@ -30,6 +30,7 @@ import {
   renderToolingPolicy,
 } from '../lib/policy.js'
 import { resolvePtcConfig } from '../lib/ptc/index.js'
+import { resolveLinuxConfig } from '../lib/components/linux/index.js'
 import { PTC_TOOLS, definition } from '../lib/ptc/contract.js'
 import { DEFAULT_SERVER_NAME, resolveConfig } from '../lib/config.js'
 
@@ -225,13 +226,14 @@ if (typeof patch === 'string' && fs.existsSync(path.join(PACKAGE_ROOT, patch))) 
     const rows = Array.isArray(document)
       ? document.flatMap((entry) => (Array.isArray(entry?.insert) ? entry.insert : []))
       : []
-    check(rows.length === 4, 'the bundle declares exactly four components')
-    for (const component of ['shell', 'file', 'background', 'ptc']) {
+    check(rows.length === 5, 'the bundle declares exactly five components')
+    for (const component of ['shell', 'file', 'background', 'ptc', 'linux']) {
       const row = rows.find(candidate => candidate?.name === `${pkg.name}/${component}`)
       check(row?.id === `${pkg.name}-${component}`, `the ${component} component has a stable row id`)
       if (!row) continue
-      check((row.disabled === true) === ['background', 'ptc'].includes(component), `${component} has its documented enablement default`)
-      try { (component === 'ptc' ? resolvePtcConfig : resolveConfig)(row.config); check(true, `${component} config is valid`) }
+      check((row.disabled === true) === ['background', 'ptc', 'linux'].includes(component), `${component} has its documented enablement default`)
+      const validate = component === 'ptc' ? resolvePtcConfig : component === 'linux' ? resolveLinuxConfig : resolveConfig
+      try { validate(row.config); check(true, `${component} config is valid`) }
       catch (error) { check(false, `${component} config is valid`, String(error?.message ?? error)) }
     }
   }
@@ -310,7 +312,7 @@ for (const [index, entry] of namespaces.slice(2).entries()) {
 const sections = manifestRaw.contributes?.['x-prompt-sections'] ?? []
 const sectionNames = sections.map((section) => section.name)
 check(
-  sectionNames.length === 3 && ['file', 'shell', 'background'].every(component => sectionNames.includes(`${TOOLING_SECTION}:${component}`)),
+  sectionNames.length === 4 && ['file', 'shell', 'background', 'linux'].every(component => sectionNames.includes(`${TOOLING_SECTION}:${component}`)),
   'the declared prompt sections match lib/policy.js',
   `declared ${sectionNames.join(', ')} vs policy ${TOOLING_SECTION}`,
 )
@@ -488,9 +490,18 @@ const ptc = manifestRaw.contributes?.['x-components']?.find(c => c.id === 'dsh-o
 check(ptc?.entry === 'dsh-ops/ptc' && ptc?.defaultEnabled === false, 'native PTC component is opt-in')
 check(JSON.stringify(ptc?.tools) === JSON.stringify(PTC_TOOLS.map(publicToolName)), 'PTC declaration matches the generated tool contract')
 check(PTC_TOOLS.every(t => definition(t, () => {}).parameters.type === 'object'), 'PTC schemas remain structured')
-check(JSON.stringify(pkg.os) === '["win32"]' && JSON.stringify(pkg.cpu) === '["x64"]' &&
-  JSON.stringify(ptc?.platforms) === '["win32"]' && JSON.stringify(ptc?.architectures) === '["x64"]',
-  '0.3.0 package and PTC declarations support Windows x64 only')
+check(JSON.stringify(pkg.os) === '["win32","linux"]' && JSON.stringify(pkg.cpu) === '["x64"]' &&
+  JSON.stringify(ptc?.platforms) === '["win32","linux"]' && JSON.stringify(ptc?.architectures) === '["x64"]',
+  'the package and the PTC component both support win32 and linux x64')
+const linuxComponent = manifestRaw.contributes?.['x-components']?.find(c => c.id === 'dsh-ops-linux')
+check(linuxComponent?.entry === 'dsh-ops/linux' && linuxComponent?.defaultEnabled === false,
+  'the Linux component is opt-in')
+check(JSON.stringify(linuxComponent?.platforms) === '["linux"]' && JSON.stringify(linuxComponent?.architectures) === '["x64"]',
+  'the Linux component declares linux x64')
+const linuxTools = [...linuxComponent?.tools ?? []].sort()
+check(JSON.stringify(linuxTools) === JSON.stringify([...FILE_TOOLS.map(publicToolName), publicToolName('bash')].sort()),
+  'the Linux component declares the file tools and bash',
+  `got ${JSON.stringify(linuxComponent?.tools)}`)
 const REQUIRED_ENTRIES = [
   'native/Cargo.toml',
   'native/Cargo.lock',

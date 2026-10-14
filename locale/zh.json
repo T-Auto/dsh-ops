@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "dsh-ops",
-    "description": "为windows的dsh提供bash、powershell7及一系列rust编写的高性能tools来提高token效率"
+    "description": "为 Windows 与 Linux 的 dsh 提供 bash、powershell7 及一系列 rust 编写的高性能 tools 来提高 token 效率"
   }
 }

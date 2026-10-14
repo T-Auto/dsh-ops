@@ -1,5 +1,8 @@
-# Four independent components. PTC is opt-in, scoped to pure PTC sessions.
+# Five independent components. PTC is opt-in, scoped to pure PTC sessions.
 # Legacy shell and file stay enabled; neither is required by the PTC component.
+# The Linux component is the same worker and bash for Linux hosts; it is off by
+# default so enabling it stays an explicit operator decision, and it is the only
+# row that opts into system bash discovery (allowSystemShellFallback).
 - insert:
     - id: dsh-ops-shell
       name: dsh-ops/shell
@@ -27,4 +30,16 @@
       name: dsh-ops/ptc
       disabled: true
       config:
+        required: false
+    - id: dsh-ops-linux
+      name: dsh-ops/linux
+      disabled: true
+      config:
+        promptPolicy: true
+        publishBashTool: true
+        # System bash is this row's declared intent, and the row is written at
+        # the current migration version so the 0.2.5 fallback retirement does
+        # not silently turn it back off.
+        allowSystemShellFallback: true
+        configUpdateVersion: 1
         required: false

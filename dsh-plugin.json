@@ -41,7 +41,7 @@
       {
         "icon": "./icon.png",
         "title": "dsh-ops",
-        "description": "Provides bash, PowerShell 7, and a suite of high-performance tools written in Rust for Windows DSH to enhance token efficiency",
+        "description": "Provides bash, PowerShell 7, and a suite of high-performance tools written in Rust for Windows and Linux DSH hosts to enhance token efficiency",
         "locales": [
           "locale/en.json",
           "locale/zh.json"
@@ -63,6 +63,11 @@
         "name": "dsh-ops:repository-tooling:background",
         "order": 3252,
         "summary": "Owned background tasks only; absent by default."
+      },
+      {
+        "name": "dsh-ops:repository-tooling:linux",
+        "order": 3253,
+        "summary": "Linux host surface: the same file tools and bash as the Windows components, with the same tool names and permission model."
       }
     ],
     "x-tool-namespaces": [
@@ -108,7 +113,7 @@
         "id": "dsh-ops-ptc",
         "entry": "dsh-ops/ptc",
         "defaultEnabled": false,
-        "platforms": ["win32"],
+        "platforms": ["win32", "linux"],
         "architectures": ["x64"],
         "presentation": "PTC-only",
         "runtime": "independent native Rust file worker; no FastCtx dependency",
@@ -129,6 +134,16 @@
         "id": "dsh-ops-background",
         "entry": "dsh-ops/background",
         "defaultEnabled": false
+      },
+      {
+        "id": "dsh-ops-linux",
+        "entry": "dsh-ops/linux",
+        "defaultEnabled": false,
+        "platforms": ["linux"],
+        "architectures": ["x64"],
+        "runtime": "the same native Rust file worker as the file component, plus the system bash under the host sandbox",
+        "tools": ["ops_inspect_local_file", "ops_glob", "ops_grep", "ops_replace", "ops_bash"],
+        "permissions": "Per-call DSH sandboxPolicy: read-only rejects replacement, workspace-write fences writes to the workspace and declared temporary areas, full access adds no write fence; restricted bash requires the host confinement provider and never falls back to an unconfined run"
       }
     ]
   },

@@ -13,7 +13,8 @@
     "url": "https://github.com/T-Auto/dsh-ops/issues"
   },
   "os": [
-    "win32"
+    "win32",
+    "linux"
   ],
   "cpu": [
     "x64"
@@ -59,7 +60,12 @@
       "default": "./lib/components/ptc/index.js"
     },
     "./ptc/package.json": "./lib/components/ptc/package.json",
-    "./ptc/locale/*.json": "./lib/components/ptc/locale/*.json"
+    "./ptc/locale/*.json": "./lib/components/ptc/locale/*.json",
+    "./linux": {
+      "default": "./lib/components/linux/index.js"
+    },
+    "./linux/package.json": "./lib/components/linux/package.json",
+    "./linux/locale/*.json": "./lib/components/linux/locale/*.json"
   },
   "bin": {
     "dsh-ops": "bin/dsh-ops.mjs"
@@ -112,7 +118,7 @@
     "provision": "node bin/dsh-ops.mjs provision",
     "validate:manifest": "node scripts/validate-manifest.mjs",
     "test": "node test/run.mjs",
-    "verify:release": "npm run verify && node bin/check-release.mjs",
+    "verify:release": "npm run verify && node bin/check-release.mjs --require win32-x64,linux-x64",
     "verify": "node scripts/validate-manifest.mjs && node test/run.mjs"
   },
   "peerDependencies": {

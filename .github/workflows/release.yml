@@ -33,13 +33,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Exactly the targets this release ships. `bin/native-runtime.mjs`
+        # refuses any other target, and the main package's `os`/`cpu` and the
+        # components' `platforms` declarations name these two, so a wider matrix
+        # would fail on its first step rather than build anything.
         include:
           - { runner: windows-latest, platform: win32, arch: x64, target: x86_64-pc-windows-msvc }
-          - { runner: windows-latest, platform: win32, arch: arm64, target: aarch64-pc-windows-msvc }
           - { runner: ubuntu-latest, platform: linux, arch: x64, target: x86_64-unknown-linux-gnu }
-          - { runner: ubuntu-24.04-arm, platform: linux, arch: arm64, target: aarch64-unknown-linux-gnu }
-          - { runner: macos-15-intel, platform: darwin, arch: x64, target: x86_64-apple-darwin }
-          - { runner: macos-latest, platform: darwin, arch: arm64, target: aarch64-apple-darwin }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7.0.1
@@ -117,8 +117,14 @@ jobs:
           path: runtime
           merge-multiple: true
 
-      - name: Verify all native PTC runtime targets
+      - name: Verify the staged native runtime targets
+        # Every advertised target must be present before anything is packed: the
+        # tarball is the only installation channel, and a Linux install with no
+        # Linux worker resolves no file tools and no bash.
         run: npm run check:ptc-runtime
+
+      - name: Verify the release closure carries both platforms
+        run: node bin/check-release.mjs --require win32-x64,linux-x64
 
       - name: Build the platform packages and the publish directory
         run: node scripts/build-platform-packages.mjs --dist "$env:DIST"

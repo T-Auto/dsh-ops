@@ -1714,6 +1714,16 @@ async function main() {
     printUsage()
     return
   }
+  // The three payload packages this script publishes are Windows payloads:
+  // PortableGit, PowerShell 7 for Windows, and a PE FastCtx build. Linux needs
+  // none of them - it uses the distribution's own bash and this repository's
+  // Linux worker, which `bin/native-runtime.mjs stage --platform linux-x64`
+  // stages into the main package. Refuse the target instead of assembling a
+  // package that would resolve no payload.
+  if (options.platform !== 'win32') {
+    throw new Error(`this script publishes Windows payload packages only; ${options.platform} has none.`
+      + ' Stage the Linux worker with `node bin/native-runtime.mjs stage --platform linux-x64`.')
+  }
   const proxy = resolveProxy(options.proxy, options.noProxy)
   const context = {
     ...options,
