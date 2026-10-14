@@ -20,7 +20,7 @@ node bin/native-runtime.mjs stage --platform win32-x64 --input native/target/rel
 node bin/native-runtime.mjs check --platform win32-x64
 ```
 
-**0.3.0 本次仅发布 Windows x64**；worker 和 Bash IPC 代理随包提供。其它平台/架构未交付，不在兼容承诺内。不存在 native 失败后回退 FastCtx 文件工具的路径。
+**0.3.0 npm 包仅发布 Windows x64 二进制**；worker 源码已支持 Windows x64、macOS (arm64/x64) 与 Linux x64，其它平台可用 `npm run build:ptc` 本地构建并配合 `binaryPath` 使用。Bash IPC 代理与 bash/PowerShell 载荷仍仅 Windows x64。不存在 native 失败后回退 FastCtx 文件工具的路径。
 
 
 **中文** | [English](README.en.md)
@@ -36,7 +36,7 @@ node bin/native-runtime.mjs check --platform win32-x64
 
 执行顺序：**工具包 → bash → PowerShell 7**。
 
-**0.3.0 仅支持 Windows x64**，目标宿主 DSH `0.2.0-rc.2`。原生 Rust 文件/PTC worker 随包携带；PTC 默认关闭，须显式启用。Linux/macOS/ARM64 留待后续版本。见 [PTC 设计与使用](docs/native-ptc.md)。
+**文件/PTC worker 支持 Windows x64、macOS (arm64/x64) 与 Linux x64**，目标宿主 DSH `0.2.0-rc.2`。0.3.0 npm 包仅随带 Windows x64 二进制，其它平台用 `npm run build:ptc` 源码构建；bash/PowerShell 载荷仍仅 Windows x64。PTC 默认关闭，须显式启用。见 [PTC 设计与使用](docs/native-ptc.md)。
 
 ## 安装、更新、卸载
 

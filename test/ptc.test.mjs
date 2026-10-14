@@ -208,8 +208,13 @@ try {
   fs.copyFileSync('package.json',path.join(isolatedPackage,'package.json'))
   const runtimeDir = path.resolve('runtime',`${process.platform}-${process.arch}`)
   fs.cpSync(runtimeDir,path.join(isolatedPackage,'runtime',`${process.platform}-${process.arch}`),{recursive:true})
-  assert.throws(() => resolveWorker({}, {platform:'linux',arch:'x64'}), /Windows x64 only/)
-  assert.throws(() => resolveWorker({}, {platform:'win32',arch:'arm64'}), /Windows x64 only/)
+  assert.throws(() => resolveWorker({}, {platform:'linux',arch:'arm64'}), /unsupported runtime target/)
+  assert.throws(() => resolveWorker({}, {platform:'win32',arch:'arm64'}), /unsupported runtime target/)
+  assert.throws(() => resolveWorker({}, {platform:'freebsd',arch:'x64'}), /unsupported runtime target/)
+  // darwin-arm64 is a supported target: an explicit worker path resolves.
+  const darwinFixture = path.join(dir,'darwin-worker-fixture')
+  fs.writeFileSync(darwinFixture,'fixture')
+  assert.equal(resolveWorker({binaryPath:darwinFixture},{platform:'darwin',arch:'arm64'}),darwinFixture)
   assert.ok(resolveWorker({}, {packageRoot:isolatedPackage}).startsWith(isolatedPackage))
   console.log('ok: installed runtime resolves without binaryPath or source build tree')
   const real = new Context(); real.logger.level = 0
@@ -230,8 +235,20 @@ try {
     assert.equal(readonlyPage.items[0].state,'completed',JSON.stringify(readonlyPage))
     assert.deepEqual(fs.readdirSync(path.join(dir,'.dsh-ops')).sort(),beforeStore)
     agent.session.mode='workspace-write'
-    const denied=await call('batch',{root:outside,action:'run',operations:[{op:'remove',path:'protected.txt'}]})
-    assert.equal(denied.status,'error',JSON.stringify(denied)); assert.ok(fs.existsSync(external))
+    // Windows confinement denies even temp-root writes under workspace-write.
+    // Other hosts rely on the JS fence, which deliberately allows temp roots,
+    // so the outside-root denial is asserted against a non-temp root there.
+    const deniedRoot = process.platform === 'win32' ? outside : os.homedir()
+    const deniedPath = process.platform === 'win32' ? 'protected.txt' : '.dsh-ops-probe-never-accessed'
+    const denied=await call('batch',{root:deniedRoot,action:'run',operations:[{op:'remove',path:deniedPath}]})
+    if (process.platform === 'win32') {
+      // Confinement surfaces as an executor failure on Windows.
+      assert.equal(denied.status,'error',JSON.stringify(denied))
+    } else {
+      // The JS fence answers a POLICY_DENIED rejection.
+      assert.equal(denied.error?.code,'POLICY_DENIED',JSON.stringify(denied))
+    }
+    assert.ok(fs.existsSync(external))
     agent.session.mode='danger-full-access'
     const unrestricted=await call('batch',{root:outside,action:'run',operations:[{op:'remove',path:'protected.txt'}]})
     assert.equal(unrestricted.status,'completed',JSON.stringify(unrestricted)); assert.equal(fs.existsSync(external),false)

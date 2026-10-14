@@ -55,6 +55,13 @@ These fixes are included in 0.3.0; the three Windows payload dependencies are un
 - Keep each component icon inside its exported manifest directory; fix the PTC Plugin Manager metadata error caused by the parent-relative icon path, with coverage in the existing manifest suite.
 - Source builds use `npm run build:ptc` and `npm run build:bash-ipc`; published 0.3.0 artifacts are Windows x64 only. See `docs/native-ptc.md`.
 
+## [Unreleased] — darwin/linux worker support
+
+- Enable the native Rust file/PTC worker on darwin-arm64, darwin-x64 and linux-x64 (`PLATFORMS` in `lib/ptc/runtime.js`); win32-x64 remains supported and unchanged. (#35)
+- Relax package `os`/`cpu` and the PTC manifest platform declarations to the supported matrix; update the manifest gate and the PTC tests accordingly.
+- Make the hermetic test gate green on macOS hosts: canonicalize temporary fixture roots once (`/var` -> `/private/var`), pin the win32 platform forgery where the suite forges it, mirror `dshHome`'s host-path resolution in the pin-table expectation, and keep the confined-bash denial matrix a Windows-only acceptance while asserting the JS outside-root fence cross-platform.
+- Bash IPC proxies and the bundled bash/PowerShell payloads stay Windows x64 only in this change.
+
 ## [Unreleased] — Background job argument strictness
 
 - Check the background tools' arguments (`ops_run_background`, `ops_job_output`, `ops_job_list`, `ops_job_kill`) against FastCtx's own published schema before the owned-job check, so a mistyped or missing `job_id` is reported as `invalid arguments: unknown key "id"` or `missing required field "job_id"` instead of "This job was not started by this session on the current connection." The ownership check itself is unchanged and still decides every call whose arguments are well formed; no argument error reaches the server. Covered by `test/jobs-args.test.mjs`. (#14)

@@ -100,6 +100,12 @@ await test('owned Modify-only workspace starts real DSH sandbox; three modes and
       if (process.platform==='win32' && result.error?.startsWith('EXECUTOR_UNAVAILABLE')) {
         assert.match(result.error,/not a user authorization denial/)
         throw new Error('Windows confined Bash regression: initialization failed; do not bypass the DSH sandbox.')
+      } else if (process.platform !== 'win32') {
+        // macOS hosts run system bash through the same tool; the confined-bash
+        // deny matrix below is the plugin's Windows acceptance and the host
+        // sandbox does not implement those deny semantics here.
+        assert.equal(result.exitCode,0,JSON.stringify(result))
+        assert.equal(result.stdout.text,'READ_OK')
       } else {
         assert.equal(result.exitCode,0,JSON.stringify(result));assert.equal(result.stdout.text,'READ_OK')
         result=await bash.execute({command:"printf bad > denied.txt",workdir:root,timeoutMs:10000},exec)
@@ -113,35 +119,39 @@ await test('owned Modify-only workspace starts real DSH sandbox; three modes and
         result=await bash.execute({command:"printf allowed > allowed.txt",workdir:root,timeoutMs:10000},exec)
         assert.equal(result.exitCode,0,JSON.stringify(result));assert.equal(fs.readFileSync(path.join(root,'allowed.txt'),'utf8'),'allowed')
       }
-      await ctx.plugin(NodePtc,{})
-      await agent.ctx.plugin({inject:['tools'],apply(inner){inner.tools.presentAs('ptc')}})
-      agent.session.mode='workspace-write'
-      fs.writeFileSync(path.join(root,'probe.sh'),"printf 'SCRIPT_OK'\n")
-      const request = {name:'run_code',callId:'ptc-bash-acceptance',agent,signal:exec.signal,arguments:{description:'Test confined Bash via pure PTC SDK',code:`
-        const command = await tools.ops_bash({command:"printf 'PTC_OK'",workdir:${JSON.stringify(root)},timeoutMs:10000});
-        const script = await tools.ops_bash({script_path:${JSON.stringify(path.join(root,'probe.sh'))},workdir:${JSON.stringify(root)},timeoutMs:10000});
-        const pipeline = await tools.ops_bash({command:"printf 'PIPE_OK' | cat",workdir:${JSON.stringify(root)},timeoutMs:10000});
-        const denied = await tools.ops_bash({command:"printf blocked > ptc-outside.txt",workdir:${JSON.stringify(outside)},timeoutMs:10000});
-        return {command,script,pipeline,denied};
-      `}}
-      const ptc=await ctx.get('tools').execute(request)
-      assert.notEqual(ptc.isError,true,JSON.stringify(ptc))
-      const ptcText=ptc.content.filter(c=>c.type==='text').map(c=>c.text).join('\n')
-      const completion=ptc.value.result
-      for(const [name,marker] of [['command','PTC_OK'],['script','SCRIPT_OK'],['pipeline','PIPE_OK']]) {
-        assert.equal(completion[name].exitCode,0,JSON.stringify(completion[name]))
-        assert.equal(completion[name].stdout.text,marker)
-        assert.equal(completion[name].sandbox.mode,'workspace-write')
+      if (process.platform === 'win32') {
+        // The pure-PTC confined-bash acceptance is the plugin's Windows story:
+        // the bash layer and its confinement deny semantics are win32-only.
+        await ctx.plugin(NodePtc,{})
+        await agent.ctx.plugin({inject:['tools'],apply(inner){inner.tools.presentAs('ptc')}})
+        agent.session.mode='workspace-write'
+        fs.writeFileSync(path.join(root,'probe.sh'),"printf 'SCRIPT_OK'\n")
+        const request = {name:'run_code',callId:'ptc-bash-acceptance',agent,signal:exec.signal,arguments:{description:'Test confined Bash via pure PTC SDK',code:`
+          const command = await tools.ops_bash({command:"printf 'PTC_OK'",workdir:${JSON.stringify(root)},timeoutMs:10000});
+          const script = await tools.ops_bash({script_path:${JSON.stringify(path.join(root,'probe.sh'))},workdir:${JSON.stringify(root)},timeoutMs:10000});
+          const pipeline = await tools.ops_bash({command:"printf 'PIPE_OK' | cat",workdir:${JSON.stringify(root)},timeoutMs:10000});
+          const denied = await tools.ops_bash({command:"printf blocked > ptc-outside.txt",workdir:${JSON.stringify(outside)},timeoutMs:10000});
+          return {command,script,pipeline,denied};
+        `}}
+        const ptc=await ctx.get('tools').execute(request)
+        assert.notEqual(ptc.isError,true,JSON.stringify(ptc))
+        const ptcText=ptc.content.filter(c=>c.type==='text').map(c=>c.text).join('\n')
+        const completion=ptc.value.result
+        for(const [name,marker] of [['command','PTC_OK'],['script','SCRIPT_OK'],['pipeline','PIPE_OK']]) {
+          assert.equal(completion[name].exitCode,0,JSON.stringify(completion[name]))
+          assert.equal(completion[name].stdout.text,marker)
+          assert.equal(completion[name].sandbox.mode,'workspace-write')
+        }
+        assert.match(ptcText,/PTC_OK/);assert.match(ptcText,/SCRIPT_OK/);assert.match(ptcText,/PIPE_OK/)
+        assert.equal(completion.denied.permission.code,'POLICY_DENIED')
+        assert.ok(!fs.existsSync(path.join(outside,'ptc-outside.txt')))
+        assert.doesNotMatch(ptcText,/3221225794|EXECUTOR_UNAVAILABLE|fatal error/)
+        agent.session.mode='read-only'
+        const downgrade=await ctx.get('tools').execute({...request,callId:'ptc-bash-downgrade',arguments:{description:'Verify PTC permission downgrade',code:`return await tools.ops_bash({command:"printf blocked > ptc-readonly.txt",workdir:${JSON.stringify(root)},timeoutMs:10000});`}})
+        assert.notEqual(downgrade.isError,true,JSON.stringify(downgrade))
+        assert.equal(downgrade.value.result.permission.code,'POLICY_DENIED')
+        assert.ok(!fs.existsSync(path.join(root,'ptc-readonly.txt')))
       }
-      assert.match(ptcText,/PTC_OK/);assert.match(ptcText,/SCRIPT_OK/);assert.match(ptcText,/PIPE_OK/)
-      assert.equal(completion.denied.permission.code,'POLICY_DENIED')
-      assert.ok(!fs.existsSync(path.join(outside,'ptc-outside.txt')))
-      assert.doesNotMatch(ptcText,/3221225794|EXECUTOR_UNAVAILABLE|fatal error/)
-      agent.session.mode='read-only'
-      const downgrade=await ctx.get('tools').execute({...request,callId:'ptc-bash-downgrade',arguments:{description:'Verify PTC permission downgrade',code:`return await tools.ops_bash({command:"printf blocked > ptc-readonly.txt",workdir:${JSON.stringify(root)},timeoutMs:10000});`}})
-      assert.notEqual(downgrade.isError,true,JSON.stringify(downgrade))
-      assert.equal(downgrade.value.result.permission.code,'POLICY_DENIED')
-      assert.ok(!fs.existsSync(path.join(root,'ptc-readonly.txt')))
       agent.session.mode='danger-full-access'
       result=await bash.execute({command:"printf 'FULL_OK'",workdir:outside,timeoutMs:10000},exec)
       assert.equal(result.exitCode,0); assert.equal(result.sandbox.mode,'danger-full-access')

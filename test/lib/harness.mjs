@@ -15,7 +15,7 @@
  */
 
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -67,7 +67,9 @@ export { assert }
  * @returns {Promise<unknown>} whatever the body returned.
  */
 export async function withTempDir(prefix, body) {
-  const dir = mkdtempSync(path.join(TEST_HOME, `${prefix}-`))
+  // macOS resolves /var -> /private/var: canonicalize once so every fixture
+  // and expectation shares one path form.
+  const dir = realpathSync(mkdtempSync(path.join(TEST_HOME, `${prefix}-`)))
   try {
     return await body(dir)
   } finally {

@@ -13,10 +13,13 @@
     "url": "https://github.com/T-Auto/dsh-ops/issues"
   },
   "os": [
-    "win32"
+    "win32",
+    "darwin",
+    "linux"
   ],
   "cpu": [
-    "x64"
+    "x64",
+    "arm64"
   ],
   "description": "Provides bash, PowerShell 7, and a suite of high-performance tools written in Rust for Windows DSH to enhance token efficiency",
   "icon": "./icon.png",

@@ -23,7 +23,7 @@ node bin/native-runtime.mjs stage --platform win32-x64 --input native/target/rel
 node bin/native-runtime.mjs check --platform win32-x64
 ```
 
-**This 0.3.0 release supports Windows x64 only.** The native worker and Bash IPC proxies are included. Other platforms/architectures are not shipped or supported by this release. No FastCtx file-tool fallback exists.
+**The 0.3.0 npm package ships Windows x64 binaries only.** The worker source supports Windows x64, macOS (arm64/x64) and Linux x64; other platforms build with `npm run build:ptc` and point at the result via `binaryPath`. Bash IPC proxies and the bash/PowerShell payloads remain Windows x64 only. No FastCtx file-tool fallback exists.
 
 
 [中文](README.md) | **English**
@@ -39,7 +39,7 @@ Reduce the tokens, time and model attention wasted on repeated PowerShell errors
 
 Routing: **toolkit → bash → PowerShell 7**.
 
-**0.3.0 supports Windows x64 only**, targeting DSH `0.2.0-rc.2`. The independent Rust file/PTC worker is included; PTC remains opt-in. Linux/macOS/ARM64 are future work, not release claims. See [Native PTC](docs/native-ptc.md).
+**The file/PTC worker supports Windows x64, macOS (arm64/x64) and Linux x64**, targeting DSH `0.2.0-rc.2`. The 0.3.0 npm package carries Windows x64 binaries only; other platforms build from source with `npm run build:ptc`. The bash/PowerShell payloads remain Windows x64 only. PTC remains opt-in. See [Native PTC](docs/native-ptc.md).
 
 ## Install, update and remove
 
