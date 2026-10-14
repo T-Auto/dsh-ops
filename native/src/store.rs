@@ -16,9 +16,18 @@ pub struct Store {
     pub dir: Dir,
     _lock: std::fs::File,
     read_only: bool,
+    // OHOS cannot fsync the O_PATH directory fds cap-std hands out (EBADF), so
+    // the flush site reopens the store directory by path instead; the upstream
+    // targets flush the cap-std handle and never touch this field.
+    #[cfg(target_env = "ohos")]
+    root_path: std::path::PathBuf,
 }
 impl Store {
-    pub fn open(root: &Dir, read_only: bool) -> Result<Self> {
+    #[cfg_attr(
+        not(target_env = "ohos"),
+        allow(unused_variables)
+    )]
+    pub fn open(root: &Dir, root_path: &std::path::Path, read_only: bool) -> Result<Self> {
         if !read_only {
             match root.create_dir(STORE) {
                 Ok(()) => (),
@@ -44,6 +53,8 @@ impl Store {
             dir,
             _lock: lock,
             read_only,
+            #[cfg(target_env = "ohos")]
+            root_path: root_path.to_path_buf(),
         })
     }
     pub fn validate_id(id: &str) -> Result<()> {
@@ -144,9 +155,17 @@ impl Store {
         drop(f);
         self.dir
             .rename(&temporary, &self.dir, format!("{id}.{generation:06}.json"))?;
-        // Persist directory entries where the platform supports directory fsync.
-        #[cfg(unix)]
+        // Persist directory entries where the platform supports directory fsync
+        // on the cap-std handle.
+        #[cfg(all(unix, not(target_env = "ohos")))]
         self.dir.try_clone()?.into_std_file().sync_all()?;
+        // OHOS rejects fsync on the O_PATH directory fds cap-std hands out (EBADF);
+        // reopen the store directory by path and flush that instead. Best-effort:
+        // the rename above is already atomic, so a flush failure must not turn a
+        // settled record into a reported error.
+        #[cfg(target_env = "ohos")]
+        let _ = std::fs::File::open(&self.root_path.join(STORE))
+            .and_then(|handle| handle.sync_all());
         Ok(())
     }
     pub fn release(&self, id: &str) -> Result<()> {

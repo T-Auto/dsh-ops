@@ -310,7 +310,18 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
         let _ = parent.remove_file(&temporary);
         return Err(Failure::new("ACCESS_DENIED", format!("Atomic replacement publish: {error}")));
     }
-    #[cfg(unix)]
+    // Persist the directory entry where the platform supports directory fsync
+    // on the cap-std handle.
+    #[cfg(all(unix, not(target_env = "ohos")))]
     parent.try_clone()?.into_std_file().sync_all()?;
+    // OHOS rejects fsync on the O_PATH directory fds cap-std hands out (EBADF);
+    // reopen the parent directory by path and flush that instead. The reopen is
+    // best-effort: the rename above is already atomic, so a flush failure must
+    // not turn a completed replacement into a reported error.
+    #[cfg(target_env = "ohos")]
+    {
+        let parent_path = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let _ = std::fs::File::open(parent_path).and_then(|handle| handle.sync_all());
+    }
     Ok(())
 }
