@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-ops-linux",
+    "description": "Native file tools and bash for Linux DSH hosts, under the same permission model as the Windows components."
+  }
+}

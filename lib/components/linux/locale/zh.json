@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-ops-linux",
+    "description": "为 Linux 宿主提供原生文件工具与 bash，权限模型与 Windows 组件一致。"
+  }
+}

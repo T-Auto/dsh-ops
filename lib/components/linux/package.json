@@ -1,0 +1,6 @@
+{
+  "name": "dsh-ops-linux",
+  "description": "Linux host surface: the native Rust file tools and the system bash under the DSH sandbox.",
+  "icon": "./icon.png",
+  "type": "module"
+}
