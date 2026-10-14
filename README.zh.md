@@ -20,7 +20,7 @@ node bin/native-runtime.mjs stage --platform win32-x64 --input native/target/rel
 node bin/native-runtime.mjs check --platform win32-x64
 ```
 
-**0.3.0 本次仅发布 Windows x64**；worker 和 Bash IPC 代理随包提供。其它平台/架构未交付，不在兼容承诺内。不存在 native 失败后回退 FastCtx 文件工具的路径。
+**0.3.0 支持 Windows x64 与 Linux x64**；worker 随包提供，Bash IPC 代理只有 Windows 需要（MSYS 兼容副本）。其它平台/架构未交付，不在兼容承诺内。不存在 native 失败后回退 FastCtx 文件工具的路径。
 
 
 **中文** | [English](README.en.md)
@@ -36,7 +36,7 @@ node bin/native-runtime.mjs check --platform win32-x64
 
 执行顺序：**工具包 → bash → PowerShell 7**。
 
-**0.3.0 仅支持 Windows x64**，目标宿主 DSH `0.2.0-rc.2`。原生 Rust 文件/PTC worker 随包携带；PTC 默认关闭，须显式启用。Linux/macOS/ARM64 留待后续版本。见 [PTC 设计与使用](docs/native-ptc.md)。
+**0.3.0 面向 DSH `0.2.0-rc.2` 的 Windows x64 与 Linux x64**。原生 Rust 文件/PTC worker 随包携带；PTC 默认关闭、须显式启用，两个平台都支持。Linux 上由可选的 `dsh-ops-linux` 组件提供同一套文件工具与 `ops_bash`，bash 用机器自带的那一份，跑在宿主沙箱里；macOS 与 ARM64 留待后续版本。见 [PTC 设计与使用](docs/native-ptc.md) 与下文的 Linux 组件说明。
 
 ## 安装、更新、卸载
 
@@ -119,7 +119,7 @@ provisioned 副本在 `<DSH_HOME>/dsh-ops/shells`（跨 profile 共享，provisi
 
 ## 组件开关与提示词
 
-Bundle 声明四个独立组件，默认开启前两个旧组件；PTC 显式启用并提供原生 worker：
+Bundle 声明五个独立组件，默认开启前两个旧组件；PTC 与 Linux 组件显式启用，PTC 需要原生 worker：
 
 | 组件 | 介绍 | 默认 | 发布的工具 |
 | --- | --- | --- | --- |
@@ -127,6 +127,24 @@ Bundle 声明四个独立组件，默认开启前两个旧组件；PTC 显式启
 | `dsh-ops-file` | 更快、更高性能、输出更精简更省token的rust文件检索 | 开 | 四个文件工具 |
 | `dsh-ops-background` | 为科研仿真、模型训练及其他长进程后台任务提供托管 | 关 | 启动、输出、列出、终止后台任务 |
 | `dsh-ops-ptc` | 独立 Rust 安全批处理与有界结果引用，仅纯 PTC 会话加载 | 关 | `ops_batch`、`ops_result` |
+| `dsh-ops-linux` | Linux x64 宿主上的同一套文件工具与 bash，bash 用机器自带的那一份 | 关 | 四个文件工具、`ops_bash` |
+
+### Linux 组件
+
+Linux 组件提供的是和 Windows 的 shell、file 两个组件**同名同语义**的工具面，只是按 Linux 宿主解析。它存在的原因是那两个 Windows 组件依赖的机制在 Linux 上没有对应物：
+
+- **bash 用机器自带的那一份**（先查 `PATH`，再查 `/bin/bash`、`/usr/bin/bash`、`/usr/local/bin/bash`），不 pin 独立副本。发行版自带的 bash 与它自己的 libc、架构是配套的；再放一份需要单独更新的副本，只会增加许可与供应链负担，解决不了任何问题。该行因此设置 `allowSystemShellFallback: true`，也可以用 `bashPath` 指定明确的可执行文件。本仓库**刻意没有 Linux shell pin**，`dsh-ops provision-shells` 仍是 Windows 专用。
+- **受限模式必须有宿主沙箱**（`ctx.sandbox.confine`，Linux 上走 `bwrap` 或 Landlock）。没有它，组件不会给该会话发布 `ops_bash`——缺沙箱绝不会退化成“无限制执行”。受限命令会带上 `LC_ALL=C.UTF-8`，因为宿主沙箱的拒绝特征串是英文的。
+- **不做工作区准备、不叠加 PowerShell**：Windows 的 ACL 前置和自带 PowerShell 7 在 Linux 上没有意义。宿主自己的 `pwsh` 工具（若装了）不受影响。
+- **PTC 在两个平台都能跑；background 组件仍仅 Windows。** PTC 的批处理与结果引用语义在 Linux 上由与 Windows 同一套测试覆盖。
+- **写入能落在哪里**：文件工具只允许工作区 + 每个会话一个私有目录（`<临时目录>/dsh-ops-session-<会话标识>`）。这比宿主沙箱**更窄**：Linux 上宿主把整个 `/tmp` 都授予 workspace-write，受限命令仍能碰到别的会话的临时文件，插件自己的围栏不允许。完全权限不加围栏。
+
+worker 是同一份 Rust 源码，构建并 stage 到主包：
+
+```console
+cargo build --release --locked --manifest-path native/Cargo.toml
+node bin/native-runtime.mjs stage --platform linux-x64 --input native/target/release
+```
 
 “默认终端改为 bash”指模型提示优先使用 `ops_bash`，**不修改系统默认终端、PATH 或宿主原有 shell 工具名称**。Shell 组件开时，通过官方配置生命周期临时指定 `pwsh-sandbox` 的 PowerShell 7 路径；关时按执行器最新原配置恢复，不写 profile 配置。执行器配置切换不代表取消已在运行的宿主命令。
 

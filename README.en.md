@@ -23,7 +23,7 @@ node bin/native-runtime.mjs stage --platform win32-x64 --input native/target/rel
 node bin/native-runtime.mjs check --platform win32-x64
 ```
 
-**This 0.3.0 release supports Windows x64 only.** The native worker and Bash IPC proxies are included. Other platforms/architectures are not shipped or supported by this release. No FastCtx file-tool fallback exists.
+**This 0.3.0 release supports Windows x64 and Linux x64.** The native worker and Bash IPC proxies are included; the Bash IPC proxies are Windows-only because only Windows needs the MSYS compatibility copy. Other platforms/architectures are not shipped or supported by this release. No FastCtx file-tool fallback exists.
 
 
 [中文](README.md) | **English**
@@ -39,7 +39,7 @@ Reduce the tokens, time and model attention wasted on repeated PowerShell errors
 
 Routing: **toolkit → bash → PowerShell 7**.
 
-**0.3.0 supports Windows x64 only**, targeting DSH `0.2.0-rc.2`. The independent Rust file/PTC worker is included; PTC remains opt-in. Linux/macOS/ARM64 are future work, not release claims. See [Native PTC](docs/native-ptc.md).
+**0.3.0 targets DSH `0.2.0-rc.2` on Windows x64 and Linux x64.** The independent Rust file/PTC worker is included; PTC remains opt-in and now covers both platforms. On Linux the same file tools and `ops_bash` come from the opt-in `dsh-ops-linux` component, which uses the machine's own bash under the host sandbox; macOS and ARM64 are future work, not release claims. See [Native PTC](docs/native-ptc.md) and the Linux component below.
 
 ## Install, update and remove
 
@@ -122,7 +122,7 @@ The provisioned copy lives in `<DSH_HOME>/dsh-ops/shells` (shared across profile
 
 ## Components and prompts
 
-The bundle declares four independently toggled components. On first installation, the first two legacy components are enabled by default; PTC is opt-in and requires a native worker build:
+The bundle declares five independently toggled components. On first installation, the first two legacy components are enabled by default; PTC and the Linux component are opt-in, and PTC requires a native worker build:
 
 | Component | Description | Default | Published tools |
 | --- | --- | --- | --- |
@@ -130,6 +130,21 @@ The bundle declares four independently toggled components. On first installation
 | `dsh-ops-file` | Faster, higher-performance Rust file retrieval with more concise, token-efficient output | On | Four file tools |
 | `dsh-ops-background` | Managed background tasks for scientific simulations, model training and other long-running processes | Off | Start, read output, list and terminate background jobs |
 | `dsh-ops-ptc` | Independent Rust safe batches and bounded result references, only in pure PTC sessions | Off | `ops_batch`, `ops_result` |
+| `dsh-ops-linux` | The same file tools and bash for Linux x64 hosts, resolved from the machine's own bash | Off | Four file tools, `ops_bash` |
+
+### The Linux component
+
+The Linux component is the same surface as the Windows shell and file components, resolved for a Linux host. It exists because the two Windows components assume Windows mechanisms that have no Linux counterpart:
+
+- **bash** comes from the machine (`PATH`, then `/bin/bash`, `/usr/bin/bash`, `/usr/local/bin/bash`), not from a pinned payload. Linux distributions ship a bash whose ABI matches their own libc; a second, separately-updated copy would add licensing and supply-chain burden without solving anything. The row therefore sets `allowSystemShellFallback: true`, and `bashPath` is available for an explicit executable. There is deliberately no Linux shell pin, and `dsh-ops provision-shells` remains Windows-only.
+- **Restricted modes** need the host confinement provider (`ctx.sandbox.confine`, which on Linux uses `bwrap` or Landlock). Without it the component never publishes `ops_bash` for that session; a missing sandbox can never degrade into an unconfined run. `LC_ALL=C.UTF-8` is set for confined commands because the host publishes its denial dialect in English.
+- **No workspace preparation and no PowerShell overlay**: the Windows ACL bootstrap and the bundled PowerShell 7 runtime have no Linux meaning. The host's own `pwsh` tool, when installed, is unaffected.
+- **PTC runs on both platforms; the background component remains Windows-only.** PTC's batch and result semantics are covered on Linux by the same suite that covers Windows (`test/ptc.test.mjs` runs against the Linux worker under the real sandbox).
+- **Where writes may land.** The file tools allow the workspace and one private directory per session (`<tmp>/dsh-ops-session-<id>`). That is deliberately narrower than the host sandbox: on Linux the host grants the whole of `/tmp` to workspace-write, so a confined command can still reach another session's temporary files, and the plugin's own fence refuses to. Full access adds no fence.
+
+The worker is the same Rust source, staged for Linux with `node bin/native-runtime.mjs stage --platform linux-x64 --input native/target/release` after `cargo build --release --locked --manifest-path native/Cargo.toml`.
+
+A release must stage **both** workers before packing: `runtime/` is already in the `files` whitelist, so staging is what puts a worker in the tarball, and `npm run verify:release` refuses a staging tree that carries only one of them.
 
 “Prefer bash as the terminal” means prompting the model to use `ops_bash` first; it **does not change the system default terminal, PATH or existing host shell tool names**. When the shell component is on, the official configuration lifecycle temporarily sets the PowerShell 7 path for `pwsh-sandbox`; when off, it restores the executor's latest original configuration without writing profile configuration. Switching executor configuration does not cancel already-running host commands.
 
@@ -161,6 +176,7 @@ config:
 - `toolCallTimeoutMs`: FastCtx RPC wait timeout; it does not mean server-side work has terminated.
 - `required`: whether to reject activation when the runtime is unavailable.
 - `shellPolicy`: defaults to `advise`; `deny-host-shell` rejects host shells in `deniedHostTools` (default `[pwsh, bash, pwsh_persistent]`). This also disables third-layer pwsh; enable cautiously.
+- `denyCredentialReads`: defaults to `true`. The file tools refuse paths inside a credential location (`~/.ssh`, `~/.aws`, `~/.kube`, `~/.dsh/.credentials.yaml`, `.npmrc`, `.netrc`, `.git-credentials`, private-key names, credential-shaped files, `.env`), in every permission mode and for a batch operation root as well. Writes were already fenced by the permission mode; this closes the read direction, because the DSH filesystem layer does not fence those paths and a repository tool has no job that needs one. Set `false` per row to allow a specific deployment's file, or add paths with `DSH_OPS_DENY_READ` (which only widens the list).
 - `allowSystemShellFallback`: defaults to `false`. Without a bundled/provisioned bash, do not discover system PATH or well-known installations; background commands cannot bypass this through FastCtx discovery either. Explicit `true` opts into an unpinned system bash that the operator must trust and maintain. Explicit `bashPath` is a separate operator selection, not an automatic fallback. See the update configuration modification area below for the first-start migration.
 - `shellPolicy` is independent: `deny-host-shell` masks/refuses host tools; disabling fallback constrains the plugin's bash resolver, not the host's own `pwsh`, and is not a filesystem sandbox.
 - `binaryPath` / `bashPath`: optional explicit paths; unavailable paths cause an error rather than silently switching executors. Usually no configuration is needed.

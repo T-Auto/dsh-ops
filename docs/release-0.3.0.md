@@ -1,9 +1,10 @@
-# dsh-ops 0.3.0 — Windows x64
+# dsh-ops 0.3.0 — Windows x64 与 Linux x64
 
 ## 发布范围
 
-- 本次正式版仅支持 **Windows x64**，目标宿主 DSH `0.2.0-rc.2`。
-- Linux、macOS、ARM64 不在本版支持范围；不能将历史编译检查当作实机支持。
+- 本版支持 **Windows x64 与 Linux x64**，目标宿主 DSH `0.2.0-rc.2`。
+- Linux 由可选的 `dsh-ops-linux` 组件提供：同一套文件工具与 `ops_bash`，bash 用机器自带的那一份。PTC 组件两个平台都支持；后台组件仍仅 Windows。
+- macOS、ARM64 不在本版支持范围；不能将历史编译检查当作实机支持。
 - `dsh-ops` 主包更新为 `0.3.0`；三个 Windows 可选载荷依赖仍固定 `0.2.1`，无需重复发布。
 
 ## 主要变化
@@ -19,7 +20,7 @@
 ## 安装与注意
 
 从官方 npm registry 或 DSH 插件市场安装 `dsh-ops@0.3.0`；替换旧版后正常退出并重启 Desktop。
-无需 Rust/MSVC：发布包携带 Windows x64 worker、IPC 代理、receipt 和匹配源码。
+无需 Rust/MSVC：发布包携带 Windows x64 worker、IPC 代理、receipt 和匹配源码；Linux x64 worker 同样随包提供，`npm run verify:release` 会拒绝只带一个平台的暂存树。
 PTC 组件需显式启用，使用纯 PTC-only 呈现；后台组件仍默认关闭、仅限完全权限。
 首次受限 Bash 调用会在 DSH_HOME 内建立私有载荷副本，有一次磁盘复制成本；之后复用同一校验身份。
 Windows 宿主仍报告 `partial` enforcement，本插件不将其冒充完整内核隔离。
@@ -28,9 +29,9 @@ Windows 宿主仍报告 `partial` enforcement，本插件不将其冒充完整�
 ## 发布验证
 
 - Manifest、源码测试、真实 Windows DSH provider、真实 Node PTC SDK command/script/pipeline 和权限切换测试。
-- `npm run verify:release` 核验单平台声明、worker PE/hash、IPC 二进制与源码 hash 闭包。
+- `npm run verify:release` 核验平台声明、两个 worker 的 PE/ELF 与 hash、IPC 二进制与源码 hash 闭包；缺任一平台即失败。
 - GitHub Release 为源码/tag/说明；随后生成 npm tarball，核验包内容、凭据排除、哈希与独立安装。
 - npm 发布由维护者使用本机 `dist/publish.bat` 执行，不由 Actions 自动发布。GitHub Actions 保持既有关闭状态。
 
-未宣称 Linux/macOS/ARM64 验收，也不把用户特定任务的 token 统计当作通用性能保证。
+Linux 侧的验收范围：Linux x64 上的文件工具、bash 与三档权限在真实宿主沙箱下实测通过（见 `test/linux*.test.mjs`）；**Windows 上的实测以 `docs/test-table.md` 与 `docs/acceptance-table.md` 的回填为准**。macOS/ARM64 未宣称验收，也不把用户特定任务的 token 统计当作通用性能保证。
 历史 PortableGit 载荷的完整 source-delivery 闭包限制见 [PROVENANCE](../PROVENANCE.md)；0.3.0 不分发修改后的 MSYS DLL，私有修改仅在用户本机生成。

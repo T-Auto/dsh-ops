@@ -8,7 +8,7 @@
 
 本插件的主要功能：
 
-- （全平台）一些可以极大改善AI报错循环、强迫思考不交付、注意力涣散的易用工具，使用rust编写，性能更好，渐进式纰漏以减少系统prompt的工具定义占用，加速任务运行，减少不必要的输入输出，减少报错率来减少运行过程中的token浪费，以及提供与 DSH 对齐的权限机制。当前npm版本仅发布windows，但源码已支持跨平台。在自用benchmark中获得了
+- （全平台）一些可以极大改善AI报错循环、强迫思考不交付、注意力涣散的易用工具，使用rust编写，性能更好，渐进式纰漏以减少系统prompt的工具定义占用，加速任务运行，减少不必要的输入输出，减少报错率来减少运行过程中的token浪费，以及提供与 DSH 对齐的权限机制。本分支把发布范围扩到 **Windows x64 与 Linux x64**（Linux 由可选组件 `dsh-ops-linux` 提供）；此前发布的 npm 版本仅含 Windows。在自用benchmark中获得了
   - 97% token减免（开启ops插件的ptc专用工具 对比 windows原装标准模式）
   - 65% token减免（开启ops插件的ptc专用工具 对比 linux 原装ptc模式）
   
@@ -17,6 +17,9 @@
 
 
 
+执行顺序：**工具包 → bash → PowerShell 7**。
+
+**0.3.0 面向 DSH `0.2.0-rc.2` 的 Windows x64 与 Linux x64**。独立 Rust 文件/PTC worker 随包携带，无需用户编译；Bash IPC 代理只有 Windows 需要。Linux 上由可选的 `dsh-ops-linux` 组件提供同一套文件工具与 `ops_bash`。macOS/ARM64 属于后续工作，不在本版兼容承诺内。见 [PTC 设计与使用](docs/native-ptc.md)。
 
 ## 安装、更新、卸载
 
@@ -99,7 +102,7 @@ provisioned 副本在 `<DSH_HOME>/dsh-ops/shells`（跨 profile 共享，provisi
 
 ## 组件开关与提示词
 
-Bundle 声明四个组件，分别启停，首次安装默认开启前两个旧组件；PTC 增强须显式启用并提供原生 worker：
+Bundle 声明五个组件，分别启停，首次安装默认开启前两个旧组件；PTC 与 Linux 组件须显式启用，PTC 需要原生 worker：
 
 | 组件 | 介绍 | 默认 | 发布的工具 |
 | --- | --- | --- | --- |
@@ -107,11 +110,96 @@ Bundle 声明四个组件，分别启停，首次安装默认开启前两个旧�
 | `dsh-ops-file` | 更快、更高性能、输出更精简更省token的rust文件检索 | 开 | 四个文件工具 |
 | `dsh-ops-background` | 为科研仿真、模型训练及其他长进程后台任务提供托管 | 关 | 启动、输出、列出、终止后台任务 |
 | `dsh-ops-ptc` | 独立 Rust 安全批处理和有界结果引用，仅纯 PTC 会话加载 | 关 | `ops_batch`、`ops_result` |
+| `dsh-ops-linux` | Linux x64 宿主上的同一套文件工具与 bash，bash 用机器自带的那一份 | 关 | 四个文件工具、`ops_bash` |
+
+### Linux 组件
+
+Linux 组件提供的是和 Windows 的 shell、file 两个组件**同名同语义**的工具面，只是按 Linux 宿主解析。它存在的原因是那两个 Windows 组件依赖的机制在 Linux 上没有对应物：
+
+- **bash 用机器自带的那一份**（先查 `PATH`，再查 `/bin/bash`、`/usr/bin/bash`、`/usr/local/bin/bash`），不 pin 独立副本。发行版自带的 bash 与它自己的 libc、架构配套；再放一份要单独更新的副本，只会增加许可与供应链负担，解决不了任何问题。该行因此设置 `allowSystemShellFallback: true`，也可以用 `bashPath` 指定明确的可执行文件。本仓库**刻意没有 Linux shell pin**，`dsh-ops provision-shells` 仍是 Windows 专用。
+- **受限模式必须有宿主沙箱**（`ctx.sandbox.confine`，Linux 上走 `bwrap` 或 Landlock）。没有它，组件不会给该会话发布 `ops_bash`——缺沙箱绝不会退化成“无限制执行”。受限命令会带上 `LC_ALL=C.UTF-8`，因为宿主沙箱的拒绝特征串是英文的。
+- **不做工作区准备、不叠加 PowerShell**：Windows 的 ACL 前置和自带 PowerShell 7 在 Linux 上没有意义。宿主自己的 `pwsh` 工具（若装了）不受影响。
+- **PTC 在两个平台都能跑；background 组件仍仅 Windows。** PTC 的批处理与结果引用语义在 Linux 上由与 Windows 同一套测试覆盖（`test/ptc.test.mjs` 在真实沙箱下驱动 Linux worker）。
+- **写入能落在哪里**：文件工具只允许工作区 + 每个会话一个私有目录（`<临时目录>/dsh-ops-session-<会话标识>`）。这比宿主沙箱**更窄**：Linux 上宿主把整个 `/tmp` 都授予 workspace-write，所以受限命令仍能碰到别的会话的临时文件，而插件自己的围栏不允许。完全权限不加围栏。
+
+发布前必须**两个 worker 都 stage**：`runtime/` 已在 `files` 白名单里，stage 进去才会进 tarball；`npm run verify:release` 会拒绝只带一个平台的暂存树。
+
+worker 是同一份 Rust 源码，构建并 stage 到主包：
+
+```console
+cargo build --release --locked --manifest-path native/Cargo.toml
+node bin/native-runtime.mjs stage --platform linux-x64 --input native/target/release
+```
 
 “默认终端改为 bash”指模型提示优先使用 `ops_bash`，**不修改系统默认终端、PATH 或宿主原有 shell 工具名称**。Shell 组件开时，通过官方配置生命周期临时指定 `pwsh-sandbox` 的 PowerShell 7 路径；关时按执行器最新原配置恢复，不写 profile 配置。执行器配置切换不代表取消已在运行的宿主命令。
 
 提示词注册为独立运行时段，**不写 AGENTS.md**：Shell 关就撤销 bash/pwsh 路由；文件关就撤销原生文件说明；后台关就不发布后台工具及自有 job 指导。文件组件使用独立 Rust worker；FastCtx 仅由默认关闭的 background 组件保留。默认新增四个原生文件工具和 `ops_bash`，不发布重复前台 `ops_run`。这些改变减少固定声明成本。极简预设会覆盖附加 system sections；PTC 模式经 SDK 调用底层工具，权限门不变。
 
+## 配置方式与工具列表
+
+在 DSH 的配置编辑器中找到对应的 `dsh-ops/shell`、`dsh-ops/file` 或 `dsh-ops/background` 行，调整 `config` 后保存；未知配置键会点名报错。也可直接在市场切换组件。主要配置：
+
+```yaml
+config:
+  # background component only; its market row is disabled by default
+  enableShellTools: true
+  publishBashTool: true
+  promptPolicy: true
+  toolCallTimeoutMs: 300000
+  required: false
+  shellPolicy: advise
+  allowSystemShellFallback: false
+  # Managed update metadata; do not remove after the first startup self-check
+  # configUpdateVersion: 1
+  # binaryPath: 'C:\tools\fastctx.exe'
+  # bashPath: 'C:\tools\bash.exe'
+```
+
+- `enableShellTools`：后台组件的部署开关，开启仍须会话 `danger-full-access` 才发布四个后台工具；文件组件不发布命令工具。
+- `publishBashTool`：是否发布 `ops_bash`；读取会话最新 DSH 权限，受限模式必须通过宿主 sandbox，完全权限使用宿主 subprocess。Windows x64 的匹配 MSYS 载荷使用校验后的私有 IPC 兼容副本，不修改原包或全局 Git；本地纯 PTC 的 command/script_path/管道及读写权限验收通过。
+- `promptPolicy`：是否注入该组件的运行时说明；可用 `extraGuidance` 追加指导。
+- `toolCallTimeoutMs`：FastCtx RPC 等待超时，不代表服务端工作已终止。
+- `required`：运行时不可用时是否拒绝激活。
+- `shellPolicy`：默认 `advise`；`deny-host-shell` 拒绝 `deniedHostTools` 列表中的宿主 shell（默认 `[pwsh, bash, pwsh_persistent]`）。这也会禁用第三层 pwsh，谨慎开启。
+- `denyCredentialReads`：默认 `true`。文件工具拒绝读取凭据位置（`~/.ssh`、`~/.aws`、`~/.kube`、`~/.dsh/.credentials.yaml`、`.npmrc`、`.netrc`、`.git-credentials`、私钥文件名、凭据形状的文件、`.env`），**所有权限档位**都拦，批量操作的根目录也拦。写入本来就被权限档位限制，这一条补的是读取方向——DSH 的文件系统层并不拦这些路径，而仓库工具没有任何工作需要读凭据。某个部署确实需要时，可以按行设 `false`，或用 `DSH_OPS_DENY_READ` 追加路径（该变量只能加严，不能放开）。
+- `allowSystemShellFallback`：默认 `false`，随包/已 provision 的 bash 缺失时不探测系统 PATH 或常见安装目录；后台组件也不绕过此选择调用 FastCtx 的自动探测。只有显式设 `true` 才使用未固定摘要的系统 bash，请自行信任与维护该执行器。显式 `bashPath` 是另一种操作者选择，并非自动回退。首次升级启动的迁移见下方“更新配置修改区”。
+- `shellPolicy` 与此开关独立：`deny-host-shell` 遮蔽/拒绝宿主工具；禁止系统回退只约束插件自己的 bash 解析，不关闭宿主 `pwsh`，也不提供文件系统沙箱。
+- `binaryPath` / `bashPath`：可选显式路径；不可用时报错，不悄悄换执行器。一般无需配置。
+
+| 工具 | 用途 | 完全权限要求 |
+| --- | --- | --- |
+| `ops_inspect_local_file` | 批量文本范围、编码、PDF 文本、hex | 无命令权限门¹ |
+| `ops_grep` | Rust 正则搜索、多文件过滤、计数/摘要 | 无命令权限门¹ |
+| `ops_glob` | 多模式找路径，支持排除 | 无命令权限门¹ |
+| `ops_replace` | 跨文件批量替换；精确编辑仍用宿主 edit | 无命令权限门¹ |
+| `ops_bash` | 优先的通用 bash 命令执行器；短命令用 `command`，长脚本用 `script_path` | 受限模式经 DSH 沙箱；Windows x64 使用匹配的私有 IPC 副本 |
+| `ops_run_background` | 启动后台任务 | 是 |
+| `ops_job_output` / `ops_job_list` / `ops_job_kill` | 查看、列出、停止当前会话启动的任务 | 是 |
+| 宿主 `pwsh` | 使用随包 PowerShell 7 的 Windows 原生操作 | 沿用宿主策略 |
+
+¹ **固定文件操作采用 DSH fs-sandbox 同类的可信操作权限检查，通过宿主 subprocess 执行固定 Rust worker，不执行模型代码。** 所有模式允许 OS 可读路径的读取；仅可查看拒绝替换；工作区内修改允许 workspace 与 DSH 临时区域内的替换；完全权限不加写入范围限制。Rust 仍拒绝 link/reparse/special object 并保留预算/CAS。任意代码（Bash、run_code）仍需宿主 OS 沙箱，无失败降级。Windows 工作区启动前仅为当前用户拥有的根目录准备目录自身 WRITE_OWNER，备份 DACL；不递归或改所有者。拒绝返回明确的用户授权原因，执行基础设施故障另行分类。
+
+## 长脚本与 JSON 稳定性
+
+`ops_bash` 的 `command` 适合短命令和短管道。对于超过约 1 KB，或包含 heredoc、引号、反斜杠、中文等内容的多行脚本，请先用宿主的文件工具写入脚本文件，再传入 `script_path` 执行；不要把整段 heredoc 塞进 `command`。这样可以显著减少模型在工具调用 JSON 中进行多层转义的负担，降低整轮因 `MALFORMED_RESPONSE` 作废的概率。
+
+当随包 bash 载荷在 profile 的声明/lockfile 中存在、但实际 `node_modules` 已被宿主包管理器清理时，`ops_bash` 会返回可读的 `ENOENT` 诊断，而不是把裸的 `spawn` 异常抛给模型。此时应使用 profile 的 frozen install 或官方插件管理器恢复依赖；不会静默切换到未授权的系统 bash。
+
+`script_path` 只接收脚本路径，脚本内容不会重复进入 `ops_bash` 的工具参数；`command` 与 `script_path` 必须二选一。该接口不会替模型修复非法 JSON，工具调用本身若未能解析，仍需由宿主或模型重试。
+
+`ops_bash` 的参数是**严格**的：传入 schema 未声明的键会在执行前被拒绝，错误信息同时点出未知键与可接受的键，不会静默忽略。**本工具没有 `run_in_background`，也没有 job id**，命令一律前台执行。宿主 `bash` / `pwsh` 工具接受 `run_in_background`，因此模型容易把该参数套到 `ops_bash` 上；这样调用会被明确拒绝而不是静默当前台执行。服务、监听器、watch 等常驻进程请改用宿主 `pwsh` 工具的 `run_in_background`，或在命令内部自行脱离（例如 `nohup ... & disown`）。否则该次调用会一直占用到 `timeoutMs`（上限 `MAX_BASH_TIMEOUT_MS`，约 24.9 天）。
+
+
+插件只回收自己启动的 `fastctx serve` 客户端：组件最后一个连接引用释放、连接关闭、宿主正常退出或强制退出时均有回收路径。`runtime-host` 是上游可复用的共享进程，父进程已退出不等于泄漏；无客户端且空闲约十分钟后自行退出。不要按进程名批量杀它。新版不自动清理旧版本已留下的进程。
+
+## 更新配置修改区
+
+`lib/config-updates.js` 集中维护一次性配置迁移。0.2.5 首次启动时逐个自有配置行执行自检：
+
+- 未完成迁移（无 `configUpdateVersion` 或值为 `0`）：把旧 `allowSystemShellFallback: true` 改为 `false`，在任何执行器解析/工具发布前生效。
+- 通过官方 loader 的配置生命周期写回该行，并加入 `configUpdateVersion: 1`；保留其它字段，不修改外来插件、PATH 或全局配置。未启用的组件在它首次启动时迁移。
+- 完成后重启/热加载不再覆盖；你之后主动改回 `true` 会被保留。不要删除迁移标记，否则会重新自检。
+- 没有 loader 配置行时只应用本次运行的安全值并告警；写入失败由迁移/loader 日志报告，未落盘的标记不能保证跨重启一次性。
 
 ## 许可证
 

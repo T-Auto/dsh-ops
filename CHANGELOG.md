@@ -5,6 +5,116 @@ All notable changes to this package are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — Linux x64 component
+
+Release scope becomes **Windows x64 and Linux x64** for DSH 0.2.0-rc.2. macOS,
+ARM64 and the Windows-only PTC/background components are unchanged.
+
+### Security
+
+- **Writes are scoped to the session, not to the shared temporary root.** A
+  real-sandbox probe confirmed the host grants all of `/tmp` to workspace-write
+  on Linux (Landlock's read-write list is `/dev/null`, `/tmp`, the workspace),
+  and that a confined command can therefore overwrite another session's
+  temporary files. The plugin cannot change the kernel grant, but it no longer
+  endorses it: the file tools' write fence now allows the workspace and the
+  session's own directory below the temp root (`<tmp>/dsh-ops-session-<id>`,
+  created lazily, mode 0700), and the PTC batch root is checked the same way. A
+  session that tries to replace a foreign temp file now gets `POLICY_DENIED`
+  instead of a silent overwrite. Windows is unchanged: its runner already
+  scopes writes to the user's own temporary directory.
+- **Traversals no longer name a credential location.** `ops_glob` and `ops_grep`
+  still returned the paths below `~/.ssh` and friends even after the read fence
+  refused their contents, because the walk happened inside the worker. The
+  worker now receives the denied roots and skips them by path identity, so a
+  search cannot even enumerate a private key. A real-home test asserts no
+  reported path starts below the credential directory while the rest of the home
+  directory is still walked.
+- **The file tools now refuse credential locations.** A real-host probe showed
+  `ops_inspect_local_file` returning the operator's credential file in every
+  permission mode, including read-only: the DSH filesystem layer does not fence
+  those paths, so a tool that reads any OS-readable file could hand a model the
+  API tokens and private keys it exists to keep. Reads are now checked against a
+  credential list (`~/.ssh/`, `~/.aws/`, `~/.kube/`, `~/.dsh/.credentials.yaml`,
+  `.npmrc`, `.netrc`, `.git-credentials`, private-key names, credential-shaped
+  files, `.env`) before the worker is spawned, and a batch operation root is
+  checked too, so copy, move and snapshots cannot reach one either. Writes were
+  already fenced by the permission mode; this closes the read direction. The
+  fence is on by default, can be disabled per row with `denyCredentialReads: false`,
+  and `DSH_OPS_DENY_READ` can only widen the list - never open it.
+
+### Added
+
+- Add the opt-in `dsh-ops-linux` component: the same four native file tools and
+  `ops_bash` the Windows shell and file components publish, resolved for a Linux
+  host. Tool names, arguments, result shapes and the three permission modes are
+  the same on both platforms, so one prompt and one skill work on either.
+- Resolve bash on a POSIX host from the machine itself: `config.bashPath`, then
+  `PATH`, then `/bin/bash`, `/usr/bin/bash`, `/usr/local/bin/bash`. There is
+  deliberately no Linux shell pin — a distribution's bash matches its own libc,
+  and a second pinned copy would add licensing and supply-chain burden without
+  solving anything.
+- Add a permanent sandbox matrix, `test/linux-sandbox.test.mjs`: every
+  permission mode against the real runner, covering the file tools, the batch
+  root, the credential fence, reads outside the workspace, a confined command's
+  reach, and the host's own temporary-directory grant - asserted as a fact of
+  the host rather than as a plugin promise.
+- Add real Linux suites: `test/linux.test.mjs` (surface, modes, staged worker)
+  and `test/linux-acceptance.test.mjs` (one session walking glob, grep, inspect,
+  dry-run and real replace, confined bash, an escape attempt and a read-only
+  refusal, against the real host sandbox).
+
+### Fixed
+
+- **Linux: a missing working directory was reported as a missing bash.** Both
+  surface as `ENOENT` at spawn time, and the plugin named the executable and
+  advised reinstalling bash, which cannot fix a workdir that does not exist. A
+  Linux run now names the directory before spawning. The Windows flow is
+  untouched.
+- **Native worker: the audit store could not commit on Linux.** The directory
+  fsync used `Dir::try_clone().into_std_file()`, whose descriptor Linux refuses
+  to fsync (EBADF), so every write-side PTC call (`batch`, `result put`) failed
+  with `IO_ERROR` after the record was written. The directory is now opened by
+  path for that fsync. The same pattern in the file component's atomic
+  replacement was fixed with it.
+- **Host write-root fence rejected legitimate targets on Linux.** The fence
+  canonicalized the target but not the roots, so a workspace reached through a
+  symlinked temporary directory (`/tmp` on Linux) compared unequal. Roots are
+  canonicalized the same way as targets now.
+- **`replace` failed the whole call on the first binary file.** Editing a real
+  directory that holds an icon or an archive returned `replace only supports
+  UTF-8 files` and named no file, so a routine directory edit was impossible and
+  the caller could not narrow the request either. Non-UTF-8 files are now
+  reported as `skipped`, their relative paths travel in `skippedPaths`, and the
+  text files around them are still edited. A real-workload test edits a copy of
+  `lib/` - which contains `icon.png` - and asserts both the edit and the skip.
+- **Confined bash could not classify a denial under a localized shell.** The host
+  sandbox publishes its denial dialect in English; the confined command now runs
+  under `LC_ALL=C.UTF-8` so a policy refusal is reported as `POLICY_DENIED`
+  instead of looking like an ordinary command failure.
+
+### Changed
+
+- **The release now carries both workers.** `bin/check-release.mjs` takes
+  `--require win32-x64,linux-x64` and the release workflow passes it before
+  anything is packed, so a tarball that would install a Linux component with no
+  Linux worker cannot be produced by the documented flow. The release matrix is
+  trimmed to the two shipped targets: it listed six, five of which
+  `bin/native-runtime.mjs` refuses. `npm pack` needs no change - `runtime/` is
+  already in the `files` whitelist, so staging the Linux worker into the
+  checkout is what puts it in the tarball.
+- `resolveWorker` accepts `linux-x64` as well as `win32-x64`, and names the
+  supported targets in its error instead of the release version.
+- `package.json` declares `os: ["win32", "linux"]`; `bin/check-release.mjs`
+  validates whichever supported targets are staged and keeps the Bash IPC proxy
+  closure Windows-only; `scripts/build-platform-packages.mjs` refuses a
+  non-Windows target with the Linux staging command instead of assembling a
+  package that would resolve no payload.
+- Two suites asserted Windows-only platform facts (`test/binary.test.mjs`'s
+  managed-copy fixture and `test/shells.test.mjs`'s pin-path expectation); both
+  are platform-correct now, and two denial assertions moved their "outside"
+  directory out of `/tmp`, which the host sandbox deliberately grants.
+
 ## [0.3.0] — 2026-10-14 — Windows x64 native tools and PTC
 
 Release scope: **Windows x64 only**, targeting DSH 0.2.0-rc.2. Linux/macOS/ARM64

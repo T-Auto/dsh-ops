@@ -1,6 +1,11 @@
-# dsh-ops 手动验收清单
+# dsh-ops 手动验收清单（历史）
 
-0.2.5 已恢复 `npm run verify` 自动门禁：安装 devDependencies 后运行 `DSH_OPS_REQUIRE_RUNTIME=1 npm run verify`（PowerShell 用 `$env:DSH_OPS_REQUIRE_RUNTIME='1'; npm run verify`）。以下清单是另行人工验收，不等于这些操作都已执行。0.2.4 时“不补/改测试、不运行旧套件”的要求与记录仅属历史，现已被此次修复替代。替换已加载源码后按宿主要求重载/重启。
+> **本文件是 0.2.x 时期的历史清单，不再作为当前验收依据。**
+> 当前验收请用 [test-table.md](test-table.md)（逐项执行并回填）与 [acceptance-table.md](acceptance-table.md)（硬门与判定）。
+> 下面保留的条目里，组件数量、环境变量口径与跳过预期都可能与 0.3.0 实现不符——以代码和上述两张表为准。
+
+0.2.5 恢复过 `npm run verify` 自动门禁：安装 devDependencies 后运行 `npm run verify`。
+`DSH_OPS_REQUIRE_RUNTIME=1` 只影响需要 FastCtx 运行时的两个套件（`lifecycle`、`mount`）：设成 1 时它们不再跳过而是失败。0.3.0 的常见结果是 **14 套件通过、2 套件跳过**（本机没有 FastCtx 构建时）。以下清单是另行人工验收，不等于这些操作都已执行。替换已加载源码后按宿主要求重载/重启。
 
 ## 系统 shell 回退与载荷
 
@@ -12,7 +17,7 @@
 
 ## 工具发布与提示词
 
-- 组件列表恰为三个：shell/file 默认开启，background 默认关闭。分别核验组件名称、中文介绍、图标，以及实际版本。
+- 组件列表恰为**五个**：shell/file 默认开启；background、PTC、linux 默认关闭。分别核验组件名称、中文介绍、图标，以及实际版本。
 - `workspace-write`、`read-only`：只有开启的四个 ops 文件工具；没有 ops_bash/后台工具，提示词不广告不存在的命令。
 - `danger-full-access`：默认四个文件工具 + ops_bash；仅后台组件开且 enableShellTools=true 时增加四个后台工具。任何组合都不发布 ops_run。
 - 文件与后台共享一个 FastCtx；关文件仍能管理后台，关后台仍能读搜改，重开不积累注册。
