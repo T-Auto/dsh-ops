@@ -24,3 +24,8 @@ uuid = { version = "1.26", features = ["v4"] }
 
 [lints.rust]
 unsafe_code = "forbid"
+
+# OHOS: ships a cap-primitives with an openat2 guard (openat2 is killed by
+# SIGSYS there, see vendor/cap-primitives/src/rustix/linux/fs/open_impl.rs).
+[patch.crates-io]
+cap-primitives = { path = "../vendor/cap-primitives" }
