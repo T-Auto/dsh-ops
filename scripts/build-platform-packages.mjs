@@ -1261,6 +1261,24 @@ function printArtifactTable(dist) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Whether one released platform package is declared in the published manifest.
+ *
+ * Only FastCtx is: it is loaded during mount, so the package manager has to
+ * resolve it before any of this plugin's code runs. The bash and pwsh payloads
+ * are installed by the published package's own `postinstall` instead
+ * (`postinstall.mjs` in the package root), which is what lets a deployment that already has
+ * a shell use that one rather than unpacking a second 400 MiB copy of it.
+ *
+ * `lib/shells.js` resolves both kinds either way, so a deployment that
+ * installed a payload, provisioned one, or declared one itself is honoured.
+ * @param {{kind: string}} pkg - one released platform package.
+ * @returns {boolean} true when the published manifest declares it.
+ */
+function declaredInPublish(pkg) {
+  return !['bash', 'pwsh'].includes(pkg.kind)
+}
+
+/**
  * The `optionalDependencies` a publish would inject.
  *
  * Exact Windows runtime optionalDependencies, injected only in the publish
@@ -1273,7 +1291,7 @@ function injectedOptionalDependencies(context) {
   const declared = mainManifest().optionalDependencies ?? {}
   const injected = { ...declared }
   for (const pkg of context.packages) {
-    injected[pkg.name] = pkg.version
+    if (declaredInPublish(pkg)) injected[pkg.name] = pkg.version
   }
   return injected
 }
@@ -1293,6 +1311,7 @@ function printInjection(context) {
   }
   console.log('  (+ marks a platform package this release injects; the rest came from the committed manifest)')
   console.log('  (all three platform packages carry ready-to-run Windows binaries)')
+  console.log('  (bash and pwsh are released but not injected: the published postinstall installs them per machine)')
   console.log('  (lib/binary.js resolves this plugin\'s own FastCtx package ahead of the upstream @fastctx/* fallbacks)\n')
 }
 

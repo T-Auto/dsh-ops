@@ -34,6 +34,34 @@ fix; see that entry for the `PSModulePath` scope note.
 - Report a `PATH`-sourced FastCtx on the success path; behaviour is unchanged (same-user, not a
   privilege boundary).
 
+### Install payloads
+
+Reported as issue #37: a profile's `node_modules/@dsh-ops` measured 684 MB, all of it the two shell
+payloads, on machines that already had a Git for Windows and a PowerShell 7 to use.
+
+- The bash and pwsh platform packages are no longer `optionalDependencies` of the published main
+  package; the package's own `postinstall` (`postinstall.mjs`) asks the registry for the one that is
+  missing, and only when the machine has no usable spelling of that shell already. An optional
+  dependency is resolved **silently** (a registry that has not synced the platform package ends the
+  install at exit code 0 printing nothing) and **unconditionally** (a machine with its own Git Bash
+  carried a second 390 MiB copy), and neither half is observable from inside the plugin — after
+  `optionalDependencies` are resolved, the plugin is already mounted. The install script runs inside
+  the package, so the answer may depend on the machine, and a miss prints the remedy
+  (`npx --yes dsh-ops@latest provision-shells --bash --pwsh`) instead of nothing. The script never
+  fails its consumer: every error path prints one line and exits 0. Set `DSH_OPS_INSTALL_PAYLOADS=1`
+  to install the pinned payloads even where a system shell exists.
+  `fastctx-win32-x64` stays an optional dependency — its payload is loaded during mount, before any
+  of this package's code runs.
+- `lib/shells.js` resolves the platform package **before** asking whether the manifest declares it,
+  so a payload that `postinstall` installed is used, and an absent one reports the new
+  `not-declared` cause with the remedy that fits it; `bashRemedy` gained that case. The confined-mode
+  guarantee is untouched: `allowSystemShellFallback` still defaults to `false` and restricted
+  read-only/workspace-write sessions still accept only the pinned MSYS payload whose IPC proxies
+  match the in-package receipt. A system Git Bash remains a `danger-full-access` convenience, and
+  `allowSystemShellFallback: true` is still the explicit, unpinned opt-in.
+- The release still publishes all three `@dsh-ops/*` platform packages and still verifies their
+  pinned digests; only the published `optionalDependencies` map changed to carry `fastctx` alone.
+
 ## [0.3.0] — 2026-10-14 — Windows x64 native tools and PTC
 
 Release scope: **Windows x64 only**, targeting DSH 0.2.0-rc.2. Linux/macOS/ARM64

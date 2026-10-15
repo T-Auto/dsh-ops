@@ -23,7 +23,7 @@ attention wasted on repeated PowerShell errors.
 
   and improved model performance on DSH.
 
-- (Windows only) Independent **bash 5.3.15** and independent **PowerShell 7.6.6**: bash is preferred, and pwsh 7 is the fallback when it is needed, so your AI no longer fights PowerShell — **it does not change the system default terminal, PATH or existing host shell tool names**, and environment variables stay safe.
+- (Windows only) Independent **bash 5.3.15** and independent **PowerShell 7.6.6**, fetched only when the machine does not already have one: `postinstall` installs just the shell that is missing, and an existing one is used as it stands (bash under `danger-full-access`, and pwsh through the host's own `pwsh-sandbox` row), so your AI no longer fights PowerShell — **it does not change the system default terminal, PATH or existing host shell tool names**, and environment variables stay safe.
 
 - Independent native Rust file tools and safe batch operations (**off by default**, opt-in), see [Component reference](docs/component-reference.md).
 
@@ -61,7 +61,7 @@ An explicit target profile is required. `tui` maps to the **dsh-TUI product's `d
 
 Desktop must use the CLI bundled with the desktop application; the default auto-detected path is `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd`. For another installation location, add `--dsh-cli "<installation>\resources\runtime\cli\bin\dsh.cmd"`.
 
-> ⚠️ **A missing `bash-win32-x64` under `node_modules/@dsh-ops/` is not a broken installation.** The three payloads are exact-versioned **optional dependencies** (`optionalDependencies`): if your registry has not synced that platform package at the pinned version, the package manager **skips it silently** — the install still exits 0 and prints no warning that names the missing payload.
+> ⚠️ **A missing `bash-win32-x64` or `pwsh-win32-x64` under `node_modules/@dsh-ops/` is not a broken installation.** Those two payloads are installed on demand by this package's `postinstall` (`postinstall.mjs`): a shell the machine already has is not downloaded a second time, and when the registry has not synced the platform package — or the install script was skipped — `postinstall` prints one line and the install still exits 0. `fastctx-win32-x64` remains an exact-versioned **optional dependency** (`optionalDependencies`), which the package manager skips silently when the registry has not synced it. Run `dsh-ops provision-shells --bash --pwsh` when a pinned copy is wanted — for the confined modes, it is required — and it fetches from upstream releases without going through a registry.
 
 > **Do not** work around a missing payload with `allowSystemShellFallback: true`: that lowers the security posture (it uses a system bash with no pinned digest), and the one-time startup configuration migration sets it back to `false`.
 

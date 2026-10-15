@@ -72,6 +72,7 @@
   "files": [
     "lib",
     "bin",
+    "postinstall.mjs",
     "cordis.patch.yml",
     "dsh-plugin.json",
     "icon.png",
@@ -102,6 +103,7 @@
     "vendor/fastctx/UPSTREAM.md"
   ],
   "scripts": {
+    "postinstall": "node postinstall.mjs",
     "status": "node bin/dsh-ops.mjs status",
     "build:bash-ipc": "node bin/build-bash-ipc.mjs",
     "build:ptc": "node bin/dsh-ops.mjs build-ptc",
@@ -128,9 +130,7 @@
     }
   },
   "optionalDependencies": {
-    "@dsh-ops/bash-win32-x64": "0.2.1",
-    "@dsh-ops/fastctx-win32-x64": "0.2.1",
-    "@dsh-ops/pwsh-win32-x64": "0.2.1"
+    "@dsh-ops/fastctx-win32-x64": "0.2.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4",

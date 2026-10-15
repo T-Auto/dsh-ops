@@ -348,7 +348,8 @@ await test('a plugin with no manifest reports the package as not installed, and 
     fs.writeFileSync(path.join(undeclared, 'package.json'), JSON.stringify({ name: 'dsh-ops', version: '0.1.0' }))
     const other = bundledShell({ kind: 'pwsh', bundleRoot: undeclared, platform: process.platform, arch: process.arch })
     assert.equal(other.file, undefined)
-    assert.match(other.detail, /is not installed$/)
+    assert.match(other.detail, /is not installed \(the optional payload/)
+    assert.equal(other.cause, 'not-declared')
   })
 })
 
@@ -429,6 +430,10 @@ await test('bundledShell names the machine-readable cause of every miss', async 
   await withTempDir('shells-cause-undeclared', async (dir) => {
     fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'dsh-ops', version: '0.1.0' }))
     assert.equal(causeOf(dir).cause, 'not-declared')
+    // A manifest that never declared the payload is the NORMAL published shape:
+    // the package's own postinstall installs it. The miss is a script that did
+    // not run, and it is reported as that rather than as a broken install.
+    assert.match(causeOf(dir).detail, /the optional payload this package's postinstall installs/)
   })
 
   await withTempDir('shells-cause-absent', async (dir) => {
