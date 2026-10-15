@@ -108,7 +108,7 @@
     "stage:ptc": "node bin/native-runtime.mjs stage",
     "check:ptc-runtime": "node bin/native-runtime.mjs check",
     "test:ptc": "node test/run.mjs ptc",
-    "test:worker": "node test/worker-acceptance.test.mjs",
+    "test:worker": "node test/run.mjs worker-acceptance",
     "probe:syscalls": "sh tools/syscall-probe/run.sh",
     "probe:boundary": "node tools/boundary-probe.mjs",
     "build:rust": "node bin/dsh-ops.mjs build",

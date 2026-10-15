@@ -19,10 +19,17 @@ about kernel enforcement on any platform.
 Build the worker first, then run it directly or through the gate runner:
 
 ```sh
-npm run build:rust          # or: cargo build --release --manifest-path native/Cargo.toml
-node test/worker-acceptance.test.mjs
-npm test                    # every suite, one child process each
+npm run build:rust            # or: cargo build --release --manifest-path native/Cargo.toml
+npm run test:worker           # node test/run.mjs worker-acceptance
+npm test                      # every suite, one child process each
 ```
+
+Run it through `test/run.mjs` (as above) rather than invoking the file directly:
+`test/lib/harness.mjs` refuses to start unless `DSH_HOME` points inside the
+temporary directory, which is the runner's job — it gives every suite a throwaway
+home so a suite that provisions a runtime cannot see another's leftovers. A bare
+`node test/worker-acceptance.test.mjs` therefore exits 2 with that explanation
+(and it is also how the suite behaves in this repository's own gate).
 
 The suite **skips** (exit 77, counted as skipped rather than passed) when no
 worker binary is available, and it prints a `note:` line instead of asserting
