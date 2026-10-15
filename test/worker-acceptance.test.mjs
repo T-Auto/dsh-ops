@@ -18,8 +18,6 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { Context } from '@deepseek-ai/cordis'
-import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { PACKAGE_ROOT, assert, report, skipSuite, test, withTempDir } from './lib/harness.mjs'
 import { invoke as invokeFile } from '../lib/file/worker.js'
 import { invoke as invokePtc } from '../lib/ptc/worker.js'
@@ -43,24 +41,43 @@ const storeFiles = root => {
   return fs.existsSync(store) ? fs.readdirSync(store) : []
 }
 
-/** Bridge context: real policy shape, fixture confinement, real subprocess. */
-async function withBridge({ mode, workspaceRoot }, body) {
-  const ctx = new Context()
-  ctx.logger.level = 0
-  await ctx.plugin(Subprocess)
+/**
+ * The bridges ask their context for three services and nothing else, so the
+ * fixture is a plain object: no host packages, no plugin mount. A suite that
+ * needs the whole registry to observe one policy decision is a suite that fails
+ * on a checkout without dependencies.
+ */
+function bridgeContext({ mode, workspaceRoot }) {
   const policy = { mode, workspaceRoot, sessionId: `${mode}-acceptance` }
-  await ctx.plugin(inner => { inner.provide('sandboxPolicy', { resolve: () => policy }) })
-  await ctx.plugin(inner => { inner.provide('sandbox', { confine: async argv => ({ enforcement: 'full', argv }) }) })
-  const exec = (scope = policy.sessionId) => ({ agent: { session: { id: scope, mode, header: { cwd: workspaceRoot } } } })
-  try {
-    return await body({
-      policy,
-      file: (tool, args, scope) => invokeFile(ctx, worker, tool, args, exec(scope), new AbortController().signal),
-      ptc: (tool, args, scope) => invokePtc(ctx, worker, tool, args, exec(scope), new AbortController().signal),
-    })
-  } finally {
-    await ctx.fiber.dispose()
+  return {
+    policy,
+    ctx: { get: name => ({
+      sandboxPolicy: { resolve: () => policy },
+      sandbox: { confine: async argv => ({ enforcement: 'full', argv }) },
+      subprocess: {
+        spawn({ argv, stdio }) {
+          const result = spawnSync(argv[0], argv.slice(1), { input: stdio.stdin.data, encoding: 'utf8', timeout: 60_000 })
+          return {
+            done: Promise.resolve({ exitCode: result.status ?? 1, signal: result.signal ?? null }),
+            collected: {
+              stdout: { readFrom: () => ({ text: result.stdout ?? '', lossy: false }) },
+              stderr: { readFrom: () => ({ text: result.stderr ?? '' }) },
+            },
+          }
+        },
+      },
+    })[name] },
   }
+}
+
+async function withBridge({ mode, workspaceRoot }, body) {
+  const { ctx, policy } = bridgeContext({ mode, workspaceRoot })
+  const exec = (scope = policy.sessionId) => ({ agent: { session: { id: scope, mode, header: { cwd: workspaceRoot } } } })
+  return await body({
+    policy,
+    file: (tool, args, scope) => invokeFile(ctx, worker, tool, args, exec(scope), new AbortController().signal),
+    ptc: (tool, args, scope) => invokePtc(ctx, worker, tool, args, exec(scope), new AbortController().signal),
+  })
 }
 
 const failure = value => value?.error?.code ?? null
