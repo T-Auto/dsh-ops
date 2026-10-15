@@ -89,11 +89,15 @@ Bundle 声明四个组件，分别启停，首次安装默认开启前两个：
 | 组件 | 介绍 | 默认 | 发布的工具 |
 | --- | --- | --- | --- |
 | `dsh-ops/shell` | 将默认终端改为 bash，以及 bash 覆盖不到时提供 PowerShell 7 | 开 | `ops_bash`；宿主 `pwsh` 使用随包 PowerShell 7 |
-| `dsh-ops/file` | 更快、更高性能、输出更精简更省 token 的 Rust 文件检索 | 开 | 四个文件工具 |
+| `dsh-ops`（file） | 更快、更高性能、输出更精简更省 token 的 Rust 文件检索 | 开 | 四个文件工具 |
 | `dsh-ops/background` | 为科研仿真、模型训练及其他长进程后台任务提供托管 | 关 | 启动、输出、列出、终止后台任务 |
 | `dsh-ops/ptc` | 独立 Rust 安全批处理和有界结果引用，仅纯 PTC 会话加载 | 关 | `ops_batch`、`ops_result` |
 
 “默认终端改为 bash”指模型提示优先使用 `ops_bash`，**不修改系统默认终端、PATH 或宿主原有 shell 工具名称**。
+
+GUI「插件 → dsh-ops → 文件行 → 配置」提供单开关「隐藏官方基础工具」（`hideBuiltinTools`，默认 `false`，归 file/root），切换即保存。开启仅隐藏 `read/write/edit/glob/grep/bash/pwsh/pwsh_persistent`；保留 `read_image`、第三方工具、`run_code`、`ops_batch`、`ops_result` 和后台 `ops_*`，并非删除所有非 ops 工具，也不改变沙箱/权限。若可用的 ops 工具无法完成任务，可关闭开关恢复；停用 file 或卸载也会恢复，但独立的 `shellPolicy` 拒绝仍保持。
+
+文件行现用根入口 `dsh-ops`，id 仍为 `dsh-ops-file`；根入口原本就是 file 别名，没有增删组件。旧 `dsh-ops/file` 仍有效，但纯子路径手写 composition 发现不了浏览器 companion，需要根入口文件行才能显示配置 UI。
 
 工具的完整参数、配置项与权限要求见 [组件参考](docs/组件参考.md) 与 [配置参考](docs/配置参考.md)。
 

@@ -383,7 +383,7 @@ the file is the durable part.
 | `new Context()`, `ctx.plugin`, `ctx.inject`, `ctx.effect`, `ctx.on`, `ctx.waterfall`, `ctx.get` | Cordis source, vendored: `vendor/cordis/src/` | the mount suite boots a real context and disposes it |
 | `tools.register(definition)` — one object argument, returns the unregister disposer | `packages/core/tools/src/index.ts:1057-1088` | the mount suite reads back the nine registered schemas, and the shells suite asserts the `ops_bash` definition and that its disposer removes it |
 | `tools.restrict(filter)` — `{allow?, deny?}` over the global tools of one agent scope; requires a scoped context, rejects unknown names, intersects, lifts on dispose | `packages/core/tools/src/index.ts:1090-1124`, type at `:700-705` | **used by this plugin**: on `agent/created`, and only while a rung of its own is live, it masks the configured host shell tools out of that agent's own view (`lib/index.js` `hideHostShellTools`), and the disposer it returns is handed to the plugin's effect too. The mount suite asserts the masked names leave `schemas(agent)`, stop resolving through `get(name, agent)`, are still refused by the fence, stay registered globally, and come back when the plugin unloads; a name the agent registered itself makes `restrict()` throw, which the plugin reports once and leaves visible |
-| `tools.guard(guard)` — monotonic denial registered after the pre-execute waterfall; the guard returns a denial reason or `undefined` | `packages/core/tools/src/index.ts:1126-1142`, type at `:723-731` | not used by this plugin yet: the fence at `tools/pre-execute` — with its model-readable reason and its `next()` delegation — plus the per-agent mask already implement `deny-host-shell` |
+| `tools.guard(guard)` — monotonic denial registered after the pre-execute waterfall; the guard returns a denial reason or `undefined` | `packages/core/tools/src/index.ts:1126-1142`, type at `:723-731` | `lib/host-tools.js` now uses it alongside `tools/pre-execute` and per-agent masks for `hideBuiltinTools` and `deny-host-shell` |
 | `tools.get(name, scope?)` — the definition one scope resolves, or undefined; the lookup half of "visibility, lookup, and execution agree" | `packages/core/tools/src/index.ts:1230` | the mount suite only: a masked host shell name must not resolve for that agent while it stays registered globally |
 | `ctx.on('agent/created')` and the agent's own scoped context (`agent.ctx`) — the event fires once per agent, after its scope is published and before its queued work is released and its prompt first assembled; the payload is `{agent, source, signal}` | `packages/core/agent/src/runtime-types.ts:261` (the typed event), sequenced at `packages/core/agent/src/index.ts:172-181` and emitted serially at `:550` | the mount suite dispatches the real event (`ctx.serial('agent/created', …)`) into real `@deepseek-ai/dsh-scope` scopes and asserts all three outcomes: hidden while a rung of the plugin's own is live, reported-and-visible when no such rung is live, and reported-and-visible when `restrict()` cannot name the tool |
 | `tools/pre-execute` waterfall, `(exec, next) => PreToolDecision`, `@mode waterfall` | `packages/core/tools/src/index.ts:142-153` | the fence suite dispatches the real waterfall and asserts `{kind:'deny'}` |
@@ -391,7 +391,7 @@ the file is the durable part.
 | `systemPrompt.assemble({})` resolves sections in ascending order, equal orders by name | `packages/core/system-prompt/src/index.ts:548-558`, sort at `:237-238` | the mount suite asserts both sections appear in one assembly |
 | `ctx.get('tools').schemas()` — one deep-cloned schema per visible tool, the global view when no scope is passed; the plugin's only answer to "are the `ops_` tools live right now" (asked at every prompt assembly) and to "which host shell names does this agent actually see" (asked when it hides them) | `packages/core/tools/src/index.ts:1252-1262` | the mount suite renders the tooling section from a real assembly and asserts it names exactly the live tools; it also reads `schemas(agent)` before and after a mask |
 | `ctx.get('subprocess')` — the abstract `SubprocessRuntime`: `spawn(spec)` with a fully explicit `argv`, `cwd`, per-stream stdio, `graceMs`, cancellation, and `env` overrides merged after the service's own credential scrub; `argv` is never shell-interpreted | `packages/subprocess/subprocess/README.md:28` (mount and consume), `:44-46` (the call shape), `docs/subsystems/subprocess.md:91-104` (the fully-explicit spec), `:267-269` (`ctx.subprocess` registration) | the shells suite, through a recording subprocess service: `ops_bash` spawns `argv: [<resolved bash>, '-c', <command>]`, forwards exactly the terminal overrides, adds no credential-shaped name of its own, and reports a missing service instead of throwing something opaque. The mount suite is where the service is real, and where the registration is shown to be gated on it: with no `ctx.subprocess`, a resolved bash publishes no rung and installs no mask |
-| the credential rule both spawn paths keep: a child never inherits credential-shaped names or ambient `DSH_*` facts, and a transport that owns its own spawn (the SDK client, MCP) stays outside the service so the policy has one source | `packages/subprocess/subprocess/README.md:80` (the scrub and its merges), `:84` (route around the service when the transport owns the spawn), `:104` (`scrubbedParentEnv`), `packages/subprocess/subprocess-local/README.md:156` (the scrub is a name heuristic, not a guarantee) | the mount suite's `childEnv` check, for the MCP child. That child's rule is restated in `lib/tools.js` `childEnv()` rather than imported, because importing `scrubbedParentEnv` would be the `@deepseek-ai/*` value import this host half forbids; the `ops_bash` child gets the service's own scrub instead (`ctx.get('subprocess')` above) |
+| the credential rule both spawn paths keep: a child never inherits credential-shaped names or ambient `DSH_*` facts, and a transport that owns its own spawn (the SDK client, MCP) stays outside the service so the policy has one source | `packages/subprocess/subprocess/README.md:80` (the scrub and its merges), `:84` (route around the service when the transport owns the spawn), `:104` (`scrubbedParentEnv`), `packages/subprocess/subprocess-local/README.md:156` (the scrub is a name heuristic, not a guarantee) | the mount suite's `childEnv` check, for the MCP child. That child's rule remains restated in `lib/tools.js` `childEnv()` rather than importing `scrubbedParentEnv`; the `ops_bash` child gets the service's own scrub instead (`ctx.get('subprocess')` above) |
 | this plugin's own `ops_` namespace is its conflict domain: a name already registered in the same scope throws, so the whole generation is rolled back rather than half-published | `packages/core/tools/src/index.ts:746-748` (both duplicate branches) | not covered against the real host — no suite publishes a colliding name; the fixture's registry raises on a duplicate (`test/mount.test.mjs`) and `#publish` in `lib/tools.js` is where the rollback lives |
 | a bundle is a package declaring `dsh.bundle.patch`, and a layer replaces a row's whole `config`: | `docs/user/develop/basic/publish.md:11-16`, `:56-64`, `:129-132` | `scripts/validate-manifest.mjs` parses the shipped patch and runs the row's config through the plugin's own validator |
 | Cordis answers every service property read with a fresh traceable wrapper | `vendor/cordis/src/utils.ts:116-125` (`getTraceable`) and `:165-218` (`createTraceable`, a new `Proxy` per read) | the incident's regression assertions in the mount suite: the registry carries no own `register` after mount, and the same foreign name registered once in each of two scopes stays out of this plugin's global view |
@@ -520,18 +520,20 @@ Rules that follow, and that this repository must not regress:
 
 ### Two spawn paths, one credential policy
 
-The plugin reaches every host service through `ctx.inject([...])` / `ctx.get()` and
-imports no `@deepseek-ai/*` value at any point. That leaves two ways to start a
-process, and the credential rule is kept on both.
+The plugin reaches host services through `ctx.inject([...])` / `ctx.get()`.
+Value imports now include `Schema` from `@deepseek-ai/schemastery` and the public
+`renderToolsSdk` / `renderToolsSdkPy` from `@deepseek-ai/dsh-tools` in
+`lib/host-tools.js`, which keep PTC SDK declarations aligned with tool masks.
+The two process-spawn paths retain the same credential rule.
 
 **The FastCtx server is the plugin's own spawn** (`lib/handshake.js`,
 `node:child_process.spawn`), because it is the plugin's transport, and the harness's
 own guidance for that case is to stay outside the subprocess service — "when a
 transport owns its own spawn (the SDK client, MCP), route around the service and
 import `scrubbedParentEnv` directly so environment policy stays single-sourced"
-(`packages/subprocess/subprocess/README.md:84`). Importing `scrubbedParentEnv` is
-exactly the value import this host half forbids, so the rule is restated in
-`lib/tools.js` `childEnv()`: credential-shaped names (`*KEY*` / `*PASSWORD*` /
+(`packages/subprocess/subprocess/README.md:84`). The existing transport still
+restates that rule in `lib/tools.js` `childEnv()` rather than importing
+`scrubbedParentEnv`: credential-shaped names (`*KEY*` / `*PASSWORD*` /
 `*SECRET*` / `*TOKEN*`) and ambient `DSH_*` facts are dropped, tool configuration
 locations such as `GH_CONFIG_DIR` survive, and the mount suite pins that behaviour.
 The heuristic has the limits upstream documents
@@ -593,14 +595,13 @@ different seams open, and both were read from the host source rather than assume
   layout, so the ladder's rung 3 and the host row are one fact rather than two
   guesses.
 
-### No Schemastery `Config`
+### One volatile Schemastery field
 
-The plugin exports no `Config` schema, so the row's config is validated by
-`lib/config.js` instead. A `Config` export means importing
-`@deepseek-ai/schemastery` — a value import whose resolution the profile loader
-owns — and this host half deliberately imports no `@deepseek-ai/*` value at load
-time. There is no exception now: every host service this plugin needs arrives as
-a service, never as an import.
+The root/file entry exports `Config` using `Schema` from
+`@deepseek-ai/schemastery`: only `hideBuiltinTools` is schema-owned, a boolean
+with `.default(false).volatile()`. The browser companion saves it immediately
+through `configForms` on row `dsh-ops-file`. Existing keys and unknown-key rejection
+remain manually validated by `lib/config.js`; this is not a full schema migration.
 
 ### Resolution and probing are synchronous
 

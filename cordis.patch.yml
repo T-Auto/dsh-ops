@@ -9,8 +9,10 @@
         shellPolicy: advise
         allowSystemShellFallback: false
     - id: dsh-ops-file
-      name: dsh-ops/file
+      # The root entry is the file component and exposes the browser companion.
+      name: dsh-ops
       config:
+        hideBuiltinTools: false
         promptPolicy: true
         enableShellTools: false
         required: false

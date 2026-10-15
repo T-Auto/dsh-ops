@@ -89,11 +89,15 @@ The bundle declares four independently toggled components. On first installation
 | Component | Description | Default | Published tools |
 | --- | --- | --- | --- |
 | `dsh-ops/shell` | Prefer bash as the terminal, with PowerShell 7 for operations bash cannot cover | On | `ops_bash`; host `pwsh` uses bundled PowerShell 7 |
-| `dsh-ops/file` | Faster, higher-performance Rust file retrieval with more concise, token-efficient output | On | Four file tools |
+| `dsh-ops` (file) | Faster, higher-performance Rust file retrieval with more concise, token-efficient output | On | Four file tools |
 | `dsh-ops/background` | Managed background tasks for scientific simulations, model training and other long-running processes | Off | Start, read output, list and terminate background jobs |
 | `dsh-ops/ptc` | Independent Rust safe batches and bounded result references, only in pure PTC sessions | Off | `ops_batch`, `ops_result` |
 
 "Prefer bash as the terminal" means prompting the model to use `ops_bash` first; it **does not change the system default terminal, PATH or existing host shell tool names**.
+
+GUI Plugins → dsh-ops → file row → Configuration provides one “Hide overlapping built-in tools” switch (`hideBuiltinTools`, default `false`, owned by file/root), saved immediately on toggle. It hides only `read/write/edit/glob/grep/bash/pwsh/pwsh_persistent`; `read_image`, third-party tools, `run_code`, `ops_batch`, `ops_result` and background `ops_*` remain. It does not remove every non-ops tool or change sandbox permissions. Turn it off if the available ops tools cannot cover a task; disabling file or uninstalling also restores the tools, but independent `shellPolicy` denials remain.
+
+The file row now uses root entry `dsh-ops`, keeping id `dsh-ops-file`; the root was already a file alias, so no components were added or removed. The old `dsh-ops/file` entry still works, but a handwritten subpath-only composition cannot discover the browser companion; the root file row is needed for the configuration UI.
 
 Full tool parameters, configuration keys and permission requirements: [Component reference](docs/component-reference.md) and [Configuration reference](docs/configuration-reference.md).
 

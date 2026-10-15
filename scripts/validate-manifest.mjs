@@ -227,7 +227,7 @@ if (typeof patch === 'string' && fs.existsSync(path.join(PACKAGE_ROOT, patch))) 
       : []
     check(rows.length === 4, 'the bundle declares exactly four components')
     for (const component of ['shell', 'file', 'background', 'ptc']) {
-      const row = rows.find(candidate => candidate?.name === `${pkg.name}/${component}`)
+      const row = rows.find(candidate => candidate?.name === (component === 'file' ? pkg.name : `${pkg.name}/${component}`))
       check(row?.id === `${pkg.name}-${component}`, `the ${component} component has a stable row id`)
       if (!row) continue
       check((row.disabled === true) === ['background', 'ptc'].includes(component), `${component} has its documented enablement default`)

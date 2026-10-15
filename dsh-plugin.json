@@ -122,7 +122,7 @@
       },
       {
         "id": "dsh-ops-file",
-        "entry": "dsh-ops/file",
+        "entry": "dsh-ops",
         "defaultEnabled": true
       },
       {

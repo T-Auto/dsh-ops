@@ -6,14 +6,18 @@ Every configuration key, and **which component row owns it**.
 
 ## Where configuration lives
 
-In DSH's configuration editor, find the corresponding `dsh-ops/shell`, `dsh-ops/file`, `dsh-ops/background` or `dsh-ops/ptc` row, adjust `config`, then save; unknown configuration keys cause errors naming the key.
+In DSH's configuration editor, find the corresponding `dsh-ops/shell`, `dsh-ops` (file), `dsh-ops/background` or `dsh-ops/ptc` row, adjust `config`, then save; unknown configuration keys cause errors naming the key.
+
+The file row now uses the root entry `dsh-ops` instead of `dsh-ops/file`, retaining id `dsh-ops-file`; the root was already a file alias, so no components were added or removed. The old `/file` entry still works, but a handwritten composition using only subpaths does not discover the browser companion; the root file row is needed for the configuration UI.
+
+In the GUI, open Plugins → dsh-ops → file row → Configuration. Its single “Hide overlapping built-in tools” switch (`hideBuiltinTools`, off by default) saves and takes effect immediately through `volatile` + `configForms`.
 
 The bundle declares four independently toggled components. On first installation, the first two are enabled by default:
 
 | Row `name` | Component | Default |
 | --- | --- | --- |
 | `dsh-ops/shell` | Terminal and shell | On |
-| `dsh-ops/file` | Rust file tools | On |
+| `dsh-ops` | Rust file tools | On |
 | `dsh-ops/background` | Background tasks | Off |
 | `dsh-ops/ptc` | Native PTC batches | Off |
 
@@ -31,6 +35,7 @@ The table below gives the **owning component** for each key. Putting a key on a 
 | `bashPath` | string path | — | shell |
 | `enableShellTools` | boolean | `true` | background |
 | `publishBashTool` | boolean | `true` | shell |
+| `hideBuiltinTools` | boolean | `false` | file / root entry `dsh-ops` |
 | `promptPolicy` | boolean | `true` | all |
 | `extraGuidance` | string | empty | all |
 | `toolCallTimeoutMs` | positive integer (ms) | `300000` | background / file |
@@ -73,6 +78,7 @@ config:
 
 - `enableShellTools`: deployment switch for the background component; enabling it still requires session `danger-full-access` to publish the four background tools. The file component never publishes command tools.
 - `publishBashTool`: publish `ops_bash` using current session policy; restricted modes require the host sandbox, full access uses the host subprocess service.
+- `hideBuiltinTools`: defaults to `false`, owned only by file/root. When on, hides and refuses calls to only `read/write/edit/glob/grep/bash/pwsh/pwsh_persistent`; `read_image`, third-party tools, `run_code`, `ops_batch`, `ops_result` and background `ops_*` remain. It does not remove every non-ops tool or change sandbox permissions. Turn it off if the available ops tools cannot cover a task. Disabling file or uninstalling also lifts the mask; independent `shellPolicy` denials remain.
 - `promptPolicy`: whether to inject the component's runtime guidance; use `extraGuidance` to append instructions.
 - `toolCallTimeoutMs`: FastCtx RPC wait timeout; it does not mean server-side work has terminated. Ceiling `2147483647`.
 - `required`: whether to reject activation when the runtime is unavailable.
