@@ -22,7 +22,9 @@ const worker = process.env.DSH_OPS_WORKER_BIN
   ?? path.resolve('native/target/release', process.platform === 'win32' ? 'dsh-ops-worker.exe' : 'dsh-ops-worker')
 if (!fs.existsSync(worker)) { console.error(`build the worker first (npm run build:rust); looked for ${worker}`); process.exit(2) }
 
-const base = fs.mkdtempSync(path.join(os.homedir(), 'dsh-ops-boundary-'))
+// Scratch goes to the platform temporary directory: a diagnostic must not
+// litter the home directory it is describing.
+const base = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-ops-boundary-'))
 const ws = path.join(base, 'ws')
 fs.mkdirSync(path.join(ws, 'src'), { recursive: true })
 fs.mkdirSync(path.join(base, 'outside'), { recursive: true })

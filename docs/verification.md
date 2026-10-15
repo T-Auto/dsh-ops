@@ -87,3 +87,38 @@ node tools/boundary-probe.mjs
 It covers: reads outside the session workspace, write roots derived from
 `os.tmpdir()`, a rewritten job manifest being executed by `resume`, and
 audit-store growth per run (generations, and what can be reclaimed in band).
+
+
+## 4. Environment assumptions (check these before trusting a green run)
+
+Every tool below was written on one host and has to survive another. The column
+that matters is the last one: what a *stranger's* environment does to it.
+
+| Assumption | Acceptance suite | Syscall probe | Boundary probe |
+| --- | --- | --- | --- |
+| Host packages (`@deepseek-ai/*`) | **none** — the bridges only need three services, so the fixture is a plain object | none | none |
+| `DSH_HOME` inside the temporary directory | required, and the gate runner supplies it | not used | not used |
+| Writable temporary directory | required (`withTempDir`) | required (`DSH_OPS_PROBE_DIR` overrides) | required |
+| Built worker binary | absent ⇒ suite exits 77 (skipped), never a green pass | n/a | refuses with exit 2 |
+| Symlink creation | skipped with a `note:` when the account cannot create them | n/a | n/a |
+| `/proc` mounted | not needed | used for `/proc/self/fd` reporting only | not needed |
+| Hard links | not needed (an atomic publish is not used to create fixtures) | n/a | n/a |
+
+Two rules follow, and both have already caught real defects here:
+
+1. **Run a suite the way a stranger's CI would, before publishing it.** For this
+   repository that means the gate runner with `DSH_HOME` unset:
+
+   ```sh
+   env -u DSH_HOME TMPDIR=<writable> node test/run.mjs worker-acceptance   # passes
+   env -u DSH_HOME TMPDIR=<writable> DSH_OPS_WORKER_BIN=/nonexistent/worker \
+     node test/run.mjs worker-acceptance                                  # skipped (77)
+   ```
+
+   A suite developed where `tmpdir()` happens to equal `$HOME` and `DSH_HOME` is
+   already set will not notice that it depends on both.
+
+2. **Verify the artifact that actually runs.** When a script or suite is copied
+   to a remote host (or served over HTTP), print its digest next to the local one
+   and compare. A cached or stale copy is otherwise indistinguishable from a fix
+   that did not work.

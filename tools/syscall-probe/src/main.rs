@@ -29,14 +29,17 @@ fn errno() -> i32 { std::io::Error::last_os_error().raw_os_error().unwrap_or(0) 
 fn main() {
     unsafe {
         let mut sa: libc::sigaction = std::mem::zeroed();
-        sa.sa_sigaction = on_sigsys as usize;
+        let handler: extern "C" fn(i32, *mut libc::siginfo_t, *mut libc::c_void) = on_sigsys;
+        sa.sa_sigaction = handler as usize;
         sa.sa_flags = libc::SA_SIGINFO;
         libc::sigaction(libc::SIGSYS, &sa, std::ptr::null_mut());
     }
     let op = std::env::args().nth(1).unwrap_or_default();
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    // Scratch space for the probe's own fixture; overridable for read-only homes.
-    let base = std::env::var("DSH_OPS_PROBE_DIR").unwrap_or_else(|_| format!("{home}/.dsh-ops-syscall-probe"));
+    // Scratch space for the probe's own fixture; overridable when the platform
+    // temporary directory is not writable.
+    let base = std::env::var("DSH_OPS_PROBE_DIR")
+        .unwrap_or_else(|_| std::env::temp_dir().join("dsh-ops-syscall-probe").to_string_lossy().into_owned());
     let _ = std::fs::create_dir_all(format!("{base}/sub"));
     let _ = std::fs::write(format!("{base}/sub/a.txt"), "hi\n");
     let file_abs = format!("{base}/sub/a.txt");
