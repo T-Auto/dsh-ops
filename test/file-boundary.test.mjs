@@ -41,6 +41,24 @@ await test('an unusable home directory drops every temporary root', () => {
   }
 })
 
+const covers = (root, target) => {
+  const relative = path.relative(root, target)
+  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+}
+
+await test('a temporary root that resolves to a volume root or above the home directory is never authorized', async () => {
+  await withTempDir('file-boundary-alias', async dir => {
+    // A link's name carries no volume or home information; only what it resolves to does.
+    const alias = target => { const at = path.join(dir, `alias-${path.basename(target) || 'volume'}`)
+      fs.symlinkSync(target, at, process.platform === 'win32' ? 'junction' : 'dir'); return at }
+    for (const [label, target] of [['the volume root', path.parse(tmpdir()).root], ['the home directory parent', path.dirname(HOME)]]) {
+      const roots = authorizedRoots({ workspaceRoot: WORKSPACE }, { platform: 'win32', tmpdir: alias(target), homedir: HOME })
+      assert.equal(roots.includes(target), false, `${label} must not be authorized`)
+      assert.equal(roots.some(root => covers(root, HOME)), false, `${label} must not cover the home directory`)
+    }
+  })
+})
+
 const { ctx } = await bootHost()
 if (!ctx.get('subprocess')) await ctx.plugin(Subprocess)
 if (!ctx.get('sandbox')) await ctx.plugin(Sandbox, {})
@@ -129,6 +147,23 @@ await test('paths inside the workspace and inside the temporary area keep workin
       assert.equal(written.value.status, 'completed')
       assert.equal(written.value.changed, 1)
       assert.equal(fs.readFileSync(victim, 'utf8'), 'after\n')
+    })
+  })
+})
+
+await test('a missing path inside the workspace stays reachable, while an escape link does not hide one', async () => {
+  await withTempDir('file-boundary-typo', async dir => {
+    await withTempDir('file-boundary-escape', async outside => {
+      await withTemporaryEnv(HOST_TEMP, async () => {
+        // The fence weighs a target against resolved roots, so a target that does not exist
+        // yet has to resolve through its deepest existing ancestor to be comparable at all.
+        fs.symlinkSync(outside, path.join(dir, 'escape'), process.platform === 'win32' ? 'junction' : 'dir')
+        const agent = await agentForCall(dir, 'workspace-write')
+        const missing = await callTool(ctx, publicToolName('inspect_local_file'), { path: 'typo.txt' }, undefined, agent)
+        assert.equal(missing.value.error?.code, 'NOT_FOUND', 'a missing file inside the workspace is a not-found, not a denial')
+        const escaped = await callTool(ctx, publicToolName('inspect_local_file'), { path: path.join('escape', 'ghost.txt') }, undefined, agent)
+        assert.equal(escaped.value.error?.code, 'POLICY_DENIED', 'a missing path behind a link out of the workspace stays denied')
+      })
     })
   })
 })
