@@ -5,6 +5,35 @@ All notable changes to this package are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Payload trust
+
+Found while reviewing what runs *before* it is trusted. Independent of the workspace-preparation
+fix; see that entry for the `PSModulePath` scope note.
+
+- Never hand a spawned child the host environment implicitly. Child processes now receive an
+  **allow-list** (`lib/env.js`): paths, identity, scratch space, locale and proxy variables survive;
+  everything else is withheld. The previous shape-based deny-list (`KEY|PASSWORD|SECRET|TOKEN`) let
+  `SSH_AUTH_SOCK` (which authorises the host's SSH keys) and `DATABASE_URL` (usually carrying a
+  password) through. `probeBinary` also defaults to the scrubbed environment — it **executes** a
+  candidate that may have come from `PATH`, so handing it the full environment made the check a
+  credential-delivery mechanism.
+- Judge the cached confined-Bash runtime with one function on both the cached and the cold path, and
+  keep the two anchors that live **outside** the writable cache (the IPC proxies against the
+  in-package receipt) separate from two **in-domain consistency checks** (the patched MSYS runtime
+  and `bash.exe`, both compared against the source payload). Folding all four into the stat
+  comparison lets a tampered `opsipc.dll` through on both paths. A generation that fails
+  verification is **quarantined and rebuilt** rather than refused forever — one bad write used to
+  brick the bash tool until the host restarted — and the quarantine is bounded to two generations.
+- Isolate every teardown callback (`lib/teardown.js`): one throwing disposer no longer strands the
+  rest of a capability withdrawal or a tool unpublish, and `ptc`'s publication gate is released in a
+  `finally` instead of wedging shut.
+- Compare the native-worker candidate path with `path.resolve` + case folding rather than a path
+  **substring**, so `…\RUNTIME\…` can no longer skip receipt verification.
+- Report a `PATH`-sourced FastCtx on the success path; behaviour is unchanged (same-user, not a
+  privilege boundary).
+
 ## [0.3.0] — 2026-10-14 — Windows x64 native tools and PTC
 
 Release scope: **Windows x64 only**, targeting DSH 0.2.0-rc.2. Linux/macOS/ARM64

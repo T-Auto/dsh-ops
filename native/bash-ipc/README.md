@@ -46,9 +46,12 @@ receipt. Unsupported layouts/versions or corrupt generations fail closed.
 Only the per-call environment puts the matching `usr/bin` first in PATH, so
 Bash children do not accidentally load another MSYS installation. Full access
 continues using the original shell. The default payload remains GPL software;
-existing LICENSE/provenance files are copied unchanged, the modified MSYS copy
-and its source hashes are identified in `.ops-ipc.json`. A public modified
-MSYS distribution requires a separate license/source-compliance review.
+existing LICENSE/provenance files are copied unchanged, and the modified MSYS
+copy is identified in `.ops-ipc.json`. That manifest records the published PATH
+directories by **size and mtime** only (not source hashes), so it serves as an
+accidental-drift detector — the tamper anchors are the patched MSYS digest and
+the in-package receipt, which the cache directory cannot rewrite. A public
+modified MSYS distribution requires a separate license/source-compliance review.
 
 ## Evidence
 

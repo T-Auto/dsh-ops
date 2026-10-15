@@ -62,4 +62,52 @@ await test('restricted compatibility accepts the pinned payload and explains a m
     assert.throws(()=>confinedBash(path.join(root,'bin/bash.exe'),{source:'well-known'}),/system Git for Windows install .*works only in danger-full-access/s)
   })
 })
+await test('a tampered cached generation is rejected, quarantined and rebuilt', async () => {
+  if(process.platform!=='win32')return
+  const receipt=path.resolve('runtime/win32-x64/bash-ipc/provenance.json')
+  if(!fs.existsSync(receipt))return
+  const source=path.resolve('node_modules/@dsh-ops/bash-win32-x64')
+  const bash=path.join(source,'usr/bin/bash.exe')
+  if(!fs.existsSync(bash))return
+  await withTempDir('bash-ipc-tamper',async home=>{
+    const first=confinedBash(bash,{home})
+    const target=path.join(home,'dsh-ops','bash-ipc',first.runtime)
+    const bads=()=>fs.readdirSync(path.dirname(target)).filter(n=>n.includes('.bad-')).length
+
+    // (1) Content changed, **length preserved** — the case only the "versus the in-package receipt"
+    //     anchor can see. A stat-only comparison (which an intermediate revision shipped) let this
+    //     through on both paths.
+    // (1) Content changed, length preserved, **and the manifest's recorded size/mtime updated to
+    //     match** — i.e. the attacker rewrote the manifest too, which is precisely what the cheap stat
+    //     layer cannot catch. (Restoring mtime with `utimes` is not a reliable setup: it quantises, and
+    //     two attempts failed to settle on the recorded value. Driving the comparison from the manifest
+    //     side is deterministic.) With a stat-only comparison — which an intermediate revision
+    //     shipped — this passes on **both** paths; the "versus the in-package receipt" anchor is what
+    //     rejects it. Verified by mutation: disable that anchor and this assertion stops failing.
+    const proxy=path.join(target,'usr/bin/opsipc.dll')
+    const markerPath=path.join(target,'.ops-ipc.json')
+    const marker=JSON.parse(fs.readFileSync(markerPath,'utf8'))
+    const buf=fs.readFileSync(proxy)
+    buf[buf.length-1]^=0xff
+    fs.writeFileSync(proxy,buf)
+    const now=fs.statSync(proxy)
+    assert.equal(now.size,marker.tree['usr/bin/opsipc.dll'].size,'test setup: flipping one byte must not change the size')
+    marker.tree['usr/bin/opsipc.dll']={size:now.size,mtimeMs:now.mtimeMs}
+    fs.writeFileSync(markerPath,JSON.stringify(marker)+'\n')
+    const second=confinedBash(bash,{home})
+    assert.equal(second.file,first.file)
+    assert.equal(bads()>0,true,'a tampered generation must be quarantined')
+
+    // (2) A different size in one of the PATH directories — the stat layer catches this one, and the
+    //     rebuild must **not** throw (the pre-recovery code bricked the tool until the host restarted).
+    const again=path.join(home,'dsh-ops','bash-ipc',second.runtime)
+    fs.appendFileSync(path.join(again,'cmd/git.exe'),'X'.repeat(4096))
+    const third=confinedBash(bash,{home})
+    assert.equal(third.file,first.file)
+
+    // (3) Served from the rebuild, and the quarantine does not accumulate.
+    assert.equal(confinedBash(bash,{home}).file,third.file)
+    assert.equal(bads()<=2,true)
+  })
+})
 report('bash-ipc')

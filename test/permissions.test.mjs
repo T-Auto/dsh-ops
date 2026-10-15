@@ -5,7 +5,7 @@ import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
-import { prepareWorkspace, mountWorkspacePreparation, runPreparation } from '../lib/workspace-preparation.js'
+import { prepareWorkspace, mountWorkspacePreparation, runPreparation, preparationEnvironment, preparationSpawnSpec } from '../lib/workspace-preparation.js'
 import { invoke as fileCall } from '../lib/file/worker.js'
 import { invoke as ptcCall } from '../lib/ptc/worker.js'
 import { resolveWorker } from '../lib/ptc/runtime.js'
@@ -17,7 +17,11 @@ import FileSystem from '@deepseek-ai/dsh-fs-local'
 import * as ObservationPolicy from '@deepseek-ai/dsh-fs-observation-policy'
 const worker = resolveWorker()
 function ps(code) {
-  const result = spawnSync('powershell.exe', ['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(code,'utf16le').toString('base64')], { encoding:'utf8' })
+  // The interpreter here is the inbox 5.1 one, and a pwsh 7 host publishes its own module directories
+  // into the **process-level** `PSModulePath`; 5.1 then resolves `Microsoft.PowerShell.Security` to
+  // the pwsh 7 copy, fails to load it, and loses `Get-Acl`/`Set-Acl`. Hand this helper the same
+  // scrubbed environment the preparation script gets, so it drives 5.1 the way production does.
+  const result = spawnSync('powershell.exe', ['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(code,'utf16le').toString('base64')], { encoding:'utf8', env: preparationEnvironment() })
   assert.equal(result.status,0,result.stderr)
   return result.stdout.trim()
 }
@@ -307,5 +311,38 @@ await test('owned Modify-only workspace starts real DSH sandbox; three modes and
       assert.equal(fs.readFileSync(path.join(root,'data.txt'),'utf8'),'after-grant')
     } finally { await shutdown(ctx); fs.rmSync(outside,{recursive:true,force:true}) }
   })
+})
+// The preparation interpreter must not inherit the host's PowerShell module search path: a DSH host
+// runs under pwsh 7, whose **process-level** `PSModulePath` makes PowerShell 5.1 resolve
+// `Microsoft.PowerShell.Security` to the pwsh 7 copy, fail to load it, and lose `Get-Acl`/`Set-Acl`
+// before the script reaches its first ACL statement.
+await test('preparation hands the 5.1 interpreter no inherited PowerShell module path', async () => {
+  const inherited = {
+    PATH: 'C:\\bin',
+    SystemRoot: 'C:\\Windows',
+    PSModulePath: 'C:\\Program Files\\PowerShell\\7\\Modules;C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules',
+  }
+  const env = preparationEnvironment(inherited)
+  assert.equal(Object.hasOwn(env, 'PSModulePath'), false)
+  assert.equal(env.PATH, 'C:\\bin')
+  assert.equal(env.SystemRoot, 'C:\\Windows')
+  assert.equal(preparationEnvironment({}).PSModulePath, undefined)
+  assert.equal(inherited.PSModulePath.startsWith('C:\\Program Files\\PowerShell\\7'), true)
+})
+// Covers the **call site**, not just the helper: `preparationSpawnSpec()` returns the exact
+// `{executable, args, options}` handed to `spawn`, so a regression that passes `process.env` straight
+// through is caught here — verified by mutation, which the helper-only assertion did not catch.
+await test('preparation hands the spawned interpreter the scrubbed environment', async () => {
+  const spec = preparationSpawnSpec('C:\\work\\scratch')
+  assert.equal(Object.hasOwn(spec.options.env, 'PSModulePath'), false)
+  // ⚠️ Look keys up case-insensitively: on Windows `process.env` is a case-insensitive proxy, but
+  // `{ ...process.env }` is a plain object whose keys keep their original spelling (`Path`, not PATH).
+  const pick = (obj, name) => Object.keys(obj).find((k) => k.toUpperCase() === name)
+  const pathKey = pick(spec.options.env, 'PATH')
+  assert.notEqual(pathKey, undefined)
+  assert.equal(spec.options.env[pathKey], process.env.PATH)
+  assert.equal(spec.executable.toLowerCase().endsWith('windows\\system32\\windowspowershell\\v1.0\\powershell.exe'), true)
+  assert.deepEqual(spec.args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-File'])
+  assert.equal(spec.args.includes('C:\\work\\scratch'), true)
 })
 report('permissions')

@@ -311,4 +311,24 @@ await test('FastCtx child drops credentials and DSH facts', () => {
   assert.equal(env.PATH, 'C:\\bin'); assert.equal(env.GH_CONFIG_DIR, 'C:\\gh')
   for (const key of ['GH_TOKEN', 'DSH_HOME', 'DEEPSEEK_API_KEY']) assert.equal(Object.hasOwn(env, key), false)
 })
+
+// The allow-list must withhold every name a credential can hide behind — not only
+// the ones that spell it out. `SSH_AUTH_SOCK` authorises the host's SSH keys and
+// `DATABASE_URL` normally carries a password; both slipped through the earlier
+// `KEY|PASSWORD|SECRET|TOKEN` deny-list, which is why this list exists.
+await test('FastCtx child withholds credential-shaped names a deny-list would miss', () => {
+  const env = childEnv({
+    PATH: 'C:\\bin', TEMP: 'C:\\tmp', LANG: 'zh_CN', LC_ALL: 'zh_CN.UTF-8', HTTPS_PROXY: 'http://proxy:1',
+    SSH_AUTH_SOCK: '\\\\.\\pipe\\openssh-ssh-agent', DATABASE_URL: 'postgres://u:p@h/db',
+    AWS_SECRET_ACCESS_KEY: 'fixture', AWS_SESSION_TOKEN: 'fixture', GITHUB_TOKEN: 'fixture',
+    npm_config__authToken: 'fixture', DSH_HOME: 'C:\\dsh',
+  })
+  for (const key of ['SSH_AUTH_SOCK', 'DATABASE_URL', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'GITHUB_TOKEN', 'npm_config__authToken', 'DSH_HOME']) {
+    assert.equal(Object.hasOwn(env, key), false, `${key} must not reach a child`)
+  }
+  // ...while a child still receives what it needs to run.
+  for (const [key, value] of Object.entries({ PATH: 'C:\\bin', TEMP: 'C:\\tmp', LANG: 'zh_CN', LC_ALL: 'zh_CN.UTF-8', HTTPS_PROXY: 'http://proxy:1' })) {
+    assert.equal(env[key], value, `${key} must survive the scrub`)
+  }
+})
 report('mount')
