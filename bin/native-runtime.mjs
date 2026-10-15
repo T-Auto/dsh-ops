@@ -13,7 +13,19 @@ const { values, positionals } = parseArgs({ options: { input: {type:'string'}, r
 const command = positionals[0] ?? 'check'
 const root = path.resolve(values.root ?? PACKAGE_ROOT)
 const version = JSON.parse(fs.readFileSync(path.join(root,'package.json'),'utf8')).version
-const targets = values.platform ? [values.platform] : PLATFORMS
+// `stage` populates every supported target by default. `check` instead verifies
+// the targets actually staged: a release job assembles the full matrix first,
+// but a source checkout built on one host only ever holds that host's worker, and
+// demanding the others made the gate impossible to pass locally. An explicitly
+// named target stays strict, and a runtime/ holding only unknown directories is
+// still an error rather than a silent pass.
+const runtimeDir = path.join(root, 'runtime')
+const staged = fs.existsSync(runtimeDir)
+  ? fs.readdirSync(runtimeDir, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort()
+  : []
+const selected = staged.filter(target => PLATFORMS.includes(target))
+if (command === 'check' && !values.platform && staged.length && !selected.length) throw Error(`No supported target under ${runtimeDir}: found ${staged.join(', ')}`)
+const targets = values.platform ? [values.platform] : command === 'check' && selected.length ? selected : PLATFORMS
 if (targets.some(t=>!PLATFORMS.includes(t))) throw Error('Unsupported target')
 const hash = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex')
 for (const target of targets) {
