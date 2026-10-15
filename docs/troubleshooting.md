@@ -6,13 +6,13 @@ Start here when installation fails, an error is unclear, or behaviour is unexpec
 
 ## Installation and payloads
 
-### `bash-win32-x64` is missing under `node_modules/@dsh-ops/`
+### `bash-win32-x64` or `pwsh-win32-x64` is missing under `node_modules/@dsh-ops/`
 
-**This is not a broken installation.** The three payloads are exact-versioned **optional dependencies** (`optionalDependencies`): if your registry has not synced that platform package at the pinned version, the package manager **skips it silently** — the install still exits 0 and prints no warning that names the missing payload.
+**This is not a broken installation.** The two shell payloads are installed on demand by this package's `postinstall` (`postinstall.mjs`), which runs when the package is installed: a shell the machine already has is not downloaded a second time, and when the registry has not synced the platform package — or the script was skipped — it prints one line and the install still exits 0. `fastctx-win32-x64` remains an exact-versioned **optional dependency** (`optionalDependencies`), which the package manager **skips silently** when the registry has not synced it — the install still exits 0 and prints no warning that names the missing payload.
 
-Measured on 2026-10-12: on `registry.npmmirror.com`, `@dsh-ops/bash-win32-x64` reports `dist-tags.latest = 0.0.0-stage` with `versions` holding only `0.0.0-stage`; the official `registry.npmjs.org` reports `0.2.1`. `npm view @dsh-ops/bash-win32-x64 version` through the mirror therefore prints a misleading old version — do not use it to decide whether the payload is available. This section expires by itself once the mirror catches up; below is how to verify and how to work around it.
+Measured on 2026-10-12: on `registry.npmmirror.com`, `@dsh-ops/bash-win32-x64` reports `dist-tags.latest = 0.0.0-stage` with `versions` holding only `0.0.0-stage`; the official `registry.npmjs.org` reports `0.2.1`. `npm view @dsh-ops/bash-win32-x64 version` through the mirror therefore prints a misleading old version — do not use it to decide whether the payload is available. Because the published manifest does not declare the payload, the request `postinstall` makes names the package without a version, so a mirror like that one hands over whatever its `latest` points at rather than failing; the pinned executor then refuses that payload against its own receipt in the package (`EXECUTOR_UNAVAILABLE`, with the remedy below) instead of running it. This section expires by itself once the mirror catches up. Below is how to verify and how to work around it.
 
-**Preferred remedy**: `provision-shells` bypasses the registry, fetches the pinned asset from the upstream GitHub Release, checks its sha256, unpacks it and writes a `.provisioned.json` receipt.
+**Preferred remedy when `postinstall` could not fetch it**: `provision-shells` bypasses the registry, fetches the pinned asset from the upstream GitHub Release, checks its sha256, unpacks it and writes a `.provisioned.json` receipt.
 
 ```console
 npx --yes dsh-ops@latest provision-shells --bash
@@ -44,7 +44,7 @@ The provisioned copy lives in `<DSH_HOME>/dsh-ops/shells` (shared across profile
 
 ### `ops_bash` errors when the bundled bash payload is gone
 
-When the bundled bash payload remains declared in the profile lockfile but its package directory has been removed by the host package manager, `ops_bash` returns a readable `ENOENT` diagnostic instead of exposing a raw `spawn` exception to the model. Restore the dependency with the profile's frozen install or official plugin manager; it does not silently switch to an unauthorized system bash.
+When the bash payload was installed but its package directory has since been removed by the host package manager, `ops_bash` returns a readable `ENOENT` diagnostic instead of exposing a raw `spawn` exception to the model. Restore it with the profile's frozen install or official plugin manager, or fetch the pinned copy without a registry with `npx --yes dsh-ops@latest provision-shells --bash` (the profile's own install runs `postinstall` again when the package is written again, not on every install); it does not silently switch to an unauthorized system bash.
 
 ---
 

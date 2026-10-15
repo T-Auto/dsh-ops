@@ -499,6 +499,7 @@ const REQUIRED_ENTRIES = [
   'runtime',
   'lib',
   'bin',
+  'postinstall.mjs',
   'cordis.patch.yml',
   'dsh-plugin.json',
   'icon.png',
@@ -526,6 +527,11 @@ check(
   missingEntries.length === 0,
   'the files whitelist names every published payload the plugin ships',
   `missing: ${missingEntries.join(', ')}`,
+)
+check(
+  pkg.scripts?.postinstall === 'node postinstall.mjs',
+  'the published package installs the shell payloads it does not declare',
+  `scripts.postinstall: ${String(pkg.scripts?.postinstall)}`,
 )
 
 /** `files` entries that would publish build output, fixtures, or the gates. */

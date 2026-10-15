@@ -336,11 +336,22 @@ rather than trusted from here. Each pin also records the digest of the executabl
 inside its archive (`bin/bash.exe`, `bin/pwsh.exe`), which the provisioner re-checks
 after unpacking, so an archive that yields something else is refused. Unpacked, the
 bash pin is about 390 MiB and the PowerShell pin about 245 MiB on disk — which is
-why neither is part of an install.
+why neither is resolved for an install up front.
 
-Every `@dsh-ops/*` platform package is an optional dependency of the published
-main package, and each one carries its own `LICENSE`, `NOTICE`, and metadata beside
-that payload or pin.
+Only `fastctx-win32-x64` is an optional dependency of the published main package:
+its payload is loaded during mount, so the package manager has to resolve it before
+any of this plugin's code runs. The two shell payloads are requested by the main
+package's own `postinstall` (`postinstall.mjs`) instead. A package manager resolves
+an optional dependency silently — a registry that has not synced the platform
+package ends the install at exit code 0 with nothing printed — and it resolves it
+unconditionally, so a machine that already has Git for Windows and PowerShell 7
+would carry a second 390 MiB copy of each either way. Running the install script
+inside the package is what makes the answer depend on the machine, and the script
+prints the remedy instead of leaving the miss silent. The payloads themselves are
+unchanged: the release still builds and publishes all three `@dsh-ops/*` platform
+packages, each carrying its own `LICENSE`, `NOTICE`, and metadata beside that
+payload or pin, and `provision-shells` still fetches the shell pins straight from
+upstream releases and verifies their digests.
 
 ### The licence each pin points at
 

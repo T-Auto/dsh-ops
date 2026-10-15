@@ -22,7 +22,7 @@ Windows DSH 的性能工具插件：提供独立 bash / PowerShell 7，并用 Ru
 
   的成绩，并改善了在 DSH 运行的 AI 的智力表现。
 
-- （仅 Windows）提供独立 **bash 5.3.15** 和独立 **PowerShell 7.6.6**：优先使用 bash，必要时回退 pwsh 7，让你的 AI 不再和 PowerShell 打架 —— **不修改系统默认终端、PATH 或宿主原有 shell 工具名称**，环境变量安全。
+- （仅 Windows）按需获取独立 **bash 5.3.15** 和独立 **PowerShell 7.6.6**：安装时 `postinstall` 只补机器上没有的那一个，已有可用 shell 就直接复用（bash 在 `danger-full-access` 下用它，`pwsh` 由宿主自己的 `pwsh-sandbox` 继续提供），让你的 AI 不再和 PowerShell 打架 —— **不修改系统默认终端、PATH 或宿主原有 shell 工具名称**，环境变量安全。
 
 - 独立的 Rust 原生文件工具与安全批处理（**默认关闭**，须显式启用），见 [组件参考](docs/组件参考.md)。
 
@@ -60,7 +60,7 @@ npx --yes dsh-ops@latest install --profile desktop
 
 桌面端必须使用桌面应用自带的 CLI；默认探测 `%LOCALAPPDATA%\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd`。安装在其它位置时加 `--dsh-cli "<安装目录>\resources\runtime\cli\bin\dsh.cmd"`。
 
-> ⚠️ **`node_modules/@dsh-ops/` 下没有 `bash-win32-x64` 不是安装损坏。** 三个载荷都是精确钉版的**可选依赖**（`optionalDependencies`）：若你的 registry 未同步该平台包的对应版本，包管理器会**静默跳过**它——安装仍以退出码 0 结束，且不打印任何指向缺包的警告。
+> ⚠️ **`node_modules/@dsh-ops/` 下没有 `bash-win32-x64` 或 `pwsh-win32-x64` 不是安装损坏。** 这两个载荷由本包的 `postinstall`（`postinstall.mjs`）按需安装：机器上已有可用 shell 就不重复下载；registry 未同步该平台包、或安装脚本被跳过时，`postinstall` 只打印一行提示，安装仍以退出码 0 结束。`fastctx-win32-x64` 仍是精确钉版的**可选依赖**（`optionalDependencies`），registry 未同步时包管理器会静默跳过它。需要钉版副本（例如受限模式要用它）时跑 `dsh-ops provision-shells --bash --pwsh`，它不经 registry 直接取上游发布件。
 
 > **不要**用 `allowSystemShellFallback: true` 绕过：那是安全姿态降级（改用未固定摘要的系统 bash），且首次升级启动的配置迁移会把它改回 `false`。
 
