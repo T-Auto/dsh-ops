@@ -1,0 +1,13 @@
+[package]
+name = "dsh-ops-syscall-probe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone diagnostics crate. It deliberately does not join the worker's
+# dependency graph: it exists to observe what the platform lets a process do,
+# including the calls the worker must avoid.
+[dependencies]
+cap-std = "3.4"
+cap-fs-ext = "3.4"
+libc = "0.2"
