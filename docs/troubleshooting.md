@@ -91,7 +91,7 @@ Fixed since this change: `ops_inspect_local_file` and `ops_replace` report to th
 
 ### Do the file tools need command permission?
 
-No. Fixed file operations follow a trusted-operation policy fence matching DSH fs-sandbox and **never execute model code**. Read-only rejects replacement, workspace-write permits writes under the workspace and DSH temporary areas, and full access adds no write fence.
+No. Fixed file operations follow a trusted-operation policy fence matching DSH fs-sandbox and **never execute model code**. Read-only rejects replacement, workspace-write permits reads and writes under the workspace and DSH temporary areas, and full access adds no fence. A temporary area counts only when it is neither a filesystem root nor a container of the home directory.
 
 ### Why are the background tools still unavailable after enabling them?
 

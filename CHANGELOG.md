@@ -5,6 +5,18 @@ All notable changes to this package are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — File tool workspace boundary
+
+- Give every file tool the read fence the bridge had before the native rewrite. `ops_inspect_local_file`,
+  `ops_grep` and `ops_glob` resolved `..` and absolute paths anywhere, so a `workspace-write` session could
+  read files the user never authorized; all four file tools now share one authorized-root set — the session
+  workspace plus temporary areas that are neither a filesystem root nor a container of the home directory —
+  and a request outside it is rejected before the worker starts. (#75)
+- Stop treating the platform temporary directory as a trusted write root. A host whose `tmpdir()` resolves to
+  the home directory, or to a filesystem root through a junction, silently authorized the whole tree;
+  admission is judged on the resolved path, and an unusable home directory authorizes nothing beyond the
+  workspace. (#76)
+
 ## [Unreleased]
 
 ### Payload trust
