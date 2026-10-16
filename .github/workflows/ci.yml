@@ -7,9 +7,11 @@ name: CI
 # TWO JOBS, ON PURPOSE, AND NEITHER MAY STAND IN FOR THE OTHER.
 #
 #   hermetic     the whole gate on a machine with no FastCtx build at all: no
-#                Rust toolchain, no provisioned runtime, no installed platform
-#                package. Fast, and the suites that need a runtime SKIP — they
-#                are counted and printed as skipped, never as passed.
+#                provisioned runtime and no FastCtx binary. Fast, and the suites
+#                that need a runtime SKIP — they are counted and printed as
+#                skipped, never as passed. (The native Rust toolchain and the
+#                platform packages are both present: the PTC worker and the Bash
+#                IPC proxies are built below, and `npm ci` installs the payloads.)
 #   integration  the same gate with a real runtime built from the vendored
 #                source and DSH_OPS_REQUIRE_RUNTIME=1, which turns any skip into
 #                a failure. This is the job that produces evidence about the
@@ -62,6 +64,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Build the Windows Bash IPC proxies
+        # `test/bash-ipc.test.mjs` reads the receipt this leaves in runtime/, and runtime/ is
+        # gitignored, so a fresh checkout has none — the suite then fails on the earlier refusal
+        # instead of exercising the proxies it exists for.
+        run: npm run build:bash-ipc
 
       - name: Set up native Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
@@ -128,6 +136,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Build the Windows Bash IPC proxies
+        run: npm run build:bash-ipc
 
       - name: Build the vendored FastCtx runtime
         run: cargo build --release --locked --manifest-path vendor/fastctx/Cargo.toml
