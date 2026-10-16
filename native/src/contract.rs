@@ -31,6 +31,10 @@ pub struct Item {
     pub revision: String,
     pub logical_bytes: u64,
     pub entries: u64,
+    /// Extended attributes the destination could not hold. Empty means everything the
+    /// source carried came across; a non-empty list is reported, never silently dropped.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub metadata_not_preserved: Vec<String>,
     pub state: State,
     pub error: Option<Failure>,
 }
