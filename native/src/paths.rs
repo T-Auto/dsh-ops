@@ -35,12 +35,17 @@ pub fn relative(raw: &str) -> Result<String> {
                     .to_str()
                     .ok_or_else(|| Failure::new("INVALID_ARGUMENT", "Non-UTF8 path"))?;
                 let upper = s.split('.').next().unwrap_or("").to_ascii_uppercase();
-                if s.ends_with(['.', ' '])
-                    || s.contains(['*', '?', '<', '>', '|', '"'])
-                    || matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-                    || (upper.len() == 4
-                        && (upper.starts_with("COM") || upper.starts_with("LPT"))
-                        && upper.ends_with(['1', '2', '3', '4', '5', '6', '7', '8', '9']))
+                // Reserved names, trailing dots and shell metacharacters are a Windows
+                // concern. Enforcing them on POSIX refused files that are legal there
+                // (`aux`, `q?.txt`, `trail.`) and disagreed with the read path, which
+                // never applied the rule.
+                if cfg!(windows)
+                    && (s.ends_with(['.', ' '])
+                        || s.contains(['*', '?', '<', '>', '|', '"'])
+                        || matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+                        || (upper.len() == 4
+                            && (upper.starts_with("COM") || upper.starts_with("LPT"))
+                            && upper.ends_with(['1', '2', '3', '4', '5', '6', '7', '8', '9'])))
                 {
                     return Err(Failure::new(
                         "INVALID_ARGUMENT",
