@@ -25,6 +25,21 @@ function ps(code) {
   assert.equal(result.status,0,result.stderr)
   return result.stdout.trim()
 }
+// A directory is owned by whoever created it — unless the process token's default owner is a group,
+// which is what an elevated administrator token carries (GitHub's hosted runner runs that way). The
+// preparation script refuses such a root as "not owned by the current user", so a fixture that means
+// to test preparation has to claim its own root first, starting from the ACL that is already there so
+// the DACL and its inheritance survive.
+//
+// Reading the owner back is the point, not a formality: a refused owner change is a PowerShell
+// *non-terminating* error, so `ps()` reports success and the suite would then blame preparation for a
+// fixture that was never in the shape it claims to be in.
+function ownFixtureRoot(target) {
+  const quoted=target.replaceAll("'","''")
+  const [owner,sid]=ps(`$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $a=Get-Acl -LiteralPath '${quoted}'; $a.SetOwner($sid); Set-Acl -LiteralPath '${quoted}' -AclObject $a; "$((Get-Acl -LiteralPath '${quoted}').GetOwner([Security.Principal.SecurityIdentifier]).Value)|$($sid.Value)"`).split('|')
+  assert.equal(owner,sid,`fixture root ${target} is owned by ${owner}, not by the current user; the preparation script refuses such a root, and the owner change that should have fixed it did not take`)
+  return sid
+}
 await test('the real worker behaves as the file-tool descriptions say (#44)', async () => {
   await withTempDir('file-contract',async root => {
     fs.mkdirSync(path.join(root,'sub'),{recursive:true}); fs.mkdirSync(path.join(root,'vendor'),{recursive:true})
@@ -109,6 +124,7 @@ await test('preparation failures name their cause: execution policy vs folder pr
 await test('the real script runs even when the effective execution policy is Restricted (#66)', async () => {
   if(process.platform!=='win32')return
   await withTempDir('prepare-restricted',async root => {
+    ownFixtureRoot(root)
     // Process scope only: the variable reaches this one child; no machine or user policy is changed.
     const previous=process.env.PSExecutionPolicyPreference
     process.env.PSExecutionPolicyPreference='Restricted'
@@ -122,6 +138,7 @@ await test('real preparation writes only the root DACL, never descendants (#43)'
     for(let d=0;d<10;d++) { const dir=path.join(root,`d${d}`,'deep'); fs.mkdirSync(dir,{recursive:true}); for(let f=0;f<30;f++) fs.writeFileSync(path.join(dir,`f${f}.txt`),'x') }
     const quoted=root.replaceAll("'","''")
     ps(`$p='${quoted}'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $a=[Security.AccessControl.DirectorySecurity]::new(); $a.SetOwner($sid); $a.SetAccessRuleProtection($true,$false); $a.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,'Modify','ContainerInherit,ObjectInherit','None','Allow')); Set-Acl -LiteralPath $p -AclObject $a`)
+    ownFixtureRoot(root)
     const sddl=target=>ps(`(Get-Acl -LiteralPath '${target.replaceAll("'","''")}').GetSecurityDescriptorSddlForm('Access')`)
     const deep=path.join(root,'d9','deep','f29.txt'), deepDir=path.join(root,'d9','deep')
     const before={root:sddl(root),deep:sddl(deep),deepDir:sddl(deepDir)}
@@ -151,7 +168,7 @@ await test('an inheriting (AI) workspace root keeps its inheritance and descenda
     fs.mkdirSync(ws)
     const quoted=ws.replaceAll("'","''")
     // Owner-only write: the script refuses roots the user does not own, and this leaves the DACL untouched.
-    const sid=ps(`$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $o=[Security.AccessControl.DirectorySecurity]::new(); $o.SetOwner($sid); [IO.Directory]::SetAccessControl('${quoted}',$o); $sid.Value`)
+    const sid=ownFixtureRoot(ws)
     for(let d=0;d<10;d++) { const dir=path.join(ws,`d${d}`,'deep'); fs.mkdirSync(dir,{recursive:true}); for(let f=0;f<30;f++) fs.writeFileSync(path.join(dir,`f${f}.txt`),'x') }
     const sddl=target=>ps(`(Get-Acl -LiteralPath '${target.replaceAll("'","''")}').GetSecurityDescriptorSddlForm('Access')`)
     const aces=text=>text.match(/\([^)]*\)/g) ?? []
