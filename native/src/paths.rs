@@ -7,6 +7,8 @@ use std::{
     io::Read,
     path::{Component, Path},
 };
+#[cfg(unix)]
+use cap_std::fs::PermissionsExt;
 
 pub const STORE: &str = ".dsh-ops";
 const MAX_ENTRIES: u64 = 100_000;
@@ -255,12 +257,104 @@ fn scan_node(dir: &Dir, name: &str, kind: Kind, s: &mut Scan, depth: usize) -> R
     }
     Ok(())
 }
-// No overwrites: files use CREATE_NEW; directories are created exclusively.
-// A partial copy is intentionally retained and settled as unknown, never silently retried.
-pub fn copy(root: &Dir, source: &str, dest: &str) -> Result<()> {
+/// A same-device move is a rename: one atomic step that carries the inode's mode,
+/// ACLs, capabilities and extended attributes with it. `false` means source and
+/// destination live on different filesystems (EXDEV) and the caller has to copy.
+pub fn rename_same_device(root: &Dir, source: &str, dest: &str) -> Result<bool> {
     let (sd, sn) = parent(root, source)?;
     let (dd, dn) = parent(root, dest)?;
-    copy_node(&sd, &sn, &dd, &dn, 0, &mut 0)
+    let from = std::ffi::CString::new(sn)
+        .map_err(|_| Failure::new("INVALID_ARGUMENT", "Source name contains NUL"))?;
+    let to = std::ffi::CString::new(dn)
+        .map_err(|_| Failure::new("INVALID_ARGUMENT", "Destination name contains NUL"))?;
+    // RENAME_NOREPLACE, not a plain rename: the copy path this replaces publishes with
+    // CREATE_NEW, so an overwrite here would be a new way to lose a file. EXIST is the same
+    // verdict the preflight gives, and a platform without the flag falls back to the copy
+    // path rather than turning a move into a failure.
+    match rustix::fs::renameat_with(&sd, &from, &dd, &to, rustix::fs::RenameFlags::NOREPLACE) {
+        Ok(()) => Ok(true),
+        Err(rustix::io::Errno::XDEV) => Ok(false),
+        Err(rustix::io::Errno::EXIST) => Err(Failure::new(
+            "REVISION_CONFLICT",
+            "Destination already exists; no overwrites",
+        )),
+        Err(rustix::io::Errno::NOSYS)
+        | Err(rustix::io::Errno::INVAL)
+        | Err(rustix::io::Errno::NOTSUP) => Ok(false),
+        Err(error) => Err(std::io::Error::from(error).into()),
+    }
+}
+/// Carry the metadata a rename would have carried: the mode, then every extended
+/// attribute the source holds except its SELinux label, which the destination's
+/// filesystem labels itself.
+///
+/// A copy that silently drops an ACL or a file capability reports success while
+/// changing what the file *is* and who may touch it, so an attribute that cannot be
+/// carried is a failure the caller sees, not a line in a log nobody reads.
+/// The mode is applied or the copy fails: a file with the wrong permissions is not
+/// the file that was asked for. Extended attributes are different — a destination
+/// filesystem that cannot hold a capability, an ACL or a user tag (vfat has no xattrs
+/// at all) must not turn a transfer into a failure, so each attribute that cannot be
+/// carried is **named** in `not_preserved` and the caller reports it. Silence was the
+/// bug; refusing the transfer was not the fix.
+///
+/// The source's SELinux label is deliberately not carried: the destination filesystem
+/// labels what it creates.
+#[cfg(unix)]
+fn copy_attributes(
+    src: &impl std::os::fd::AsFd,
+    dst: &impl std::os::fd::AsFd,
+    mode: u32,
+    not_preserved: &mut Vec<String>,
+) -> Result<()> {
+    // The mode is not optional: fail here rather than publish a file whose permissions
+    // are some default the caller never asked for.
+    rustix::fs::fchmod(dst, rustix::fs::Mode::from_bits_truncate(mode))
+        .map_err(std::io::Error::from)?;
+    let mut names = vec![0u8; 64 * 1024];
+    let used = match rustix::fs::flistxattr(src, &mut names) {
+        Ok(used) => used,
+        // A filesystem that cannot hold attributes has none to carry; that is a
+        // property of the destination, not an error in the transfer.
+        Err(rustix::io::Errno::NOTSUP) | Err(rustix::io::Errno::NOSYS) => return Ok(()),
+        Err(error) => return Err(std::io::Error::from(error).into()),
+    };
+    for raw in names[..used].split(|byte| *byte == 0) {
+        if raw.is_empty() || raw == b"security.selinux" {
+            continue;
+        }
+        let Ok(name) = std::ffi::CString::new(raw) else {
+            not_preserved.push("an attribute whose name contains a NUL byte".into());
+            continue;
+        };
+        let shown = name.to_string_lossy().into_owned();
+        let mut value = vec![0u8; 64 * 1024];
+        let read = match rustix::fs::fgetxattr(src, &name, &mut value) {
+            Ok(read) => read,
+            Err(error) => {
+                not_preserved.push(format!("{shown}: {error}"));
+                continue;
+            }
+        };
+        if let Err(error) =
+            rustix::fs::fsetxattr(dst, &name, &value[..read], rustix::fs::XattrFlags::empty())
+        {
+            not_preserved.push(format!("{shown}: {error}"));
+        }
+    }
+    Ok(())
+}
+// No overwrites: files use CREATE_NEW; directories are created exclusively.
+// A partial copy is intentionally retained and settled as unknown, never silently retried.
+/// Copy `source` to `dest`, returning the extended attributes the destination could
+/// not hold. A non-empty list is a report about the destination, not a failure of the
+/// transfer: the bytes and the mode are there, and the caller says what is missing.
+pub fn copy(root: &Dir, source: &str, dest: &str) -> Result<Vec<String>> {
+    let (sd, sn) = parent(root, source)?;
+    let (dd, dn) = parent(root, dest)?;
+    let mut not_preserved = Vec::new();
+    copy_node(&sd, &sn, &dd, &dn, 0, &mut 0, &mut not_preserved)?;
+    Ok(not_preserved)
 }
 fn copy_node(
     sd: &Dir,
@@ -269,6 +363,7 @@ fn copy_node(
     dn: &str,
     depth: usize,
     visited: &mut u64,
+    not_preserved: &mut Vec<String>,
 ) -> Result<()> {
     *visited += 1;
     if *visited > MAX_ENTRIES || depth > MAX_DEPTH {
@@ -287,16 +382,22 @@ fn copy_node(
         std::io::copy(&mut source, &mut target)?;
         target.set_permissions(source.metadata()?.permissions())?;
         target.sync_all()?;
+        // The mode alone is not what the file was: an ACL, a file capability or a
+        // user attribute would be gone, and the copy would still report success.
+        #[cfg(unix)]
+        copy_attributes(&source, &target, m.permissions().mode(), not_preserved)?;
     } else if m.is_dir() {
         dd.create_dir(dn)?;
         let source = sd.open_dir_nofollow(sn)?;
         let target = dd.open_dir_nofollow(dn)?;
+        #[cfg(unix)]
+        copy_attributes(&source, &target, m.permissions().mode(), not_preserved)?;
         for entry in source.entries()? {
             let name = entry?
                 .file_name()
                 .into_string()
                 .map_err(|_| Failure::new("POLICY_DENIED", "Non-UTF8 entry"))?;
-            copy_node(&source, &name, &target, &name, depth + 1, visited)?;
+            copy_node(&source, &name, &target, &name, depth + 1, visited, not_preserved)?;
         }
     } else {
         return Err(Failure::new("POLICY_DENIED", "Unsupported copy source"));
