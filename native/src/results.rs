@@ -73,7 +73,9 @@ pub fn run(store: &Store, request: &Request) -> Result<Value> {
                 },
             )?;
             Ok(
-                json!({ "id": id, "total": total, "expires": expires, "complete": false, "omitted": total, "nextAction": "Use page with this id; references grant no filesystem authority." }),
+                // `status` matches the file and batch envelopes: a caller that reads one
+                // tool's verdict must not have to special-case this one.
+                json!({ "status": "completed", "id": id, "total": total, "expires": expires, "complete": false, "omitted": total, "nextAction": "Use page with this id; references grant no filesystem authority." }),
             )
         }
         "page" | "release" => {
@@ -168,7 +170,7 @@ fn page(items: Vec<Value>, args: &ResultArgs, id: &str) -> Result<Value> {
             item
         };
         result.push(item);
-        let candidate = json!({"id":id,"items":result,"total":total,"nextOffset":next+1,"complete":next+1==total,"omitted":total-(next+1)});
+        let candidate = json!({"status":"completed","id":id,"items":result,"total":total,"nextOffset":next+1,"complete":next+1==total,"omitted":total-(next+1)});
         // Reserve envelope room for host sandbox facts added after transport.
         if serde_json::to_vec(&candidate)?.len() + 128 > budget {
             result.pop();
@@ -183,6 +185,6 @@ fn page(items: Vec<Value>, args: &ResultArgs, id: &str) -> Result<Value> {
         next += 1;
     }
     Ok(
-        json!({"id":id,"items":result,"total":total,"nextOffset":next,"complete":next==total,"omitted":total-next}),
+        json!({"status":"completed","id":id,"items":result,"total":total,"nextOffset":next,"complete":next==total,"omitted":total-next}),
     )
 }
