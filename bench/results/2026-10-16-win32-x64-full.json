@@ -1,0 +1,1213 @@
+{
+  "version": 1,
+  "createdAt": "2026-10-15T23:26:38.923Z",
+  "platform": "win32-x64",
+  "node": "v24.19.0",
+  "seed": 870016,
+  "scale": 1,
+  "timeoutMs": 60000,
+  "warmups": 1,
+  "rounds": 5,
+  "cache": "warm",
+  "measurement": "direct spawn-to-close",
+  "engines": {
+    "baseline": {
+      "binary": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\binaries\\baseline-6a7a4c7.exe",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27"
+    },
+    "candidate": {
+      "binary": "D:\\dsh\\dev\\_test\\issue-87\\build\\release\\dsh-ops-worker.exe",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27"
+    }
+  },
+  "rows": [
+    {
+      "fixture": "small-files",
+      "query": {
+        "id": "grep-miss",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\small-files",
+        "pattern": "BENCH_NEVER_PRESENT_87",
+        "outputMode": "summary"
+      },
+      "engine": "baseline",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        19551.521100000005,
+        14368.315400000007,
+        12113.392499999987,
+        14644.414400000009,
+        19310.65710000001
+      ],
+      "medianMs": 14644.414400000009,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 155,
+      "resultHash": "27ab23755d1637ccd5fcf01675262e2523e29c6d68eb2adcc88f9fe86a1231c7",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.939569020773512
+    },
+    {
+      "fixture": "small-files",
+      "query": {
+        "id": "grep-miss",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\small-files",
+        "pattern": "BENCH_NEVER_PRESENT_87",
+        "outputMode": "summary"
+      },
+      "engine": "candidate",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        20705.724499999997,
+        15586.310400000002,
+        14099.232399999979,
+        14977.256200000003,
+        49041.4559
+      ],
+      "medianMs": 15586.310400000002,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 155,
+      "resultHash": "27ab23755d1637ccd5fcf01675262e2523e29c6d68eb2adcc88f9fe86a1231c7",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.939569020773512
+    },
+    {
+      "fixture": "small-files",
+      "query": {
+        "id": "glob",
+        "tool": "glob",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\small-files",
+        "pattern": [
+          "**/*.txt",
+          "!**/absent/**"
+        ],
+        "outputMode": "paths",
+        "sort": "path",
+        "limit": 100
+      },
+      "engine": "baseline",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        837.5587999999989,
+        1578.7918000000063,
+        1482.5205000000133,
+        1150.876099999994,
+        1466.1696999999695
+      ],
+      "medianMs": 1466.1696999999695,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 11782,
+      "resultHash": "8a59d3950d7436b9359c1b1b1d39a0477fd8e97e9687b512703e548d49ee93df",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 1.0017858558196127
+    },
+    {
+      "fixture": "small-files",
+      "query": {
+        "id": "glob",
+        "tool": "glob",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\small-files",
+        "pattern": [
+          "**/*.txt",
+          "!**/absent/**"
+        ],
+        "outputMode": "paths",
+        "sort": "path",
+        "limit": 100
+      },
+      "engine": "candidate",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        965.6680000000051,
+        1699.2056999999913,
+        1000.0362000000023,
+        1848.2580999999773,
+        1463.5560000000405
+      ],
+      "medianMs": 1463.5560000000405,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 11782,
+      "resultHash": "8a59d3950d7436b9359c1b1b1d39a0477fd8e97e9687b512703e548d49ee93df",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 1.0017858558196127
+    },
+    {
+      "fixture": "deep-tree",
+      "query": {
+        "id": "grep-miss",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\deep-tree",
+        "pattern": "BENCH_NEVER_PRESENT_87",
+        "outputMode": "summary"
+      },
+      "engine": "baseline",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        56506.98619999993,
+        57293.99809999997
+      ],
+      "medianMs": 56900.49214999995,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 3,
+      "errors": 0,
+      "warmupState": "TIMEOUT",
+      "outputBytes": 155,
+      "resultHash": "27ab23755d1637ccd5fcf01675262e2523e29c6d68eb2adcc88f9fe86a1231c7",
+      "unstable": false,
+      "eligible": false,
+      "nativeErrors": [],
+      "failures": [
+        {
+          "state": "TIMEOUT",
+          "error": "",
+          "stderr": ""
+        },
+        {
+          "state": "TIMEOUT",
+          "error": "",
+          "stderr": ""
+        },
+        {
+          "state": "TIMEOUT",
+          "error": "",
+          "stderr": ""
+        },
+        {
+          "state": "TIMEOUT",
+          "error": "",
+          "stderr": ""
+        }
+      ],
+      "state": "TIMEOUT",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": null
+    },
+    {
+      "fixture": "deep-tree",
+      "query": {
+        "id": "grep-miss",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\deep-tree",
+        "pattern": "BENCH_NEVER_PRESENT_87",
+        "outputMode": "summary"
+      },
+      "engine": "candidate",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        55904.378400000045
+      ],
+      "medianMs": 55904.378400000045,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 4,
+      "errors": 0,
+      "warmupState": "TIMEOUT",
+      "outputBytes": 155,
+      "resultHash": "27ab23755d1637ccd5fcf01675262e2523e29c6d68eb2adcc88f9fe86a1231c7",
+      "unstable": false,
+      "eligible": false,
+      "nativeErrors": [],
+      "failures": [
+        {
+          "state": "TIMEOUT",
+          "error": "",
+          "stderr": ""
+        },
+        {
+          "state": "TIMEOUT",
+          "error": "",
+          "stderr": ""
+        },
+        {
+          "state": "TIMEOUT",
+          "error": "",
+          "stderr": ""
+        },
+        {
+          "state": "TIMEOUT",
+          "error": "",
+          "stderr": ""
+        },
+        {
+          "state": "TIMEOUT",
+          "error": "",
+          "stderr": ""
+        }
+      ],
+      "state": "TIMEOUT",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": null
+    },
+    {
+      "fixture": "big-file",
+      "query": {
+        "id": "grep",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\big-file",
+        "pattern": "needle",
+        "outputMode": "summary"
+      },
+      "engine": "baseline",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        41.55409999995027,
+        45.26459999999497,
+        42.14210000005551,
+        45.865400000009686,
+        50.21900000004098
+      ],
+      "medianMs": 45.26459999999497,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 155,
+      "resultHash": "81a54eb40459b9e3c6fca57c341528d969ed85cea8bd7998d6265cefcc3648ad",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 1.022256549928761
+    },
+    {
+      "fixture": "big-file",
+      "query": {
+        "id": "grep",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\big-file",
+        "pattern": "needle",
+        "outputMode": "summary"
+      },
+      "engine": "candidate",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        44.2791000000434,
+        47.29660000000149,
+        42.95739999995567,
+        43.35320000001229,
+        49.21250000002328
+      ],
+      "medianMs": 44.2791000000434,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 155,
+      "resultHash": "81a54eb40459b9e3c6fca57c341528d969ed85cea8bd7998d6265cefcc3648ad",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 1.022256549928761
+    },
+    {
+      "fixture": "big-file",
+      "query": {
+        "id": "inspect-oversize",
+        "tool": "inspect_local_file",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\big-file\\large.txt",
+        "view": "hex",
+        "offset": 1,
+        "limit": 2
+      },
+      "engine": "baseline",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [],
+      "medianMs": null,
+      "rejectedRunsMs": [
+        50.26100000005681,
+        51.205900000059046,
+        56.58499999996275,
+        63.11599999992177,
+        53.56010000000242
+      ],
+      "rejectionMedianMs": 53.56010000000242,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 219,
+      "resultHash": "e37ccb0ba31f6b4e8c5babb54c70c0659746d97fd97040c938c6241bd7654c76",
+      "unstable": false,
+      "eligible": false,
+      "nativeErrors": [
+        {
+          "code": "OUTPUT_LIMIT",
+          "effectState": "none",
+          "message": "File exceeds the bounded read budget",
+          "nextAction": "Correct the request or inspect the manifest.",
+          "phase": "preflight",
+          "retryable": false
+        }
+      ],
+      "failures": [],
+      "state": "EXPECTED_REJECTION",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": null
+    },
+    {
+      "fixture": "big-file",
+      "query": {
+        "id": "inspect-oversize",
+        "tool": "inspect_local_file",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\big-file\\large.txt",
+        "view": "hex",
+        "offset": 1,
+        "limit": 2
+      },
+      "engine": "candidate",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [],
+      "medianMs": null,
+      "rejectedRunsMs": [
+        46.76510000007693,
+        49.17310000001453,
+        50.85800000000745,
+        51.02270000008866,
+        52.3695000000298
+      ],
+      "rejectionMedianMs": 50.85800000000745,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 219,
+      "resultHash": "e37ccb0ba31f6b4e8c5babb54c70c0659746d97fd97040c938c6241bd7654c76",
+      "unstable": false,
+      "eligible": false,
+      "nativeErrors": [
+        {
+          "code": "OUTPUT_LIMIT",
+          "effectState": "none",
+          "message": "File exceeds the bounded read budget",
+          "nextAction": "Correct the request or inspect the manifest.",
+          "phase": "preflight",
+          "retryable": false
+        }
+      ],
+      "failures": [],
+      "state": "EXPECTED_REJECTION",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": null
+    },
+    {
+      "fixture": "big-file",
+      "query": {
+        "id": "inspect-window",
+        "tool": "inspect_local_file",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\big-file\\window.txt",
+        "view": "hex",
+        "offset": 1,
+        "limit": 2
+      },
+      "engine": "baseline",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        35.07730000000447,
+        34.190400000079535,
+        28.600800000014715,
+        27.411399999982677,
+        27.607199999969453
+      ],
+      "medianMs": 28.600800000014715,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 379,
+      "resultHash": "9334cc23a99ba1f0e00a8469fd472b244527271ef2341f559a4625a2929e505a",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.9270262736546292
+    },
+    {
+      "fixture": "big-file",
+      "query": {
+        "id": "inspect-window",
+        "tool": "inspect_local_file",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\big-file\\window.txt",
+        "view": "hex",
+        "offset": 1,
+        "limit": 2
+      },
+      "engine": "candidate",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        32.914600000018254,
+        30.852199999964796,
+        31.24910000001546,
+        28.897400000016205,
+        28.379799999995157
+      ],
+      "medianMs": 30.852199999964796,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 379,
+      "resultHash": "9334cc23a99ba1f0e00a8469fd472b244527271ef2341f559a4625a2929e505a",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.9270262736546292
+    },
+    {
+      "fixture": "dense-hits",
+      "query": {
+        "id": "summary",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\dense-hits",
+        "pattern": "needle",
+        "outputMode": "summary",
+        "limit": 10
+      },
+      "engine": "baseline",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        242.56599999999162,
+        237.56550000002608,
+        240.23889999999665,
+        242.13709999993443,
+        238.39450000005309
+      ],
+      "medianMs": 240.23889999999665,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 165,
+      "resultHash": "925fda2757c55560e536b3482a8c820b67354418eb813e6452a71dbb716add64",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.9688876897381333
+    },
+    {
+      "fixture": "dense-hits",
+      "query": {
+        "id": "summary",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\dense-hits",
+        "pattern": "needle",
+        "outputMode": "summary",
+        "limit": 10
+      },
+      "engine": "candidate",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        247.95330000005197,
+        233.8571000000229,
+        256.1632000000682,
+        240.5667999999132,
+        252.01540000003297
+      ],
+      "medianMs": 247.95330000005197,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 165,
+      "resultHash": "925fda2757c55560e536b3482a8c820b67354418eb813e6452a71dbb716add64",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.9688876897381333
+    },
+    {
+      "fixture": "dense-hits",
+      "query": {
+        "id": "count",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\dense-hits",
+        "pattern": "needle",
+        "outputMode": "count",
+        "limit": 10
+      },
+      "engine": "baseline",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        42.81090000004042,
+        45.19560000009369,
+        44.57940000004601,
+        45.930399999953806,
+        44.3747999999905
+      ],
+      "medianMs": 44.57940000004601,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 1463,
+      "resultHash": "1bcf4de2b688c19e208297f76fe49dfbbc848ab5d7f4c22ca8395f770869e607",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.9847687927036397
+    },
+    {
+      "fixture": "dense-hits",
+      "query": {
+        "id": "count",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\dense-hits",
+        "pattern": "needle",
+        "outputMode": "count",
+        "limit": 10
+      },
+      "engine": "candidate",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        45.26890000002459,
+        49.95669999998063,
+        40.51870000001509,
+        45.178300000028685,
+        45.64229999994859
+      ],
+      "medianMs": 45.26890000002459,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 1463,
+      "resultHash": "1bcf4de2b688c19e208297f76fe49dfbbc848ab5d7f4c22ca8395f770869e607",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.9847687927036397
+    },
+    {
+      "fixture": "dense-hits",
+      "query": {
+        "id": "content",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\dense-hits",
+        "pattern": "needle",
+        "outputMode": "content",
+        "limit": 10
+      },
+      "engine": "baseline",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        37.88580000004731,
+        51.08189999999013,
+        59.70169999997597,
+        68.00349999999162,
+        59.71710000000894
+      ],
+      "medianMs": 59.70169999997597,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 1737,
+      "resultHash": "7154adc1d4231abd1d0bf09844821849273456e3c1c4bcb067f31421d191d28d",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 1.1155317964227274
+    },
+    {
+      "fixture": "dense-hits",
+      "query": {
+        "id": "content",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\dense-hits",
+        "pattern": "needle",
+        "outputMode": "content",
+        "limit": 10
+      },
+      "engine": "candidate",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        37.88339999993332,
+        44.14429999992717,
+        69.3632000000216,
+        68.11119999992661,
+        53.51859999995213
+      ],
+      "medianMs": 53.51859999995213,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 1737,
+      "resultHash": "7154adc1d4231abd1d0bf09844821849273456e3c1c4bcb067f31421d191d28d",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 1.1155317964227274
+    },
+    {
+      "fixture": "dense-hits",
+      "query": {
+        "id": "content-offset",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\dense-hits",
+        "pattern": "needle",
+        "outputMode": "content",
+        "offset": 128,
+        "limit": 10,
+        "beforeContext": 1,
+        "afterContext": 1
+      },
+      "engine": "baseline",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        43.56930000009015,
+        36.98109999997541,
+        37.90170000004582,
+        37.50929999991786,
+        39.597500000032596
+      ],
+      "medianMs": 37.90170000004582,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 2199,
+      "resultHash": "729d317ef58695437112cc25438fb36ad06cafae324fb969872f203ed02c2c67",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 1.0337381732282513
+    },
+    {
+      "fixture": "dense-hits",
+      "query": {
+        "id": "content-offset",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\dense-hits",
+        "pattern": "needle",
+        "outputMode": "content",
+        "offset": 128,
+        "limit": 10,
+        "beforeContext": 1,
+        "afterContext": 1
+      },
+      "engine": "candidate",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        44.37430000002496,
+        38.37849999999162,
+        36.542099999962375,
+        34.79779999994207,
+        36.66470000008121
+      ],
+      "medianMs": 36.66470000008121,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 2199,
+      "resultHash": "729d317ef58695437112cc25438fb36ad06cafae324fb969872f203ed02c2c67",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 1.0337381732282513
+    },
+    {
+      "fixture": "edge-text",
+      "query": {
+        "id": "long-line",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\edge-text\\long.txt",
+        "pattern": "needle",
+        "outputMode": "content",
+        "limit": 1
+      },
+      "engine": "baseline",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        23.990600000019185,
+        23.043399999965914,
+        27.613899999996647,
+        24.065900000045076,
+        30.495099999941885
+      ],
+      "medianMs": 24.065900000045076,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 1048878,
+      "resultHash": "0bbcb87b35fb49a44991104f8de67b250b3fd4ba96804c5eaaf49d3d2d755b24",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 1.013574184206152
+    },
+    {
+      "fixture": "edge-text",
+      "query": {
+        "id": "long-line",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\edge-text\\long.txt",
+        "pattern": "needle",
+        "outputMode": "content",
+        "limit": 1
+      },
+      "engine": "candidate",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        22.03130000003148,
+        20.111700000008568,
+        23.743599999928847,
+        24.41079999995418,
+        31.367499999934807
+      ],
+      "medianMs": 23.743599999928847,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 1048878,
+      "resultHash": "0bbcb87b35fb49a44991104f8de67b250b3fd4ba96804c5eaaf49d3d2d755b24",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 1.013574184206152
+    },
+    {
+      "fixture": "edge-text",
+      "query": {
+        "id": "unicode",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\edge-text\\unicode.txt",
+        "pattern": "needle",
+        "outputMode": "content",
+        "limit": 1
+      },
+      "engine": "baseline",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        135.78740000003017,
+        30.51560000004247,
+        27.502700000070035,
+        22.78469999996014,
+        24.871299999998882
+      ],
+      "medianMs": 27.502700000070035,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 346,
+      "resultHash": "168fb36a4a884a69406cc2361bfe688aa78b16e896c5456645e5aaf75e30ffeb",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.9031966739384354
+    },
+    {
+      "fixture": "edge-text",
+      "query": {
+        "id": "unicode",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\edge-text\\unicode.txt",
+        "pattern": "needle",
+        "outputMode": "content",
+        "limit": 1
+      },
+      "engine": "candidate",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        66.27710000006482,
+        35.807999999960884,
+        28.701099999947473,
+        24.772099999943748,
+        30.450399999972433
+      ],
+      "medianMs": 30.450399999972433,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 346,
+      "resultHash": "168fb36a4a884a69406cc2361bfe688aa78b16e896c5456645e5aaf75e30ffeb",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.9031966739384354
+    },
+    {
+      "fixture": "edge-text",
+      "query": {
+        "id": "invalid-utf8",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\edge-text\\invalid.txt",
+        "pattern": "needle",
+        "outputMode": "content",
+        "limit": 1
+      },
+      "engine": "baseline",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        33.21870000008494,
+        124.95810000004712,
+        128.0461999999825,
+        45.43599999998696,
+        46.07560000009835
+      ],
+      "medianMs": 46.07560000009835,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 169,
+      "resultHash": "ba748ec6e2743bc341bb4d5b0bd6e708cb21f9678223f5d31839f2420ab2f2d6",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.8882694057598793
+    },
+    {
+      "fixture": "edge-text",
+      "query": {
+        "id": "invalid-utf8",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\edge-text\\invalid.txt",
+        "pattern": "needle",
+        "outputMode": "content",
+        "limit": 1
+      },
+      "engine": "candidate",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        36.2801000000909,
+        65.67509999999311,
+        62.59869999997318,
+        51.87120000005234,
+        38.651599999982864
+      ],
+      "medianMs": 51.87120000005234,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 169,
+      "resultHash": "ba748ec6e2743bc341bb4d5b0bd6e708cb21f9678223f5d31839f2420ab2f2d6",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.8882694057598793
+    },
+    {
+      "fixture": "edge-text",
+      "query": {
+        "id": "utf8-boundary",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\edge-text\\boundary.txt",
+        "pattern": "needle",
+        "outputMode": "content",
+        "limit": 1
+      },
+      "engine": "baseline",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        34.196499999961816,
+        29.97810000006575,
+        29.08239999995567,
+        25.135899999993853,
+        24.2170000000624
+      ],
+      "medianMs": 29.08239999995567,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 4414,
+      "resultHash": "c4ac8863d672e0677900a05a4ebe9ffdcc71be6677d4524eef8bf97b8ac1b7fd",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.9873367871418581
+    },
+    {
+      "fixture": "edge-text",
+      "query": {
+        "id": "utf8-boundary",
+        "tool": "grep",
+        "path": "D:\\dsh\\dev\\dsh-ops\\out\\_test\\file-bench\\fixtures\\dsh-ops-file-bench-dV7rtk\\edge-text\\boundary.txt",
+        "pattern": "needle",
+        "outputMode": "content",
+        "limit": 1
+      },
+      "engine": "candidate",
+      "binarySha256": "863325cb0fddeaaf4986694d22986120dd28eb5c12c7f82c15fcbf251c42af27",
+      "runsMs": [
+        33.37289999995846,
+        30.52690000005532,
+        29.45539999997709,
+        27.771500000031665,
+        26.311299999943003
+      ],
+      "medianMs": 29.45539999997709,
+      "rejectedRunsMs": [],
+      "rejectionMedianMs": null,
+      "timeouts": 0,
+      "errors": 0,
+      "warmupState": "OK",
+      "outputBytes": 4414,
+      "resultHash": "c4ac8863d672e0677900a05a4ebe9ffdcc71be6677d4524eef8bf97b8ac1b7fd",
+      "unstable": false,
+      "eligible": true,
+      "nativeErrors": [],
+      "failures": [],
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.9873367871418581
+    }
+  ],
+  "comparisons": [
+    {
+      "id": "small-files/grep-miss",
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.939569020773512,
+      "difference": null
+    },
+    {
+      "id": "small-files/glob",
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 1.0017858558196127,
+      "difference": null
+    },
+    {
+      "id": "deep-tree/grep-miss",
+      "state": "TIMEOUT",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": null,
+      "difference": null
+    },
+    {
+      "id": "big-file/grep",
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 1.022256549928761,
+      "difference": null
+    },
+    {
+      "id": "big-file/inspect-oversize",
+      "state": "EXPECTED_REJECTION",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": null,
+      "difference": null
+    },
+    {
+      "id": "big-file/inspect-window",
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.9270262736546292,
+      "difference": null
+    },
+    {
+      "id": "dense-hits/summary",
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.9688876897381333,
+      "difference": null
+    },
+    {
+      "id": "dense-hits/count",
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.9847687927036397,
+      "difference": null
+    },
+    {
+      "id": "dense-hits/content",
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 1.1155317964227274,
+      "difference": null
+    },
+    {
+      "id": "dense-hits/content-offset",
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 1.0337381732282513,
+      "difference": null
+    },
+    {
+      "id": "edge-text/long-line",
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 1.013574184206152,
+      "difference": null
+    },
+    {
+      "id": "edge-text/unicode",
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.9031966739384354,
+      "difference": null
+    },
+    {
+      "id": "edge-text/invalid-utf8",
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.8882694057598793,
+      "difference": null
+    },
+    {
+      "id": "edge-text/utf8-boundary",
+      "state": "MATCH",
+      "sameAsBaseline": true,
+      "expectedDifference": null,
+      "speedup": 0.9873367871418581,
+      "difference": null
+    }
+  ]
+}

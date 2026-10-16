@@ -96,6 +96,7 @@
     "native/bash-ipc"
   ],
   "scripts": {
+    "bench:files": "node bench/files.mjs",
     "build:bash-ipc": "node bin/build-bash-ipc.mjs",
     "build:ptc": "node bin/dsh-ops.mjs build-ptc",
     "stage:ptc": "node bin/native-runtime.mjs stage",

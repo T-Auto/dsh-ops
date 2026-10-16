@@ -8,6 +8,20 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      bench:
+        # Opt-in, and deliberately not a timing gate. A base-versus-head comparison needs two
+        # release workers and this workflow builds one, so what this input adds is the benchmark
+        # harness driving the worker this job just built: baseline and candidate are the same
+        # staged binary. That leaves exactly the failures worth having — the harness broke, the
+        # worker crashed on one of the five fixtures, or two runs of one binary disagreed with each
+        # other. Medians are printed and uploaded, never asserted; the before/after table stays
+        # manual evidence on the pull request (bench/README.md). The deterministic half of the
+        # benchmark — `test/file-bench.test.mjs` — needs no input: `npm run verify` discovers it
+        # like every other suite.
+        description: 'Also run the file-tool benchmark harness against the staged worker'
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -69,5 +83,34 @@ jobs:
         with:
           name: native-${{ matrix.target }}
           path: runtime/${{ matrix.target }}/
+          if-no-files-found: error
+          retention-days: 7
+      - name: File-tool benchmark smoke (opt-in)
+        # `bench/files.mjs` exits non-zero unless every query came out MATCH,
+        # EXPECTED_DIFFERENCE or EXPECTED_REJECTION, and it never compares times. With one binary
+        # on both sides the run is a determinism and integration check, not a performance verdict —
+        # which is why the watchdog is generous and the fixture counts are small: a runner is
+        # shared, and a slow machine must not read as a broken worker. `inputs` is empty on the
+        # `push` and `pull_request` runs, so those are unaffected and this stays opt-in.
+        # `inputs` is only populated for `workflow_dispatch`, but naming the event keeps this
+        # explicit on the `push` and `pull_request` runs, where the step is skipped anyway.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.bench }}
+        shell: bash
+        run: |
+          # The staged worker, not `native/target`: it is the copy the resolver and the closure
+          # check above agree on, and the one this run publishes as an artifact.
+          worker="runtime/${{ matrix.target }}/dsh-ops-worker${{ runner.os == 'Windows' && '.exe' || '' }}"
+          mkdir -p out/_test/file-bench/fixtures
+          node bench/files.mjs \
+            --baseline "$worker" --candidate "$worker" \
+            --out "out/_test/file-bench/${{ matrix.target }}.json" \
+            --temp-dir out/_test/file-bench/fixtures \
+            --scale 0.01 --timeout-ms 180000
+      - name: Upload the benchmark report
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.bench }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: file-bench-${{ matrix.target }}
+          path: out/_test/file-bench/${{ matrix.target }}.json
           if-no-files-found: error
           retention-days: 7

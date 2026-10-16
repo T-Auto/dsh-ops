@@ -20,12 +20,14 @@ native/target/
 node_modules/
 
 # Scratch trees used by the suites and by hand
+out/_test/
 .tmp-*
 *.scratch.*
 .scratch-*
 
 # Local cross-session handoff, project context and architecture notes
 memorybank/
+docs/superpowers/
 
 # Editor and OS noise
 .DS_Store

@@ -313,6 +313,33 @@ The documentation caught the same drift it exists to prevent: `docs/verify-local
 as failing rather than skipping where no worker resolves, and credited the Windows numbers to a
 sandbox that cannot run the gate at all.
 
+### A file-tool benchmark harness, and the one suite it adds
+
+`bench/files.mjs` compares two explicitly named **release** workers — one warmup per engine, then
+five alternating paired rounds — over five seeded fixtures it generates, times and deletes: 10,000
+small files with excluded subtrees, the same count at depth 32, a 33 MiB rejection beside an
+accepted 8 MiB hex window, files where every line matches, and the 1 MiB/UTF-8/BOM/CRLF/invalid-tail
+boundaries. It prints each worker's SHA-256, compares canonical JSON with `elapsedMs`/`durationMs`
+removed, and refuses to report a speedup for a query that timed out, errored, or differed. Reports
+are created exclusively, so a rerun cannot overwrite evidence, and cleanup inventories the tree it
+owns before deleting any of it. Production behaviour is unchanged and no timing threshold is
+asserted anywhere.
+
+`test/file-bench.test.mjs` rides the existing gate: `test/run.mjs` discovers it, so `npm run verify`
+covers the fixtures, the comparison logic, the watchdog, and the CLI wiring including its refusal to
+overwrite a report, on every platform — and no gate number has to move for it, because the expected
+suite total is derived from `test/*.test.mjs` rather than pinned. Its CLI smoke drives 168
+short-lived workers, so its watchdog sits at 110s, just under the 120s per-suite deadline
+`test/run.mjs` enforces, which a slow shared runner would otherwise turn into an unexplained kill;
+measured here at 30s for 6/6 checks.
+
+The comparison itself stays manual, because it needs two release workers and a reviewed
+`EXPECTED_DIFFERENCES` entry for every intended change. CI gains an opt-in `bench` dispatch input
+that instead runs the harness against the one worker the job just staged, **the same binary on both
+sides**, so a failure there can only mean the harness broke, the worker crashed on a fixture, or two
+runs of one binary disagreed. It asserts nothing about time, and the `push` and `pull_request` runs
+never see it.
+
 ## [0.3.0] — 2026-10-14 — Windows x64 native tools and PTC
 
 Release scope: **Windows x64 only**, targeting DSH 0.2.0-rc.2. macOS arm64 is
