@@ -84,7 +84,10 @@ await test('an 8.3 short-name workspace root is prepared, not refused as a link'
       console.log('  (no 8.3 short name is in play for this root; nothing to exercise)')
       return
     }
-    await prepareWorkspace({mode:'workspace-write',workspaceRoot:candidate})
+    // The subject here is the path judgement, not the preparation run, so hand it a no-op runner:
+    // otherwise the check would also depend on the fixture root being owned by the current user, and
+    // the hosted runner creates directories its user does not own.
+    await prepareWorkspace({mode:'workspace-write',workspaceRoot:candidate},{platform:'win32',run(){}})
   })
 })
 await test('a workspace root that is itself a junction is refused before any ACL work', async () => {
