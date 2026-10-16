@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
+import { ownCurrentUser, resolveTrustee } from './lib/ownership.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { prepareWorkspace, mountWorkspacePreparation, runPreparation, preparationEnvironment, preparationSpawnSpec } from '../lib/workspace-preparation.js'
 import { invoke as fileCall } from '../lib/file/worker.js'
@@ -24,21 +25,6 @@ function ps(code) {
   const result = spawnSync('powershell.exe', ['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(code,'utf16le').toString('base64')], { encoding:'utf8', env: preparationEnvironment() })
   assert.equal(result.status,0,result.stderr)
   return result.stdout.trim()
-}
-// A directory is owned by whoever created it — unless the process token's default owner is a group,
-// which is what an elevated administrator token carries (GitHub's hosted runner runs that way). The
-// preparation script refuses such a root as "not owned by the current user", so a fixture that means
-// to test preparation has to claim its own root first, starting from the ACL that is already there so
-// the DACL and its inheritance survive.
-//
-// Reading the owner back is the point, not a formality: a refused owner change is a PowerShell
-// *non-terminating* error, so `ps()` reports success and the suite would then blame preparation for a
-// fixture that was never in the shape it claims to be in.
-function ownFixtureRoot(target) {
-  const quoted=target.replaceAll("'","''")
-  const [owner,sid]=ps(`$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $a=Get-Acl -LiteralPath '${quoted}'; $a.SetOwner($sid); Set-Acl -LiteralPath '${quoted}' -AclObject $a; "$((Get-Acl -LiteralPath '${quoted}').GetOwner([Security.Principal.SecurityIdentifier]).Value)|$($sid.Value)"`).split('|')
-  assert.equal(owner,sid,`fixture root ${target} is owned by ${owner}, not by the current user; the preparation script refuses such a root, and the owner change that should have fixed it did not take`)
-  return sid
 }
 await test('the real worker behaves as the file-tool descriptions say (#44)', async () => {
   await withTempDir('file-contract',async root => {
@@ -124,7 +110,7 @@ await test('preparation failures name their cause: execution policy vs folder pr
 await test('the real script runs even when the effective execution policy is Restricted (#66)', async () => {
   if(process.platform!=='win32')return
   await withTempDir('prepare-restricted',async root => {
-    ownFixtureRoot(root)
+    ownCurrentUser(root)
     // Process scope only: the variable reaches this one child; no machine or user policy is changed.
     const previous=process.env.PSExecutionPolicyPreference
     process.env.PSExecutionPolicyPreference='Restricted'
@@ -138,7 +124,7 @@ await test('real preparation writes only the root DACL, never descendants (#43)'
     for(let d=0;d<10;d++) { const dir=path.join(root,`d${d}`,'deep'); fs.mkdirSync(dir,{recursive:true}); for(let f=0;f<30;f++) fs.writeFileSync(path.join(dir,`f${f}.txt`),'x') }
     const quoted=root.replaceAll("'","''")
     ps(`$p='${quoted}'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $a=[Security.AccessControl.DirectorySecurity]::new(); $a.SetOwner($sid); $a.SetAccessRuleProtection($true,$false); $a.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,'Modify','ContainerInherit,ObjectInherit','None','Allow')); Set-Acl -LiteralPath $p -AclObject $a`)
-    ownFixtureRoot(root)
+    ownCurrentUser(root)
     const sddl=target=>ps(`(Get-Acl -LiteralPath '${target.replaceAll("'","''")}').GetSecurityDescriptorSddlForm('Access')`)
     const deep=path.join(root,'d9','deep','f29.txt'), deepDir=path.join(root,'d9','deep')
     const before={root:sddl(root),deep:sddl(deep),deepDir:sddl(deepDir)}
@@ -168,7 +154,7 @@ await test('an inheriting (AI) workspace root keeps its inheritance and descenda
     fs.mkdirSync(ws)
     const quoted=ws.replaceAll("'","''")
     // Owner-only write: the script refuses roots the user does not own, and this leaves the DACL untouched.
-    const sid=ownFixtureRoot(ws)
+    const sid=ownCurrentUser(ws)
     for(let d=0;d<10;d++) { const dir=path.join(ws,`d${d}`,'deep'); fs.mkdirSync(dir,{recursive:true}); for(let f=0;f<30;f++) fs.writeFileSync(path.join(dir,`f${f}.txt`),'x') }
     const sddl=target=>ps(`(Get-Acl -LiteralPath '${target.replaceAll("'","''")}').GetSecurityDescriptorSddlForm('Access')`)
     const aces=text=>text.match(/\([^)]*\)/g) ?? []
@@ -187,7 +173,9 @@ await test('an inheriting (AI) workspace root keeps its inheritance and descenda
     assert.equal(added.length,1,`exactly one ACE added: ${after}`)
     const [type,flags,mask,,,trustee]=added[0].slice(1,-1).split(';')
     assert.equal(type,'A'); assert.equal(flags,'','the added ACE applies to the root directory only')
-    assert.equal(trustee,sid)
+    // Through a SID, not a string: SDDL abbreviates well-known SIDs, so the built-in Administrator
+    // reads as `LA` rather than as `S-1-5-…-500`.
+    assert.equal(resolveTrustee(trustee),sid)
     assert.ok((Number.parseInt(mask,16) & 0x80000)!==0,`the added ACE grants WRITE_OWNER: ${added[0]}`)
     const rights=ps(`(Get-Acl -LiteralPath '${quoted}').Access | ForEach-Object { $_.FileSystemRights.ToString() }`)
     assert.doesNotMatch(rights,/FullControl/)

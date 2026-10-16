@@ -16,9 +16,15 @@ import { resolveWorker } from '../lib/ptc/runtime.js'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { invoke } from '../lib/ptc/worker.js'
+import { ownCurrentUser } from './lib/ownership.mjs'
 const file = process.env.DSH_OPS_WORKER_BIN ?? path.resolve('native/target/release', process.platform === 'win32' ? 'dsh-ops-worker.exe' : 'dsh-ops-worker')
 assert.ok(fs.existsSync(file), 'Build the independent worker with npm run build:ptc; this suite never silently skips.')
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ops-ptc-'))
+// The scenarios below hand this directory to the plugin as a session workspace, so preparation runs
+// on it. A host whose token creates directories it does not own (an elevated administrator token —
+// GitHub's hosted runner) would have preparation refuse it, and the suite would report that as a
+// product failure.
+if (process.platform === 'win32') ownCurrentUser(dir)
 const request = (tool, args, scope = 'scenario') => {
   const result = spawnSync(file, [], { input: JSON.stringify({ root: dir, scope, tool, args }), encoding: 'utf8' })
   assert.equal(result.status, 0, result.stderr)
