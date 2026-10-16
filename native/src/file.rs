@@ -300,7 +300,11 @@ fn result(items: Vec<Value>, total: usize, offset: usize, next_base: usize, matc
 
 fn inspect(request: &Request) -> Result<Value> {
     let args: InspectArgs = serde_json::from_value(request.args.clone())?;
-    if args.limit == 0 || args.limit > 10_000 || !args.encoding.eq_ignore_ascii_case("utf-8") { return Err(Failure::new("INVALID_ARGUMENT", "inspect supports UTF-8 and a bounded limit")); }
+    // Name the parameter that is wrong, and the range it has to fit. Merging "missing"
+    // and "out of range" into one message made a caller that *did* pass a value read it
+    // as a missing argument, and retry the same call.
+    if !args.encoding.eq_ignore_ascii_case("utf-8") { return Err(Failure::new("INVALID_ARGUMENT", format!("encoding must be utf-8 (got {})", args.encoding))); }
+    if args.limit == 0 || args.limit > 10_000 { return Err(Failure::new("INVALID_ARGUMENT", format!("limit must be in 1..=10000 (got {})", args.limit))); }
     let path = target(&args.path, false)?;
     if !path.is_file() { return Err(Failure::new("INVALID_ARGUMENT", "path is a directory; use ops_glob or ops_grep")); }
     let bytes = read_bytes(&path)?;
@@ -336,7 +340,8 @@ fn glob(request: &Request) -> Result<Value> {
 }
 fn grep(request: &Request) -> Result<Value> {
     let args: GrepArgs = serde_json::from_value(request.args.clone())?;
-    if args.pattern.is_empty() || args.limit == 0 || args.limit > 10_000 { return Err(Failure::new("INVALID_ARGUMENT", "pattern and bounded limit are required")); }
+    if args.pattern.is_empty() { return Err(Failure::new("INVALID_ARGUMENT", "pattern is required")); }
+    if args.limit == 0 || args.limit > 10_000 { return Err(Failure::new("INVALID_ARGUMENT", format!("limit must be in 1..=10000 (got {})", args.limit))); }
     if args.before_context > 32 || args.after_context > 32 { return Err(Failure::new("INVALID_ARGUMENT", "context is limited to 32 lines")); }
     let regex = RegexBuilder::new(&args.pattern).case_insensitive(args.case_insensitive).multi_line(args.multiline).build().map_err(|e| Failure::new("INVALID_ARGUMENT", e))?;
     let walked = files_for(&args.path, &args.glob, request)?; let mut matches = Vec::new(); let mut file_count = 0; let mut match_count = 0;
@@ -402,7 +407,8 @@ fn grep(request: &Request) -> Result<Value> {
 fn replace(request: &Request) -> Result<Value> {
     if request.read_only { return Err(Failure::new("POLICY_DENIED", "replace is unavailable in read-only mode")); }
     let args: ReplaceArgs = serde_json::from_value(request.args.clone())?;
-    if args.pattern.is_empty() || args.max_replacements == 0 || args.max_replacements > 100_000 { return Err(Failure::new("INVALID_ARGUMENT", "pattern and maxReplacements are required")); }
+    if args.pattern.is_empty() { return Err(Failure::new("INVALID_ARGUMENT", "pattern is required")); }
+    if args.max_replacements == 0 || args.max_replacements > 100_000 { return Err(Failure::new("INVALID_ARGUMENT", format!("maxReplacements must be in 1..=100000 (got {})", args.max_replacements))); }
     let walked = files_for(&args.path, &args.glob, request)?; let mut plans = Vec::new(); let mut total = 0usize; let mut binary: Vec<PathBuf> = Vec::new();
     // A directory that holds one binary file (an icon, an archive) is a normal repository, not a
     // malformed request: the binary is reported as skipped and the text files around it are still
