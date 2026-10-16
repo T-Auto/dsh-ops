@@ -6,12 +6,14 @@ name: CI
 
 # TWO JOBS, ON PURPOSE, AND NEITHER MAY STAND IN FOR THE OTHER.
 #
-#   hermetic     the whole gate on a machine with no FastCtx build at all: no
-#                provisioned runtime and no FastCtx binary. Fast, and the suites
-#                that need a runtime SKIP — they are counted and printed as
-#                skipped, never as passed. (The native Rust toolchain and the
-#                platform packages are both present: the PTC worker and the Bash
-#                IPC proxies are built below, and `npm ci` installs the payloads.)
+#   hermetic     the whole gate on a machine with no FastCtx built from the
+#                vendored source and no provisioned runtime. Fast, and the suites
+#                that need a runtime SKIP — counted and printed as skipped, never
+#                as passed — unless a platform payload supplies a binary, in
+#                which case they run and say which runtime they hosted. (The
+#                native Rust toolchain and the platform packages are both
+#                present: the PTC worker and the Bash IPC proxies are built
+#                below, and `npm ci` installs the payloads.)
 #   integration  the same gate with a real runtime built from the vendored
 #                source and DSH_OPS_REQUIRE_RUNTIME=1, which turns any skip into
 #                a failure. This is the job that produces evidence about the
@@ -83,30 +85,33 @@ jobs:
       - name: Run the gate
         run: npm run verify
 
-      - name: Assert the runtime suite skipped rather than passed
-        # The failure this guards against is a gate that reports success about a
-        # suite it never ran. `test/mount.test.mjs` exits 77 when it has no
-        # runtime (test/lib/harness.mjs `skipSuite`), and this job has none.
+      - name: Assert the runtime suite reported its outcome rather than losing it
+        # The failure this guards against is a gate that reports success about a suite it never ran.
+        # `test/mount.test.mjs` skips itself (exit 77) when no runtime resolves, and runs when one
+        # does. This job builds no FastCtx from source, but `npm ci` installs the platform payloads
+        # and one of them can supply the binary, so both outcomes are legitimate here — what is not
+        # legitimate is an unexplained third one.
         shell: pwsh
         run: |
-          # Not `$home`: that name is PowerShell's own read-only variable for the
-          # user profile, so assigning to it fails this step before the suite ever
-          # runs — which is what the first hermetic run of this repository did.
-          # And not `[System.IO.Path]::GetTempPath()` either: it can disagree with
-          # the directory Node calls `os.tmpdir()`, and the suite refuses a
-          # DSH_HOME outside its own temporary directory. `$env:RUNNER_TEMP` is
-          # the directory both sides agree on.
-          $staging = Join-Path $env:RUNNER_TEMP ("dsh-ops-hermetic-" + [guid]::NewGuid().ToString('N'))
-          New-Item -ItemType Directory -Path $staging | Out-Null
+          # Ask Node where its temporary directory is rather than choosing one for it: the harness
+          # refuses a DSH_HOME outside `os.tmpdir()`, and on the hosted runner that is neither
+          # `$env:RUNNER_TEMP` (a different drive: D:\a\_temp against C:\Users\RUNNER~1\...) nor
+          # necessarily what `[System.IO.Path]::GetTempPath()` returns. Creating the directory with
+          # the same call the harness compares against makes the two agree by construction.
+          $staging = node -e "console.log(require('node:fs').mkdtempSync(require('node:path').join(require('node:os').tmpdir(),'dsh-ops-hermetic-')))"
           $env:DSH_HOME = $staging
           node test/mount.test.mjs
           $code = $LASTEXITCODE
           Remove-Item -Recurse -Force $staging
           if ($code -eq 77) {
-            Write-Host 'mount skipped, as a machine without a runtime must'
+            Write-Host 'mount skipped: no runtime resolved, which is this job''s premise'
             exit 0
           }
-          throw "expected the mount suite to skip (exit 77) without a FastCtx runtime, got exit $code"
+          if ($code -eq 0) {
+            Write-Host 'mount ran and passed: a platform payload supplied a runtime, and the suite hosted it'
+            exit 0
+          }
+          throw "expected the mount suite to skip (77) or pass (0) and say which, got exit $code"
 
   integration:
     name: Gate with the vendored FastCtx build
