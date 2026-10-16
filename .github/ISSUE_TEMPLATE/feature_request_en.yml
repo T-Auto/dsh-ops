@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose an improvement or a new capability
+title: "[Request] "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check first that it is not already covered: search open and closed issues, and read the component and configuration references under `docs/`.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve
+      description: Starting from "what I cannot do today" is more useful than starting from "please add this parameter".
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: What you do today, and what it costs
+      description: How do you work around it now, and what does that workaround cost you?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach (optional)
+      description: If it touches a tool contract, say what it does to the schema / prompt bytes (see `docs/schema-measurement.md`).
+    validations:
+      required: false
+
+  - type: dropdown
+    id: willing
+    attributes:
+      label: Would you send a pull request?
+      options:
+        - Yes, and I can already run the gate locally
+        - Yes, but I would need pointers (see docs/CONTRIBUTING.md)
+        - Not at the moment
+    validations:
+      required: true

@@ -1,0 +1,88 @@
+name: Bug report
+description: Report a reproducible defect (for install or diagnostics questions, read the troubleshooting doc first)
+title: "[BUG] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing:
+
+        1. run `node <profile>/node_modules/dsh-ops/bin/dsh-ops.mjs ladder --json` (a read-only report of native worker and shell resolution; it spawns nothing);
+        2. read [`docs/troubleshooting.md`](https://github.com/T-Auto/dsh-ops/blob/main/docs/troubleshooting.md);
+        3. if a test suite is red, check the environment prerequisites first — a missing Rust toolchain (`ptc`) or a missing bash payload (`bash-ipc`) is not a defect.
+
+  - type: input
+    id: dsh-ops-version
+    attributes:
+      label: dsh-ops version and how it was installed
+      placeholder: "e.g. 0.3.1 (GitHub release) or 0.3.0 (npm); source: registry.npmjs.org / local tarball / dsh-ops provision-shells"
+    validations:
+      required: true
+
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH version and profile
+      placeholder: "e.g. DSH 0.2.0-rc.2, profile=desktop"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS and architecture
+      options:
+        - Windows x64
+        - Windows arm64
+        - Linux x64
+        - Linux arm64
+        - macOS arm64
+        - macOS x64
+        - Other (explain below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Minimal reproduction
+      description: Commands or tool calls that can be copied as they are, with the full arguments.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual reading
+      description: Raw output rather than a paraphrase — the error text, the exit code, the relevant `ladder --json` fields.
+      render: shell
+    validations:
+      required: true
+
+  - type: dropdown
+    id: isolation
+    attributes:
+      label: Reproduced in isolation?
+      options:
+        - Reproduced in an isolated profile / temporary DSH_HOME
+        - Only reproduced in a real profile
+        - Did not try isolation
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else (optional)
+      description: Related issues or PRs, what you already ruled out, proxy or mirror environment.
+    validations:
+      required: false

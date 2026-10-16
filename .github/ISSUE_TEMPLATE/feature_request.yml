@@ -1,0 +1,44 @@
+name: 功能请求
+description: 提出一个改进或新能力
+title: "[请求] "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先确认它不是已有条目：搜索 open/closed issue，并看 `docs/` 下的组件与配置参考。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你想解决什么问题
+      description: 从"现在做不到什么"写起，比从"希望加某个参数"写起更有用。
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: 现状与替代方案
+      description: 现在你是怎么绕过它的？绕法有什么代价？
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案（可选）
+      description: 涉及工具契约时，请写明它对 schema / 提示词字节的影响（见 `docs/schema-measurement.md`）。
+    validations:
+      required: false
+
+  - type: dropdown
+    id: willing
+    attributes:
+      label: 是否愿意提 PR
+      options:
+        - 愿意，并已能本地跑通门禁
+        - 愿意，但需要指路（见 docs/贡献指南.md）
+        - 暂不打算
+    validations:
+      required: true

@@ -1,0 +1,17 @@
+blank_issues_enabled: true
+
+# 保留空白 issue：本仓现有报告里，中文长文、带完整读数、超出模板边界的居多；
+# 强制表单会把这类报告挤到 Discussions 或直接劝退——本仓 Discussions 是开着的，但
+# `docs/CONTRIBUTING.md` 把 issue 当作 PR 的工作区，报告的实际习惯留在 issue。
+# 表单只用于让"缺陷"与"功能请求"带上必要的环境与读数，不作为准入门槛。
+
+contact_links:
+  - name: 安装与诊断（troubleshooting）
+    url: https://github.com/T-Auto/dsh-ops/blob/main/docs/troubleshooting.md
+    about: 载荷缺失、profile 安装、workspace 准备失败等常见成因与补救。
+  - name: 中文常见问题
+    url: https://github.com/T-Auto/dsh-ops/blob/main/docs/%E5%B8%B8%E8%A7%81%E9%97%AE%E9%A2%98.md
+    about: 上述文档的中文版。
+  - name: 贡献与本地门禁
+    url: https://github.com/T-Auto/dsh-ops/blob/main/docs/%E8%B4%A1%E7%8C%AE%E6%8C%87%E5%8D%97.md
+    about: 怎么在本机跑门禁、代码与文档约定、PR 流程。
