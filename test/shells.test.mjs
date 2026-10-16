@@ -1336,6 +1336,18 @@ function pwshOverrideExpression() {
 }
 
 /**
+ * A stand-in for a `Volatile` config reference: `get()` plus the write symbol
+ * the loader's own `updateVolatile()` writes through
+ * (`Symbol.for('cosmokit.volatile.write')`).
+ * @param {unknown} initial - the reference's initial value.
+ * @returns {object} the fake reference.
+ */
+function volatileRef(initial) {
+  let current = initial
+  return { get: () => current, [Symbol.for('cosmokit.volatile.write')](next) { current = next } }
+}
+
+/**
  * Evaluate one loader expression exactly as the vendored loader does.
  * @param {string} expr - the expression body.
  * @param {object} ctx - the evaluation scope (`with (ctx)`).
@@ -1349,13 +1361,13 @@ function evaluateLoaderExpression(expr, ctx) {
   const { fileURLToPath } = urlHelpers
   const bundleRoot = fs.realpathSync(path.join(fileURLToPath(ctx.baseUrl), 'node_modules', 'dsh-ops'))
   const shells = resolveShells(config(), { bundleRoot })
-  let hook
-  let result
+  // The overlay commits into the row's live `pwshPath` reference; the value the
+  // owner would read back is that reference after the mount.
   const entry = { options: { id: 'pwsh-sandbox', name: '@deepseek-ai/dsh-pwsh-sandbox', config: {} },
-    fiber: { state: 2, update() { result = hook.call({ entry }, {}, () => ({})).pwshPath } } }
+    fiber: { state: 2, config: { pwshPath: volatileRef(undefined) } } }
   mountBundledPwsh({ inject(_deps, body) { body({ get() { return { entries: () => [entry] } },
-    on(_event, body) { hook = body; return () => {} }, effect() {} }) } }, shells)
-  return result
+    on() { return () => {} }, effect() {} }) } }, shells)
+  return entry.fiber.config.pwshPath.get()
 }
 
 await test('the manifest declares the plugin\'s own shell tools as their own namespace', () => {
@@ -1625,32 +1637,44 @@ await test('system discovery is opt-in on Windows and is the rung on a POSIX hos
   })
 })
 
-await test('runtime pwsh overlay targets only the owning row and restores latest raw config without saving', () => {
+await test('runtime pwsh overlay commits in place, targets only the owning row, and restores the latest raw value', () => {
   let hook, cleanup
-  const updates = []
-  const target = { options: { id: 'pwsh-sandbox', name: '@deepseek-ai/dsh-pwsh-sandbox', config: { pwshPath: 'original', retained: true } } }
-  target.fiber = { state: 2, update(raw, noSave) {
-    updates.push({ config: hook ? hook.call({ entry: target }, raw, () => ({ ...raw })) : { ...raw }, noSave })
-  } }
-  const foreign = { options: { id: 'pwsh-sandbox', name: 'foreign-executor', config: {} }, fiber: { state: 2, update() { throw new Error('foreign update') } } }
+  const ref = volatileRef('original')
+  const target = {
+    options: { id: 'pwsh-sandbox', name: '@deepseek-ai/dsh-pwsh-sandbox', config: { pwshPath: 'original', retained: true } },
+    // The overlay must never restart the owning row: Fiber.update() on an ACTIVE
+    // row is a dispose/reload, swapping the `shell` service provider and
+    // rebuilding every inject('shell') consumer (#29, #104, #129).
+    fiber: { state: 2, config: { pwshPath: ref }, update() { throw new Error('the overlay must not restart the owning row') } },
+  }
+  const bareRef = volatileRef('original')
+  // A second owning row that declares no pwshPath: the restore must clear it
+  // back to undefined, which is the host's own resolution chain.
+  const bare = { options: { id: 'pwsh-sandbox', name: '@deepseek-ai/dsh-pwsh-sandbox', config: { retained: true } },
+    fiber: { state: 2, config: { pwshPath: bareRef }, update() { throw new Error('the overlay must not restart the owning row') } } }
+  const foreignRef = volatileRef('foreign')
+  const foreign = { options: { id: 'pwsh-sandbox', name: 'foreign-executor', config: {} }, fiber: { state: 2, config: { pwshPath: foreignRef } } }
   const fixture = { inject(_deps, body) { body({
-    get() { return { entries: () => [target, foreign] } },
+    get() { return { entries: () => [target, bare, foreign] } },
     on(_name, callback) { hook = callback; return () => { hook = undefined } },
     effect(callback) { cleanup = callback() },
   }) } }
   const original = target.options.config
   mountBundledPwsh(fixture, { pwsh: { available: true, file: 'approved-pwsh' } })
   // No platform gate: the overlay is gated by `shells.pwsh.available` alone, so
-  // the whole contract holds here — owning row only, no config saved, and the
-  // restore recomputed from the owner's latest raw config.
-  assert.deepEqual(updates[0], { config: { pwshPath: 'approved-pwsh', retained: true }, noSave: true })
+  // the whole contract holds here — the owning rows' live references only, no
+  // stored config written, and the restore taken from each owner's latest raw config.
+  assert.equal(ref.get(), 'approved-pwsh')
+  assert.equal(bareRef.get(), 'approved-pwsh')
   assert.equal(target.options.config, original)
+  assert.equal(foreignRef.get(), 'foreign')
   assert.deepEqual(hook.call({ entry: foreign }, {}, () => ({ pwshPath: 'foreign' })), { pwshPath: 'foreign' })
   target.options.config = { pwshPath: 'new-owner-choice', retained: false }
   cleanup()
-  assert.deepEqual(updates[1], { config: target.options.config, noSave: true })
+  assert.equal(ref.get(), 'new-owner-choice', 'the restore uses the owner\'s latest raw config')
+  assert.equal(bareRef.get(), undefined, 'no declared value restores to undefined')
   cleanup()
-  assert.equal(updates.length, 2, 'cleanup is idempotent')
+  assert.equal(ref.get(), 'new-owner-choice', 'cleanup is idempotent')
 })
 
 

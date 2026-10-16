@@ -65,26 +65,23 @@ await test('a malformed provenance receipt is a parse failure, not a leaked raw 
   })
 })
 
-await test('one pwsh row that refuses the update does not strand the rows behind it', () => {
-  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
-  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
-  try {
-    const updates = []
-    const warnings = []
-    const row = (name, update) => ({ options: { id: 'pwsh-sandbox', name, config: { pwshPath: 'original', retained: true } }, fiber: { state: 2, update } })
-    const refusing = row('@deepseek-ai/dsh-pwsh-sandbox', () => { throw new Error('row refuses') })
-    const following = row('@deepseek-ai/dsh-pwsh-sandbox', (raw, noSave) => updates.push({ raw, noSave }))
-    const fixture = { inject(_deps, body) { body({
-      get: () => ({ entries: () => [refusing, following] }),
-      on: () => () => {},
-      effect: (callback) => { callback() },
-      logger: { warn: (message) => warnings.push(message) },
-    }) } }
-    mountBundledPwsh(fixture, { pwsh: { available: true, file: 'C:/pwsh.exe' } })
-    assert.deepEqual(updates, [{ raw: { pwshPath: 'original', retained: true }, noSave: true }])
-    assert.equal(warnings.length, 1, 'the refusal is reported once')
-    assert.match(warnings[0], /rejected the update: row refuses/)
-  } finally { Object.defineProperty(process, 'platform', descriptor) }
+await test('one pwsh row that refuses the overlay does not strand the rows behind it', () => {
+  const warnings = []
+  const refusingRef = { get: () => 'original', [Symbol.for('cosmokit.volatile.write')]() { throw new Error('row refuses') } }
+  const following = { current: 'original' }
+  const followingRef = { get: () => following.current, [Symbol.for('cosmokit.volatile.write')](next) { following.current = next } }
+  const row = (ref) => ({ options: { id: 'pwsh-sandbox', name: '@deepseek-ai/dsh-pwsh-sandbox', config: { pwshPath: 'original', retained: true } },
+    fiber: { state: 2, config: { pwshPath: ref } } })
+  const fixture = { inject(_deps, body) { body({
+    get: () => ({ entries: () => [row(refusingRef), row(followingRef)] }),
+    on: () => () => {},
+    effect: (callback) => { callback() },
+    logger: { warn: (message) => warnings.push(message) },
+  }) } }
+  mountBundledPwsh(fixture, { pwsh: { available: true, file: 'C:/pwsh.exe' } })
+  assert.equal(following.current, 'C:/pwsh.exe')
+  assert.equal(warnings.length, 1, 'the refusal is reported once')
+  assert.match(warnings[0], /rejected the overlay: row refuses/)
 })
 
 report('hardening')

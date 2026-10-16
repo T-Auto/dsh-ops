@@ -10,6 +10,25 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Tools trial: `node scripts/tools-trial.mjs` calls every published tool on a real host and prints a
   per-tool table; CI runs it in a separate, non-required `tools-trial` job.
 
+### The pwsh overlay commits into the live config reference instead of restarting the host row
+
+`mountBundledPwsh()` applied its reversible overlay with `entry.fiber.update(...)` on the official
+`pwsh-sandbox` row, at mount and again at unmount. On an ACTIVE row that call is a full dispose/reload:
+restarting the host's executor swaps the `shell` service provider, every `inject('shell')` consumer is
+rebuilt, and reconstructing `permission-presets` over a loaded session still carrying the durable `auto`
+preset throws — which bricks the permission service and, through the per-call auto-review hook, every
+tool in the instance (#29, #104, #129; deepseek-harness discussion #9882).
+
+`pwshPath` is a volatile config field and the owning executor re-reads it before every command, so the
+overlay now commits the value into that live reference — through the same
+`Symbol.for('cosmokit.volatile.write')` channel the loader's own `updateVolatile()` writes on — and the
+unmount restores the owner's latest declared value the same way. Neither `Entry.update()` nor
+`Fiber.update()` is called, the owner's stored raw config is never touched, and the takeover and its
+revocation both take effect without restarting anything.
+
+The shells and hardening suites now assert the in-place contract, including that the owning row's
+`update()` is never invoked.
+
 ### The config-update marker goes to the profile patch, and never to the composed tree
 
 `mountConfigUpdates()` persisted its one-time marker with `entry.parent.tree.write()`, an API that
