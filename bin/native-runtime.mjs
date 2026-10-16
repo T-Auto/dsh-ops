@@ -76,7 +76,12 @@ for (const target of targets) {
   if (!fs.existsSync(receiptPath)) throw Error(`Runtime for ${target} is not staged: ${receiptPath} is missing. Run npm run build:ptc -- stage on ${target}, or use check --staged to validate only the targets this package carries.`)
   const receipt = readJson(receiptPath,`runtime provenance for ${target}`)
   if (!fs.existsSync(destination)) throw Error(`Runtime for ${target} is incomplete: ${receiptPath} exists but ${destination} is missing.`)
-  if (receipt.version !== version || receipt.target !== target || receipt.executable !== name || receipt.sha256 !== hash(destination)) throw Error(`Runtime provenance mismatch: ${target}`)
+  // A mismatch is a verdict, not a stack trace: name the target, the digest the receipt
+  // promises and the digest actually on disk, then exit 1.
+  if (receipt.version !== version || receipt.target !== target || receipt.executable !== name || receipt.sha256 !== hash(destination)) {
+    console.error(`Runtime provenance mismatch: ${target} (receipt sha256 ${receipt.sha256}, actual ${hash(destination)})`)
+    process.exit(1)
+  }
   const bytes = fs.readFileSync(destination)
   // Reject accidental copies of a host binary labeled as a foreign target.
   if (target.startsWith('win32-')) {
