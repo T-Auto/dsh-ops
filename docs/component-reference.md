@@ -57,6 +57,8 @@ Read bounded UTF-8 text lines, or a hex view of one path. Directories are reject
 
 Find regular files below `path`. `pattern` is an **array** of globs matched segment by segment against paths relative to `path` (ASCII case-insensitive), e.g. `["**/*.md","!vendor/**"]`: `*.md` matches the top level only and `**/*.md` any depth; a `!` prefix excludes, and at least one positive entry is required. A bare string is rejected; there is no `include` field.
 
+Traversal is bounded: 128 directory levels and 100,000 entries per call (`MAX_DEPTH` / `MAX_ENTRIES` in `native/src/file.rs`). A walk that reaches either bound stops there and reports `truncated: true` / `complete: false` — files below the bound are not returned, and the flag is what tells you so. **The same `glob` filter on `ops_grep` follows this rule**, so `*.rs` filters the top level only: recursive searches need `**/*.rs`.
+
 | Parameter | Type | Notes |
 | --- | --- | --- |
 | `path` | string | Search root |
