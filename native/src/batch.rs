@@ -364,6 +364,9 @@ pub fn summary(job: &Job) -> Value {
     json!({ "id": job.id, "status": if completed == job.items.len() { "completed" } else if unknown > 0 { "unknown" } else if failed > 0 { "partial_completion" } else { "planned" },
         "phase": if completed+failed+unknown == 0 { "preflight" } else { "settled" }, "done": completed, "total": job.items.len(), "failed": failed, "unknown": unknown,
         "logicalBytes": job.items.iter().map(|i| i.logical_bytes).sum::<u64>(), "byteSemantics": "logical_path_bytes_not_physical_reclaimed_space",
+        // Already computed per item during preflight; a recursive remove that does not
+        // report its scale leaves the plan unable to answer "how much is this?".
+        "entries": job.items.iter().map(|i| i.entries).sum::<u64>(),
         // Attributes a destination could not hold are a report, not a failure: the file
         // moved, and this says how many attributes did not travel with it.
         "metadataNotPreserved": job.items.iter().map(|i| i.metadata_not_preserved.len() as u64).sum::<u64>(),
