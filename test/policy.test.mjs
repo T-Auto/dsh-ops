@@ -21,14 +21,12 @@ await test('file guidance names exactly the available file tools', () => {
   assert.match(text, /do not switch to a shell workaround/)
   assert.match(text, /pass only declared fields/)
 })
-await test('the prompt states the real file-tool syntax and result contract (#44)', () => {
+await test('the routing table keeps file-tool routing value, not duplicated syntax (#44)', () => {
   const text = renderToolingPolicy({ published: files, shellComponent: false })
-  assert.match(text, /ops_glob `pattern` and the `glob` filters are ARRAYS of globs relative to `path`, e\.g\. `\["\*\*\/\*\.md","!vendor\/\*\*"\]`/)
-  const globOnly = renderToolingPolicy({ published: [publicToolName('glob')], shellComponent: false })
-  assert.match(globOnly, /ops_glob `pattern` is an ARRAY of globs/)
-  assert.equal(globOnly.includes('ops_grep') || globOnly.includes('ops_replace'), false)
-  assert.match(text, /`\*\.md` matches the top level only/)
-  assert.match(text, /ops_grep has no `include`; ops_replace `pattern` is literal text/)
+  // Per-tool syntax (ops_glob `pattern` is an ARRAY; *.md top level only; ops_grep has no
+  // `include`; ops_replace `pattern` is literal text) now lives in each tool's own description;
+  // the table keeps only routing-unique guidance.
+  assert.match(text, /Every file tool has one `path`/)
   assert.match(text, /ops file tools never throw: check `status` and `error\.code`/)
   assert.equal(text.includes('ops_bash resolves with'), false)
   const bash = renderToolingPolicy({ published: [BASH_TOOL] })
