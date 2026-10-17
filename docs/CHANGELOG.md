@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Fix `ops_glob` reporting file sizes as `modified` and sorting by size (#96, #137).
+  Details now report Unix millisecond modification timestamps; `sort: "modified"`
+  orders newest first, with ascending paths for ties, before paging.
 - Tools trial: `node scripts/tools-trial.mjs` calls every published tool on a real host and prints a
   per-tool table; CI runs it in a separate, non-required `tools-trial` job.
 - Documentation now matches the shipped 0.3.1 surface (no behavior change): the component reference
