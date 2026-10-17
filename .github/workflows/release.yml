@@ -43,11 +43,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-node@v7.1.0
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '24.18.0'
-      - uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+      - uses: actions-rust-lang/setup-rust-toolchain@v2.0.0
         with:
           toolchain: 1.97.1
           target: ${{ matrix.target }}
@@ -56,7 +56,7 @@ jobs:
         run: cargo build --release --locked --manifest-path native/Cargo.toml --target ${{ matrix.target }}
       - name: Stage native runtime and provenance
         run: node bin/native-runtime.mjs stage --platform ${{ matrix.platform }}-${{ matrix.arch }} --input native/target/${{ matrix.target }}/release
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ptc-${{ matrix.platform }}-${{ matrix.arch }}
           path: runtime/
@@ -82,17 +82,17 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Check out
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@v7
         with:
           node-version: '24.18.0'
           registry-url: https://registry.npmjs.org
           cache: npm
 
       - name: Set up the Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1.17.0
+        uses: actions-rust-lang/setup-rust-toolchain@v2.0.0
         with:
           # Pinned rather than `stable`, matching the native worker build above.
           toolchain: 1.97.1
@@ -111,7 +111,7 @@ jobs:
             throw "tag $env:GITHUB_REF_NAME does not match the package version v$version"
           }
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: ptc-*
           path: runtime
