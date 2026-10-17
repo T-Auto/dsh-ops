@@ -59,9 +59,11 @@ Find regular files below `path`. `pattern` is an **array** of globs matched segm
 | `path` | string | Search root |
 | `pattern` | string[] (required, ≥1) | Glob patterns |
 | `outputMode` | `paths` \| `details` | Output shape |
-| `sort` | `path` \| `modified` | Ordering |
+| `sort` | `path` \| `modified` | `modified`: newest first, with ascending paths for equal timestamps; `path` is the default |
 | `offset` | integer | Paging start |
 | `limit` | integer 1–10000 | Maximum entries |
+
+In `details` output, `bytes` is the file size and `modified` is the last-modification time in Unix milliseconds (negative before 1970). Modification-time sorting happens before paging. Metadata read failures return a structured error instead of a fabricated timestamp.
 
 ### `ops_grep`
 

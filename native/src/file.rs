@@ -243,7 +243,14 @@ fn read_bytes(path: &Path) -> Result<Vec<u8>> {
     if bytes.len() as u64 > MAX_FILE_BYTES { return Err(Failure::new("OUTPUT_LIMIT", "File exceeds the bounded read budget")); }
     Ok(bytes)
 }
-fn modified(path: &Path) -> u64 { fs::symlink_metadata(path).ok().map_or(0, |m| m.len()) }
+/// Unix milliseconds, including negative timestamps for files older than the epoch.
+fn modified(metadata: &fs::Metadata) -> Result<i64> {
+    let millis = match metadata.modified()?.duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => duration.as_millis() as i128,
+        Err(error) => -(error.duration().as_millis() as i128),
+    };
+    i64::try_from(millis).map_err(|_| Failure::new("INVALID_ARGUMENT", "File modification time is outside the supported millisecond range"))
+}
 /// What one character costs in serde_json's encoding.
 fn encoded_cost(character: char) -> usize {
     match character {
@@ -328,10 +335,23 @@ fn glob(request: &Request) -> Result<Value> {
     let root = target(&args.path, false)?; if !root.is_dir() { return Err(Failure::new("INVALID_ARGUMENT", "glob path must be a directory")); }
     let walked = walk(&root, request)?;
     let mut files: Vec<_> = walked.files.into_iter().filter(|f| matches_any(&root, f, &args.pattern)).collect();
-    if args.sort == "modified" { files.sort_by_key(|f| std::cmp::Reverse(modified(f))); } else if !args.sort.is_empty() && args.sort != "path" { return Err(Failure::new("INVALID_ARGUMENT", "sort must be path or modified")); }
+    if args.sort == "modified" {
+        // Read each timestamp once: querying the filesystem inside the comparator
+        // both repeats work and makes the ordering depend on concurrent changes.
+        let mut dated: Vec<_> = files.into_iter().map(|file| {
+            Ok((modified(&fs::symlink_metadata(&file)?)?, file))
+        }).collect::<Result<_>>()?;
+        dated.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.as_os_str().cmp(b.1.as_os_str())));
+        files = dated.into_iter().map(|(_, file)| file).collect();
+    } else if !args.sort.is_empty() && args.sort != "path" { return Err(Failure::new("INVALID_ARGUMENT", "sort must be path or modified")); }
     let output_mode = if args.output_mode.is_empty() { "paths" } else { args.output_mode.as_str() };
     if output_mode != "paths" && output_mode != "details" { return Err(Failure::new("INVALID_ARGUMENT", "outputMode must be paths or details")); }
-    let total = files.len(); let selected: Vec<_> = files.into_iter().skip(args.offset).take(args.limit).map(|f| if output_mode == "paths" { json!(f) } else { let modified_at = modified(&f); json!({"path":f,"bytes":fs::symlink_metadata(&f).map(|m|m.len()).unwrap_or(0),"modified":modified_at}) }).collect();
+    let total = files.len();
+    let selected: Vec<_> = files.into_iter().skip(args.offset).take(args.limit).map(|file| {
+        if output_mode == "paths" { return Ok(json!(file)); }
+        let metadata = fs::symlink_metadata(&file)?;
+        Ok(json!({"path":file,"bytes":metadata.len(),"modified":modified(&metadata)?}))
+    }).collect::<Result<_>>()?;
     Ok(result(selected, total, args.offset, args.offset, total, walked.truncated))
 }
 fn grep(request: &Request) -> Result<Value> {
