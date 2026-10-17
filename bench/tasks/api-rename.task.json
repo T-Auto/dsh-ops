@@ -1,0 +1,15 @@
+{
+  "id": "api-rename",
+  "title": "Rename one exported symbol across a 60-module tree using file tools only",
+  "prompt": "In src/core.js the exported function parsePayload has to be renamed to decodePayload: its definition, every import of it, and every call site. parsePayloadLegacy and parsePayloadAsync are different functions and keep their own names. Change no behaviour, add or remove no file under src/, and leave check.mjs alone. Use the file tools to make every change; do not modify files with a shell command such as sed or a script. When you are done, node check.mjs must exit 0.",
+  "fixture": {
+    "generator": "symbolTree",
+    "params": { "seed": 31, "files": 60 }
+  },
+  "verify": [
+    { "type": "contentHashes", "dir": "src", "expect": "final" },
+    { "type": "command", "command": "node", "args": ["check.mjs"], "exitCode": 0 }
+  ],
+  "repeat": 2,
+  "timeoutMs": 1800000
+}

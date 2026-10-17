@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "启动数据检测",
+    "description": "默认关闭。打开后,新对话会在该会话的工作目录内生成 .dsh-ops/panel/<sessionId>.json(唯一数据源)与读取它的 panel.html 查看器。只写静态文件:不注册界面、不开端口、不写 ~/.dsh,默认关闭时零开销。"
+  }
+}

@@ -1,5 +1,5 @@
 # Component reference
-What each of the four components publishes, with parameters and permission requirements.
+What each of the six components publishes, with parameters and permission requirements.
 ---
 
 ## Components at a glance
@@ -9,7 +9,9 @@ What each of the four components publishes, with parameters and permission requi
 | `dsh-ops/shell` | Prefer bash as the terminal, with PowerShell 7 for operations bash cannot cover | On | `ops_bash`; host `pwsh` uses bundled PowerShell 7 |
 | `dsh-ops/file` | Faster, higher-performance Rust file retrieval with more concise, token-efficient output | On | Four file tools |
 | `dsh-ops/ptc` | Independent Rust safe batches and bounded result references, only in pure PTC sessions | Off | `ops_batch`, `ops_result` |
+| `dsh-ops/panel` | Data capture, off at the switch: new conversations write `<cwd>/.dsh-ops/panel/<sessionId>.json` plus the viewer `panel.html` | Row on, `capture: false` | None; see the [configuration reference](configuration-reference.md) |
 | `dsh-ops/tui` | Read-only current-session OPS sidebar | Off | None; see [sidebar guide](tui-panel.md) |
+| `dsh-ops/hide-official` | Strict hiding of official tools that have reviewed OPS equivalents | Off | None |
 
 The former `dsh-ops/background` component (FastCtx background jobs: `ops_run`, `ops_run_background`, `ops_job_output`, `ops_job_list`, `ops_job_kill`) has been removed. A profile row that still names it loads as a no-op: it accepts any config, publishes nothing, and logs one warning that the row can be deleted.
 

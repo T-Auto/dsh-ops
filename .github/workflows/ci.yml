@@ -11,7 +11,20 @@ on:
   # whose required checks passed there. Without this trigger the workflow simply never runs for a
   # queued group, so enabling a merge queue would silently un-gate every merge.
   merge_group:
+  # An **opt-in** bench smoke. `inputs` is populated only for `workflow_dispatch`, and the job below
+  # also names the event, so `push`, `pull_request` and `merge_group` runs skip it and stay exactly
+  # as they were. Even when a human turns it on it is informational: `CI required` reports it and
+  # never blocks on it, and the model-driven sweep is not run here at all.
   workflow_dispatch:
+    inputs:
+      bench:
+        # Same-binary versus same-binary, so a green run means "the harness still drives a real
+        # worker and the worker answers the same way twice" — never a performance verdict. The
+        # comparison's state machine reads output hashes, error codes and harness failures only;
+        # medians are printed and uploaded, never asserted.
+        description: 'Also smoke the bench harness: the same staged worker on both sides, deterministic outcomes only'
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -135,6 +148,78 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # The bench smoke: `workflow_dispatch` only, off by default, and informational (like `tools-trial`
+  # above). One platform is enough, because it exercises the harness rather than the platform — the
+  # three-OS matrix in `validate` is the gate. Both sides are the *same* staged worker, so the run
+  # proves only what a harness self-check can prove: the corpus builds and is removed, the worker
+  # answers identically twice, and every query lands on `MATCH` or a declared `EXPECTED_*`. It cannot
+  # produce a performance verdict: `compare()` derives its state from output hashes, error codes and
+  # harness failures, and the timings are printed as evidence. A real sweep drives a model and is
+  # **never** run in CI.
+  bench-smoke:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.bench }}
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: '3'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Set up pinned Rust
+        shell: bash
+        run: rustup toolchain install 1.97.1 --profile minimal && rustup default 1.97.1
+      - name: Reuse exact locked Rust build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/target
+          key: ops-031-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/Cargo.lock') }}
+          restore-keys: ops-031-${{ runner.os }}-${{ runner.arch }}-
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
+      - name: Build the native worker
+        shell: bash
+        run: npm run build:ptc
+      # The harness's deterministic half on its own: pure functions, node stand-ins and the
+      # comparison's state machine. No model and no timing, so it is safe on a shared runner.
+      - name: Harness deterministic suites
+        run: node test/run.mjs bench
+      # One binary on both sides, through the single cross-platform entry point (`bench/cli.mjs`).
+      # The evidence lands under `bench/runs/` — the ignored evidence directory — so a hand-run of the
+      # same command leaves the working tree clean too. `--scale 0.01` shrinks the file *counts* only:
+      # the 33 MiB rejection, the 8 MiB hex window and the 1 MiB line boundaries are always present,
+      # so a smoke still exercises every boundary. The watchdog is generous because a shared runner is
+      # slow, not wrong.
+      - name: Tool-level comparison, one binary on both sides
+        shell: bash
+        run: |
+          worker="runtime/linux-x64/dsh-ops-worker"
+          mkdir -p bench/runs/smoke/fixtures
+          node bench/cli.mjs tools \
+            --baseline "$worker" --candidate "$worker" \
+            --out bench/runs/smoke/tools.json \
+            --temp-dir bench/runs/smoke/fixtures \
+            --scale 0.01 --timeout-ms 180000
+      # Evidence, not a gate: `report.md` / `run.json` / `panel.html` are uploaded **when they exist**
+      # (a tools-only smoke produces the comparison JSON and nothing else), so a dispatch that later
+      # runs more of the harness still gets its report without failing on the files it did not make.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-smoke-report
+          path: |
+            bench/runs/smoke/**
+            bench/runs/*/run.json
+            bench/runs/*/report.md
+            bench/runs/*/panel.html
+          if-no-files-found: warn
+          retention-days: 7
+
   # Static checks on the workflows themselves. Cheap, no Rust, nothing beyond the repository's own
   # dependencies: a workflow that quietly stops triggering — or stops blocking — is otherwise
   # invisible until someone merges something it was supposed to stop.
@@ -183,11 +268,14 @@ jobs:
   # One check for a maintainer to require. Branch protection names individual job results, and the
   # matrix above expands into one check per platform, so requiring the gate means keeping three names
   # in sync — and silently losing the gate when a runner label changes. This job collapses them, and
-  # it reports the deliberately non-blocking `tools-trial` without letting it fail the run.
+  # it reports the deliberately non-blocking `tools-trial` and `bench-smoke` without letting either
+  # fail the run. `bench-smoke` is listed in `needs` only so that this aggregate always accounts for
+  # every job; it is deliberately absent from the loop below, which is the whole of its non-blocking
+  # guarantee.
   ci-required:
     name: CI required
     if: always()
-    needs: [validate, workflow-lint, node-floor, tools-trial]
+    needs: [validate, workflow-lint, node-floor, tools-trial, bench-smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -206,6 +294,7 @@ jobs:
             [ "$result" = success ] || failed=1
           done
           echo "tools-trial: ${{ needs.tools-trial.result }} — informational: a broken tool shows up in its own job and report, it does not block a merge"
+          echo "bench-smoke: ${{ needs.bench-smoke.result }} — informational: opt-in via the 'bench' dispatch input (skipped on push/pull_request/merge_group), it does not block a merge"
           if [ "$failed" != 0 ]; then
             echo "::error::a blocking job did not succeed; read the failing job above"
             exit 1

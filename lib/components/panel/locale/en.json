@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Panel data capture",
+    "description": "Off by default. Once switched on, new conversations write <cwd>/.dsh-ops/panel/<sessionId>.json (the only data source) plus a panel.html viewer that reads it. Static files only: no UI panel, no port, no ~/.dsh writes."
+  }
+}

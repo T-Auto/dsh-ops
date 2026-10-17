@@ -7,6 +7,21 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### A repository-only benchmark harness, merged from #103 and #183 (#205, #173)
+
+- `bench/` is one cross-platform harness with two measurement modes and one JSON data
+  contract. It is repository-only: `files` does not carry `bench/`, no release build
+  touches it, no default CI run executes it, and `npm run bench:*` outside a checkout
+  fails with exit 2 instead of a dead path.
+- The model-free tool-level comparison is adopted from #103 (@OldLigant): its
+  `MATCH / MISMATCH / EXPECTED_DIFFERENCE / EXPECTED_REJECTION / UNSTABLE` state machine,
+  strictly created (never overwritten) reports, and the fixed size-boundary fixture corpus.
+- The model-driven token A/B skeleton is adopted from #183 (@Richeir): pass-drop before
+  cost, per-task pairing, the geomean summary and the archive of the raw evidence.
+- This set follows #173's intent: local performance measurement. Timings are printed as
+  human evidence, never adjudicated; a cost direction is read only when the paired,
+  both-sides-passing delta clears the A/A noise floor.
+
 ### Platform defaults confirmed by the operator (#170)
 
 - PTC enhancement is enabled by default (`defaultEnabled: true`, no disabled bundle row).

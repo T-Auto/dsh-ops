@@ -1,0 +1,12 @@
+{
+  "id": "config-hunt",
+  "title": "Resolve a setting's effective value across layered config files",
+  "prompt": "This repository assembles its application configuration from several JSON files. README.md documents the order in which they are merged: a key defined in a later layer replaces the same key from an earlier one. For the production environment, work out the effective value of MAX_UPLOAD_MB and write just that integer to answer.txt, with nothing else in the file.",
+  "fixture": {
+    "generator": "configTree",
+    "params": { "seed": 21, "packages": 12, "env": "production" }
+  },
+  "verify": [{ "type": "fileEquals", "path": "answer.txt", "expect": "answer" }],
+  "repeat": 2,
+  "timeoutMs": 900000
+}

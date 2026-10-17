@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/T-Auto/dsh-ops/bench/run.schema.json",
+  "title": "dsh-ops bench run.json",
+  "description": "One sealed measurement, and the only place bench data lives (bench/README.md, hard boundary 1). The panel and the comparison read this document; nothing is inlined into panel.html. Event bodies are written as NDJSON while a sweep runs (crash safe) and merged into this document when it is sealed. Every numeric field names its unit in its description.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "meta", "arms", "results", "verify", "events", "archive"],
+  "properties": {
+    "schemaVersion": { "description": "Contract revision of THIS document; a reader must reject a version it does not know. Bumped only when a field changes meaning.", "const": 1 },
+    "meta": { "description": "Provenance of the sweep: what ran, where, on which runtime, and the exact command line. Every clock in this document that is not derived from the rows lives here or in `events.mergedAt`.", "type": "object", "additionalProperties": false,
+      "required": ["benchVersion", "mode", "platform", "node", "argv", "startedAt", "endedAt", "arms"],
+      "properties": {
+        "benchVersion": { "description": "Version of the bench harness (package.json of the dsh-ops checkout).", "type": "string" },
+        "mode": { "description": "Measurement mode: \"ab\" is the model-driven token A/B, \"tools\" is the model-free deterministic tool-level comparison.", "enum": ["ab", "tools"] },
+        "platform": { "description": "Host tag as <platform>-<arch>, e.g. linux-x64 or win32-x64.", "type": "string" },
+        "node": { "description": "Node.js version the runner ran on, e.g. v24.21.0.", "type": "string" },
+        "dsh": { "description": "Version of the dsh launcher both arms were measured with, or null when unknown.", "type": ["string", "null"] },
+        "model": { "description": "Model id both arms used, or null for the model-free mode.", "type": ["string", "null"] },
+        "gitSha": { "description": "Commit the checkout was on, or null when it could not be read.", "type": ["string", "null"] },
+        "gitBranch": { "description": "Branch the checkout was on, or null when it could not be read.", "type": ["string", "null"] },
+        "argv": { "description": "The command line that produced this document, one array element per argv entry.", "type": "array", "items": { "type": "string" } },
+        "startedAt": { "description": "Wall-clock start of the sweep, ISO 8601 UTC; derived from the rows when the caller did not pass one.", "type": "string", "format": "date-time" },
+        "endedAt": { "description": "Wall-clock end of the sweep, ISO 8601 UTC, derived from the rows when the caller did not pass one, or null while it is still running.", "type": ["string", "null"], "format": "date-time" },
+        "arms": { "description": "Compact identity of the two arms compared: label and profile fingerprint. The full descriptor is the top-level `arms`.", "type": "object", "additionalProperties": false, "required": ["base", "cand"],
+          "properties": {
+            "base": { "description": "The baseline side's label, profile name, and profile fingerprint.", "type": "object", "additionalProperties": false, "required": ["label", "profile", "profileHash"],
+              "properties": {
+                "label": { "description": "Baseline arm label, also its profile name, e.g. bench-base.", "type": "string" },
+                "profile": { "description": "Baseline profile name whose resolved configuration was measured.", "type": "string" },
+                "profileHash": { "description": "SHA-256 in hex of the baseline's dumped configuration.", "type": "string" }
+              } },
+            "cand": { "description": "The candidate side's label, profile name, and profile fingerprint.", "type": "object", "additionalProperties": false, "required": ["label", "profile", "profileHash"],
+              "properties": {
+                "label": { "description": "Candidate arm label, also its profile name, e.g. bench-ops.", "type": "string" },
+                "profile": { "description": "Candidate profile name whose resolved configuration was measured.", "type": "string" },
+                "profileHash": { "description": "SHA-256 in hex of the candidate's dumped configuration.", "type": "string" }
+              } }
+          } }
+      } },
+    "arms": { "description": "The two sides of the comparison, described fully enough to reproduce them.", "type": "object", "additionalProperties": false, "required": ["base", "cand"],
+      "properties": { "base": { "$ref": "#/$defs/arm" }, "cand": { "$ref": "#/$defs/arm" } } },
+    "results": { "description": "One record per task x repeat x arm: the measurement rows the comparison and the panel pair up.", "type": "array", "items": { "$ref": "#/$defs/result" } },
+    "verify": { "description": "Run-level rollup of the per-row check results, for the panel's scoring tab.", "type": "object", "additionalProperties": false, "required": ["checks", "passed", "failed", "degraded"],
+      "properties": {
+        "checks": { "description": "Number of individual checks recorded across every row, as a count.", "type": "integer", "minimum": 0 },
+        "passed": { "description": "How many of those checks passed, as a count.", "type": "integer", "minimum": 0 },
+        "failed": { "description": "How many of those checks failed, as a count.", "type": "integer", "minimum": 0 },
+        "degraded": { "description": "True when at least one row cannot support a cost conclusion (timed out, crashed, interrupted, or usage was not fully reported).", "type": "boolean" },
+        "notes": { "description": "Human-readable caveats, one sentence per array item.", "type": "array", "items": { "type": "string" } }
+      } },
+    "events": { "description": "How the event stream is archived: written as NDJSON during the sweep, merged into this document when it is sealed. `results[].events.inline` carries the merged bodies.", "type": "object", "additionalProperties": false, "required": ["layout", "merged", "files"],
+      "properties": {
+        "layout": { "description": "On-disk layout of the event stream: \"ndjson-per-run\" while a sweep is in flight, \"merged\" once the bodies have been folded into this document.", "enum": ["ndjson-per-run", "merged"] },
+        "merged": { "description": "True when this document carries the event bodies in results[].events.inline; false when only the NDJSON files hold them.", "type": "boolean" },
+        "mergedAt": { "description": "When the NDJSON files were merged, ISO 8601 UTC, or null while unsealed.", "type": ["string", "null"], "format": "date-time" },
+        "files": { "description": "The NDJSON files this document was sealed from, each hashed so a reader can prove the merge.", "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["path", "events"],
+          "properties": {
+            "path": { "description": "Path relative to the run directory, with forward slashes.", "type": "string" },
+            "events": { "description": "Number of event lines in this file, as a count.", "type": "integer", "minimum": 0 },
+            "sha256": { "description": "SHA-256 of the file in hex, or null when it was not hashed.", "type": ["string", "null"] }
+          } } }
+      } },
+    "archive": { "description": "The manifest of one sealed run directory: every file that is part of the evidence, with its size and hash. The sealed run.json itself is not listed — it cannot hash itself.", "type": "array",
+      "items": { "type": "object", "additionalProperties": false, "required": ["path", "bytes", "sha256", "role"],
+        "properties": {
+          "path": { "description": "Path relative to the run directory, with forward slashes.", "type": "string" },
+          "bytes": { "description": "File size in bytes.", "type": "integer", "minimum": 0 },
+          "sha256": { "description": "SHA-256 of the file in hex.", "type": "string" },
+          "role": { "description": "What the file is: the contract document itself, the event stream, captured stderr, the narrated trace, a row's metrics document, a rendered report, the panel, a runner log, or anything else.", "enum": ["run", "events", "stderr", "trace", "metrics", "report", "panel", "log", "other"] }
+        } } }
+  },
+  "$defs": {
+    "arm": { "description": "One arm of the comparison: what it was called, which profile contents it ran, and how it was launched.", "type": "object", "additionalProperties": false, "required": ["label", "profile", "profileHash"],
+      "properties": {
+        "label": { "description": "Arm label, also the profile name it ran, e.g. bench-base.", "type": "string" },
+        "profile": { "description": "Profile name whose resolved configuration was measured.", "type": "string" },
+        "profileHash": { "description": "SHA-256 in hex of the arm's dumped configuration, the single-variable fingerprint.", "type": "string" },
+        "dshPath": { "description": "Absolute path of the lib/bin.js the arm ran, or null when unknown.", "type": ["string", "null"] },
+        "dshVersion": { "description": "dsh version the arm ran, or null when unknown.", "type": ["string", "null"] },
+        "env": { "description": "The environment overrides this arm was given, as name -> value (null means the name was removed).", "type": "object", "additionalProperties": { "type": ["string", "null"] } }
+      } },
+    "result": { "description": "One measured task x repeat x arm row.", "type": "object", "additionalProperties": false, "required": ["taskId", "repeatIndex", "arm", "metrics", "verify", "events"],
+      "properties": {
+        "taskId": { "description": "Id of the task this row measured.", "type": "string" },
+        "repeatIndex": { "description": "1-based repeat number of this task within the sweep.", "type": "integer", "minimum": 1 },
+        "arm": { "description": "Which arm this row belongs to, by arm label.", "type": "string" },
+        "profile": { "description": "Profile name this row ran under, or null when the row did not record one.", "type": ["string", "null"] },
+        "metrics": { "$ref": "#/$defs/metrics" },
+        "verify": { "description": "One entry per declared check, in declared order.", "type": "array", "items": { "$ref": "#/$defs/check" } },
+        "verifyPassed": { "description": "True when every check on this row passed; the row-level copy of the verdict the run rollup counts.", "type": "boolean" },
+        "verifyError": { "description": "Why the verifier could not produce a verdict, or null when it ran.", "type": ["string", "null"] },
+        "events": { "$ref": "#/$defs/eventRef" },
+        "traceFile": { "description": "Path of this row's narrated trace relative to the run directory, or null when there is none; the file itself is registered in `archive[]` and never inlined.", "type": ["string", "null"] },
+        "stderrFile": { "description": "Path of this row's captured stderr relative to the run directory, or null when there is none; the file itself is registered in `archive[]` and never inlined.", "type": ["string", "null"] },
+        "interrupted": { "description": "True when the operator stopped this row before it finished.", "type": "boolean" },
+        "spawnError": { "description": "Why the child could not be spawned, or null when it started.", "type": ["string", "null"] },
+        "runnerError": { "description": "Why the row's own runner failed (fixture or verifier), or null when it completed; a row is still returned so one broken row cannot erase a sweep.", "type": ["string", "null"] },
+        "timeoutMs": { "description": "Deadline this row was given, in milliseconds (ms).", "type": "integer", "minimum": 0 },
+        "archiveErrors": { "description": "Write failures the archiving streams reported for this row, one message per array item.", "type": "array", "items": { "type": "string" } }
+      } },
+    "metrics": { "description": "The measured numbers of one row: execution facts from the session driver plus the P6 aggregate of the same event stream. Token counts are absolute totals for the row, never deltas.", "type": "object", "additionalProperties": false,
+      "required": ["startedAt", "durationMs", "exit", "timedOut", "steps", "toolCalls", "usage", "usageReported", "traceRows", "milestones", "narration"],
+      "properties": {
+        "startedAt": { "description": "Wall-clock start of this row, ISO 8601 UTC.", "type": "string", "format": "date-time" },
+        "durationMs": { "description": "Wall-clock duration of this row in milliseconds (ms), measured around the child process.", "type": "integer", "minimum": 0 },
+        "exit": { "description": "Child process exit code, or null when the row timed out or was killed before it could exit.", "type": ["integer", "null"] },
+        "timedOut": { "description": "True when the task deadline killed this row.", "type": "boolean" },
+        "interrupted": { "description": "True when the operator stopped this row before it finished.", "type": "boolean" },
+        "spawnError": { "description": "Why the child could not be spawned, or null when it started.", "type": ["string", "null"] },
+        "runnerError": { "description": "Why the row's runner failed (fixture or verifier), or null when it completed.", "type": ["string", "null"] },
+        "steps": { "description": "Model steps (requests) in this row, as a count.", "type": "integer", "minimum": 0 },
+        "stepsWithUsage": { "description": "Steps in this row that reported usage, as a count; a step that reported none makes the token totals a lower bound.", "type": "integer", "minimum": 0 },
+        "turns": { "description": "Model turns in this row, as a count.", "type": "integer", "minimum": 0 },
+        "toolCalls": { "description": "Tool invocations in this row, as a count.", "type": "integer", "minimum": 0 },
+        "toolErrors": { "description": "Tool results in this row whose status was error, as a count.", "type": "integer", "minimum": 0 },
+        "usage": { "$ref": "#/$defs/usage" },
+        "usageReported": { "description": "True when every step reported usage. False makes the token totals a lower bound, so the row cannot support a cost conclusion.", "type": "boolean" },
+        "usageBucketsSeen": { "description": "Bucket names the provider actually reported in this row, sorted; `reasoningTokens` appears only when it was reported.", "type": "array", "items": { "type": "string" } },
+        "format": { "description": "Format tag of the P6 metrics document this row was folded from, so a reader can tell which shape it is holding.", "type": "string" },
+        "profile": { "description": "Profile name the aggregate was given for this row, or null when it was not told.", "type": ["string", "null"] },
+        "sessionId": { "description": "Session id the row's first `session` event carried, or null when none reached the stream.", "type": ["string", "null"] },
+        "prompt": { "$ref": "#/$defs/prompt" },
+        "stepUsage": { "description": "Per-step attribution: one entry per step_end, in step order, each naming the tools called during that step.", "type": "array", "items": { "$ref": "#/$defs/stepUsage" } },
+        "toolUsage": { "description": "Per-tool attribution, keyed by tool name; the entries' usage totals sum back to the steps that called them.", "type": "object", "additionalProperties": { "$ref": "#/$defs/toolAttribution" } },
+        "unattributedUsage": { "description": "Usage of the steps that called no tool at all, split the way the runtime reported it.", "anyOf": [{ "$ref": "#/$defs/usage" }, { "type": "null" }] },
+        "attribution": { "$ref": "#/$defs/attribution" },
+        "toolCallsByName": { "description": "Tool invocations broken down by tool name, each value a count.", "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "turnEndReason": { "description": "Why the model loop ended, as reported by the runtime, or null when unknown.", "type": ["string", "null"] },
+        "textChars": { "description": "Characters of assistant text the stream carried, as a count; no bytes were decoded twice.", "type": "integer", "minimum": 0 },
+        "thinkingChars": { "description": "Characters of reasoning text the stream carried, as a count.", "type": "integer", "minimum": 0 },
+        "finalTextBytes": { "description": "Size of the final answer's text in bytes.", "type": "integer", "minimum": 0 },
+        "finalSeen": { "description": "True when a `final` event reached the stream.", "type": "boolean" },
+        "eventCount": { "description": "Events folded into the aggregate, as a count.", "type": "integer", "minimum": 0 },
+        "malformedLines": { "description": "Stdout lines that were not a JSON object, as a count.", "type": "integer", "minimum": 0 },
+        "truncatedLines": { "description": "Events the stream marked truncated, as a count.", "type": "integer", "minimum": 0 },
+        "errorEvents": { "description": "Errors the runtime reported on the stream, one entry per event.", "type": "array", "items": { "$ref": "#/$defs/errorEvent" } },
+        "traceRows": { "description": "Rows in this row's narrated trace file, as a count; the trace itself is only registered in `archive[]`.", "type": "integer", "minimum": 0 },
+        "milestones": { "description": "Trace rows in the milestone lanes (boot, milestone, stall), as a count.", "type": "integer", "minimum": 0 },
+        "narration": { "$ref": "#/$defs/narration" },
+        "archiveErrors": { "description": "Write failures the archiving streams reported for this row, one message per array item.", "type": "array", "items": { "type": "string" } }
+      } },
+    "usage": { "description": "Token usage of one row, split the way the runtime reports it: the four core buckets are always present, `grandTotal` is their sum, and `reasoningTokens` appears only when the provider reported it.", "type": "object", "additionalProperties": false,
+      "required": ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "grandTotal"],
+      "properties": {
+        "inputTokens": { "description": "Uncached prompt tokens, as a count of tokens.", "type": "integer", "minimum": 0 },
+        "outputTokens": { "description": "Completion tokens, as a count of tokens.", "type": "integer", "minimum": 0 },
+        "cacheReadTokens": { "description": "Prompt tokens served from the prompt cache, as a count of tokens.", "type": "integer", "minimum": 0 },
+        "cacheWriteTokens": { "description": "Prompt tokens written into the prompt cache, as a count of tokens.", "type": "integer", "minimum": 0 },
+        "reasoningTokens": { "description": "Reasoning tokens the provider billed, as a count of tokens; absent — not zeroed — when the provider does not report them.", "type": "integer", "minimum": 0 },
+        "grandTotal": { "description": "Input + output + cache read + cache write, as a count of tokens; reasoning tokens are deliberately not a term.", "type": "integer", "minimum": 0 }
+      } },
+    "prompt": { "description": "Prompt-size summary of one row, all prompt token counts: what was re-sent to the model rather than produced by it.", "type": "object", "additionalProperties": false,
+      "required": ["reported", "firstStep", "median", "max", "total", "perTurn"],
+      "properties": {
+        "reported": { "description": "True when every step reported a usable size, so the summary is complete.", "type": "boolean" },
+        "firstStep": { "description": "Prompt tokens of the run's first request, as a count of tokens, or null when that step reported no size.", "type": ["integer", "null"] },
+        "median": { "description": "Median prompt tokens per step, as a count of tokens, or null when no step reported a size.", "type": ["integer", "null"] },
+        "max": { "description": "Largest prompt of any step, as a count of tokens, or null when no step reported a size.", "type": ["integer", "null"] },
+        "total": { "description": "Sum of every step's prompt tokens, as a count of tokens, or null when no step reported a size.", "type": ["integer", "null"] },
+        "perTurn": { "description": "The first request of each turn, in turn order; separates asking little from carrying little.", "type": "array", "items": { "$ref": "#/$defs/perTurnPrompt" } }
+      } },
+    "perTurnPrompt": { "description": "The first step of one turn and the prompt tokens it sent.", "type": "object", "additionalProperties": false, "required": ["turn", "tokens"],
+      "properties": {
+        "turn": { "description": "Turn number the stream labelled, or null when it did not.", "type": ["integer", "null"] },
+        "tokens": { "description": "Prompt tokens of that turn's first request, as a count of tokens.", "type": "integer", "minimum": 0 }
+      } },
+    "stepUsage": { "description": "One step's usage and the tools it called; the usage is null when that step reported nothing usable, never a zero row.", "type": "object", "additionalProperties": false,
+      "required": ["turn", "step", "promptTokens", "usage", "tools"],
+      "properties": {
+        "turn": { "description": "Turn number the stream labelled, or null when it did not.", "type": ["integer", "null"] },
+        "step": { "description": "Step number the stream labelled, or null when it did not.", "type": ["integer", "null"] },
+        "promptTokens": { "description": "Prompt tokens of this step, as a count of tokens, or null when the step reported no size.", "type": ["integer", "null"] },
+        "usage": { "description": "This step's bucket totals, or null when the step reported no usage.", "anyOf": [{ "$ref": "#/$defs/usage" }, { "type": "null" }] },
+        "tools": { "description": "Names of the tools called during this step, in call order.", "type": "array", "items": { "type": "string" } }
+      } },
+    "toolAttribution": { "description": "What one tool was charged: its call count and the step usage split evenly across its calls.", "type": "object", "additionalProperties": false, "required": ["calls", "steps", "usage", "usageBucketsSeen"],
+      "properties": {
+        "calls": { "description": "Calls to this tool, as a count.", "type": "integer", "minimum": 0 },
+        "steps": { "description": "Steps that called this tool, as a count.", "type": "integer", "minimum": 0 },
+        "usage": { "$ref": "#/$defs/usage" },
+        "usageBucketsSeen": { "description": "Bucket names that contributed to this tool's usage, sorted.", "type": "array", "items": { "type": "string" } }
+      } },
+    "attribution": { "description": "Conservation rollup of the attribution views: what the tools were charged, what no tool was charged for, and whether the two reconstitute the row.", "type": "object", "additionalProperties": false, "required": ["tools", "unattributed", "balanced"],
+      "properties": {
+        "tools": { "description": "Tokens charged to tools, as a count of tokens.", "type": "integer", "minimum": 0 },
+        "unattributed": { "description": "Tokens charged to no tool, as a count of tokens.", "type": "integer", "minimum": 0 },
+        "balanced": { "description": "True when tools + unattributed equals the row's core token total, so the attribution view adds up.", "type": "boolean" }
+      } },
+    "errorEvent": { "description": "One error the runtime reported on the event stream.", "type": "object", "additionalProperties": false, "required": ["message"],
+      "properties": { "message": { "description": "The error text, clamped for a human-readable report.", "type": "string" } } },
+    "narration": { "description": "Bounded P5 narration summary of one row: the milestone rows a reader should quote, capped, and whether the cap cut any.", "type": "object", "additionalProperties": false, "required": ["excerpts", "truncated"],
+      "properties": {
+        "excerpts": { "description": "The first milestone-lane trace rows, in order, capped by the sealer; each is a copy of the narrated line, not the whole trace.", "type": "array", "items": { "$ref": "#/$defs/narrationRow" } },
+        "truncated": { "description": "True when milestone rows were dropped by the cap; the full trace stays in the archive.", "type": "boolean" }
+      } },
+    "narrationRow": { "description": "One narrated milestone, copied from the row's trace for the panel.", "type": "object", "additionalProperties": false, "required": ["seq", "at", "offsetMs", "kind", "text"],
+      "properties": {
+        "seq": { "description": "1-based position of this row in the trace, as a count.", "type": "integer", "minimum": 1 },
+        "at": { "description": "Wall-clock time the line was narrated, ISO 8601 UTC.", "type": "string", "format": "date-time" },
+        "offsetMs": { "description": "Milliseconds (ms) since the row's trace started.", "type": "integer", "minimum": 0 },
+        "kind": { "description": "Trace lane of the line, e.g. session, step_end, stall.", "type": "string" },
+        "text": { "description": "The narrated line, verbatim.", "type": "string" }
+      } },
+    "check": { "description": "One declared verification check and its outcome on this row.", "type": "object", "additionalProperties": false, "required": ["type", "pass", "detail"],
+      "properties": {
+        "type": { "description": "Check type as declared in the task file, e.g. fileEquals.", "type": "string" },
+        "target": { "description": "What was checked: the path, directory, or command, or null when the check has no target.", "type": ["string", "null"] },
+        "pass": { "description": "True when the check held on this row.", "type": "boolean" },
+        "detail": { "description": "What was expected and what was found, in one line; a passing check keeps its evidence too (e.g. `present`, `matches expected content`) instead of being blanked.", "type": "string" },
+        "evidence": { "description": "Path of the evidence for this check, relative to the run directory, or null.", "type": ["string", "null"] }
+      } },
+    "eventRef": { "description": "Where this row's event body is: an NDJSON file during the sweep, inline in this document after the merge.", "type": "object", "additionalProperties": false, "required": ["format", "count"],
+      "properties": {
+        "format": { "description": "ndjson = the body is still only in a file; inline = the body is in `inline` in this document.", "enum": ["ndjson", "inline"] },
+        "file": { "description": "Path of the NDJSON file the body was read from, relative to the run directory, or null when there was none; kept after sealing so the archive can be checked.", "type": ["string", "null"] },
+        "count": { "description": "Number of event lines for this row, as a count; equals the line count of the source file.", "type": "integer", "minimum": 0 },
+        "malformed": { "description": "Lines in this row that were not a JSON object, as a count; they are not inlined because they are not events.", "type": "integer", "minimum": 0 },
+        "sha256": { "description": "SHA-256 of the NDJSON file in hex, or null when the file was absent.", "type": ["string", "null"] },
+        "inline": { "description": "The event objects themselves, present only after sealing (format inline); each is one NDJSON line, verbatim.", "type": "array", "items": { "type": "object" } }
+      } }
+  }
+}

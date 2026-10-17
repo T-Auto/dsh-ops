@@ -1,0 +1,12 @@
+{
+  "id": "csv-sum",
+  "title": "Aggregate an 8000-row CSV without drowning the context",
+  "prompt": "The file data.csv has the header id,region,amount. Compute the sum of the amount column over all rows whose region is exactly EU. Write only the resulting integer into answer.txt - no thousands separators, no other characters, no explanatory text.",
+  "fixture": {
+    "generator": "largeCsv",
+    "params": { "seed": 7, "rows": 8000, "targetRegion": "EU", "regions": ["EU", "US", "APAC", "LATAM"] }
+  },
+  "verify": [{ "type": "fileEquals", "path": "answer.txt", "expect": "sum" }],
+  "repeat": 2,
+  "timeoutMs": 900000
+}

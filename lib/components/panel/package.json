@@ -1,0 +1,7 @@
+{
+  "name": "dsh-ops-panel",
+  "version": "0.3.2",
+  "description": "Opt-in capture of new conversations into <cwd>/.dsh-ops/panel: one JSON data document per session plus a static viewer that reads it.",
+  "icon": "./icon.png",
+  "type": "module"
+}
