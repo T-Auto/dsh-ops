@@ -1,0 +1,12 @@
+{
+  "id": "big-file-paging",
+  "title": "Answer a question that needs two distant ranges of a 4,000-line module",
+  "prompt": "src/pipeline.js is a long generated module. It exports exactly one function named auditLimit. Write the exact integer that auditLimit('staging') returns to answer.txt, with nothing else in the file.",
+  "fixture": {
+    "generator": "deepModule",
+    "params": { "seed": 23, "lines": 4200, "env": "staging" }
+  },
+  "verify": [{ "type": "fileEquals", "path": "answer.txt", "expect": "answer" }],
+  "repeat": 2,
+  "timeoutMs": 900000
+}

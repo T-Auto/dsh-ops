@@ -1,0 +1,15 @@
+{
+  "id": "noisy-test-triage",
+  "title": "Triage the one real failure out of a 2,400-line test log",
+  "prompt": "Run node runner.js in the current working directory. Exactly one test fails and the process exits non-zero. Write the name of the failing test to failure.txt: exactly the text that follows 'not ok <number> - ' on that line, with no leading or trailing spaces and nothing else in the file.",
+  "fixture": {
+    "generator": "noisySuite",
+    "params": { "seed": 29, "tests": 2400 }
+  },
+  "verify": [
+    { "type": "fileEquals", "path": "failure.txt", "expect": "failingName" },
+    { "type": "command", "command": "node", "args": ["runner.js"], "exitCode": 1, "invariant": true }
+  ],
+  "repeat": 2,
+  "timeoutMs": 900000
+}

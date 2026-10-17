@@ -2,6 +2,9 @@
 # platform that checked them out.
 * text=auto eol=lf
 
+# bat file runs on Windows, default end line is CRLF
+*.bat text eol=crlf
+
 *.exe binary
 *.dll binary
 *.png binary

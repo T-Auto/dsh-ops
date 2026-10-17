@@ -59,6 +59,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - Tools trial: `node scripts/tools-trial.mjs` calls every published tool on a real host and prints a
   per-tool table; CI runs it in a separate, non-required `tools-trial` job.
+- `npm run bench:setup` prepares both bench profiles in one idempotent command.
+- `npm run bench:baseline` runs the full A/B sweep — base, ops, compare — in one command.
 - Documentation now matches the shipped 0.3.1 surface (no behavior change): the component reference
   describes `ops_inspect_local_file` as the bounded UTF-8/hex reader it implements (not multi-range,
   extra encodings or PDF), calls `ops_replace` a literal replacement, states that read-only refuses

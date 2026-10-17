@@ -99,7 +99,7 @@ npx --yes dsh-ops@latest uninstall --profile desktop
 ## 文档
 
 - [使用指南](docs/使用指南.md) · [常见问题](docs/常见问题.md) · [组件参考](docs/组件参考.md) · [配置参考](docs/配置参考.md)
-- [PTC 设计与使用](docs/native-ptc.md) · [手动验证](docs/manual-validation.md)
+- [PTC 设计与使用](docs/native-ptc.md) · [手动验证](docs/manual-validation.md) · [性能测试](bench/README.md)
 - [贡献指南](docs/贡献指南.md) · [路线图](docs/roadmap.md) · [变更日志](docs/CHANGELOG.md) · [溯源记录](docs/PROVENANCE.md)
 
 ## 许可证

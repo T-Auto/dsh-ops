@@ -61,7 +61,9 @@
     },
     "./ptc/package.json": "./lib/components/ptc/package.json",
     "./ptc/locale/*.json": "./lib/components/ptc/locale/*.json",
-    "./tui": { "default": "./lib/components/tui/index.js" },
+    "./tui": {
+      "default": "./lib/components/tui/index.js"
+    },
     "./tui/package.json": "./lib/components/tui/package.json",
     "./tui/locale/*.json": "./lib/components/tui/locale/*.json",
     "./hide-official": {
@@ -111,7 +113,9 @@
     "validate:manifest": "node scripts/validate-manifest.mjs",
     "test": "node test/run.mjs",
     "verify:release": "npm run verify && node bin/check-release.mjs",
-    "verify": "node scripts/validate-manifest.mjs && node test/run.mjs"
+    "verify": "node scripts/validate-manifest.mjs && node test/run.mjs",
+    "bench:setup": "node bench/setup.mjs",
+    "bench:baseline": "bench\\platform\\win-ab.bat"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",
