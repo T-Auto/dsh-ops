@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/T-Auto/dsh-ops/bench/run.schema.json",
+  "title": "dsh-ops bench run.json",
+  "description": "One sealed measurement, and the only place bench data lives (bench/README.md, hard boundary 1). The panel and the comparison read this document; nothing is inlined into panel.html. Event bodies are written as NDJSON while a sweep runs (crash safe) and merged into this document when it is sealed. Every numeric field names its unit in its description.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "meta", "arms", "results", "verify", "events", "archive"],
+  "properties": {
+    "schemaVersion": { "description": "Contract revision of THIS document; a reader must reject a version it does not know. Bumped only when a field changes meaning.", "const": 1 },
+    "meta": { "description": "Provenance of the sweep: what ran, where, on which runtime, and the exact command line.", "type": "object", "additionalProperties": false,
+      "required": ["benchVersion", "mode", "platform", "node", "argv", "startedAt", "endedAt", "arms"],
+      "properties": {
+        "benchVersion": { "description": "Version of the bench harness (package.json of the dsh-ops checkout).", "type": "string" },
+        "mode": { "description": "Measurement mode: \"ab\" is the model-driven token A/B, \"tools\" is the model-free deterministic tool-level comparison.", "enum": ["ab", "tools"] },
+        "platform": { "description": "Host tag as <platform>-<arch>, e.g. linux-x64 or win32-x64.", "type": "string" },
+        "node": { "description": "Node.js version the runner ran on, e.g. v24.21.0.", "type": "string" },
+        "dsh": { "description": "Version of the dsh launcher both arms were measured with, or null when unknown.", "type": ["string", "null"] },
+        "model": { "description": "Model id both arms used, or null for the model-free mode.", "type": ["string", "null"] },
+        "gitSha": { "description": "Commit the checkout was on, or null when it could not be read.", "type": ["string", "null"] },
+        "gitBranch": { "description": "Branch the checkout was on, or null when it could not be read.", "type": ["string", "null"] },
+        "argv": { "description": "The command line that produced this document, one array element per argv entry.", "type": "array", "items": { "type": "string" } },
+        "startedAt": { "description": "Wall-clock start of the sweep, ISO 8601 UTC.", "type": "string", "format": "date-time" },
+        "endedAt": { "description": "Wall-clock end of the sweep, ISO 8601 UTC, or null while it is still running.", "type": ["string", "null"], "format": "date-time" },
+        "arms": { "description": "Compact identity of the two arms compared: label and profile fingerprint. The full descriptor is the top-level `arms`.", "type": "object", "additionalProperties": false, "required": ["base", "cand"],
+          "properties": {
+            "base": { "description": "The baseline side's label, profile name, and profile fingerprint.", "type": "object", "additionalProperties": false, "required": ["label", "profile", "profileHash"],
+              "properties": {
+                "label": { "description": "Baseline arm label, also its profile name, e.g. bench-base.", "type": "string" },
+                "profile": { "description": "Baseline profile name whose resolved configuration was measured.", "type": "string" },
+                "profileHash": { "description": "SHA-256 in hex of the baseline's dumped configuration.", "type": "string" }
+              } },
+            "cand": { "description": "The candidate side's label, profile name, and profile fingerprint.", "type": "object", "additionalProperties": false, "required": ["label", "profile", "profileHash"],
+              "properties": {
+                "label": { "description": "Candidate arm label, also its profile name, e.g. bench-ops.", "type": "string" },
+                "profile": { "description": "Candidate profile name whose resolved configuration was measured.", "type": "string" },
+                "profileHash": { "description": "SHA-256 in hex of the candidate's dumped configuration.", "type": "string" }
+              } }
+          } }
+      } },
+    "arms": { "description": "The two sides of the comparison, described fully enough to reproduce them.", "type": "object", "additionalProperties": false, "required": ["base", "cand"],
+      "properties": { "base": { "$ref": "#/$defs/arm" }, "cand": { "$ref": "#/$defs/arm" } } },
+    "results": { "description": "One record per task x repeat x arm: the measurement rows the comparison and the panel pair up.", "type": "array", "items": { "$ref": "#/$defs/result" } },
+    "verify": { "description": "Run-level rollup of the per-row check results, for the panel's scoring tab.", "type": "object", "additionalProperties": false, "required": ["checks", "passed", "failed", "degraded"],
+      "properties": {
+        "checks": { "description": "Number of individual checks recorded across every row, as a count.", "type": "integer", "minimum": 0 },
+        "passed": { "description": "How many of those checks passed, as a count.", "type": "integer", "minimum": 0 },
+        "failed": { "description": "How many of those checks failed, as a count.", "type": "integer", "minimum": 0 },
+        "degraded": { "description": "True when at least one row cannot support a cost conclusion (timed out, crashed, or usage was not fully reported).", "type": "boolean" },
+        "notes": { "description": "Human-readable caveats, one sentence per array item.", "type": "array", "items": { "type": "string" } }
+      } },
+    "events": { "description": "How the event stream is archived: written as NDJSON during the sweep, merged into this document when it is sealed.", "type": "object", "additionalProperties": false, "required": ["layout", "merged", "files"],
+      "properties": {
+        "layout": { "description": "On-disk layout while the sweep ran: one NDJSON file per task x repeat x arm.", "const": "ndjson-per-run" },
+        "merged": { "description": "True when this document carries the event bodies in results[].events.inline; false when only the NDJSON files hold them.", "type": "boolean" },
+        "mergedAt": { "description": "When the NDJSON files were merged, ISO 8601 UTC, or null while unsealed.", "type": ["string", "null"], "format": "date-time" },
+        "files": { "description": "The NDJSON files this document was sealed from, each hashed so a reader can prove the merge.", "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["path", "events"],
+          "properties": {
+            "path": { "description": "Path relative to the run directory, with forward slashes.", "type": "string" },
+            "events": { "description": "Number of event lines in this file, as a count.", "type": "integer", "minimum": 0 },
+            "sha256": { "description": "SHA-256 of the file in hex, or null when it was not hashed.", "type": ["string", "null"] }
+          } } }
+      } },
+    "archive": { "description": "The manifest of one sealed run directory: every file that is part of the evidence, with its size and hash.", "type": "array",
+      "items": { "type": "object", "additionalProperties": false, "required": ["path", "bytes", "role"],
+        "properties": {
+          "path": { "description": "Path relative to the run directory, with forward slashes.", "type": "string" },
+          "bytes": { "description": "File size in bytes.", "type": "integer", "minimum": 0 },
+          "sha256": { "description": "SHA-256 of the file in hex, or null when it was not hashed.", "type": ["string", "null"] },
+          "role": { "description": "What the file is: the contract document, the event stream, captured stderr, a rendered report, the panel, a runner log, or anything else.", "enum": ["run", "events", "stderr", "report", "panel", "log", "other"] }
+        } } }
+  },
+  "$defs": {
+    "arm": { "description": "One arm of the comparison: what it was called, which profile contents it ran, and how it was launched.", "type": "object", "additionalProperties": false, "required": ["label", "profile", "profileHash"],
+      "properties": {
+        "label": { "description": "Arm label, also the profile name it ran, e.g. bench-base.", "type": "string" },
+        "profile": { "description": "Profile name whose resolved configuration was measured.", "type": "string" },
+        "profileHash": { "description": "SHA-256 in hex of the arm's dumped configuration, the single-variable fingerprint.", "type": "string" },
+        "dshPath": { "description": "Absolute path of the lib/bin.js the arm ran, or null when unknown.", "type": ["string", "null"] },
+        "dshVersion": { "description": "dsh version the arm ran, or null when unknown.", "type": ["string", "null"] },
+        "env": { "description": "The environment overrides this arm was given, as name -> value (null means the name was removed).", "type": "object", "additionalProperties": { "type": ["string", "null"] } }
+      } },
+    "result": { "description": "One measured task x repeat x arm row.", "type": "object", "additionalProperties": false, "required": ["taskId", "repeatIndex", "arm", "metrics", "verify", "events"],
+      "properties": {
+        "taskId": { "description": "Id of the task this row measured.", "type": "string" },
+        "repeatIndex": { "description": "1-based repeat number of this task within the sweep.", "type": "integer", "minimum": 1 },
+        "arm": { "description": "Which arm this row belongs to, by arm label.", "type": "string" },
+        "metrics": { "$ref": "#/$defs/metrics" },
+        "verify": { "description": "One entry per declared check, in declared order.", "type": "array", "items": { "$ref": "#/$defs/check" } },
+        "events": { "$ref": "#/$defs/eventRef" }
+      } },
+    "metrics": { "description": "The measured numbers of one row. Token counts are absolute totals for the row, never deltas.", "type": "object", "additionalProperties": false,
+      "required": ["startedAt", "durationMs", "exit", "timedOut", "steps", "toolCalls", "usage", "usageReported"],
+      "properties": {
+        "startedAt": { "description": "Wall-clock start of this row, ISO 8601 UTC.", "type": "string", "format": "date-time" },
+        "durationMs": { "description": "Wall-clock duration of this row in milliseconds (ms), measured around the child process.", "type": "integer", "minimum": 0 },
+        "exit": { "description": "Child process exit code, or null when the row timed out or was killed before it could exit.", "type": ["integer", "null"] },
+        "timedOut": { "description": "True when the task deadline killed this row.", "type": "boolean" },
+        "steps": { "description": "Model steps (requests) in this row, as a count.", "type": "integer", "minimum": 0 },
+        "toolCalls": { "description": "Tool invocations in this row, as a count.", "type": "integer", "minimum": 0 },
+        "usage": { "$ref": "#/$defs/usage" },
+        "usageReported": { "description": "True when every step reported usage. False makes the token totals a lower bound, so the row cannot support a cost conclusion.", "type": "boolean" },
+        "toolCallsByName": { "description": "Tool invocations broken down by tool name, each value a count.", "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "turnEndReason": { "description": "Why the model loop ended, as reported by the runtime, or null when unknown.", "type": ["string", "null"] }
+      } },
+    "usage": { "description": "Token usage of one row, split the way the runtime reports it.", "type": "object", "additionalProperties": false,
+      "required": ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "reasoningTokens"],
+      "properties": {
+        "inputTokens": { "description": "Uncached prompt tokens, as a count of tokens.", "type": "integer", "minimum": 0 },
+        "outputTokens": { "description": "Completion tokens, as a count of tokens.", "type": "integer", "minimum": 0 },
+        "cacheReadTokens": { "description": "Prompt tokens served from the prompt cache, as a count of tokens.", "type": "integer", "minimum": 0 },
+        "cacheWriteTokens": { "description": "Prompt tokens written into the prompt cache, as a count of tokens.", "type": "integer", "minimum": 0 },
+        "reasoningTokens": { "description": "Reasoning tokens the provider billed, as a count of tokens; 0 when the provider does not report them.", "type": "integer", "minimum": 0 }
+      } },
+    "check": { "description": "One declared verification check and its outcome on this row.", "type": "object", "additionalProperties": false, "required": ["type", "pass", "detail"],
+      "properties": {
+        "type": { "description": "Check type as declared in the task file, e.g. fileEquals.", "type": "string" },
+        "target": { "description": "What was checked: the path, directory, or command, or null when the check has no target.", "type": ["string", "null"] },
+        "pass": { "description": "True when the check held on this row.", "type": "boolean" },
+        "detail": { "description": "One line saying what was expected and what was found; empty when pass is true.", "type": "string" },
+        "evidence": { "description": "Path of the evidence for this check, relative to the run directory, or null.", "type": ["string", "null"] }
+      } },
+    "eventRef": { "description": "Where this row's event body is: an NDJSON file during the sweep, inline after the merge.", "type": "object", "additionalProperties": false, "required": ["format", "count"],
+      "properties": {
+        "format": { "description": "ndjson = the body is still in a file; inline = the body is in `inline` in this document.", "enum": ["ndjson", "inline"] },
+        "file": { "description": "Path of the NDJSON file relative to the run directory, or null once the body is inline.", "type": ["string", "null"] },
+        "count": { "description": "Number of event lines for this row, as a count.", "type": "integer", "minimum": 0 },
+        "sha256": { "description": "SHA-256 of the NDJSON file in hex, or null when it was not hashed.", "type": ["string", "null"] },
+        "inline": { "description": "The event objects themselves, present only after sealing (format inline); each is one NDJSON line, verbatim.", "type": "array", "items": { "type": "object" } }
+      } }
+  }
+}
