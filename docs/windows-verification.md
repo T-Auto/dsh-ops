@@ -20,6 +20,38 @@ difference is the deliverable, not a nuisance.
 
 ## W1 — `ops_replace` and file security on Windows (L1 / L9, Windows half)
 
+> **Measured 2026-10-15 on a real Windows x64 host** (Windows 11 Pro, NTFS,
+> Node v24.18.0, worker built from this tree). Automated as
+> `test/windows-security.test.mjs` — 8 checks, all green; the suite runs on
+> every `npm run verify` Windows lane, so this half no longer needs a human.
+> The measurements, with raw `icacls` before/after in the suite output:
+>
+> - **W1a — finding confirmed, and it is worse than "lost"**: the explicit
+>   read-only grant (`user:(R)`, inheritance removed) comes back as
+>   `user:(F)` — full control. The replacement **widened** access.
+> - **W1b — finding confirmed**: a deny ACE for another principal
+>   (`Guest:(DENY)(W)`) does not survive a successful replacement; the
+>   restriction is widened away. (A deny that blocks the caller's own write
+>   refuses earlier — see the W1b-failclosed note in the suite history; the
+>   observable mechanism is covered by W1d's structured refusal.)
+> - **W1c — same-user owner unchanged** (the two-user case still needs a
+>   second account).
+> - **W1d — confirmed**: a READONLY target refuses with a **structured**
+>   error (`error.code` present, phase carried), nothing rewritten, no debris.
+> - **W1e — confirmed**: a no-share open target refuses with a **structured**
+>   error, nothing rewritten, no debris. Measured detail: `deny(W)`/`deny(D)`
+>   on the target also blocks Node's own `readFileSync` (libuv opens for
+>   more than read), so the fixture asserts after releasing the holder.
+> - **W1g — confirmed**: an uncontended replace succeeds under the sidecar
+>   lock; a racing loser reports structured `REVISION_CONFLICT` (never a raw
+>   platform error).
+> - **W1h — confirmed**: reads of the target/directory never fail while
+>   replaces are in flight (8 replaces × continuous reader, 0 denials).
+>
+> One harness finding from the same run: the gate's own cleanup used to crash
+> on Windows transient `EPERM` (`rmSync` without retries); it now retries
+> (`maxRetries: 8`), which any CI Windows lane needs.
+
 The POSIX half of this defect is **fixed**. `atomic_write` now captures the target's
 mode, owner, POSIX ACL and extended attributes and reapplies them before publishing,
 and `test/file-metadata.test.mjs` locks that in: `0600` and `0400` stay `0600`/`0400`,
