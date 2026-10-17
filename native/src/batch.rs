@@ -95,6 +95,7 @@ pub fn run(root: &Dir, store: &Store, request: &Request) -> Result<Value> {
                     revision: snap.revision,
                     logical_bytes: snap.bytes,
                     entries: snap.entries,
+                    metadata_not_preserved: Vec::new(),
                     state: State::Pending,
                     error: None,
                 });
@@ -293,7 +294,8 @@ fn execute(root: &Dir, store: &Store, job: &mut Job, request: &Request) -> Resul
                 e.message
             )));
         }
-        let effect = (|| -> Result<()> {
+        let effect = (|| -> Result<Vec<String>> {
+            let mut not_preserved = Vec::new();
             match op.op {
                 Kind::Remove => paths::remove(root, &op.path)?,
                 Kind::Copy | Kind::Move => {
@@ -301,32 +303,42 @@ fn execute(root: &Dir, store: &Store, job: &mut Job, request: &Request) -> Resul
                         .to
                         .as_ref()
                         .ok_or_else(|| Failure::new("INVALID_ARGUMENT", "Missing destination"))?;
-                    paths::copy(root, &op.path, to)?;
-                    if paths::snapshot(root, to, Kind::Copy)?.revision != job.items[index].revision
-                    {
-                        return Err(Failure::unknown("Copy verification failed"));
-                    }
-                    if op.op == Kind::Move {
-                        if paths::snapshot(root, &op.path, Kind::Move)?.revision
+                    // A same-device move is a rename: one atomic step that carries the
+                    // inode's mode, ACLs, capabilities and xattrs with it, at no copy
+                    // cost. Only a cross-device move falls back to copy-and-remove,
+                    // which re-applies that metadata itself (paths::copy_attributes).
+                    let renamed =
+                        op.op == Kind::Move && paths::rename_same_device(root, &op.path, to)?;
+                    if !renamed {
+                        not_preserved = paths::copy(root, &op.path, to)?;
+                        if paths::snapshot(root, to, Kind::Copy)?.revision
                             != job.items[index].revision
                         {
-                            return Err(Failure::unknown(
-                                "Source changed during copy; both paths retained",
-                            ));
+                            return Err(Failure::unknown("Copy verification failed"));
                         }
-                        paths::remove(root, &op.path)?;
+                        if op.op == Kind::Move {
+                            if paths::snapshot(root, &op.path, Kind::Move)?.revision
+                                != job.items[index].revision
+                            {
+                                return Err(Failure::unknown(
+                                    "Source changed during copy; both paths retained",
+                                ));
+                            }
+                            paths::remove(root, &op.path)?;
+                        }
                     }
                 }
             }
             if !postcondition(root, &job.items[index])? {
                 return Err(Failure::unknown("Postcondition failed"));
             }
-            Ok(())
+            Ok(not_preserved)
         })();
         match effect {
-            Ok(()) => {
+            Ok(not_preserved) => {
                 job.items[index].state = State::Completed;
                 job.items[index].error = None;
+                job.items[index].metadata_not_preserved = not_preserved;
             }
             Err(e) => {
                 job.items[index].error =
@@ -352,6 +364,12 @@ pub fn summary(job: &Job) -> Value {
     json!({ "id": job.id, "status": if completed == job.items.len() { "completed" } else if unknown > 0 { "unknown" } else if failed > 0 { "partial_completion" } else { "planned" },
         "phase": if completed+failed+unknown == 0 { "preflight" } else { "settled" }, "done": completed, "total": job.items.len(), "failed": failed, "unknown": unknown,
         "logicalBytes": job.items.iter().map(|i| i.logical_bytes).sum::<u64>(), "byteSemantics": "logical_path_bytes_not_physical_reclaimed_space",
+        // Already computed per item during preflight; a recursive remove that does not
+        // report its scale leaves the plan unable to answer "how much is this?".
+        "entries": job.items.iter().map(|i| i.entries).sum::<u64>(),
+        // Attributes a destination could not hold are a report, not a failure: the file
+        // moved, and this says how many attributes did not travel with it.
+        "metadataNotPreserved": job.items.iter().map(|i| i.metadata_not_preserved.len() as u64).sum::<u64>(),
         "detailsRef": job.id, "complete": false, "omitted": job.items.len(),
         "nextAction": if unknown > 0 { "Resume verifies unknown items only; inspect unresolved manifest entries before manual repair." } else { "Use ops_result page with detailsRef for complete per-item data." } })
 }
