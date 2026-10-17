@@ -203,4 +203,57 @@ await test('read-only publishes no bash tool at all', async () => {
   } finally { await shutdown(ctx) }
 })
 
+await test('session bash resolves workdir before validating or spawning it (#180)', async () => {
+  const { ctx } = await bootHost()
+  const previousCwd = process.cwd()
+  try {
+    await ctx.plugin(Subprocess)
+    await ctx.plugin(inner => inner.provide('sandboxPolicy', policyService()))
+    await withTempDir('linux-shell-workdir', async root => {
+      const workspace = path.join(root, 'session workspace')
+      const helper = path.join(root, 'helper')
+      const child = path.join(workspace, 'retest-dir')
+      fs.mkdirSync(child, { recursive: true })
+      // Both directories exist: success alone must not hide running in the wrong one.
+      fs.mkdirSync(path.join(helper, 'retest-dir'), { recursive: true })
+      process.chdir(helper)
+      await mountComponent(ctx, 'shell', {})
+      const agent = await agentFor(ctx, 'linux-shell-workdir', 'danger-full-access', workspace)
+      let definition
+      const deadline = Date.now() + 5000
+      while (!(definition = ctx.get('tools').get(BASH_TOOL, agent)) && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 50))
+      }
+      assert.ok(definition, 'the session must publish ops_bash')
+      const execute = args => definition.execute(args, { agent, signal: new AbortController().signal })
+      for (const [workdir, expected] of [
+        [undefined, workspace], ['', workspace], ['   ', workspace], ['.', workspace],
+        ['retest-dir', child], ['./retest-dir', child], ['retest-dir/../retest-dir', child], [child, child],
+      ]) {
+        const value = await execute({ command: 'pwd -P', workdir })
+        assert.equal(value.exitCode, 0, JSON.stringify(value))
+        assert.equal(value.stdout.text.trim(), expected, `workdir=${JSON.stringify(workdir)}`)
+      }
+      const marker = path.join(helper, 'must-not-run')
+      const file = path.join(workspace, 'not-a-directory')
+      fs.writeFileSync(file, 'file')
+      for (const workdir of ['missing', 'not-a-directory', path.join(workspace, 'absent')]) {
+        await assert.rejects(() => execute({ command: 'touch must-not-run', workdir }), error => {
+          assert.match(error.message, /invalid workdir: must be an existing directory/)
+          assert.ok(error.message.includes(path.resolve(workspace, workdir)), error.message)
+          assert.doesNotMatch(error.message, /bash executable|provision-shells/)
+          return true
+        })
+      }
+      assert.equal(fs.existsSync(marker), false)
+      assert.equal(fs.existsSync(path.join(workspace, 'must-not-run')), false)
+      // Moving the command directory must not move the authoritative workspace boundary.
+      assert.equal(ctx.get('sandboxPolicy').resolve({ session: agent.session }).workspaceRoot, workspace)
+    })
+  } finally {
+    process.chdir(previousCwd)
+    await shutdown(ctx)
+  }
+})
+
 report('linux-shell')

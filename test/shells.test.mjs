@@ -1078,16 +1078,17 @@ await test('ops_bash rejects an empty workdir string instead of spawning it', as
 })
 
 await test('sessionWorkdir resolves placeholders to the session directory', async () => {
-  const session = { header: { cwd: 'C:\\session\\cwd' } }
-  assert.equal(sessionWorkdir({}, session), 'C:\\session\\cwd')
-  assert.equal(sessionWorkdir({ workdir: undefined }, session), 'C:\\session\\cwd')
-  assert.equal(sessionWorkdir({ workdir: null }, session), 'C:\\session\\cwd')
-  assert.equal(sessionWorkdir({ workdir: '' }, session), 'C:\\session\\cwd')
-  assert.equal(sessionWorkdir({ workdir: '   ' }, session), 'C:\\session\\cwd')
-  assert.equal(sessionWorkdir({ workdir: 'D:\\chosen' }, session), 'D:\\chosen')
-  // A meaningful string passes through unaltered, and a non-string is not
-  // silently coerced to the default; the executor rejects it.
-  assert.equal(sessionWorkdir({ workdir: '  D:\\chosen  ' }, session), '  D:\\chosen  ')
+  const cwd = path.resolve('session', 'cwd')
+  const session = { header: { cwd } }
+  assert.equal(sessionWorkdir({}, session), cwd)
+  assert.equal(sessionWorkdir({ workdir: undefined }, session), cwd)
+  assert.equal(sessionWorkdir({ workdir: null }, session), cwd)
+  assert.equal(sessionWorkdir({ workdir: '' }, session), cwd)
+  assert.equal(sessionWorkdir({ workdir: '   ' }, session), cwd)
+  const chosen = path.resolve('chosen')
+  assert.equal(sessionWorkdir({ workdir: chosen }, session), chosen)
+  // Meaningful spaces are filename bytes, and non-strings still reach validation.
+  assert.equal(sessionWorkdir({ workdir: '  chosen  ' }, session), path.resolve(cwd, '  chosen  '))
   assert.equal(sessionWorkdir({ workdir: 5 }, session), 5)
 })
 

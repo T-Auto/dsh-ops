@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Fix `ops_bash` resolving relative `workdir` paths against the host process instead of
+  the calling session's workspace (#180, #113). Directory validation now receives the
+  resolved path, so an invalid workdir reports that absolute path before a command starts.
 - Tools trial: `node scripts/tools-trial.mjs` calls every published tool on a real host and prints a
   per-tool table; CI runs it in a separate, non-required `tools-trial` job.
 - Documentation now matches the shipped 0.3.1 surface (no behavior change): the component reference

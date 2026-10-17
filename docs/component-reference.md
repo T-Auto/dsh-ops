@@ -141,6 +141,8 @@ Bounded session-owned result references: put object rows, page with top-level `e
 Routing: **toolkit → bash → PowerShell 7**.
 
 - `ops_bash`: the preferred general command executor. Use `command` for short commands and `script_path` for long scripts.
+  Relative `workdir` paths (including `.`) resolve against the calling session's workspace, not the host process directory. Omitting `workdir` or passing a blank string uses that workspace; absolute paths remain absolute. Missing or non-directory targets are rejected before execution, with the resolved path in the error.
+  On Windows, `\child` uses the session's drive; a drive-relative path such as `C:child` on a different drive must be written as an absolute path.
 - Host `pwsh`: Windows-native operations, using bundled PowerShell 7.
 
 "Prefer bash as the terminal" means prompting the model to use `ops_bash` first; it **does not change the system default terminal, PATH or existing host shell tool names**. When the shell component is on, the official configuration lifecycle temporarily sets the PowerShell 7 path for `pwsh-sandbox`; when off, it restores the executor's latest original configuration without writing profile configuration. Switching executor configuration does not cancel already-running host commands.
