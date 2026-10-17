@@ -64,9 +64,9 @@ jobs:
     steps:
       # Every action major in this workflow matches the actively-running ci.yml, so
       # both files share one upgrade path instead of drifting apart.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
 
@@ -106,7 +106,7 @@ jobs:
         if: matrix.target == 'win32-x64'
         run: npm run build:bash-ipc
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: native-${{ matrix.target }}
           # Download each artifact into its own runtime/<target>/ directory.
@@ -125,9 +125,9 @@ jobs:
     env:
       DIST: dist-release
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
 
@@ -146,17 +146,17 @@ jobs:
             throw "tag $env:GITHUB_REF_NAME does not match the package version v$version"
           }
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: native-win32-x64
           path: runtime/win32-x64
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: native-linux-x64
           path: runtime/linux-x64
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: native-darwin-arm64
           path: runtime/darwin-arm64
@@ -191,7 +191,7 @@ jobs:
         # a mismatch between the plan, the tarballs and SHA256SUMS fails here.
         run: node scripts/build-platform-packages.mjs check --dist "$env:DIST"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-dist
           path: dist-release/
@@ -211,7 +211,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release-dist
           path: dist-release

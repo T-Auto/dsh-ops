@@ -38,8 +38,8 @@ jobs:
       DSH_OPS_SUITE_TIMEOUT_MS: '300000'
       DSH_OPS_RETRY_TIMEOUTS: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - name: Verify runner identity
@@ -48,7 +48,7 @@ jobs:
         shell: bash
         run: rustup toolchain install 1.97.1 --profile minimal && rustup default 1.97.1
       - name: Reuse exact locked Rust build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -82,7 +82,7 @@ jobs:
       - name: Check shell payload platform filtering
         shell: bash
         run: node -e "const fs=require('fs');if(process.platform!=='win32'){for(const n of ['bash','pwsh'])if(fs.existsSync('node_modules/@dsh-ops/'+n+'-win32-x64'))throw Error('Windows shell installed on POSIX')}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: native-${{ matrix.target }}
           path: runtime/${{ matrix.target }}/
@@ -100,15 +100,15 @@ jobs:
     env:
       CARGO_BUILD_JOBS: '3'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - name: Set up pinned Rust
         shell: bash
         run: rustup toolchain install 1.97.1 --profile minimal && rustup default 1.97.1
       - name: Reuse exact locked Rust build cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -127,7 +127,7 @@ jobs:
       - name: Try every published tool
         shell: bash
         run: node scripts/tools-trial.mjs
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: tools-trial-report
@@ -142,8 +142,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '24'
       - name: Install locked dependencies
@@ -162,8 +162,8 @@ jobs:
       DSH_OPS_SUITE_TIMEOUT_MS: '300000'
       DSH_OPS_RETRY_TIMEOUTS: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: '22.19'
       - name: Set up pinned Rust
