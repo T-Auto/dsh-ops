@@ -4,7 +4,7 @@
  * @module dsh-ops/bench/fixtures/log
  */
 
-import { hexRun, mulberry32, pad, pick, WORDS } from './index.mjs'
+import { hexRun, mulberry32, pad, pick, WORDS } from './internal.mjs'
 
 /**
  * `logStats` — a directory of log files plus the per-file count of `ERROR` lines
