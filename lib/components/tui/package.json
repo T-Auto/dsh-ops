@@ -1,6 +1,6 @@
 {
   "name": "dsh-ops-tui",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Optional read-only OPS activity sidebar for dsh-TUI.",
   "icon": "./icon.png",
   "type": "module"

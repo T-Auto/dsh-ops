@@ -1,6 +1,6 @@
 {
   "name": "dsh-ops",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "publishConfig": {
     "access": "public"
   },
@@ -61,7 +61,9 @@
     },
     "./ptc/package.json": "./lib/components/ptc/package.json",
     "./ptc/locale/*.json": "./lib/components/ptc/locale/*.json",
-    "./tui": { "default": "./lib/components/tui/index.js" },
+    "./tui": {
+      "default": "./lib/components/tui/index.js"
+    },
     "./tui/package.json": "./lib/components/tui/package.json",
     "./tui/locale/*.json": "./lib/components/tui/locale/*.json",
     "./hide-official": {

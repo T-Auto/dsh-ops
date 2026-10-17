@@ -754,7 +754,7 @@ await test('on POSIX the profile CLI fallback launches dsh, not the Windows cmd 
     })
     assert.match(run.stdout, /Official CLI: dsh;/, `${run.stdout}${run.stderr}`)
     assert.equal(fs.existsSync(marker), true, `the POSIX CLI must have been launched: ${run.stdout}${run.stderr}`)
-    assert.equal(fs.readFileSync(marker, 'utf8').trim(), 'plugin --profile web add dsh-ops@0.3.1')
+    assert.equal(fs.readFileSync(marker, 'utf8').trim(), 'plugin --profile web add dsh-ops@0.3.2')
     assert.equal(run.status, 0, `${run.stdout}${run.stderr}`)
   })
 })

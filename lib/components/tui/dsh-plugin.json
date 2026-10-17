@@ -3,7 +3,7 @@
   "manifestVersion": "0.15",
   "id": "dsh-ops-tui",
   "name": "dsh-ops-tui",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "license": "MIT",
   "facets": {
     "host": {

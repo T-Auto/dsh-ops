@@ -3,7 +3,7 @@
   "manifestVersion": "0.15",
   "id": "dsh-ops.native",
   "name": "dsh-ops",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "license": "MIT AND Apache-2.0",
   "facets": {
     "host": {
@@ -102,27 +102,57 @@
         "id": "dsh-ops-ptc",
         "entry": "dsh-ops/ptc",
         "defaultEnabled": true,
-        "platforms": ["win32", "linux", "darwin"],
-        "architectures": ["x64", "arm64"],
-        "targets": ["win32-x64", "linux-x64", "darwin-arm64"],
+        "platforms": [
+          "win32",
+          "linux",
+          "darwin"
+        ],
+        "architectures": [
+          "x64",
+          "arm64"
+        ],
+        "targets": [
+          "win32-x64",
+          "linux-x64",
+          "darwin-arm64"
+        ],
         "presentation": "PTC-only",
         "runtime": "independent native Rust file worker",
-        "tools": ["ops_batch", "ops_result"],
+        "tools": [
+          "ops_batch",
+          "ops_result"
+        ],
         "permissions": "Per-call original DSH sandboxPolicy and sandbox.confine (host full/partial enforcement reported); full access bypasses confinement and permits explicit operation roots; subprocess owns cancellation and credential scrub"
       },
       {
         "id": "dsh-ops-shell",
         "entry": "dsh-ops/shell",
         "defaultEnabled": true,
-        "platforms": ["win32", "linux", "darwin"],
-        "targets": ["win32-x64", "linux-x64", "darwin-arm64"]
+        "platforms": [
+          "win32",
+          "linux",
+          "darwin"
+        ],
+        "targets": [
+          "win32-x64",
+          "linux-x64",
+          "darwin-arm64"
+        ]
       },
       {
         "id": "dsh-ops-file",
         "entry": "dsh-ops/file",
         "defaultEnabled": true,
-        "platforms": ["win32", "linux", "darwin"],
-        "targets": ["win32-x64", "linux-x64", "darwin-arm64"]
+        "platforms": [
+          "win32",
+          "linux",
+          "darwin"
+        ],
+        "targets": [
+          "win32-x64",
+          "linux-x64",
+          "darwin-arm64"
+        ]
       },
       {
         "id": "dsh-ops-tui",
@@ -135,9 +165,17 @@
         "id": "dsh-ops-hide-official",
         "entry": "dsh-ops/hide-official",
         "defaultEnabled": false,
-        "platforms": ["win32", "linux", "darwin"],
+        "platforms": [
+          "win32",
+          "linux",
+          "darwin"
+        ],
         "strict": true,
-        "retainedOfficialCommand": { "win32": "pwsh", "linux": "bash", "darwin": "bash" },
+        "retainedOfficialCommand": {
+          "win32": "pwsh",
+          "linux": "bash",
+          "darwin": "bash"
+        },
         "readiness": "Opt-in: READINESS_BLOCKED blocks assembly/execution only for the affected scope; healthy scopes retain verified masks. All visible official capabilities require reviewed implemented OPS equivalents before that scope is masked. run_code is not exempt; unhideable transports and own-scope registrations fail prompt assembly and execution closed."
       }
     ]
