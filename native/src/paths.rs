@@ -265,6 +265,7 @@ fn scan_node(dir: &Dir, name: &str, kind: Kind, s: &mut Scan, depth: usize) -> R
 /// A same-device move is a rename: one atomic step that carries the inode's mode,
 /// ACLs, capabilities and extended attributes with it. `false` means source and
 /// destination live on different filesystems (EXDEV) and the caller has to copy.
+#[cfg(unix)]
 pub fn rename_same_device(root: &Dir, source: &str, dest: &str) -> Result<bool> {
     let (sd, sn) = parent(root, source)?;
     let (dd, dn) = parent(root, dest)?;
@@ -289,6 +290,15 @@ pub fn rename_same_device(root: &Dir, source: &str, dest: &str) -> Result<bool> 
         Err(error) => Err(std::io::Error::from(error).into()),
     }
 }
+
+/// A platform that cannot publish a move with `RENAME_NOREPLACE` keeps the
+/// copy-then-remove path the move already falls back to when a filesystem reports
+/// `EXDEV`: `false` here means "copy instead of renaming", not "the move failed".
+#[cfg(not(unix))]
+pub fn rename_same_device(_root: &Dir, _source: &str, _dest: &str) -> Result<bool> {
+    Ok(false)
+}
+
 /// Carry the metadata a rename would have carried: the mode, then every extended
 /// attribute the source holds except its SELinux label, which the destination's
 /// filesystem labels itself.
@@ -314,7 +324,10 @@ fn copy_attributes(
 ) -> Result<()> {
     // The mode is not optional: fail here rather than publish a file whose permissions
     // are some default the caller never asked for.
-    rustix::fs::fchmod(dst, rustix::fs::Mode::from_bits_truncate(mode))
+    // `mode()` is u32 on every platform, while rustix's `Mode` is built on the
+    // platform's `mode_t` (16 bits on darwin); `from_raw_mode` takes it as-is and masks
+    // the file-type bits itself.
+    rustix::fs::fchmod(dst, rustix::fs::Mode::from_raw_mode(mode as _))
         .map_err(std::io::Error::from)?;
     let mut names = vec![0u8; 64 * 1024];
     let used = match rustix::fs::flistxattr(src, &mut names) {
