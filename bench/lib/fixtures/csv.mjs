@@ -4,7 +4,7 @@
  * @module dsh-ops/bench/fixtures/csv
  */
 
-import { mulberry32, pick, randInt } from './index.mjs'
+import { mulberry32, pick, randInt } from './internal.mjs'
 
 /**
  * `largeCsv` — one wide CSV plus the exact integer sum of one region's amounts

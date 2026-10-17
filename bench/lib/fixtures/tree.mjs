@@ -8,7 +8,7 @@
 
 import { createHash } from 'node:crypto'
 
-import { drawIndices, hexRun, mulberry32, pad, pick, randInt, WORDS } from './index.mjs'
+import { drawIndices, hexRun, mulberry32, pad, pick, randInt, WORDS } from './internal.mjs'
 
 /**
  * `grepTree` — a source tree in which a needle token appears in a fixed set of
@@ -190,10 +190,24 @@ export function deriveRenameTree(files) {
   return { count: files.length, hashes }
 }
 
-/** Recompute `configTree`'s winner from `files` and `{key, env}` by applying the documented precedence. */
+/**
+ * Recompute `configTree`'s winner from `files` and `{key, env}` by applying the
+ * documented precedence.
+ *
+ * Requires at least one package-local config (`packages >= 1`). The decoy value is
+ * only ever written into the package-local `config.json` files, so with
+ * `packages: 0` there is no byte to read it back from and the derivation is
+ * impossible — that is a `RangeError`, never a silent `undefined`.
+ * @param {{path: string, content: string}[]} files - the generated tree.
+ * @param {{key: string, env: string}} spec - the key and environment the fixture was built for.
+ * @returns {object} the recomputed expectation.
+ */
 export function deriveConfigTree(files, { key, env }) {
   const read = (name) => JSON.parse(files.find((file) => file.path === name)?.content ?? '{}')
   const packages = files.filter((file) => file.path.startsWith('packages/') && file.path.endsWith('/config.json'))
+  if (packages.length === 0) {
+    throw new RangeError(`deriveConfigTree: no packages/*/config.json in the tree, so the decoy for "${key}" cannot be derived (configTree needs packages >= 1)`)
+  }
   const decoy = [...new Set(packages.map((file) => JSON.parse(file.content)[key]))][0]
   const local = read(`config/${env}.local.json`)[key]
   return {

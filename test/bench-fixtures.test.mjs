@@ -1,11 +1,12 @@
 /**
- * The P2 fixture-family gate: the csv / log / tree / symbol builders, the seeded
- * PRNG they share, and the derivation functions that prove every exported
- * expectation is recomputable from the bytes the builder itself wrote.
+ * The fixture-family gate: the csv / log / tree / symbol builders (P2) plus the
+ * corpus / deep / repair families (P3), the seeded PRNG they share, and the
+ * derivation functions that prove every exported expectation is recomputable from
+ * the bytes the builder itself wrote.
  *
- * `test/bench.test.mjs` keeps the whole-corpus gate; this suite is the slice's
- * own gate and runs standalone in the ordinary `node test/run.mjs` sweep. The
- * parameters are small on purpose — the deadline is 120s, and a 20000-row CSV
+ * `test/bench.test.mjs` keeps the whole-corpus gate; this suite is the split
+ * slice's own gate and runs standalone in the ordinary `node test/run.mjs` sweep.
+ * The parameters are small on purpose — the deadline is 120s, and a 20000-row CSV
  * proves nothing about determinism that a 200-row one does not.
  *
  * @module dsh-ops/test/bench-fixtures
@@ -18,9 +19,10 @@ import { spawnSync } from 'node:child_process'
 import { assert, report, test, withTempDir } from './lib/harness.mjs'
 
 import {
-  configTree, deepModule, deriveConfigTree, deriveDeepModule, deriveGrepTree, deriveLargeCsv,
-  deriveLogStats, deriveNoisySuite, deriveRenameTree, deriveSymbolTree, generate, GENERATORS,
-  grepTree, largeCsv, logStats, mulberry32, noisySuite, renameTree, symbolTree,
+  brokenProject, configTree, deepCorpus, deepModule, deriveConfigTree, deriveDeepModule,
+  deriveGrepTree, deriveLargeCsv, deriveLogStats, deriveNoisySuite, deriveRenameTree,
+  deriveSymbolTree, gatePipeline, generate, GENERATORS, grepTree, largeCsv, logStats,
+  mulberry32, noisySuite, renameTree, symbolTree,
 } from '../bench/lib/fixtures/index.mjs'
 
 const LABEL = 'bench-fixtures'
@@ -30,12 +32,21 @@ const SMALL = {
   grepTree: { seed: 1, dirs: 2, filesPerDir: 6, linesPerFile: 8, needle: 'NEEDLE_X7Q', needleFiles: 3 },
   renameTree: { seed: 2, count: 6, lines: 2 },
   largeCsv: { seed: 7, rows: 200, targetRegion: 'EU', regions: ['EU', 'US', 'APAC', 'LATAM'] },
+  brokenProject: { seed: 11 },
   logStats: { seed: 13, files: 4, linesPerFile: 20 },
   configTree: { seed: 21, packages: 3, env: 'production' },
   deepModule: { seed: 23, lines: 400, env: 'staging' },
+  deepCorpus: { seed: 41, shards: 3, charsPerShard: 4000, pagesPerShard: 6 },
   noisySuite: { seed: 29, tests: 200 },
   symbolTree: { seed: 31, files: 6 },
+  gatePipeline: { seed: 53, gates: 4, probes: 3, linesPerGate: 4 },
 }
+
+/** The complete registry: every family builder, in the order `GENERATORS` lists them. */
+const ALL_GENERATORS = [
+  'brokenProject', 'configTree', 'deepCorpus', 'deepModule', 'gatePipeline', 'grepTree',
+  'largeCsv', 'logStats', 'noisySuite', 'renameTree', 'symbolTree',
+]
 
 /** Write one generated file into a workspace, creating its parents. */
 const write = (dir, file) => {
@@ -125,6 +136,12 @@ await test('configTree separates the winning layer from every look-alike', () =>
   assert.deepEqual(deriveConfigTree(files, { key: exports.key, env: exports.env }), exports, 'the winner must follow the precedence')
   assert.match(read('README.md'), /config\/defaults\.json[\s\S]*config\/production\.json[\s\S]*config\/production\.local\.json/, 'the README must state the merge order')
   assert.ok(files.some((file) => file.path.startsWith('packages/') && file.path.endsWith('config.json')), 'the decoy file must exist')
+  // The degenerate input is refused, not silently undefined: with no package-local
+  // config there is no byte to read the decoy back from.
+  assert.throws(
+    () => deriveConfigTree(configTree({ seed: 21, packages: 0 }).files, { key: exports.key, env: exports.env }),
+    /cannot be derived/,
+  )
 })
 
 await test('deepModule puts the table and the function far apart, with wrong decoys', () => {
@@ -181,15 +198,93 @@ await test('symbolTree renames one symbol and leaves its look-alikes alone', () 
     'a non-default rename must be recomputable too',
   )
   assert.ok(files.some((file) => file.path === 'check.mjs'), 'the smoke check must ship with the fixture')
+  // The documented floor: fewer than five files cannot include the never-touched
+  // shape, and the generator refuses rather than shipping a rename with no survivor.
+  assert.throws(() => symbolTree({ seed: 31, files: 3 }), /at least one file must be unaffected/)
+})
+
+await test('deepCorpus answers come from the index maximum and nowhere else', () => {
+  const { files, exports } = deepCorpus(SMALL.deepCorpus)
+  const readme = files.find((file) => file.path === 'README.md').content
+  assert.ok(readme.includes('## Index') && readme.includes('VOID SETTLE'), 'the rule sheet must state the rule')
+  const shards = files.filter((file) => file.path.startsWith('shards/'))
+  assert.equal(shards.length, exports.shards)
+  assert.equal(exports.report.length, exports.shards)
+  // Re-derive the whole report from the bytes: the highest *indexed* page decides.
+  const derived = []
+  for (const shard of shards) {
+    const name = shard.path.split('/').pop().replace(/\.md$/, '')
+    const indexed = [...shard.content.matchAll(/^- page (\d+) —/gm)].map((match) => Number(match[1]))
+    assert.ok(indexed.length >= 4, `${name}: the index must list pages`)
+    const livePage = Math.max(...indexed)
+    const candidates = [...shard.content.matchAll(/^- SETTLE (\S+) page=(\d+) amount=(\d+)$/gm)]
+      .map((match) => ({ shard: match[1], page: Number(match[2]), amount: match[3] }))
+    assert.equal(candidates.length, 4, `${name}: four candidate settlements`)
+    const live = candidates.filter((line) => line.page === livePage)
+    assert.equal(live.length, 1, `${name}: exactly one candidate names the index maximum`)
+    derived.push(`${name} ${live[0].amount}`)
+    // A decoy really is a wrong answer: an unindexed page sits above the live one, so
+    // "the highest page anywhere" and "the first SETTLE line" both lose.
+    const everyPage = [...shard.content.matchAll(/page=(\d+)/g)].map((match) => Number(match[1]))
+    assert.ok(Math.max(...everyPage) > livePage, `${name}: an unindexed page must sit above the live page`)
+    // Bulk prose may never carry a marker, or "search for SETTLE" would not be exact.
+    assert.equal(shard.content.split('SETTLE').length, 7, 'each shard carries exactly 4 ledger + 2 void markers')
+  }
+  assert.deepEqual(derived, exports.report, 'the exported report must be the one the rule produces')
+  assert.deepEqual(exports.report, [...exports.report].sort(), 'the report must be in ascending shard order')
+  assert.ok(exports.chars > 0)
+})
+
+await test('brokenProject fails as shipped and passes when repaired', async () => {
+  const { files, exports } = brokenProject(SMALL.brokenProject)
+  assert.equal(exports.fixes.length, 3, 'exactly three defects, one per source file')
+  await withTempDir('bench-broken-', async (dir) => {
+    files.forEach((file) => write(dir, file))
+    // stdio "ignore": the exit code is the whole assertion, and a confined parent
+    // (this suite under the DSH sandbox) cannot always open the pipes of a capturing spawn.
+    const broken = spawnSync(process.execPath, ['test.js'], { cwd: dir, stdio: 'ignore', timeout: 30000 })
+    assert.equal(broken.status, 1, `the broken project must fail on an assertion, got status ${broken.status}`)
+    exports.fixes.forEach((fix) => write(dir, fix))
+    const fixed = spawnSync(process.execPath, ['test.js'], { cwd: dir, stdio: 'ignore', timeout: 30000 })
+    assert.equal(fixed.status, 0, `the repaired project must pass, got status ${fixed.status}`)
+    assert.equal(exports.testSource, fs.readFileSync(path.join(dir, 'test.js'), 'utf8'), 'the anti-tamper expectation must be the real test.js')
+  })
+})
+
+await test('gatePipeline breaks exactly one constant per stage and its repairs green the gate', async () => {
+  const { files, exports } = gatePipeline(SMALL.gatePipeline)
+  const broken = new Map(files.map((file) => [file.path, file.content]))
+  assert.equal(exports.fixes.length, exports.gates, 'every stage needs a repair')
+  for (const fix of exports.fixes) {
+    const before = broken.get(fix.path).split('\n')
+    const after = fix.content.split('\n')
+    assert.equal(before.length, after.length, `${fix.path}: a repair may not change the shape`)
+    assert.equal(before.filter((line, at) => line !== after[at]).length, 1, `${fix.path}: exactly one line may differ`)
+  }
+  // The chain input is never a probe, so a stage that memorises the golden values
+  // instead of implementing its contract cannot produce the final answer.
+  assert.ok(!exports.probes.includes(7), 'the chain seed must not be one of the probes')
+  await withTempDir('bench-gates-', async (dir) => {
+    files.forEach((file) => write(dir, file))
+    const runGate = () => spawnSync(process.execPath, ['check.js'], { cwd: dir, encoding: 'utf8', timeout: 30000 })
+    const untouched = runGate()
+    assert.equal(untouched.status, 1, 'the gate must fail before any repair')
+    assert.match(untouched.stdout, /not ok 1 - gate_0/, 'the gate must stop at the first stage')
+    exports.fixes.forEach((fix) => write(dir, fix))
+    const repaired = runGate()
+    assert.equal(repaired.status, 0, `the repaired gate must pass: ${repaired.stdout.slice(-400)}`)
+    assert.ok(repaired.stdout.includes(`# final value ${exports.answer}`), 'the gate prints the value the task is judged on')
+  })
 })
 
 await test('generate() rejects an unknown generator by name', () => {
   assert.throws(() => generate('nope', {}), /unknown fixture generator/)
-  // The P2 slice. P3 registers corpus/deep here and extends this list; a generator
-  // that exists but was never re-exported fails the typeof check below.
-  assert.deepEqual(Object.keys(GENERATORS).sort(), [
-    'configTree', 'deepModule', 'grepTree', 'largeCsv', 'logStats', 'noisySuite', 'renameTree', 'symbolTree',
-  ])
+  // The complete registry, asserted as an exact list *and* a count: a family that
+  // exists but was never registered (or never re-exported) is unreachable, and a
+  // duplicate or a stray extra key has to fail here rather than in a task run.
+  assert.deepEqual(Object.keys(GENERATORS).sort(), ALL_GENERATORS)
+  assert.equal(Object.keys(GENERATORS).length, 11)
+  assert.deepEqual(Object.keys(SMALL).sort(), ALL_GENERATORS, 'the small-parameter table must cover every registered generator')
   for (const [name, builder] of Object.entries(GENERATORS)) assert.equal(typeof builder, 'function', `${name} must be exported as a builder`)
 })
 
