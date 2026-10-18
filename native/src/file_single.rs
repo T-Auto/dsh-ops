@@ -398,10 +398,12 @@ fn publish_new(
             return Err(error);
         }
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     {
         // RENAME_EXCL publishes an absent destination without a staging unlink.
-        // A preserved Darwin deny-delete ACE must not strand a second hardlink.
+        // A preserved Darwin deny-delete ACE must not strand a second hardlink,
+        // and a link-emulating runtime (e.g. proot) publishes a destination that
+        // stat() reports but open() cannot reach. Both are avoided here.
         let published = rustix::fs::renameat_with(
             &checked.parent, temporary.as_str(), &checked.parent, checked.name.as_str(),
             rustix::fs::RenameFlags::NOREPLACE,
@@ -413,13 +415,13 @@ fn publish_new(
         drop(file);
         return sync_applied(&checked.parent);
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     let published = checked
         .parent
         .hard_link(&temporary, &checked.parent, &checked.name);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     let cleanup = publication::discard_sibling(&checked.parent, &temporary, file);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     if let Err(mut failure) = cleanup {
         if published.is_ok() {
             failure.effect_state = "applied".into();
@@ -427,11 +429,11 @@ fn publish_new(
         }
         return Err(failure);
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     published?;
     #[cfg(windows)]
     if let Some(preserved) = &preserved { preserved.verify(&checked.parent, &checked.name)?; }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     sync_applied(&checked.parent)
 }
 fn sync_applied(parent: &cap_std::fs::Dir) -> Result<()> {
@@ -497,13 +499,45 @@ fn transfer_file(request: &Request) -> Result<Value> {
     if request.tool == "copy" {
         publish_new(&dest, &bytes, Some(&source), Some(&args.expected_revision))?;
     } else {
+        #[cfg(unix)]
+        // A rename consumes the source, so its revision must be confirmed first.
+        check_revision(
+            optional_bytes(&args.path)
+                .map_err(|error| applied_failure("RESULT_PARTIAL", error.message))?
+                .as_deref(),
+            &args.expected_revision,
+        )
+        .map_err(|_| {
+            Failure::new(
+                "RESULT_PARTIAL",
+                "Source changed before publication; nothing was moved",
+            )
+        })?;
+        // RENAME_EXCL is atomic no-clobber and preserves the original security
+        // metadata. A link-emulating runtime (e.g. proot) would otherwise publish
+        // a destination that stat() reports but open() cannot reach.
+        rustix::fs::renameat_with(
+            &source.parent, source.name.as_str(), &target.parent, target.name.as_str(),
+            rustix::fs::RenameFlags::NOREPLACE,
+        )
+        .map_err(|error| {
+            if error == rustix::io::Errno::XDEV {
+                Failure::new(
+                    "CROSS_DEVICE",
+                    "Move requires the same filesystem; no copy-delete fallback",
+                )
+            } else {
+                Failure::from(std::io::Error::from(error))
+            }
+        })?;
+        #[cfg(windows)]
         // A hard link is atomic no-clobber and preserves the original security metadata.
         // The OS rejects cross-device links; never degrade into copy/delete.
         source
             .parent
             .hard_link(&source.name, &target.parent, &target.name)
             .map_err(|error| {
-                if error.raw_os_error() == Some(if cfg!(windows) { 17 } else { 18 }) {
+                if error.raw_os_error() == Some(17) {
                     Failure::new(
                         "CROSS_DEVICE",
                         "Move requires the same filesystem; no copy-delete fallback",
@@ -525,6 +559,7 @@ fn transfer_file(request: &Request) -> Result<Value> {
                 "Destination published but its revision differs; source was retained",
             )
         })?;
+        #[cfg(windows)]
         check_revision(
             optional_bytes(&args.path)
                 .map_err(|error| applied_failure("RESULT_PARTIAL", error.message))?
@@ -537,12 +572,14 @@ fn transfer_file(request: &Request) -> Result<Value> {
                 "Destination published but source changed; source was retained",
             )
         })?;
+        #[cfg(windows)]
         source.parent.remove_file(&source.name).map_err(|error| {
             applied_failure(
                 "RESULT_PARTIAL",
                 format!("Destination published but source unlink failed: {error}"),
             )
         })?;
+        #[cfg(windows)]
         sync_applied(&source.parent)?;
         output["items"]
             .as_array_mut()
