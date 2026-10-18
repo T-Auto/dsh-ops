@@ -4,16 +4,17 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { PACKAGE_ROOT, assert, report, test, withTempDir } from './lib/harness.mjs'
-import { PLATFORMS, workerName } from '../lib/ptc/runtime.js'
+import { PLATFORMS, RELEASE_TARGETS, workerName } from '../lib/ptc/runtime.js'
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 function header(target) {
   const bytes = Buffer.alloc(80)
   if (target === 'win32-x64') { bytes.write('MZ'); bytes.writeUInt32LE(64,60); bytes.writeUInt32LE(0x4550,64); bytes.writeUInt16LE(0x8664,68) }
   if (target === 'linux-x64') { Buffer.from([127,69,76,70,2,1]).copy(bytes); bytes.writeUInt16LE(62,18) }
   if (target === 'darwin-arm64') { bytes.writeUInt32LE(0xfeedfacf,0); bytes.writeUInt32LE(0x100000c,4) }
+  if (target === 'linux-arm64') { Buffer.from([127,69,76,70,2,1]).copy(bytes); bytes.writeUInt16LE(183,18) }
   return bytes
 }
-function fixture(root, targets = PLATFORMS) {
+function fixture(root, targets = RELEASE_TARGETS) {
   const pkg = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT,'package.json'),'utf8'))
   const manifest = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT,'dsh-plugin.json'),'utf8'))
   fs.mkdirSync(path.join(root,'bin'),{recursive:true})
@@ -49,7 +50,7 @@ await test('each missing target fails strict release while staged source checks 
   const result=run(root); assert.notEqual(result.status,0); assert.match(result.out,/missing win32-x64, darwin-arm64/)
 }))
 await test('every foreign target is rejected including Intel Mac',async()=>withTempDir('release-foreign',root=>{
-  fixture(root); for(const target of ['darwin-x64','win32-arm64','linux-arm64']) {
+  fixture(root); for(const target of ['darwin-x64','win32-arm64','linux-riscv64']) {
     const result=run(root,'native-runtime.mjs',['--platform',target]); assert.notEqual(result.status,0); assert.match(result.out,/Unsupported target/)
   }
 }))

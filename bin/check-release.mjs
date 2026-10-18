@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
-import { PLATFORMS } from '../lib/ptc/runtime.js'
+import { PLATFORMS, RELEASE_TARGETS } from '../lib/ptc/runtime.js'
 const { values } = parseArgs({ options: { root: { type: 'string' } } })
 const root = path.resolve(values.root ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'))
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
@@ -16,7 +16,10 @@ const declared = components.find(component => component.id === 'dsh-ops-ptc')?.t
 const sameSet = (a, b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort())
 if (!sameSet(declared, PLATFORMS)) throw Error(`Declared scope ${JSON.stringify(declared)} and resolver PLATFORMS ${JSON.stringify(PLATFORMS)} disagree`)
 // npm os/cpu filters cannot express paired targets. The component's exact targets
-// and runtime resolver are authoritative; Intel Mac and Windows/Linux arm64 stay rejected.
+// and runtime resolver are authoritative; Intel Mac, Windows arm64 and OpenHarmony
+// stay rejected. Linux arm64 closes here only when its build is produced — CI runs
+// `npm pack` on exactly the three release runners (win32-x64, linux-x64, darwin-arm64),
+// so the arm64 package is published from an arm64 build rather than claimed.
 if (!sameSet(pkg.os ?? [], PLATFORMS.map(target => target.split('-')[0]).filter((value, index, all) => all.indexOf(value) === index)) ||
     !sameSet(pkg.cpu ?? [], [...new Set(PLATFORMS.map(target => target.split('-')[1]))])) throw Error('Package os/cpu and exact target declarations disagree')
 for (const id of ['dsh-ops-file', 'dsh-ops-shell']) {
@@ -31,8 +34,12 @@ const runtimeDir = path.join(root, 'runtime')
 const staged = fs.existsSync(runtimeDir) ? fs.readdirSync(runtimeDir, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort() : []
 const unexpected = staged.filter(target => !declared.includes(target))
 if (unexpected.length) throw Error(`Unexpected runtime targets in release: ${unexpected.join(', ')}`)
-const missing = declared.filter(target => !staged.includes(target))
-if (missing.length) throw Error(`Release is missing ${missing.join(', ')}; every declared target is required`)
+// The closure is what CI ships, not the whole support matrix: a release is packed on
+// its three runners, and a declared target with no runner would be a claim no CI job
+// ever builds. `RELEASE_TARGETS` names the packed set, so adding a target to the
+// support matrix cannot silently loosen the gate.
+const missing = RELEASE_TARGETS.filter(target => !staged.includes(target))
+if (missing.length) throw Error(`Release is missing ${missing.join(', ')}; every packed target is required`)
 const check = spawnSync(process.execPath, [path.join(root, 'bin/native-runtime.mjs'), 'check', '--root', root], { stdio: 'inherit' })
 if (check.status !== 0) throw Error('Native runtime gate failed')
 const hash = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex')

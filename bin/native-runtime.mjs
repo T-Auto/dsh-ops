@@ -5,9 +5,10 @@
  *
  * `check` answers two different questions, so it takes two different scopes:
  *
- * - `check` (no scope flag) demands every declared platform. A release package
- *   must carry all of them, and `scripts/build-platform-packages.mjs` relies on
- *   this to refuse an incomplete publish directory.
+ * - `check` (no scope flag) demands every packed release target (`RELEASE_TARGETS`).
+ *   A release package must carry all of them, and `scripts/build-platform-packages.mjs`
+ *   relies on this to refuse an incomplete publish directory. It is deliberately
+ *   narrower than `PLATFORMS`: a target can be resolvable without being shipped.
  * - `check --staged` validates the targets actually present under `runtime/`.
  *   That is the honest question for a one-host source build, where only the
  *   host target can be produced.
@@ -20,7 +21,7 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
-import { PLATFORMS, PACKAGE_ROOT, workerName } from '../lib/ptc/runtime.js'
+import { PLATFORMS, RELEASE_TARGETS, PACKAGE_ROOT, workerName } from '../lib/ptc/runtime.js'
 const { values, positionals } = parseArgs({ options: { input: {type:'string'}, root: {type:'string'}, platform: {type:'string'}, staged: {type:'boolean'} }, allowPositionals:true })
 const command = positionals[0] ?? 'check'
 if (command !== 'stage' && command !== 'check') throw Error('Expected stage or check')
@@ -52,7 +53,7 @@ const stagedTargets = () => {
 }
 const targets = values.platform
   ? [values.platform]
-  : values.staged ? stagedTargets() : [...PLATFORMS]
+  : values.staged ? stagedTargets() : [...RELEASE_TARGETS]
 if (values.staged && targets.length === 0) throw Error('No staged native runtime under runtime/; run npm run build:ptc on the target platform first')
 if (targets.some(t=>!PLATFORMS.includes(t))) throw Error('Unsupported target')
 const hash = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex')
