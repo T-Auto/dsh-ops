@@ -104,7 +104,7 @@
         "defaultEnabled": true,
         "platforms": ["win32", "linux", "darwin"],
         "architectures": ["x64", "arm64"],
-        "targets": ["win32-x64", "linux-x64", "darwin-arm64"],
+        "targets": ["win32-x64", "linux-x64", "darwin-arm64", "linux-arm64"],
         "presentation": "PTC-only",
         "runtime": "independent native Rust file worker",
         "tools": ["ops_batch", "ops_result"],
@@ -115,14 +115,14 @@
         "entry": "dsh-ops/shell",
         "defaultEnabled": true,
         "platforms": ["win32", "linux", "darwin"],
-        "targets": ["win32-x64", "linux-x64", "darwin-arm64"]
+        "targets": ["win32-x64", "linux-x64", "darwin-arm64", "linux-arm64"]
       },
       {
         "id": "dsh-ops-file",
         "entry": "dsh-ops/file",
         "defaultEnabled": true,
         "platforms": ["win32", "linux", "darwin"],
-        "targets": ["win32-x64", "linux-x64", "darwin-arm64"]
+        "targets": ["win32-x64", "linux-x64", "darwin-arm64", "linux-arm64"]
       },
       {
         "id": "dsh-ops-tui",

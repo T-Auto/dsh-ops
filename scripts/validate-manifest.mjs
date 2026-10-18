@@ -483,8 +483,8 @@ check(JSON.stringify(ptc?.tools) === JSON.stringify(PTC_TOOLS.map(publicToolName
 check(PTC_TOOLS.every(t => definition(t, () => {}).parameters.type === 'object'), 'PTC schemas remain structured')
 check(JSON.stringify(pkg.os) === '["win32","linux","darwin"]' && JSON.stringify(pkg.cpu) === '["x64","arm64"]' &&
   JSON.stringify(ptc?.platforms) === '["win32","linux","darwin"]' && JSON.stringify(ptc?.architectures) === '["x64","arm64"]' &&
-  JSON.stringify(ptc?.targets) === '["win32-x64","linux-x64","darwin-arm64"]',
-  '0.3.1 exact targets are Windows x64, Linux x64 and macOS Apple Silicon; Intel Mac is unsupported')
+  JSON.stringify(ptc?.targets) === '["win32-x64","linux-x64","darwin-arm64","linux-arm64"]',
+  '0.3.1 exact targets are Windows x64, Linux x64, Linux arm64 and macOS Apple Silicon; Intel Mac, Windows arm64 and OpenHarmony are unsupported')
 /** Every component states the platforms it really serves, so a Linux claim cannot ride along. */
 const platformClaims = id => manifestRaw.contributes?.['x-components']?.find(c => c.id === id)?.platforms
 check(JSON.stringify(platformClaims('dsh-ops-shell')) === '["win32","linux","darwin"]',
