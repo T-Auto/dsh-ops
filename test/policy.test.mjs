@@ -63,13 +63,32 @@ await test('resident-only routing omits unavailable operation hints and includes
 })
 await test('shell routing prefers bash and leaves PowerShell ownership with the host', () => {
   const text = renderToolingPolicy({ published: [BASH_TOOL, 'pwsh'] })
-  assert.match(text, /^# Shell routing: bash → host PowerShell/)
+  assert.match(text, new RegExp(`^# Shell routing: ${BASH_TOOL} → host PowerShell`))
   assert.match(text, /pwsh \(host PowerShell\)/)
   assert.equal(text.includes('bundled'), false)
-  assert.match(text, /fix bash errors in bash, do not switch shells/)
+  assert.match(text, new RegExp(`fix ${BASH_TOOL} errors in ${BASH_TOOL}, do not switch shells`))
   assert.match(text, /longer than about 1 KB.*script_path/)
   assert.equal(renderToolingPolicy({ published: ['pwsh'] }).includes('bundled PowerShell'), false)
   assert.equal(renderToolingPolicy({ published: ['pwsh'], shellComponent: false }), '')
+})
+// #298: the model called `bash` 15 times in one session and got `unknown tool`
+// each time, because the prompt named the shell `bash` while the registry only
+// publishes `ops_bash`. Any bare `bash` in model-visible prose reintroduces it.
+await test('the shell is never advertised under a name the registry does not publish', () => {
+  const text = renderToolingPolicy({ published: [BASH_TOOL, 'pwsh'] })
+  assert.match(text, new RegExp(`${BASH_TOOL} → host PowerShell`))
+  assert.match(text, new RegExp(`fix ${BASH_TOOL} errors in ${BASH_TOOL}, do not switch shells`))
+  // One place keeps the word on purpose: saying the tool does not exist. Every
+  // other line must name the published tool, or the prompt re-teaches `bash`.
+  const lines = text.split('\n')
+  const prohibition = lines.filter((line) => /There is no tool named bash/.test(line))
+  assert.equal(prohibition.length, 1, 'the prompt must warn that bash does not exist')
+  assert.match(prohibition[0], new RegExp(BASH_TOOL))
+  const advertising = lines.filter((line) => line !== prohibition[0] && /\bbash\b/.test(line))
+  assert.deepEqual(advertising, [], `prompt names bash outside the prohibition: ${advertising.join(' | ')}`)
+  // Without the shell published, neither the heading nor the prohibition appears.
+  const fileOnly = renderToolingPolicy({ published: files, shellComponent: false })
+  assert.equal(/\bbash\b/.test(fileOnly), false)
 })
 await test('the removed background tools are never advertised, even if a registry still lists them', () => {
   assert.equal(renderToolingPolicy({ published: removed, shellComponent: false }), '')
