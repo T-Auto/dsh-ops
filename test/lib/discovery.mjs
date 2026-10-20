@@ -205,6 +205,99 @@ export async function discoveryMountChecks() {
       assert.ok(scopedToolNames(ctx, agent).includes(publicToolName('stat')))
     } finally { await shutdown(ctx) }
   }))
+  await test('incremental reconcile: attaching an agent assembles once regardless of how many agents are active', () => withTempDir('discovery', async dir => {
+    const { ctx } = await boot()
+    try {
+      let assembles = 0
+      ctx.on('system-prompt/assemble', async (_assembly, _context, next) => { assembles++; return next() })
+      for (let i = 0; i < 4; i++) {
+        const before = assembles
+        await mint(ctx, `discovery-incr-${i}`, dir)
+        await waitFor(() => assembles === before + 1, { what: `attach agent ${i} adds exactly one assembly` })
+      }
+      assert.equal(assembles, 4, 'four agents cost exactly four native probes, not O(N^2)')
+    } finally { await shutdown(ctx) }
+  }))
+  await test('tools/change invalidates cached native verdicts and recomputes without republishing an unchanged surface', () => withTempDir('discovery', async dir => {
+    const { ctx } = await boot()
+    try {
+      let assembles = 0
+      ctx.on('system-prompt/assemble', async (_assembly, _context, next) => { assembles++; return next() })
+      const agent = await mint(ctx, 'discovery-tools-change', dir)
+      const stable = ctx.get('tools').get(DISCOVER, agent)
+      assert.ok(stable, 'surface is published before the change')
+      const before = assembles
+      ctx.tools.register({ name: 'glob', description: 'glob', parameters: { type: 'object' }, output: { schema: { type: 'object' }, render: () => [] }, execute: async () => ({}) })
+      await waitFor(() => assembles === before + 1, { what: 'tools/change re-assembles the scoped probe' })
+      assert.equal(assembles, before + 1, 'exactly one recomputation for the single active agent')
+      assert.equal(ctx.get('tools').get(DISCOVER, agent), stable, 'an unrelated registration must not republish the surface')
+    } finally { await shutdown(ctx) }
+  }))
+  await test('session-shells registrations never re-probe or re-assemble other agents', () => withTempDir('discovery', async dir => {
+    const { ctx } = await boot()
+    try {
+      let assembles = 0
+      ctx.on('system-prompt/assemble', async (_assembly, _context, next) => { assembles++; return next() })
+      // Mirror session-shells: every new session registers its own bash tool in
+      // its scope, which emits a real tools/change (ScopedLayers onChange).
+      // Before the directed invalidation this re-probed every active agent.
+      const bashTool = { name: 'sim_shell_row', description: 'mock shell row', parameters: {}, output: { schema: { type: 'object' }, render: () => [] }, execute: async () => ({}) }
+      const registered = new Set()
+      ctx.on('agent/created', async ({ agent }) => {
+        if (registered.has(agent)) return
+        registered.add(agent)
+        await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.register(bashTool) } })
+        return undefined
+      })
+      const deltas = []
+      for (let i = 0; i < 4; i++) {
+        const before = assembles
+        await mint(ctx, `discovery-shell-${i}`, dir)
+        await waitFor(() => assembles >= before + 1, { timeoutMs: 15000, what: `attaching agent ${i} starts an assembly` })
+        await new Promise(resolve => setTimeout(resolve, 300))
+        deltas.push(assembles - before)
+      }
+      // Each attach costs exactly two probes: the fresh attach probe plus one
+      // recomputation after that agent's own shell registration (its surface
+      // did change). The delta stays constant as more agents pile up — a full
+      // invalidation would re-probe every active agent and grow the delta.
+      assert.deepEqual(deltas, [2, 2, 2, 2], `per-attach assembly delta stays constant, not O(N): ${JSON.stringify(deltas)}`)
+      assert.equal(assembles, 8, 'four agents cost eight probes, far below the O(N^2) full-invalidation budget')
+    } finally { await shutdown(ctx) }
+  }))
+  await test('system-prompt/change invalidates every cached verdict and recomputes on the next probe', () => withTempDir('discovery', async dir => {
+    const { ctx } = await boot()
+    try {
+      let assembles = 0
+      ctx.on('system-prompt/assemble', async (_assembly, _context, next) => { assembles++; return next() })
+      const agent = await mint(ctx, 'discovery-prompt-change', dir)
+      await waitFor(() => assembles === 1, { what: 'initial attach probes once' })
+      const dispose = ctx.systemPrompt.section({ name: 'segment-drift', order: 100, interpolate: false, text: 'segment' })
+      await waitFor(() => assembles === 2, { timeoutMs: 15000, what: 'a section change re-probes the cached agent' })
+      const assembled = await ctx.systemPrompt.assemble({ scope: agent })
+      assert.ok(assembled.sections.some(section => section.name === 'segment-drift'))
+      const beforeDispose = assembles
+      dispose()
+      await waitFor(() => assembles === beforeDispose + 1, { timeoutMs: 15000, what: 'removing the section re-probes again' })
+    } finally { await shutdown(ctx) }
+  }))
+  await test('a vanished ptc-only section restores the withdrawn native surface', () => withTempDir('discovery', async dir => {
+    const { ctx } = await boot()
+    try {
+      ctx.provide('ptcRuntime', { language: 'typescript' })
+      const agent = await mint(ctx, 'discovery-restore', dir)
+      await call(ctx, agent, 'discover_tools', { query: 'select:ops_stat' })
+      await nextStep(ctx, agent)
+      await waitFor(() => scopedToolNames(ctx, agent).includes(publicToolName('stat')))
+      const lift = agent.ctx.tools.presentAs('ptc')
+      await waitFor(async () => { await assemble(ctx, agent); return !scopedToolNames(ctx, agent).includes(DISCOVER) },
+        { timeoutMs: 15000, what: 'ptc-only presentation withdraws the native surface' })
+      lift()
+      await waitFor(async () => { await assemble(ctx, agent); return scopedToolNames(ctx, agent).includes(DISCOVER) },
+        { timeoutMs: 15000, what: 'a vanished ptc-only section restores the native surface' })
+      assert.ok(scopedToolNames(ctx, agent).includes(publicToolName('stat')))
+    } finally { await shutdown(ctx) }
+  }))
 }
 
 export { boot as bootDiscoveryHost, mint as mintDiscoveryAgent, nextStep as discoveryNextStep }

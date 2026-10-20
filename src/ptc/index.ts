@@ -4,7 +4,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-sandbox-policy'
 import type { PromptAssembly } from '@deepseek-ai/dsh-system-prompt'
-import { inspectPresentation, isPresentationProbe } from '../presentation.js'
+import { inspectCachedPresentation, inspectPresentation, invalidateNativePresentation, isPresentationProbe, layerFingerprint } from '../presentation.js'
 import { WORKER_TIMEOUT_MS } from '../worker-protocol.js'
 import { FILE_TOOLS, PTC_TOOLS } from '../capabilities/registry.js'
 import { PTC_SECTION, definition } from './contract.js'
@@ -27,6 +27,9 @@ const ptcDefinitions = new WeakSet<ToolDefinition>()
 interface Entry {
   ctx?: Context; fiber?: Fiber; ready: Promise<void>; disposers: (() => void)[]
   selected: Set<ApiName>; pending: Set<ApiName>; owned: Map<string, ToolDefinition>; ptc: boolean
+  /** Tool-layer fingerprint at the last observation; changes drive directed
+   * tools/change invalidation. */
+  layers?: string
 }
 const isPtc = (assembly: PromptAssembly): boolean => assembly.tools.length === 1 && assembly.tools[0]?.name === 'run_code'
   && assembly.sections.some(section => section.name === 'tools:ptc-only' && section.text.trim() !== '')
@@ -65,6 +68,16 @@ export function apply(root: Context, rawConfig: unknown): void {
       }
     }
     const ptcOnly = async (agent: Agent, signal?: AbortSignal): Promise<boolean> => Boolean(ctx.get('ptcRuntime')) && isPtc(await inspectPresentation(prompt, agent, signal))
+    /** Verdict sharing discovery's per-scope cached assembly. Reconcile and
+     * pre-step read the cache (one assembled result computes both verdicts);
+     * the execute hot paths keep a fresh signal-bound inspection below. */
+    const cachedPtcOnly = async (agent: Agent): Promise<boolean> =>
+      Boolean(ctx.get('ptcRuntime')) && isPtc(await inspectCachedPresentation(prompt, agent))
+    /** Record an agent's current tool-layer fingerprint after any publish, so
+     * the next external tools/change can diff against it. */
+    const rememberLayers = (agent: Agent, entry: Entry): void => {
+      if (entry.ctx) entry.layers = layerFingerprint(agent, scope => tools.schemas(scope))
+    }
     const abortOwner = (agent: Agent, reason: string) => {
       for (const [controller, work] of active) if (work.owner === agent) controller.abort(new Error(reason))
     }
@@ -96,7 +109,7 @@ export function apply(root: Context, rawConfig: unknown): void {
       chain = chain.then(async () => {
         if (stopped || version !== epoch) return
         const ready = new Set<Agent>()
-        for (const [agent, entry] of entries) if (entry.ctx && ownership?.owns(agent) && await ptcOnly(agent).catch(() => false)) ready.add(agent)
+        for (const [agent, entry] of entries) if (entry.ctx && ownership?.owns(agent) && await cachedPtcOnly(agent).catch(() => false)) ready.add(agent)
         if (stopped || version !== epoch) return
         if (!force && snapshot() === lastSnapshot && [...entries].every(([agent, entry]) => entry.ptc === ready.has(agent))) return
         mutating = true; ownership?.begin()
@@ -145,6 +158,7 @@ export function apply(root: Context, rawConfig: unknown): void {
           for (const entry of entries.values()) clear(entry)
           throw error
         } finally { ownership?.end(); mutating = false }
+        for (const [agent, entry] of entries) rememberLayers(agent, entry)
         ownership?.changedBelow()
       }).catch(error => ctx.logger.warn('dsh-ops: PTC publication failed: ' + String(error)))
       return chain
@@ -161,7 +175,7 @@ export function apply(root: Context, rawConfig: unknown): void {
     ctx.on('agent/pre-step', async ({ agent, signal }, next) => {
       await attach(agent)
       const entry = entries.get(agent)
-      if (entry && !signal.aborted && await ptcOnly(agent, signal).catch(() => false)) {
+      if (entry && !signal.aborted && await cachedPtcOnly(agent).catch(() => false)) {
         for (const tool of entry.pending) entry.selected.add(tool)
         const changed = entry.pending.size > 0; entry.pending.clear()
         await reconcile(changed)
@@ -169,12 +183,32 @@ export function apply(root: Context, rawConfig: unknown): void {
       return next()
     })
     ctx.on('agent/disposed', async ({ agent }) => {
+      invalidateNativePresentation(agent)
       const entry = entries.get(agent); if (!entry) return
       entries.delete(agent); ownership?.forget(agent); abortOwner(agent, 'Owning agent disposed'); mutating = true
       try { clear(entry) } finally { mutating = false }
       await entry.fiber?.dispose(); await reconcile(true)
     })
-    ctx.on('tools/change', () => { if (!ownership?.publishing()) void reconcile(true) })
+    ctx.on('tools/change', () => {
+      if (ownership?.publishing()) return
+      // Directed invalidation: an agent whose tool-layer fingerprint moved can
+      // have a different ptc verdict; unchanged agents keep the cached shared
+      // assembly, so one session's bash registration never re-probes everyone.
+      for (const [agent, entry] of entries) {
+        if (!entry.ctx) continue
+        const current = layerFingerprint(agent, scope => tools.schemas(scope))
+        if (entry.layers !== undefined && current !== entry.layers) invalidateNativePresentation(agent)
+        entry.layers = current
+      }
+      void reconcile(true)
+    })
+    ctx.on('system-prompt/change', () => {
+      if (ownership?.publishing()) return
+      // Preview sections changing without tools/change must re-verify every
+      // cached verdict (e.g. a ptc-only section appearing or vanishing).
+      for (const agent of entries.keys()) invalidateNativePresentation(agent)
+      void reconcile(true)
+    })
     ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
       // The pinned host assembles BEFORE agent/pre-step. Wait for publication
       // queued by the previous committed step, then obtain a fresh public assembly.
