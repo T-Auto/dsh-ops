@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Restore extended attributes before the replacement's final mode, so a read-only file keeps its `user.*` attributes and macOS stops reporting `com.apple.provenance` unrestored on every `0400` replace. The mode matrix now carries a user attribute, so the order is asserted on every host rather than only where macOS supplies that attribute for free (#324).
+- 恢复扩展属性时改在写入最终模式之前进行，只读文件不再丢失 `user.*` 属性，macOS 的 `0400` 替换也不再报告 `com.apple.provenance` 未恢复；模式矩阵用例改为携带用户属性，使该顺序在所有平台都受断言约束，而不只依赖 macOS 自带的属性（#324）。
+
 ## [0.4.1] — 2026-10-20 — Update locks stop leaving files behind
 
 - Stop the update lock from leaving `.dsh-ops-update-*.lock` sidecars behind (#319). The writer that takes the lock removes it on release, and only after proving the name still leads to the inode it locked, so a waiter that opened the old inode can never publish under it. A published write, a request refused after the lock and a directory-wide `replace` now leave the directory exactly as they found it; a sidecar left by a killed writer is not a stuck lock — the next write of that name binds to it, publishes under it and removes it.

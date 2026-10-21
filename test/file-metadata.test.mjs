@@ -87,6 +87,8 @@ const installed = command => {
 }
 const SETFACL = installed('setfacl') && installed('getfacl')
 const PYTHON = installed('python3')
+/** Whether this host can attach and read back a user attribute for the fixtures below. */
+const ATTRIBUTES = process.platform === 'darwin' || PYTHON
 const setUserAttribute = target => process.platform === 'darwin'
   ? execFileSync('/usr/bin/xattr', ['-w', 'user.dsh-ops', 'kept', target])
   : PYTHON && execFileSync('python3', ['-c', "import os,sys; os.setxattr(sys.argv[1],'user.dsh-ops',b'kept')", target])
@@ -105,13 +107,27 @@ const seed = (target, mode) => {
   return target
 }
 
+/** The same fixture with a user attribute attached while the mode still allows it. */
+const seedWithAttribute = (target, mode) => {
+  fs.writeFileSync(target, 'TOKEN\n')
+  setUserAttribute(target)
+  fs.chmodSync(target, mode)
+  return target
+}
+
 const replaceToken = async (target, workspace) =>
   envelopeOf(await callTool('replace', { path: target, pattern: 'TOKEN', replacement: 'DONE' }, { root: workspace }), assert)
 
 await test('every mode a caller can set survives a replacement', async () => {
   await withTempDir('file-metadata-mode', async workspace => {
     for (const mode of [0o600, 0o400, 0o640, 0o644, 0o755, 0o750]) {
-      const target = seed(path.join(workspace, `mode-${octal(mode)}.txt`), mode)
+      // A read-only mode denies `setxattr`, so the attribute has to be attached
+      // while the fixture is still writable. That is what makes this case catch a
+      // restore that applies the final mode before the attributes, on every host
+      // rather than only where macOS supplies `com.apple.provenance` for free.
+      const target = ATTRIBUTES
+        ? seedWithAttribute(path.join(workspace, `mode-${octal(mode)}.txt`), mode)
+        : seed(path.join(workspace, `mode-${octal(mode)}.txt`), mode)
       const body = await replaceToken(target, workspace)
 
       assert.equal(body.items[0].metadata.mode, octal(mode), `the envelope must report ${octal(mode)} as kept`)
@@ -120,6 +136,10 @@ await test('every mode a caller can set survives a replacement', async () => {
       assert.equal(body.items[0].metadata.owner, true)
       assert.equal(body.items[0].metadata.acl, false)
       assert.equal(body.items[0].metadataWarnings, undefined, 'a clean restore must not carry a warning')
+      if (ATTRIBUTES) {
+        assert.ok(body.items[0].metadata.xattrs.includes('user.dsh-ops'), `mode ${octal(mode)} must still put the attribute back`)
+        assert.equal(userAttribute(target), 'kept', `mode ${octal(mode)} must restore the attribute exactly`)
+      }
     }
   })
 })

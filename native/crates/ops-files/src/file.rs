@@ -200,6 +200,14 @@ impl PreservedMetadata {
                 Err(error) => { warnings.push(format!("owner {}:{} was not restored ({error}); the replacement is owned by the current user", self.uid, self.gid)); false }
             }
         };
+        // Extended attributes go on before the final mode, while the replacement is
+        // still writable. A read-only mode such as `0400` denies `setxattr` outright,
+        // so restoring them afterwards reported every captured attribute — including
+        // the `com.apple.provenance` macOS gives every new file — as unrestored.
+        let mut restored = Vec::new();
+        for (name, value) in &self.xattrs {
+            match rustix::fs::fsetxattr(file, name.as_str(), value, rustix::fs::XattrFlags::empty()) { Ok(()) => restored.push(name.clone()), Err(error) => warnings.push(format!("extended attribute {name} was not restored ({error})")) }
+        }
         // The mode goes on after the owner, because a successful `chown` clears
         // setuid and setgid. This one is fatal if it fails.
         rustix::fs::fchmod(file, rustix::fs::Mode::from_bits_truncate((self.mode & 0o7777) as _)).map_err(|error| Failure::new("ACCESS_DENIED", format!("Mode {:04o} could not be preserved ({error}); nothing was published", self.mode & 0o7777)))?;
@@ -219,10 +227,6 @@ impl PreservedMetadata {
                 false
             },
         };
-        let mut restored = Vec::new();
-        for (name, value) in &self.xattrs {
-            match rustix::fs::fsetxattr(file, name.as_str(), value, rustix::fs::XattrFlags::empty()) { Ok(()) => restored.push(name.clone()), Err(error) => warnings.push(format!("extended attribute {name} was not restored ({error})")) }
-        }
         let omitted = restored.len().saturating_sub(16); restored.truncate(16);
         let omitted_warnings = warnings.len().saturating_sub(16); warnings.truncate(16);
         if omitted_warnings > 0 { warnings.push(format!("{omitted_warnings} additional metadata warnings omitted")); }
