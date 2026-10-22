@@ -3,11 +3,46 @@ param([Parameter(Mandatory=$true)][string]$Workspace, [Parameter(Mandatory=$true
 $ErrorActionPreference = 'Stop'
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+. (Join-Path $PSScriptRoot 'reparse-tag.ps1')
 $item = Get-Item -LiteralPath $Workspace -Force
 if (!$item.PSIsContainer) { throw 'Workspace is not a directory' }
+# Read the tag, not just the attribute bit: a sync engine's placeholder is a reparse point that
+# names the directory itself, while a junction or a symlink names another path. A tag that cannot
+# be read is treated as a link, so an unexpected filter fails closed.
+Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+public static class DshOpsReparseTag {
+    const uint FSCTL_GET_REPARSE_POINT = 0x000900A8;
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern IntPtr CreateFileW(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool DeviceIoControl(IntPtr handle, uint code, IntPtr inBuffer, uint inSize, byte[] outBuffer, uint outSize, out uint returned, IntPtr overlapped);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool CloseHandle(IntPtr handle);
+    public static uint Read(string path) {
+        // FILE_READ_ATTRIBUTES; share read/write/delete; OPEN_EXISTING; FILE_FLAG_BACKUP_SEMANTICS
+        // opens a directory; FILE_FLAG_OPEN_REPARSE_POINT reads the entry instead of following it.
+        IntPtr handle = CreateFileW(path, 0x0080u, 7u, IntPtr.Zero, 3u, 0x02000000u | 0x00200000u, IntPtr.Zero);
+        if (handle == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        try {
+            byte[] buffer = new byte[16384];
+            uint returned;
+            if (!DeviceIoControl(handle, FSCTL_GET_REPARSE_POINT, IntPtr.Zero, 0u, buffer, (uint)buffer.Length, out returned, IntPtr.Zero))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            return BitConverter.ToUInt32(buffer, 0);
+        } finally { CloseHandle(handle); }
+    }
+}
+'@
 $cursor = $item
 while ($null -ne $cursor) {
-    if ($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Workspace ancestry contains a reparse point; refusing ACL preparation' }
+    if ($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        $placeholder = $false
+        try { $placeholder = Test-DshOpsCloudReparseTag ([DshOpsReparseTag]::Read($cursor.FullName)) } catch { $placeholder = $false }
+        if (!$placeholder) { throw 'Workspace ancestry contains a reparse point; refusing ACL preparation' }
+    }
     $cursor = $cursor.Parent
 }
 $acl = Get-Acl -LiteralPath $item.FullName

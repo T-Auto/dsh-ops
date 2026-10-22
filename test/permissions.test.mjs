@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { assert, test, report, skipSuite, withTempDir, ownWindowsFixture } from './lib/harness.mjs'
@@ -127,6 +128,19 @@ await test('a junction above the workspace root is refused although the resolved
     assert.equal(fs.realpathSync.native(root).toLowerCase(),fs.realpathSync.native(path.join(target,'ws')).toLowerCase())
     await assert.rejects(prepareWorkspace({mode:'workspace-write',workspaceRoot:root}),/must not resolve through a junction or symlink/)
   })
+})
+await test('a sync engine placeholder in the ancestry is not refused as a link', async () => {
+  if(process.platform!=='win32')return
+  // IO_REPARSE_TAG_CLOUD .. _CLOUD_F (0x9000?01A) name the directory itself: a bidirectional sync
+  // folder is a real directory and its DACL is the one to prepare. Junctions, symlinks and mount
+  // points keep 0xA0000003 / 0xA000000C and stay refused.
+  const script=fileURLToPath(new URL('../bin/reparse-tag.ps1',import.meta.url)).replaceAll("'","''")
+  const verdict=hex=>ps(`. '${script}'; $t=[uint32]::Parse('${hex}','HexNumber'); if (Test-DshOpsCloudReparseTag $t) { 'allow' } else { 'refuse' }`)
+  for(const hex of ['9000001A','9000101A','9000601A','9000F01A']) assert.equal(verdict(hex),'allow',hex)
+  for(const hex of ['A0000003','A000000C','80000017','00000000']) assert.equal(verdict(hex),'refuse',hex)
+  // The guard itself must consult the tag: reverting it to the bare attribute test has to fail here.
+  const prepare=fs.readFileSync(new URL('../bin/prepare-workspace.ps1',import.meta.url),'utf8')
+  assert.match(prepare,/Test-DshOpsCloudReparseTag/)
 })
 await test('preparation failures always say why, including a timeout (#43)', async () => {
   const node=code=>({executable:process.execPath,args:['-e',code]})
