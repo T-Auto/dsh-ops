@@ -29,13 +29,14 @@ import { fileURLToPath } from 'node:url'
 import { REPO_ROOT, resolveDshEntry, spawnPlan } from './lib/env.mjs'
 import { USAGE as PROFILE_USAGE, dshHomeFor, nextStepLines, parseArgs, prepareProfiles, spawnInvoker } from './setup/profile.mjs'
 import { EXTRA_FLAGS, USAGE_EXTRA, closingLines, preflight } from './setup/preflight.mjs'
+import { SWITCH_USAGE, extractSwitches, configureSwitches } from './setup/switches.mjs'
 
 /** Exit codes: 0 prepared, 1 a check or a step failed, 2 usage. `bench/cli.mjs`'s own
  * `EXIT.pending` (3) never applies here — this module exists, so `setup` is implemented. */
 export const EXIT = { ok: 0, failure: 1, usage: 2 }
 
 /** The whole help: `profile.mjs`'s flags plus setup B's own. */
-export const USAGE = `${PROFILE_USAGE}\n${USAGE_EXTRA}`
+export const USAGE = `${PROFILE_USAGE}\n${USAGE_EXTRA}\n${SWITCH_USAGE}`
 
 /**
  * The injectable half of `main`. `bench/cli.mjs` passes `{out, err}`; a suite passes the
@@ -69,8 +70,12 @@ export const USAGE = `${PROFILE_USAGE}\n${USAGE_EXTRA}`
 export async function main(argv, io = {}) {
   const out = io.out ?? ((line) => console.log(line))
   const err = io.err ?? ((line) => console.error(line))
-  let options
-  try { options = parseArgs(argv, { ...EXTRA_FLAGS, platform: io.platform }) } catch (error) {
+  let options, switches
+  try {
+    const extracted = extractSwitches(argv)
+    switches = extracted.switches
+    options = parseArgs(extracted.argv, { ...EXTRA_FLAGS, platform: io.platform })
+  } catch (error) {
     err(`${error.message}\n\n${USAGE}`)
     return EXIT.usage
   }
@@ -122,6 +127,8 @@ export async function main(argv, io = {}) {
     err(`\nsetup is not finished: ${prepared.problems.join('; ')}`)
     return EXIT.failure
   }
+  try { configureSwitches(options, { home, log, invoke, prefix: plan.args, overlay: io.overlay }, switches) }
+  catch (error) { err(`component switches: ${error.message}`); return EXIT.failure }
   out('\n— next —')
   for (const line of closingLines(options)) out(line)
   out(options.dryRun ? '\n[dry-run] everything above is a plan; nothing was changed.' : '\nsetup complete.')

@@ -531,6 +531,7 @@ export function renderReport(comparison) {
     REPORT_TITLE,
     '',
     `Condition: ${describeCondition(comparison.condition)}`,
+    `Candidate switches: ${JSON.stringify(comparison.switches ?? null)} (null means unknown)`,
     '',
     ...environmentLines(comparison.environment),
     ...taskSection(comparison),

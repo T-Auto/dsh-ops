@@ -208,6 +208,8 @@ function buildSummary(arm, rows, ctx) {
     meta: { platform: ctx.spec.meta?.platform ?? `${process.platform}-${process.arch}` },
     profileHash: arm.profileHash ?? null,
     components: arm.components ?? null,
+    switches: arm.switches ?? null,
+    candidateSwitches: ctx.spec.arms?.find(item => item.side === 'cand')?.switches ?? null,
     format: SUMMARY_FORMAT,
     label: arm.label,
     profile: arm.profile,
@@ -242,6 +244,7 @@ function noiseFor(spec, summaries, arms) {
 /** The arm descriptor the seal step (P8a) lifts into `run.json`'s `arms`. */
 function descriptor(arm) {
   return {
+    switches: arm.switches ?? null,
     components: arm.components ?? null,
     label: arm.label,
     profile: arm.profile,

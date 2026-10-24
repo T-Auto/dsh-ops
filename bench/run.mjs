@@ -45,6 +45,7 @@ import { renderReport, reportFileName } from './compare.mjs'
 import { reasoningEffort, planConditions, writeConditionPatch, patchArgs, describeCondition, assertEffectiveCondition } from './lib/condition.mjs'
 import { runMatrix } from './lib/matrix.mjs'
 import { componentFacts } from './lib/environment.mjs'
+import { switchesFromDump } from './lib/switches.mjs'
 
 /** The runner-only flags that take a value; `--task`/`--repeat`/`--folder`/`--base`/`--cand` are parsed by the CLI. */
 const VALUE_FLAGS = ['--sleep-ms', '--out', '--heartbeat-ms', '--stall-ms', '--timeout', '--dsh', '--llm-patch', '--model', '--reasoning-effort', '--provider']
@@ -271,6 +272,7 @@ export function profileFingerprints(arms, context = {}) {
       fs.writeFileSync(path.join(context.dirs[arm.side], 'dump-config.txt'), text, { mode: 0o600 })
     }
     arm.components = componentFacts(text)
+    arm.switches = switchesFromDump(text)
   }
   return hashes
 }

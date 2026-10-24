@@ -125,6 +125,8 @@ CI runs on every pull request and every push to `main`, `0.3.2` and `release/0.4
 
 ## One CI run per pull request
 
+All target branches are covered, including stacked feature branches. Repository enforcement requires the separate [administrator ruleset and acceptance steps](required-ci-admin.md); passing CI alone does not configure branch protection.
+
 Every pull request must show one run of the [Cross-platform validation](https://github.com/T-Auto/dsh-ops/blob/main/.github/workflows/ci.yml)
 workflow that its **own `pull_request` event** triggered. The aggregate job **`CI required`**
 summarises the two blocking POSIX legs (Linux x64, macOS arm64); the non-blocking Windows x64 leg

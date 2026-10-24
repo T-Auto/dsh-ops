@@ -76,6 +76,7 @@
   "$defs": {
     "arm": { "description": "One arm of the comparison: what it was called, which profile contents it ran, and how it was launched.", "type": "object", "additionalProperties": false, "required": ["label", "profile", "profileHash"],
       "properties": {
+        "switches": { "description": "Effective component switches from the composed profile; null for unknown legacy records.", "type": ["object", "null"], "additionalProperties": { "type": "object", "required": ["enabled"], "properties": { "enabled": { "type": ["boolean", "null"] }, "replaceTools": { "type": ["array", "null"], "items": { "type": "string" } } }, "additionalProperties": false } },
         "components": { "description": "Component states read from composed configuration, not a publication/readiness receipt. Null for older or injected records.", "type": ["object", "null"], "additionalProperties": { "type": "string", "enum": ["enabled", "disabled", "absent", "unknown"] } },
         "label": { "description": "Arm label, also the profile name it ran, e.g. bench-base.", "type": "string" },
         "profile": { "description": "Profile name whose resolved configuration was measured.", "type": "string" },

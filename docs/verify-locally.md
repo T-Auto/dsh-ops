@@ -31,6 +31,8 @@ There is no exit code for "green with a surprise in it" — that is `1`.
 
 ## The pull request run (CI, not this host)
 
+Feature-branch targets also run CI. Applying and proving repository enforcement is a separate [administrator task](required-ci-admin.md); a local gate never configures GitHub rulesets.
+
 Every pull request must show one `Cross-platform validation` run triggered by its own
 `pull_request` event, and paste the `CI required` run URL into the PR template. A local
 `verify-gate` run — however green — is not that run: it proves the checkout, not the merge

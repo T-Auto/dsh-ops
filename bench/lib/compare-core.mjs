@@ -35,6 +35,7 @@
 import { CORE_BUCKETS, median, minValue, pairMetrics } from './aggregate.mjs'
 import { assertSameCondition } from './condition.mjs'
 import { compareEnvironment } from './environment.mjs'
+import { assertSameSwitches } from './switches.mjs'
 
 export { median, minValue }
 
@@ -483,6 +484,7 @@ export function classifyExcluded(pairs, taskId = null) {
  * @returns {object} the noise-floor document; `pct: null` when nothing could be paired.
  */
 export function noiseFloor(baseA, baseB, options = {}) {
+  assertSameSwitches(baseA, baseB)
   assertSameCondition(baseA, baseB)
   compareEnvironment(baseA, baseB, options)
   const aggregate = AGGREGATES.includes(options.aggregate) ? options.aggregate : 'median'
@@ -708,6 +710,8 @@ export function formatNumber(value) {
  * @returns {object} the comparison structure, including the gate and the verdict.
  */
 export function compareSummaries(base, cand, options = {}) {
+  const switches = assertSameSwitches(base, cand)
+  if (options.noise) assertSameSwitches(base, options.noise.base)
   const condition = assertSameCondition(base, cand)
   const environment = compareEnvironment(base, cand, options)
   if (options.noise) compareEnvironment(base, options.noise.base, options)
@@ -862,6 +866,7 @@ export function compareSummaries(base, cand, options = {}) {
 
   return {
     format: COMPARE_FORMAT,
+    switches,
     condition,
     environment,
     base: { label: sideLabel(base, 'base'), profile: sideProfile(base, 'base'), model: baseModel, dshVersion: sideDshVersion(base, 'base') },

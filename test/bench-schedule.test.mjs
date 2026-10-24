@@ -536,6 +536,8 @@ await test('main: a sweep is unsealed by default and --seal opts in', async () =
     assert.ok(fs.existsSync(path.join(group, armDir, 'summary.json')), 'the per-arm summary is the artifact the report reads')
     const summary = JSON.parse(fs.readFileSync(path.join(group, armDir, 'summary.json'), 'utf8'))
     assert.equal(summary.components.shell, 'enabled', 'unsealed summaries still preserve component configuration')
+    assert.equal(summary.switches.shell.enabled, true)
+    assert.equal(summary.candidateSwitches.shell.enabled, true, 'both sides share the candidate conditions for pairing')
     assert.equal(summary.meta.platform, `${process.platform}-${process.arch}`)
     assert.equal(fs.existsSync(path.join(group, 'run.json')), false, 'nothing sealed this sweep')
     const reports = fs.readdirSync(group).filter((name) => name.startsWith('DSH-OPS Benchmark Report') && name.endsWith('.md'))

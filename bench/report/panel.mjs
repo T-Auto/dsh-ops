@@ -376,6 +376,7 @@ function renderConclusion() {
 }
 function renderOverview(node) {
   const condition = obj(RUN.meta).condition
+  node.appendChild(el('p', 'mono', 'Candidate switches: ' + j(obj(obj(RUN.arms).cand).switches || null)))
   node.appendChild(el('p', 'mono', 'Condition: ' + (condition === undefined || condition === null ? 'unknown' : j(condition))))
   const environment = el('div', 'card')
   environment.appendChild(el('h3', null, 'Platform / component configuration'))

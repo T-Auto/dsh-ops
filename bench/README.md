@@ -71,6 +71,25 @@ node bench/cli.mjs report --matrix bench/runs/benchmark-YYYY-MM-DD-NN
 
 Model flags set the actual shared route, with the condition patch applied after the provider overlay. Both arms archive their composed configuration. Repeated models and reasoning levels form independent Cartesian groups; `report --matrix` renders one section per condition and never combines deltas. Cross-condition comparisons exit 2, naming both conditions. Without new flags, routing is unchanged and the condition is `unknown`; historical labels do not prove routing. An omitted reasoning level remains `null` unless the overlay pins it. All examples are optional model-driven runs, outside CI.
 
+### 组件开关 / Component switches
+
+```console
+node bench/cli.mjs setup --switch hide-official=all --switch ptc --switch panel=false --dry-run
+node bench/cli.mjs setup --switch hide-official=read,grep --switch discovery --switch shell
+```
+
+`--switch` 可重复，支持 `hide-official`、`ptc`、`panel`、`discovery`、`shell`；省略值等同 `true`，普通开关也接受 `false`。`hide-official=all` 只选择已有替代实现的 `read,glob,grep`，也可指定不重复的子集或 `false`。只修改 candidate 的 `cordis.patch.yml`；baseline 不写入组件行。每次 setup 只改明确指定的开关，不自动搜索组合。
+
+写入幂等；本地已有相反值需 `--force`，继承的字面配置键会保留。动态表达式、非映射配置、重复行和无法安全编辑的目标形态需手工处理，`--force` 也不会猜测。`--dry-run` 打印请求的行和值，不启动宿主、不修改 profile。
+
+实跑先读合成配置，写入后再核验配置并执行一次有超时的最小 headless turn；这可能调用已配置模型。没有已完成 turn、宿主错误或 `READINESS_BLOCKED` 都会让 setup 失败并指向 [#207](https://github.com/T-Auto/dsh-ops/issues/207)，不会启动 benchmark sweep。这个探测不代替 Desktop 重启后的人工验证。
+
+实际配置写入摘要及封存 `run.json` 的 `arms.cand.switches`，报告头和 panel 显示 candidate 开关。baseline 的空集合与 candidate 的非空集合属于正常 A/B；两份运行的 candidate 集合不同则 compare 退出 `2`，列出差异，不合并 Δ。未求值配置记录 `null`，旧数据缺失开关元数据仍可读取为未知；这些字段是配置事实，不证明组件已经发布到会话。
+
+Repeat `--switch` to set candidate components. Values default to `true`; booleans also accept `false`. `hide-official=all` expands only the implemented `read,glob,grep` replacements, or select a unique subset. Setup edits only the candidate patch, preserves inherited literal configuration, and changes only named switches. Conflicting local values require `--force`; dynamic or unsafe shapes require manual edits even with force. Dry-run prints the requested values without launching the host or writing profiles.
+
+Real setup verifies composed configuration and runs one bounded headless readiness turn, which may call the configured model. Missing successful completion, host errors and `READINESS_BLOCKED` fail setup with the #207 diagnostic before a sweep starts. This does not substitute for Desktop validation. Summaries and sealed `arms.cand.switches` retain effective configuration; report headers and the panel show it. Comparisons reject different candidate switch sets with exit 2, while the baseline's empty set is expected. Unevaluated configuration and historical missing metadata remain unknown, without implying publication readiness. Switch combinations are selected explicitly and are outside the CI gate.
+
 ## 任务一览
 
 六个任务各自压一种能力，`ops_*` 工具名来自 `publicToolName()`。每个任务的期望值都由夹具生成器现算（`derive*`），判卷在 `bench/lib/verify.mjs`。

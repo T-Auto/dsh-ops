@@ -167,7 +167,7 @@ await test('the same comparison renders byte-identical text twice: tables first,
   const text = renderReport(beyond)
   assert.equal(renderReport(beyond), text, 'rendering is a pure function of its inputs')
   assertEnglish(text)
-  assert.match(text, /^# DSH-OPS Benchmark Report \(beta\)\n\nCondition: unknown\n\nPlatform: base=unknown; cand=unknown\./, 'the header states condition and environment evidence before the data')
+  assert.match(text, /^# DSH-OPS Benchmark Report \(beta\)\n\nCondition: unknown\nCandidate switches: null \(null means unknown\)\n\nPlatform: base=unknown; cand=unknown\./, 'the header states condition, switches and environment evidence before the data')
   assert.match(text, /^## Per-task pairs$/m)
   assert.match(text, /^\| task \| base \| ops \(Δ%\) \| steps: base→ops \(Δ%\) \| tool calls: base→ops \(Δ%\) \| time: base→ops \(Δ%\) \| tool errors \| pass \|$/m, 'the first table carries cost, behaviour, wall-clock evidence and pass: no pairs, exclusion or direction column')
   assert.ok(text.includes(`| csv-sum | 1,000 | 926 (${green('\u22127.4%')}) | 4 → 4 (${green('0.0%')}) | 6 → 6 (${green('0.0%')}) | 60.0s → 55.0s (${green('\u22128.3%')}) | 0 → 0 | 2/2→2/2 |`), 'each cell keeps its own Δ% in parentheses, painted like every other percent — time included')
