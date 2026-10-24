@@ -62,6 +62,20 @@ Long scripts, heredocs and multi-layer quotes and backslashes make the model esc
 
 A key the `ops_bash` schema does not declare is refused before execution, and the error names both the unknown keys and the accepted ones. This is deliberate — nothing is silently ignored.
 
+### Bash script files, PATH precedence and empty input
+
+`script_path` always selects a Bash script; the extension does not select an
+interpreter. Run PowerShell scripts through the host's `pwsh` tool instead.
+The private Windows runtime keeps its matching `usr/bin` first in the child
+PATH, then searches the caller's PATH before its optional `ucrt64/bin` and `cmd`
+programs. This retains caller-installed Git/curl versions where the required
+MSYS directory does not provide the same command. The system PATH is unchanged.
+
+Bash receives an immediately closed empty input pipe rather than the Windows
+NUL device. Programs still see EOF, including scripts and commands that read
+stdin; this avoids the reported MSYS fd-0 device initialization condition
+(#372 section 1) without changing sandbox permissions.
+
 ### `ops_bash` cannot run a custom bashPath or Git for Windows in restricted modes
 
 Symptom, in a read-only or workspace-write session: `EXECUTOR_UNAVAILABLE: ops_bash cannot run the configured bashPath … in restricted modes` (0.3.0 printed `This MSYS version has no verified DSH IPC compatibility build. Rebuild the matching proxies`).

@@ -88,7 +88,8 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
         // Legacy direct executor callers can omit cwd; scoped host calls resolve it before this seam.
         cwd: spec.workdir!,
         stdio: {
-          stdin: 'ignore',
+          // A closed pipe supplies EOF without exposing Windows NUL to MSYS as a device.
+          stdin: { data: '' },
           stdout: { maxBytes: DEFAULT_MAX_OUTPUT_BYTES, spill: { maxBytes: DEFAULT_MAX_SPILL_BYTES } },
           stderr: { maxBytes: DEFAULT_MAX_OUTPUT_BYTES, spill: { maxBytes: DEFAULT_MAX_SPILL_BYTES } },
         },

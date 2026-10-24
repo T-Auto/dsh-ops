@@ -44,7 +44,9 @@ creates a complete private copy under `DSH_HOME/dsh-ops/bash-ipc/<identity>`,
 redirects import DLL names (no executable instructions modified), and records a
 receipt. Unsupported layouts/versions or corrupt generations fail closed.
 Only the per-call environment puts the matching `usr/bin` first in PATH, so
-Bash children do not accidentally load another MSYS installation. Full access
+Bash children do not accidentally load another MSYS installation. The caller's
+PATH then precedes the optional private `ucrt64/bin` and `cmd` programs, retaining
+caller-installed tools where the required MSYS directory has no same-name tool. Full access
 continues using the original shell. The default payload remains GPL software;
 existing LICENSE/provenance files are copied unchanged, and the modified MSYS
 copy is identified in `.ops-ipc.json`. That manifest records the published PATH
