@@ -7,6 +7,7 @@ import { resolveDiscoveryConfig } from '../config.js'
 import { NativeFileTools } from '../file/runtime.js'
 import { nativeProviders, registerNativeProvider, claimNativeSelection } from '../file/result-provider.js'
 import { ownScopes } from '../scoped-ownership.js'
+import { surfaceOf as toolSurface } from '../surface.js'
 import { isNativePresentation, isPresentationProbe } from '../presentation.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
 import { failure, resolveWorker } from '../file/worker.js'
@@ -47,7 +48,7 @@ export function apply(root: Context, raw: unknown): void {
     const entries = new Map<Agent, Entry>()
     mountResultLifecycle(ctx)
     let ownership: Awaited<ReturnType<typeof ownScopes>> | undefined
-    let stopped = false, mutating = false, epoch = 0, chain = Promise.resolve()
+    let stopped = false, mutating = false, epoch = 0, published = 0, chain = Promise.resolve()
     let settled = chain
     const drain = async () => {
       let current: Promise<void>
@@ -69,14 +70,39 @@ export function apply(root: Context, raw: unknown): void {
     }
     const ptcOnly = (assembly: PromptAssembly): boolean => assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
     const native = (agent: Agent): Promise<boolean> => isNativePresentation(prompt, agent)
+    /**
+     * Probe result memo keyed by the agent's visible tool names.
+     *
+     * A presentation probe assembles the whole prompt, so probing every tracked agent on
+     * every reconcile made one session's tool change cost more as sessions accumulated.
+     * The verdict only depends on which tools the scope publishes; a different set of names
+     * re-probes, and an agent nobody references drops out with its entry. That is an
+     * assumption about `isNativePresentation`, which reads the `tools:ptc-only` section text
+     * as well as the tool list: a presentation that flips without the names moving is missed
+     * here. The per-step `native()` probe below is unmemoized, so such a scope corrects itself
+     * on its next step.
+     */
+    const probed = new WeakMap<Agent, { surface: string; native: boolean }>()
+    const surfaceOf = (agent: Agent): string => toolSurface(tools, agent)
+    const settledNative = async (agent: Agent): Promise<boolean> => {
+      const surface = surfaceOf(agent)
+      const memo = probed.get(agent)
+      if (memo !== undefined && memo.surface === surface) return memo.native
+      const verdict = await native(agent).catch(() => false)
+      probed.set(agent, { surface, native: verdict })
+      return verdict
+    }
     const own = async (agent: Agent, entry: Entry, tool: ToolDefinition): Promise<void> => {
       if (!entry.ctx) return
       const execute = tool.execute
       const registration: ToolDefinition = { ...tool, execute: async (args, exec) => {
         await chain
-        const version = epoch
+        // The probe below assembles the prompt, which reconciles other scopes; `epoch` would
+        // therefore invalidate this call for changes that never republished this one. What
+        // retires a registration is a republish, so the guard compares `published`.
+        const version = published
         const available = () => ownership?.owns(agent) && !stopped && entries.get(agent) === entry && exec.agent === agent && entry.owned.has(tool.name)
-        if (!available() || !await native(agent).catch(() => false) || !available() || version !== epoch) {
+        if (!available() || !await native(agent).catch(() => false) || !available() || version !== published) {
           return failure('POLICY_DENIED', 'Discovery capability belongs to a different or inactive scope.')
         }
         return execute(args, exec)
@@ -92,9 +118,9 @@ export function apply(root: Context, raw: unknown): void {
       chain = chain.then(async () => {
         if (stopped || version !== epoch) return
         const ready: [Agent, Entry][] = []
-        for (const [agent, entry] of entries) if (entry.ctx && ownership?.owns(agent) && permitted(agent) && await native(agent).catch(() => false)) ready.push([agent, entry])
+        for (const [agent, entry] of entries) if (entry.ctx && ownership?.owns(agent) && permitted(agent) && await settledNative(agent)) ready.push([agent, entry])
         if (stopped || version !== epoch) return
-        mutating = true; ownership?.begin()
+        mutating = true; ownership?.begin(); published = version
         try {
           for (const [agent, entry] of entries) {
             if (!ownership?.owns(agent)) { clear(entry); entry.releaseSelection?.(); entry.releaseSelection = undefined; continue }
