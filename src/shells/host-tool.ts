@@ -8,6 +8,7 @@ import { BashArgumentError, isBashArgumentError } from './argument-error.js'
 import { approveBashPolicy } from './approval.js'
 import { HOST_BASH_OUTPUT_SCHEMA, hostFailure, hostForeground, renderHostBash } from './host-contract.js'
 import { BashJobAdmissionError, startBashJob, waitOnBashJob } from './jobs.js'
+import { bashPresentationMeta, presentBashCall, presentBashResult } from './presentation.js'
 
 export const HOST_MAX_BASH_TIMEOUT_MS = 600_000
 
@@ -31,7 +32,9 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
     description: 'Execute a Bash command in a fresh shell using the host sandbox, approvals and jobs. Relative workdir uses the current session workspace. Output is bounded with spill paths. Use command for host-compatible calls; script_path is an OPS extension for an existing script file. Verify resolved absolute targets before delete or move. Never bypass a sandbox denial by switching shells.',
     parameters: { ...parameters },
     // The host validates this value against the declared schema before invoking its renderer.
-    output: { schema: HOST_BASH_OUTPUT_SCHEMA, render: (_args, value) => [{ type: 'text', text: renderHostBash(value as unknown as HostBashResult) }] },
+    output: { schema: HOST_BASH_OUTPUT_SCHEMA, render: (_args, value) => [{ type: 'text', text: renderHostBash(value as unknown as HostBashResult) }], presentationMeta: bashPresentationMeta },
+    presentCall: presentBashCall,
+    presentResult: presentBashResult,
     async execute(input: unknown, exec: ShellCall = {}): Promise<HostBashResult> {
       let timeoutMs = 120_000
       let policy: ShellPolicy | undefined

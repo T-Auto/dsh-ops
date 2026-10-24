@@ -184,6 +184,8 @@ On Windows x64 the install carries the pinned Bash payload as an optional depend
 
 `sandbox_permissions` plus `justification` can request a strictly wider mode through the host approval service. An allowed-once grant applies to that command only; rejection never executes it or changes the session mode. Authority is checked again after approval and sandbox preparation. Windows confinement reports the host provider’s actual enforcement (including `partial`); incompatible Bash runtimes fail closed.
 
+`ops_bash` supplies the host's terminal-card presentation: multiline command or script path, session-relative working directory, captured output, and recorded exit code or signal. Hosts supporting this public presentation contract can show a dedicated card without a tool-name-specific client registration; older UIs retain their generic fallback. This is captured-output presentation, not a live terminal connection. Background and promoted calls retain their job IDs; collect later output with host job tools.
+
 `script_path` (instead of `command`), `graceMs`, and `includeDiagnostics` remain explicit OPS compatibility extensions. They do not change the host command contract or its timeout limits.
 
 "Prefer bash as the terminal" means prompting the model to use `ops_bash` first; it **does not change the system default terminal, PATH or existing host shell tool names**. OPS never overlays the host PowerShell executor configuration. Use `dsh-ops upgrade-host-pwsh` to preview an explicit standard PowerShell 7 installation; `--yes` executes it. Restart DSH afterwards, and review any custom host `pwshPath` in host settings. Existing running commands and old provisioned copies are not removed.
