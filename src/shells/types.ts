@@ -6,7 +6,7 @@ import type { SandboxExecutionPolicy, SandboxProvider } from '@deepseek-ai/dsh-s
 import type { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
 import type { SubprocessRuntime, SubprocessOutputReader } from '@deepseek-ai/dsh-subprocess'
 
-export type ShellCall = Partial<Pick<ToolRunContext, 'agent' | 'callId' | 'signal'>>
+export type ShellCall = Partial<Pick<ToolRunContext, 'agent' | 'callId' | 'signal' | 'token' | 'parent'>>
 export type ShellPolicy = SandboxExecutionPolicy
 export interface ShellStream { text: string; truncated: boolean; spillPath?: string; bytes?: number; bytesTotal?: number; lines?: number }
 export interface ShellResult {
