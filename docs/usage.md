@@ -18,6 +18,9 @@ forms and the optional browser carrier. Use [manual acceptance](manual-validatio
 
 ## Prerequisites
 
+For repository review evidence, the explicit [review snapshot CLI](review-snapshot.md)
+aggregates bounded PR, claim, CI and base-head facts without adding resident tools.
+
 | Item | Requirement |
 | --- | --- |
 | OS | Windows x64, Linux x64 or macOS arm64; OPS Bash is on by default on all three (pinned payload on Windows, distribution Bash on POSIX) |
