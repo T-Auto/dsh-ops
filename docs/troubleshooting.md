@@ -89,6 +89,8 @@ Strict tool-call adapters that fill every schema field send `""`, `null` or `[]`
 
 Fixed since this change: `ops_inspect_local_file` and `ops_replace` report to the host's read-before-edit table like host `read`/`edit`, so host `edit` works right after them. On older versions (FastCtx-backed 0.2.x), ops reads did not count — read the file with the host `read` tool before using host `edit`. (#17)
 
+Content that arrived through a search or a command does not count as a read. `ops_grep`, `ops_glob`, the host `grep` and shell output show bytes without recording an observation, so an `edit` straight after them still fails with `file has not been read` — **one rejection per file that was never read**, so a batch pays for every file in it. This is deliberate, not a missing report: a partial scan is not a complete read, and `ops_grep`/`ops_glob` record nothing on purpose. Read the file before editing it — `ops_read_files` (or `ops_inspect_local_file`) with a narrow range is enough, and one `ops_read_files` call covers a whole batch. The tooling policy states this boundary. In one benchmark run a single `grep` stood in for 24 reads and the following 23 edits were each refused (#360).
+
 ### Do the file tools need command permission?
 
 No. Fixed file operations follow a trusted-operation policy fence matching DSH fs-sandbox and **never execute model code**. Read-only rejects replacement, workspace-write permits writes under the workspace and DSH temporary areas, and full access adds no write fence.

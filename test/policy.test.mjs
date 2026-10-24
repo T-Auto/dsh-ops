@@ -61,6 +61,37 @@ await test('resident-only routing omits unavailable operation hints and includes
   assert.match(discovery, /next model step/)
   for (const name of files) assert.equal(discovery.includes(name), false)
 })
+await test('a search hit is not a read: the prompt names the readers that clear the host gate (#360)', () => {
+  // The session-start shape: `read_files` is the only resident file capability, while
+  // ops_grep/ops_glob stay discoverable and the host grep is callable. Pinning this line to a
+  // visible ops search tool would silence it in exactly the session that needs it, so the
+  // reader alone must be enough to emit it.
+  const residentOnly = renderToolingPolicy({ published: [publicToolName('read_files')], shellComponent: false })
+  assert.match(residentOnly, /A search hit or a command's output is not a read/)
+  assert.match(residentOnly, /"file has not been read"/)
+  assert.match(residentOnly, /Read such a file first with ops_read_files — a narrow range is enough/)
+  assert.equal(residentOnly.includes(publicToolName('inspect_local_file')), false, 'an unpublished reader is never named')
+  assert.equal(residentOnly.includes(publicToolName('grep')), false, 'a discoverable searcher is not advertised')
+
+  const withSearch = renderToolingPolicy({ published: [publicToolName('read_files'), publicToolName('grep')], shellComponent: false })
+  assert.match(withSearch, /Read such a file first with ops_read_files — a narrow range is enough/)
+  assert.equal(withSearch.includes(BASH_TOOL), false, 'the file section never advertises the shell tool')
+
+  const inspected = renderToolingPolicy({ published: [publicToolName('inspect_local_file'), publicToolName('glob')], shellComponent: false })
+  assert.match(inspected, /Read such a file first with ops_inspect_local_file/)
+  assert.equal(inspected.includes(publicToolName('read_files')), false)
+
+  const readers = renderToolingPolicy({ published: [publicToolName('read_files'), publicToolName('inspect_local_file'), publicToolName('grep')], shellComponent: false })
+  assert.match(readers, /Read such a file first with ops_read_files or ops_inspect_local_file/)
+
+  for (const published of [[publicToolName('grep')], [publicToolName('glob')]]) {
+    assert.equal(renderToolingPolicy({ published, shellComponent: false }).includes('not a read'), false,
+      `${published.join('+')} has no visible reader, so no remedy can be named`)
+  }
+  const shell = renderToolingPolicy({ published: [BASH_TOOL, 'pwsh'] })
+  assert.ok(shell.includes(BASH_TOOL))
+  assert.equal(shell.includes('not a read'), false, 'the shell section names no reader, so it carries no remedy')
+})
 await test('shell routing prefers bash and leaves PowerShell ownership with the host', () => {
   const text = renderToolingPolicy({ published: [BASH_TOOL, 'pwsh'] })
   assert.match(text, new RegExp(`^# Shell routing: ${BASH_TOOL} → host PowerShell`))

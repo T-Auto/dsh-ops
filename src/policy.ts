@@ -78,6 +78,15 @@ export function renderToolingPolicy({ published, mounted, levels, shellComponent
   if (names.has(publicToolName('glob')) || names.has(publicToolName('grep'))) lines.push('- Published searches exclude symlinks, junctions, reparse points, hidden files and `.git`.')
   if (names.has(publicToolName('result'))) lines.push(`- ${publicToolName('result')} accepts the original reference root; page completeness describes stored rows only.`)
   if (names.has(publicToolName('read_files'))) lines.push(`- ${publicToolName('read_files')} takes files with independent ranges and per-file recovery.`)
+  // A search hit or a command's output shows content without recording a read, and the host
+  // read-before-edit table credits only the readers below. Emitted whenever one of them is
+  // visible — NOT only beside ops_grep/ops_glob: those are discoverable, so at session start the
+  // visible set is `read_files` alone while the host grep stays callable, which is exactly the
+  // shape of the rejected batch. One error is produced per unread file. (#360)
+  const observing = ['read_files', 'inspect_local_file'].filter(raw => names.has(publicToolName(raw))).map(publicToolName)
+  if (observing.length) lines.push(
+    `- A search hit or a command's output is not a read: the host \`edit\` tool refuses a file it has no recorded read for ("file has not been read"). Read such a file first with ${observing.join(' or ')} — a narrow range is enough.`,
+  )
   const globbing = ['glob', 'grep', 'replace'].filter(raw => names.has(publicToolName(raw)))
   if (globbing.length) {
     const arrays = [names.has(publicToolName('glob')) && 'ops_glob `pattern`', (names.has(publicToolName('grep')) || names.has(publicToolName('replace'))) && 'the `glob` filters'].filter(Boolean).join(' and ')
