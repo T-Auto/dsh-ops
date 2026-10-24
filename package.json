@@ -21,7 +21,7 @@
     "x64",
     "arm64"
   ],
-  "description": "Native file and PTC tools for DSH on Windows x64, Linux x64 and macOS Apple Silicon; Windows-only optional Bash payload and host PowerShell integration",
+  "description": "Native file and PTC tools for DSH on Windows x64, Linux x64 and macOS arm64/x64; Windows-only optional Bash payload and host PowerShell integration",
   "icon": "./docs/assets/icon.png",
   "keywords": [
     "dsh",
@@ -46,16 +46,19 @@
     },
     "./shell/package.json": "./lib/components/shell/package.json",
     "./shell/locale/*.json": "./lib/components/shell/locale/*.json",
+    "./shell/icon": "./lib/components/shell/icon.png",
     "./file": {
       "default": "./lib/components/file/index.js"
     },
     "./file/package.json": "./lib/components/file/package.json",
     "./file/locale/*.json": "./lib/components/file/locale/*.json",
+    "./file/icon": "./lib/components/file/icon.png",
     "./background": {
       "default": "./lib/components/background/index.js"
     },
     "./background/package.json": "./lib/components/background/package.json",
     "./background/locale/*.json": "./lib/components/background/locale/*.json",
+    "./background/icon": "./lib/components/background/icon.png",
     "./ptc": {
       "default": "./lib/components/ptc/index.js"
     },
@@ -64,6 +67,7 @@
     },
     "./ptc/package.json": "./lib/components/ptc/package.json",
     "./ptc/locale/*.json": "./lib/components/ptc/locale/*.json",
+    "./ptc/icon": "./lib/components/ptc/icon.png",
     "./panel": {
       "default": "./lib/components/panel/index.js"
     },
@@ -75,16 +79,19 @@
     },
     "./tui/package.json": "./lib/components/tui/package.json",
     "./tui/locale/*.json": "./lib/components/tui/locale/*.json",
+    "./tui/icon": "./lib/components/tui/icon.png",
     "./discovery": {
       "default": "./lib/components/discovery/index.js"
     },
     "./discovery/package.json": "./lib/components/discovery/package.json",
     "./discovery/locale/*.json": "./lib/components/discovery/locale/*.json",
+    "./discovery/icon": "./lib/components/discovery/icon.png",
     "./hide-official": {
       "default": "./lib/components/hide-official/index.js"
     },
     "./hide-official/package.json": "./lib/components/hide-official/package.json",
     "./hide-official/locale/*.json": "./lib/components/hide-official/locale/*.json",
+    "./hide-official/icon": "./lib/components/hide-official/icon.png",
     "./client": {
       "default": "./lib/client.js"
     }
@@ -156,7 +163,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",
-    "@deepseek-ai/dsh": "^0.2.0-rc.2"
+    "@deepseek-ai/dsh": "0.2.0-rc.2 || 0.2.1-rc.2"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
@@ -215,6 +222,7 @@
     "yaml": "^2.9.1"
   },
   "engines": {
-    "node": "^22.19 || >=24"
+    "node": "^22.19 || >=24",
+    "dsh": "0.2.0-rc.2 || 0.2.1-rc.2"
   }
 }

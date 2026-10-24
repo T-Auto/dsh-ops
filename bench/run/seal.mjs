@@ -37,6 +37,7 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { aggregateLines } from '../lib/aggregate.mjs'
 import { REPO_ROOT, platformTag } from '../lib/env.mjs'
+import { conditionOf } from '../lib/condition.mjs'
 
 /** The four per-row archive files the session driver writes, by suffix. */
 export const ROW_SUFFIXES = {
@@ -533,6 +534,7 @@ function buildMeta(options, arms, results, sealedAt) {
     node: typeof provided.node === 'string' ? provided.node : process.version,
     dsh: textOrNull(provided.dsh),
     model: textOrNull(provided.model),
+    condition: conditionOf({ meta: provided }),
     gitSha: textOrNull(provided.gitSha),
     gitBranch: textOrNull(provided.gitBranch),
     argv: Array.isArray(provided.argv) ? provided.argv.map(String) : [],

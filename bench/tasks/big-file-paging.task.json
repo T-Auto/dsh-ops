@@ -7,6 +7,6 @@
     "params": { "seed": 23, "lines": 4200, "env": "staging" }
   },
   "verify": [{ "type": "fileEquals", "path": "answer.txt", "expect": "answer" }],
-  "repeat": 2,
+  "repeat": 1,
   "timeoutMs": 900000
 }

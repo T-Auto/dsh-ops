@@ -10,7 +10,7 @@ function header(target) {
   const bytes = Buffer.alloc(80)
   if (target === 'win32-x64') { bytes.write('MZ'); bytes.writeUInt32LE(64,60); bytes.writeUInt32LE(0x4550,64); bytes.writeUInt16LE(0x8664,68) }
   if (target === 'linux-x64') { Buffer.from([127,69,76,70,2,1]).copy(bytes); bytes.writeUInt16LE(62,18) }
-  if (target === 'darwin-arm64') { bytes.writeUInt32LE(0xfeedfacf,0); bytes.writeUInt32LE(0x100000c,4) }
+  if (target === 'darwin-arm64' || target === 'darwin-x64') { bytes.writeUInt32LE(0xfeedfacf,0); bytes.writeUInt32LE(target.endsWith('x64') ? 0x1000007 : 0x100000c,4) }
   return bytes
 }
 function fixture(root, targets = PLATFORMS) {
@@ -41,15 +41,21 @@ function run(root, name='check-release.mjs', args=[]) {
   const result=spawnSync(process.execPath,[path.join(root,'bin',name),...(name==='native-runtime.mjs'?['check']:[]),'--root',root,...args],{encoding:'utf8'})
   return {status:result.status,out:`${result.stdout}${result.stderr}`}
 }
-await test('all three paired targets and Windows IPC close successfully',async()=>withTempDir('release-all',root=>{
+await test('all four paired targets and Windows IPC close successfully',async()=>withTempDir('release-all',root=>{
   fixture(root); const result=run(root); assert.equal(result.status,0,result.out); assert.match(result.out,/Release closure OK/)
+}))
+await test('an Intel-only staged closure validates its Mach-O worker and receipt (#371)',async()=>withTempDir('release-intel',root=>{
+  fixture(root,['darwin-x64'])
+  const result=run(root,'native-runtime.mjs',['--platform','darwin-x64'])
+  assert.equal(result.status,0,result.out)
+  assert.match(result.out,/darwin-x64/)
 }))
 await test('each missing target fails strict release while staged source checks remain local',async()=>withTempDir('release-missing',root=>{
   fixture(root,['linux-x64']); assert.equal(run(root,'native-runtime.mjs',['--staged']).status,0)
-  const result=run(root); assert.notEqual(result.status,0); assert.match(result.out,/missing win32-x64, darwin-arm64/)
+  const result=run(root); assert.notEqual(result.status,0); assert.match(result.out,/missing win32-x64, darwin-arm64, darwin-x64/)
 }))
-await test('every foreign target is rejected including Intel Mac',async()=>withTempDir('release-foreign',root=>{
-  fixture(root); for(const target of ['darwin-x64','win32-arm64','linux-arm64']) {
+await test('every foreign target is rejected',async()=>withTempDir('release-foreign',root=>{
+  fixture(root); for(const target of ['win32-arm64','linux-arm64','darwin-riscv64']) {
     const result=run(root,'native-runtime.mjs',['--platform',target]); assert.notEqual(result.status,0); assert.match(result.out,/Unsupported target/)
   }
 }))
@@ -62,13 +68,13 @@ await test('Windows worker without IPC cannot pass',async()=>withTempDir('releas
   const result=run(root); assert.notEqual(result.status,0); assert.match(result.out,/requires its Bash IPC/)
 }))
 await test('half-staged and unexpected targets are never silently skipped',async()=>withTempDir('release-stray',root=>{
-  fixture(root); fs.mkdirSync(path.join(root,'runtime/darwin-x64')); assert.match(run(root).out,/Unexpected runtime targets/)
-  fs.rmSync(path.join(root,'runtime/darwin-x64'),{recursive:true}); fs.unlinkSync(path.join(root,'runtime/darwin-arm64/provenance.json'))
+  fixture(root); fs.mkdirSync(path.join(root,'runtime/darwin-riscv64')); assert.match(run(root).out,/Unexpected runtime targets/)
+  fs.rmSync(path.join(root,'runtime/darwin-riscv64'),{recursive:true}); fs.unlinkSync(path.join(root,'runtime/darwin-arm64/provenance.json'))
   assert.match(run(root,'native-runtime.mjs',['--staged']).out,/Half-staged runtime/)
 }))
 await test('manifest exact targets, npm platform filters and shell pins must agree',async()=>withTempDir('release-drift',root=>{
   fixture(root); const file=path.join(root,'dsh-plugin.json'), manifest=JSON.parse(fs.readFileSync(file,'utf8'))
-  manifest.contributes['x-components'].find(c=>c.id==='dsh-ops-ptc').targets.push('darwin-x64')
+  manifest.contributes['x-components'].find(c=>c.id==='dsh-ops-ptc').targets.push('win32-arm64')
   fs.writeFileSync(file,JSON.stringify(manifest)); assert.match(run(root).out,/disagree/)
 }))
 await test('release closure requires the pinned Bash payload and refuses a PowerShell dependency', async () => withTempDir('release-shell-dep', root => {

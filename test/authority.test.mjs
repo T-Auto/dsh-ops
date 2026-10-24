@@ -4,7 +4,7 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { createScope } from '@deepseek-ai/dsh-scope'
-import { assert, test, report, withTempDir, skipSuite } from './lib/harness.mjs'
+import { assert, test, report, withTempDir, skipSuite, waitFor } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { invoke as fileCall } from '../lib/file/worker.js'
 import { invoke as ptcCall } from '../lib/ptc/worker.js'
@@ -221,6 +221,7 @@ await test('Bash stops on a middle-preparation authority change using the real s
       await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: () => ({ mode: race && ++resolves > 1 ? 'workspace-write' : 'danger-full-access', workspaceRoot: root }) }))
       await ctx.plugin({ inject: ['tools'], apply(inner) { mountSessionBash(inner, { publishBashTool: true }, { bash: { available: true, file: process.execPath, source: 'config' } }) } })
       await ctx.serial('agent/created', { agent })
+      await waitFor(() => ctx.get('tools').get('ops_bash', agent), { what: 'deferred Bash publication' })
       const tool = ctx.get('tools').get('ops_bash', agent)
       assert.ok(tool)
       race = true

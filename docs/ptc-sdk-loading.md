@@ -4,6 +4,8 @@ The PTC row owns its file APIs independently of the Native file row. A PTC-only 
 
 Call `tools.ops_load_sdk({ tools: ['grep', 'read_files'] })` inside `run_code`. A completed Outcome contains `data.tools` and `data.nextTurn: true`. Finish the current tool round; the owning session's committed `step/end` makes the requested APIs visible in the immediately following provider request. They are absent from the current frozen SDK snapshot. Prompt and diagnostic assembly before that boundary, and registry notifications, never activate queued names. Assembly waits for owned publication and obtains a fresh public snapshot when needed; internal presentation probes bypass that barrier to avoid recursion.
 
+PTC and discovery probe independent root sessions separately. Related ancestors and descendants still publish together because their tool overlays depend on one another. If a host prompt hook never returns, that family cannot gain newly verified tools, but another root can create, assemble, change authority and dispose. Superseded probes receive cancellation; disposal and unload release OPS's wait even when the hook ignores its signal, and late responses cannot publish. This isolates the shared-queue failure class; it does not establish the cause or recovery of the multi-plugin Desktop freeze reported in [#359](https://github.com/T-Auto/dsh-ops/issues/359).
+
 The PTC row accepts these settings through central config validation:
 
 | Key | Default | Meaning |

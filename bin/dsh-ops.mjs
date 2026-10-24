@@ -44,6 +44,8 @@ Usage:
   dsh-ops settings-profile --profile-dir <dir> --host-anchor <host package.json> [--dsh-home <dir>] [--offline --yes]
                                   Preview or explicitly enable the optional browser settings carrier
   dsh-ops build-ptc              Build the independent native Rust worker (all platforms)
+  dsh-ops review snapshot --repo <owner/name> --prs <1,2> [--base main] [--checkout <path>]
+                                  Collect bounded PR/CI evidence; optionally probe local commit objects
   dsh-ops uninstall [--yes] [--purge-fastctx]
                                   Report files older versions left under <DSH_HOME>/dsh-ops and,
                                   with --yes, remove them; --purge-fastctx also removes leftover
@@ -96,6 +98,7 @@ const REMOVED_COMMANDS = Object.freeze({
  * @returns {Promise<number>} the exit code.
  */
 async function main() {
+  if (process.argv[2] === 'review') return (await import('../lib/review/cli.js')).commandReview(process.argv.slice(3))
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
     allowPositionals: true,

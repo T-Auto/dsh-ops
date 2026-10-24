@@ -195,7 +195,7 @@ export function withBashStatus(value: ShellResult): SettledShellResult {
 export function bashToolDescription() {
   return 'Run general commands, builds, git/gh, pipelines and scripts in bash; prefer this command '
     + 'executor over PowerShell. Use file tools for file operations. Each call uses a fresh non-login '
-    + 'shell; set workdir explicitly. For scripts longer than about 1 KB or containing heredocs, '
+    + 'shell; set workdir explicitly. For Bash scripts longer than about 1 KB or containing heredocs, '
     + 'quotes, backslashes or non-ASCII text, write the script to a file first and pass script_path '
     + 'instead of embedding it in command. Use command for short commands and pipelines. Fix failed '
     + 'bash commands here, do not switch shells or mix PowerShell syntax. Output is bounded with '
@@ -233,7 +233,7 @@ export function bashToolDefinition({ file, source, subprocess, prepareArgv, env 
         },
         script_path: {
           type: 'string',
-          description: 'Existing bash script path. Omit or leave empty when using command. Never use /dev/null as a placeholder.',
+          description: 'Existing Bash script path, always executed by Bash regardless of extension. Use host pwsh for PowerShell scripts. Omit or leave empty when using command. Never use /dev/null as a placeholder.',
         },
         workdir: {
           type: 'string',

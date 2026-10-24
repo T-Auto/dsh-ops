@@ -47,6 +47,11 @@ export function restrictedCompatibility(file: string, {platform=process.platform
 }
 /** The directories this runtime puts on the child's PATH — what an attacker would target. */
 const PATH_DIRS=['usr/bin','ucrt64/bin','cmd']
+/** Per-call PATH for the verified private MSYS tree. */
+export function privateRuntimePath(target: string, inheritedPath = process.env.PATH ?? '') {
+  return [path.join(target,'usr/bin'), ...inheritedPath.split(path.delimiter).filter(Boolean),
+    path.join(target,'ucrt64/bin'),path.join(target,'cmd')].join(path.delimiter)
+}
 /** Relative-path → `{sha256, size, mtimeMs}` for every file under {@link PATH_DIRS}.
  *  `bash.exe` and the DLLs are verified individually; this covers the rest of what the child can
  *  actually execute, so swapping `cmd/git.exe` — which the PATH exposes and the child will
@@ -264,7 +269,7 @@ export function confinedBash(file: string, {home=process.env.DSH_HOME ?? path.jo
       try {renameWithRetry(stage,target)} catch(error){if(!fs.existsSync(marker))throw error}
     } finally {fs.rmSync(stage,{recursive:true,force:true})}
   }
-  const result={file:selected,env:{PATH:[path.join(target,'usr/bin'),path.join(target,'ucrt64/bin'),path.join(target,'cmd'),process.env.PATH??''].join(path.delimiter)},runtime:identity}
+  const result={file:selected,env:{PATH:privateRuntimePath(target)},runtime:identity}
   cache.set(key,result)
   return result
 }

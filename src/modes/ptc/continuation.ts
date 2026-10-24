@@ -1,8 +1,8 @@
 /** Continuations describe read-only retrieval. They are data, never authority or automatic retries. */
 import type { CanonicalData, JsonValue } from './outcome.js'
+import { CONTINUATION_TOOLS as readers } from '../../capabilities/registry.js'
 const object = (value: unknown): CanonicalData | undefined => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as CanonicalData : undefined
 const integer = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) >= 0
-const readers = ['inspect_local_file', 'read_files', 'glob', 'grep', 'diff', 'result', 'read_table', 'read_docx', 'read_pdf'] as const
 export type ContinuationTool = typeof readers[number]
 export interface RetrievalContinuation { version: 1, tool: ContinuationTool, args: CanonicalData }
 const PREFIX = 'ops-next-v1:'

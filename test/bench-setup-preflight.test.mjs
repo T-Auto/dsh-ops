@@ -220,7 +220,7 @@ await test('the preflight reports the poisoned PSModulePath as a warning with th
     const isDirectory = (file) => file === path.win32.join(CORE, 'Microsoft.PowerShell.Security')
     const options = { baseProfile: 'bench-base', candProfile: 'bench-ops', permissionMode: 'danger-full-access', plugin: 'local', noBuildCheck: true }
     const lines = []
-    const dirty = preflight(options, { home: path.join(dir, 'home'), env: poisoned, platform: 'linux', arch: 'x64', log: (line) => lines.push(line), isDirectory })
+    const dirty = preflight(options, { home: path.join(dir, 'home'), env: poisoned, platform: 'win32', arch: 'x64', log: (line) => lines.push(line), isDirectory })
     assert.equal(dirty.ok, true, 'a poisoned module path is a warning, not a refusal')
     assert.equal(dirty.outcomes.modulePath, 'poisoned')
     assert.equal(dirty.warnings.length, 1)
@@ -228,7 +228,7 @@ await test('the preflight reports the poisoned PSModulePath as a warning with th
     assert.match(lines.join('\n'), /search order: 1\. C:\\Program Files\\PowerShell\\7\\Modules/)
     assert.match(lines.join('\n'), /preflight: PSModulePath/)
 
-    const clean = preflight(options, { home: path.join(dir, 'home'), env: { SystemRoot: 'C:\\Windows' }, platform: 'linux', arch: 'x64' })
+    const clean = preflight(options, { home: path.join(dir, 'home'), env: { SystemRoot: 'C:\\Windows' }, platform: 'win32', arch: 'x64' })
     assert.equal(clean.outcomes.modulePath, 'clean')
     assert.deepEqual(clean.warnings, [])
   })
@@ -466,10 +466,11 @@ await test('the poisoned PSModulePath reaches main as a warning and never blocks
   await withTempDir('bench-pre-main-module-', async (dir) => {
     const fx = fixture(dir)
     const io = fx.io({
+      platform: 'win32',
       env: { SystemRoot: 'C:\\Windows', PSModulePath: `${CORE};${IN_BOX}` },
       isDirectory: (file) => file === path.win32.join(CORE, 'Microsoft.PowerShell.Security'),
     })
-    const code = await main(['--dsh-home', fx.home, '--no-pin', '--dry-run'], io)
+    const code = await main(['--dsh-home', fx.home, '--no-pin', '--dry-run', '--no-build-check'], io)
     assert.equal(code, 0, fx.err())
     assert.match(fx.err(), /cmd\.exe/)
     assert.match(fx.out(), /preflight: PSModulePath/)

@@ -13,11 +13,12 @@ export interface DiscoveryConfig {
   denyCredentialReads: boolean
 }
 export const DISCOVERABLE_TOOLS = Object.freeze(Object.keys(DISCOVERY_TERMS) as DiscoverableName[])
+export const DISCOVERY_CONFIG_KEYS = Object.freeze(['enabled', 'maxResults', 'allowedTools', 'alwaysLoaded', 'binaryPath', 'required', 'denyCredentialReads'] as const satisfies readonly (keyof DiscoveryConfig)[])
 export function resolveDiscoveryConfig(raw: unknown = {}): DiscoveryConfig {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new ConfigError('discovery config must be an object')
   const input = raw as Record<string, unknown>
   for (const key of Object.keys(input)) {
-    if (!['enabled', 'maxResults', 'allowedTools', 'alwaysLoaded', 'binaryPath', 'required', 'denyCredentialReads'].includes(key)) {
+    if (!(DISCOVERY_CONFIG_KEYS as readonly string[]).includes(key)) {
       throw new ConfigError(`unknown discovery key: ${key}`)
     }
   }

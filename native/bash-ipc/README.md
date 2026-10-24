@@ -14,9 +14,11 @@ unchanged except:
 - `CreatePipe`: newly created anonymous process-tracking pipes.
 - `NtCreateNamedPipeFile`: new single-instance MSYS data pipes, relative to the
   verified `\Device\NamedPipe\` root, with the current PID in their name.
-- `NtCreateSection`: pagefile-backed `cygpid.<digits>` process trackers under a
-  verified MSYS installation object-directory root. Disk-backed mappings and
-  all other names are unchanged.
+- `NtCreateSection`: pagefile-backed `cygpid.<digits>` process trackers and the
+  current token user's `S-<SID>.<digits>` shared section under a verified MSYS
+  installation object-directory root. Independent Bash roots can reopen that
+  shared section while another root remains alive. Disk-backed mappings, other
+  users' SIDs and names outside that object directory are unchanged.
 
 For those new objects only, retain the original DACL/denies, add the current
 logon SID already present in the host restricting list, and use a Low integrity
@@ -44,7 +46,9 @@ creates a complete private copy under `DSH_HOME/dsh-ops/bash-ipc/<identity>`,
 redirects import DLL names (no executable instructions modified), and records a
 receipt. Unsupported layouts/versions or corrupt generations fail closed.
 Only the per-call environment puts the matching `usr/bin` first in PATH, so
-Bash children do not accidentally load another MSYS installation. Full access
+Bash children do not accidentally load another MSYS installation. The caller's
+PATH then precedes the optional private `ucrt64/bin` and `cmd` programs, retaining
+caller-installed tools where the required MSYS directory has no same-name tool. Full access
 continues using the original shell. The default payload remains GPL software;
 existing LICENSE/provenance files are copied unchanged, and the modified MSYS
 copy is identified in `.ops-ipc.json`. That manifest records the published PATH
@@ -60,4 +64,7 @@ Node PTC runtime with the generated tools SDK: workspace-write command,
 script_path, external executable pipeline, inside writes, outside writes denied,
 read-only downgrade denied, and full access. Test failures are gate failures.
 `test/bash-ipc.test.mjs` pins untouched file/token APIs and unsupported-version
-rejection. GUI Desktop acceptance is separate and requires a restart.
+rejection. `test/bash-ipc-roots.test.mjs` keeps one restricted MSYS root alive
+while eight independent roots execute, checks their output and file effects,
+and verifies an outside-workspace write is still denied. GUI Desktop acceptance
+is separate and requires a restart.

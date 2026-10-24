@@ -1,7 +1,7 @@
 import { DISCOVERY_TERMS } from '../capabilities/discovery.js'
+import { OFFICIAL_REPLACEMENT_NAMES as replacements } from '../capabilities/replacements.js'
 import { checked, FormActions, strings, Unavailable, useEditor } from './forms.js'
 import type { SettingsProps } from './forms.js'
-const replacements = ['read', 'glob', 'grep'] as const
 const readReplacement = (value: Record<string, unknown>) => strings(value.replaceTools)
 export function ReplacementForm(props: SettingsProps) {
   const { form, t } = props, editor = useEditor(form, readReplacement, t)

@@ -12,7 +12,7 @@ export async function inspectPresentation(prompt: Pick<SystemPrompt, 'assemble'>
   } finally { probes.delete(context) }
 }
 
-export async function isNativePresentation(prompt: Pick<SystemPrompt, 'assemble'>, scope: NonNullable<AssembleContext['scope']>): Promise<boolean> {
-  const assembly = await inspectPresentation(prompt, scope)
+export async function isNativePresentation(prompt: Pick<SystemPrompt, 'assemble'>, scope: NonNullable<AssembleContext['scope']>, signal?: AbortSignal): Promise<boolean> {
+  const assembly = await inspectPresentation(prompt, scope, signal)
   return !assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
 }

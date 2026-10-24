@@ -8,6 +8,9 @@ import { BashArgumentError, isBashArgumentError } from './argument-error.js'
 import { approveBashPolicy } from './approval.js'
 import { HOST_BASH_OUTPUT_SCHEMA, hostFailure, hostForeground, renderHostBash } from './host-contract.js'
 import { BashJobAdmissionError, startBashJob, waitOnBashJob } from './jobs.js'
+import { createJsonDigestProjection } from './json-digest.js'
+
+import { bashPresentationMeta, presentBashCall, presentBashResult } from './presentation.js'
 
 export const HOST_MAX_BASH_TIMEOUT_MS = 600_000
 
@@ -26,13 +29,18 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
     sandbox_permissions: { type: 'string', enum: ['workspace-write', 'danger-full-access'], description: 'After a real denial, request the narrowest wider mode for this exact command with justification. Approval applies only to this call. Do not bypass a rejection.' },
     justification: { type: 'string', description: 'One sentence explaining why this command needs wider access, in the user’s language. Required when changing sandbox_permissions.' },
   } }
+  const projection = createJsonDigestProjection()
   return {
     ...base,
     description: 'Execute a Bash command in a fresh shell using the host sandbox, approvals and jobs. Relative workdir uses the current session workspace. Output is bounded with spill paths. Use command for host-compatible calls; script_path is an OPS extension for an existing script file. Verify resolved absolute targets before delete or move. Never bypass a sandbox denial by switching shells.',
     parameters: { ...parameters },
+    projectContent: projection.projectContent,
     // The host validates this value against the declared schema before invoking its renderer.
-    output: { schema: HOST_BASH_OUTPUT_SCHEMA, render: (_args, value) => [{ type: 'text', text: renderHostBash(value as unknown as HostBashResult) }] },
+    output: { schema: HOST_BASH_OUTPUT_SCHEMA, render: (_args, value) => [{ type: 'text', text: renderHostBash(value as unknown as HostBashResult) }], presentationMeta: bashPresentationMeta },
+    presentCall: presentBashCall,
+    presentResult: presentBashResult,
     async execute(input: unknown, exec: ShellCall = {}): Promise<HostBashResult> {
+      const complete = async (value: HostBashResult) => { await projection.prepare(value, exec); return value }
       let timeoutMs = 120_000
       let policy: ShellPolicy | undefined
       let attempted = false
@@ -70,11 +78,11 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
             if (run_in_background || attempted || error instanceof BashJobAdmissionError && error.runInvoked) throw error
             ctx.logger?.warn?.(`Bash job admission refused; using the foreground deadline: ${errorMessage(error)}`)
           }
-          if (attached) return run_in_background ? { kind: 'background', jobId: attached.id, label: attached.label } : await waitOnBashJob(jobs, attached, exec, timeoutMs)
+          if (attached) return run_in_background ? { kind: 'background', jobId: attached.id, label: attached.label } : await complete(await waitOnBashJob(jobs, attached, exec, timeoutMs))
         } else if (run_in_background) return hostFailure('EXECUTOR_UNAVAILABLE: the host job registry is unavailable.', timeoutMs)
         const execution = await start(exec, {})
         const result = await execution.result()
-        return hostForeground(result, execution.started ? 'unknown' : 'none')
+        return await complete(hostForeground(result, execution.started ? 'unknown' : 'none'))
       } catch (error) {
         const message = isBashArgumentError(error) ? `INVALID_BASH_ARGUMENT: ${errorMessage(error)}` : errorMessage(error)
         return { ...hostFailure(message, timeoutMs, process ? (process.started ? 'unknown' : 'none') : attempted ? 'unknown' : 'none', exec.signal?.aborted === true), ...(policy ? { sandbox: { mode: policy.mode, denied: false } } : {}) }

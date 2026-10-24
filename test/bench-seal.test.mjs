@@ -28,8 +28,8 @@ const SEALED_AT = new Date(NOW).toISOString()
 
 /** The two sides, with the fingerprints the contract requires. */
 const ARMS = {
-  base: { label: 'bench-base', profile: 'bench-base', profileHash: 'a'.repeat(64) },
-  cand: { label: 'bench-ops', profile: 'bench-ops', profileHash: 'b'.repeat(64) },
+  base: { label: 'bench-base', profile: 'bench-base', profileHash: 'a'.repeat(64), switches: {} },
+  cand: { label: 'bench-ops', profile: 'bench-ops', profileHash: 'b'.repeat(64), switches: { panel: { enabled: true } } },
 }
 
 /** A string that exists only in a non-milestone trace lane, so "not inlined" is provable. */
@@ -163,6 +163,8 @@ await test('sealRun writes one schema-valid run.json and reports where it went',
     assert.equal(validation.ok, true)
     assert.equal(document.meta.arms.base.label, 'bench-base')
     assert.equal(document.meta.arms.cand.profileHash, ARMS.cand.profileHash)
+    assert.deepEqual(document.arms.base.switches, {})
+    assert.deepEqual(document.arms.cand.switches, ARMS.cand.switches)
     assert.equal(document.verify.checks, 2)
     assert.equal(document.verify.passed, 2)
     assert.equal(document.verify.failed, 0)

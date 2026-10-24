@@ -91,7 +91,9 @@ pub fn finish(mut scan: Scan, cursor: Cursor, page: Page, observed: usize, item_
         "skipped":page.offset,"failed":scan.failed,"complete":complete && !more && !page.output_cut,
         "truncated":!complete || more || page.output_cut,"items":page.items,"nextOffset":next});
     if complete { output["total"] = json!(item_total); output["omitted"] = json!(item_total.saturating_sub(next)); }
-    if !complete { output["nextAction"] = json!("Narrow path/glob or resolve the reported scan gaps, then start a fresh query. No stable continuation is available for an incomplete traversal."); }
+    if !complete { output["nextAction"] = json!(if scan.stopped == Some(TruncatedBy::RowLimit) {
+        "Stopped at the requested row limit (exactTotal=false). matchedObserved is a lower bound; no stable continuation is available. Start a fresh query with exactTotal=true for totals, resolving any reported scan gaps. If a line is only partly displayed, inspect its file with bounded text/hex ranges."
+    } else { "Narrow path/glob or resolve the reported scan gaps, then start a fresh query. No stable continuation is available for an incomplete traversal." }); }
     else if page.partial_item { output["nextAction"] = json!("A matching line is only partially displayed. Inspect that file with bounded text/hex ranges; nextOffset does not skip the undisplayed suffix."); }
     output.as_object_mut().unwrap().extend(serde_json::to_value(report)?.as_object().unwrap().clone());
     if let Some(extra) = extra.as_object() { output.as_object_mut().unwrap().extend(extra.clone()); }

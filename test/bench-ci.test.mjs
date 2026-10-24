@@ -65,7 +65,13 @@ await test('"CI required" neither waits on nor judges the smoke', () => {
 await test('the smoke drives the one CLI entry point with the same binary on both sides', () => {
   assert.match(benchRuns, /node bench\/cli\.mjs tools\b/u, 'the smoke goes through the single cross-platform entry')
   assert.match(benchRuns, /--baseline "\$worker" --candidate "\$worker"/u, 'both sides are the same staged worker')
-  assert.match(benchRuns, /runtime\/linux-x64\/dsh-ops-worker/u, 'it uses the worker this job just built and staged')
+  assert.ok(benchRuns.includes('runtime/${{ matrix.target }}/${{ matrix.worker }}'), 'each runner uses its own staged worker')
+  assert.equal(benchJob['runs-on'], '${{ matrix.os }}')
+  assert.deepEqual(benchJob.strategy.matrix.include, [
+    { os: 'ubuntu-24.04', target: 'linux-x64', worker: 'dsh-ops-worker' },
+    { os: 'windows-latest', target: 'win32-x64', worker: 'dsh-ops-worker.exe' },
+    { os: 'macos-latest', target: 'darwin-arm64', worker: 'dsh-ops-worker' },
+  ])
   assert.doesNotMatch(benchRuns, /bench\/cli\.mjs ab\b/u, 'the model-driven sweep is never run in CI')
   for (const flag of ['--max-ms', '--budget', '--threshold']) {
     assert.equal(benchRuns.includes(flag), false, `no timing gate in the smoke (${flag})`)
@@ -81,6 +87,7 @@ await test('the smoke uploads report.md / run.json / panel.html when they exist'
   assert.equal(uploads.length, 1, 'the smoke uploads exactly one artifact')
   const upload = uploads[0]
   assert.match(String(upload.with?.name ?? ''), /-report$/u, 'the name follows the tools-trial-report convention')
+  assert.ok(upload.with.name.includes('${{ matrix.target }}'), 'parallel platforms never overwrite one another’s artifact')
   assert.equal(upload.with?.['if-no-files-found'], 'warn', 'a tools-only smoke makes no run.json and must not fail on that')
   assert.match(String(upload.if ?? ''), /always\(\)/u, 'evidence is uploaded even when the comparison is red')
   const paths = String(upload.with?.path ?? '')

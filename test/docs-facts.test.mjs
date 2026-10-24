@@ -51,4 +51,21 @@ await test('the discovery allowedTools example is exactly the discoverable catal
   }
 })
 
+// #300: a published checksum without its object is not a contract — the notes said
+// `SHA-256` and meant the worker in one release, the archive in the next. The docs now
+// have to name both objects, and the checker they recommend has to be a real script.
+await test('docs name the object of each published checksum and keep the checker', () => {
+  const releaseProcess = read('docs/release-process.md')
+  // Both clauses are unique to the stated contract: `SHA256SUMS` already appears as a
+  // build artifact elsewhere, so matching the word alone would stay green on a revert.
+  assert.match(releaseProcess, /authoritative in `SHA256SUMS`/u)
+  assert.match(releaseProcess, /never defines a checksum/u)
+  assert.doesNotMatch(releaseProcess, /正文为准/u)
+  for (const file of ['docs/troubleshooting.md', 'docs/常见问题.md']) {
+    assert.match(read(file), /native-runtime\.mjs check --root package --platform/u, `${file} lost the in-package checker`)
+  }
+  assert.equal(fs.existsSync(path.join(PACKAGE_ROOT, 'bin/native-runtime.mjs')), true,
+    'the checker the docs recommend no longer exists')
+})
+
 report('docs-facts')

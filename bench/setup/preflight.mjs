@@ -434,12 +434,15 @@ export function preflight(options, context = {}) {
   else if (permissions.ok) log(`  both sides will pin ${pairText(permissions.expected)}`)
 
   log('\n— preflight: PSModulePath —')
-  const modulePath = inspectModulePath({ modulePath: env.PSModulePath, windows: env.SystemRoot, isDirectory: context.isDirectory })
-  outcomes.modulePath = modulePath ? 'poisoned' : 'clean'
+  const modulePath = platform === 'win32' ? inspectModulePath({ modulePath: env.PSModulePath, windows: env.SystemRoot, isDirectory: context.isDirectory }) : null
+  outcomes.modulePath = platform !== 'win32' ? 'skipped' : modulePath ? 'poisoned' : 'clean'
   if (modulePath) {
     log(`  ✗ ${modulePath.entry} is ahead of the in-box 5.1 module directory`)
     log(`  search order: ${describeModulePath(env.PSModulePath, modulePath.entry)}`)
     warnings.push(modulePath.warning)
+  } else if (platform !== 'win32') {
+    log('  skipped: Windows PSModulePath ordering does not apply on this platform')
+    log('  skipped: Windows Bash IPC proxy and bundled Windows shell payload checks do not apply')
   } else {
     log('  clean: no Core module root ahead of the in-box Windows PowerShell 5.1 directory')
   }

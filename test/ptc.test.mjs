@@ -387,7 +387,7 @@ try {
   fs.cpSync(runtimeDir,path.join(isolatedPackage,'runtime',`${process.platform}-${process.arch}`),{recursive:true})
   assert.throws(() => resolveWorker({}, {platform:'linux',arch:'arm64'}), /unsupported runtime target/)
   assert.throws(() => resolveWorker({}, {platform:'win32',arch:'arm64'}), /unsupported runtime target/)
-  assert.throws(() => resolveWorker({}, {platform:'darwin',arch:'x64'}), /unsupported runtime target/)
+  assert.throws(() => resolveWorker({}, {platform:'darwin',arch:'riscv64'}), /unsupported runtime target/)
   assert.ok(resolveWorker({}, {packageRoot:isolatedPackage}).startsWith(isolatedPackage))
   console.log('ok: installed runtime resolves without binaryPath or source build tree')
   const real = new Context(); real.logger.level = 0

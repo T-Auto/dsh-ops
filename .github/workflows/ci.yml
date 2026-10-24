@@ -6,11 +6,9 @@ on:
   # staging branch before the final release PR.
   push:
     branches: [main, 0.3.2, release/0.4.0]
-  # And a pull request has to show its result before it is merged, not after. GitHub reads this
-  # file from the pull request's own head, so listing the release branch here is what makes a
-  # pull request against a release branch run the gate at all.
+  # Every PR needs evidence, including stacked changes targeting a feature branch.
+  # No target-branch or path filter: an omitted run cannot satisfy CI required.
   pull_request:
-    branches: [main, 0.3.2, release/0.4.0]
   # A merge queue builds the queued commits before they reach `main`, and it only accepts a group
   # whose required checks passed there. Without this trigger the workflow simply never runs for a
   # queued group, so enabling a merge queue would silently un-gate every merge.
@@ -37,8 +35,8 @@ concurrency:
   # because a half-built release branch is worse than a queued one.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
-  # The POSIX legs are the gate: a red Linux or macOS run fails `ci-required` and blocks the merge.
-  # Windows is split into its own, non-blocking job directly below (#316).
+  # The blocking POSIX legs are Linux x64 and macOS arm64: a red one fails `ci-required`.
+  # macOS Intel and Windows are separate non-blocking signals below (#316).
   validate-posix:
     strategy:
       fail-fast: false
@@ -100,6 +98,56 @@ jobs:
         with:
           name: native-${{ matrix.target }}
           path: runtime/${{ matrix.target }}/
+          if-no-files-found: error
+          retention-days: 7
+
+  # macOS Intel is a signal, not a gate: this leg measured 318 s on the PR run that added
+  # it, past the approved ">300 s -> non-blocking" line (#316). It still runs on every push,
+  # pull request and merge group, and uploads the darwin-x64 artifact for the release job.
+  validate-macos-intel:
+    runs-on: macos-15-intel
+    continue-on-error: true
+    timeout-minutes: 35
+    env:
+      CARGO_BUILD_JOBS: '3'
+      DSH_OPS_SUITE_TIMEOUT_MS: '300000'
+      DSH_OPS_RETRY_TIMEOUTS: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The provenance regression verifies exact blobs from the pinned 0.3.1 commit.
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Verify runner identity
+        run: node -e "if(process.platform+'-'+process.arch!=='darwin-x64')throw Error('Unexpected runner'); console.log(process.platform,process.arch)"
+      - name: Set up pinned Rust
+        shell: bash
+        run: rustup toolchain install 1.97.1 --profile minimal && rustup default 1.97.1
+      - name: Reuse exact locked Rust build cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/target
+          key: ops-031-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/Cargo.lock') }}
+          restore-keys: ops-031-${{ runner.os }}-${{ runner.arch }}-
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
+      - name: Functional gate (skips, suite inventory, packed artifact)
+        shell: bash
+        run: node scripts/verify-gate.mjs --skip-install
+      - name: Verify native staged closure
+        run: node bin/native-runtime.mjs check --platform darwin-x64
+      - name: Check shell payload platform filtering
+        shell: bash
+        run: node -e "const fs=require('fs');if(process.platform!=='win32'){for(const n of ['bash','pwsh'])if(fs.existsSync('node_modules/@dsh-ops/'+n+'-win32-x64'))throw Error('Windows shell installed on POSIX')}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-darwin-x64
+          path: runtime/darwin-x64/
           if-no-files-found: error
           retention-days: 7
 
@@ -238,8 +286,9 @@ jobs:
           retention-days: 7
 
   # The bench smoke: `workflow_dispatch` only, off by default, and informational (like `tools-trial`
-  # above). One platform is enough, because it exercises the harness rather than the platform — the
-  # `validate-posix` matrix is the gate and `validate-windows` its non-blocking counterpart. Both
+  # above). Three host platforms exercise the portable harness; the
+  # `validate-posix` matrix is the gate, with `validate-windows` and `validate-macos-intel` as
+  # non-blocking counterparts. Both
   # sides are the *same* staged worker, so the run
   # proves only what a harness self-check can prove: the corpus builds and is removed, the worker
   # answers identically twice, and every query lands on `MATCH` or a declared `EXPECTED_*`. It cannot
@@ -248,7 +297,20 @@ jobs:
   # **never** run in CI.
   bench-smoke:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.bench }}
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: linux-x64
+            worker: dsh-ops-worker
+          - os: windows-latest
+            target: win32-x64
+            worker: dsh-ops-worker.exe
+          - os: macos-latest
+            target: darwin-arm64
+            worker: dsh-ops-worker
+    runs-on: ${{ matrix.os }}
     continue-on-error: true
     timeout-minutes: 30
     env:
@@ -293,7 +355,7 @@ jobs:
       - name: Tool-level comparison, one binary on both sides
         shell: bash
         run: |
-          worker="runtime/linux-x64/dsh-ops-worker"
+          worker="runtime/${{ matrix.target }}/${{ matrix.worker }}"
           mkdir -p bench/runs/smoke/fixtures
           node bench/cli.mjs tools \
             --baseline "$worker" --candidate "$worker" \
@@ -309,7 +371,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: bench-smoke-report
+          name: bench-smoke-${{ matrix.target }}-report
           path: |
             bench/runs/smoke/**
             bench/runs/*/run.json
@@ -383,7 +445,8 @@ jobs:
   # names in sync — and silently losing the gate when a runner label changes. This job collapses them.
   #
   # It waits **only** on blocking jobs. Every `continue-on-error: true` job — `validate-windows`,
-  # `tools-trial`, `bench-smoke` — is deliberately absent from `needs` and from the loop below:
+  # `validate-macos-intel`, `tools-trial`, `bench-smoke` — is deliberately absent from `needs` and
+  # from the loop below:
   # listing one here would keep the required check pending until that job finished, which is a gate
   # in everything but name. `scripts/check-workflows.mjs` enforces both halves of that rule.
   ci-required:
@@ -410,7 +473,7 @@ jobs:
           done
           # Not in `needs` on purpose: this check must never wait for them, so their result is not
           # available here. Read them on their own jobs; a red one is a signal, not a merge blocker.
-          echo "validate-windows, tools-trial, bench-smoke: non-blocking (continue-on-error), not waited on by this check"
+          echo "validate-windows, validate-macos-intel, tools-trial, bench-smoke: non-blocking (continue-on-error), not waited on by this check"
           if [ "$failed" != 0 ]; then
             echo "::error::a blocking job did not succeed; read the failing job above"
             exit 1

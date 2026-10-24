@@ -26,8 +26,8 @@ name: Release
 # checksum manifest (docs/PROVENANCE.md), not a second, unmaintained mechanism, and an
 # attestation would need `id-token: write` / `attestations: write` on the repository.
 #
-# SCOPE: exactly the three declared targets in lib/ptc/runtime.js — win32-x64,
-# linux-x64, darwin-arm64. Intel macOS, Windows arm64 and Linux arm64 are outside the
+# SCOPE: exactly the four declared targets in lib/ptc/runtime.js — win32-x64,
+# linux-x64, darwin-arm64 and darwin-x64. Windows arm64 and Linux arm64 are outside the
 # matrix; `bin/native-runtime.mjs` refuses them, and `bin/check-release.mjs` fails the
 # run if any other target appears under `runtime/`.
 on:
@@ -57,6 +57,7 @@ jobs:
           - { runner: windows-latest, target: win32-x64, triple: x86_64-pc-windows-msvc }
           - { runner: ubuntu-24.04, target: linux-x64, triple: x86_64-unknown-linux-gnu }
           - { runner: macos-latest, target: darwin-arm64, triple: aarch64-apple-darwin }
+          - { runner: macos-15-intel, target: darwin-x64, triple: x86_64-apple-darwin }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     env:
@@ -166,6 +167,11 @@ jobs:
           name: native-darwin-arm64
           path: runtime/darwin-arm64
 
+      - uses: actions/download-artifact@v8
+        with:
+          name: native-darwin-x64
+          path: runtime/darwin-x64
+
       - name: Prepare the host worker for functional suites
         # Boundary suites intentionally resolve their checkout-local host build.
         # This build is test-only; the staged release runtimes remain the cold matrix artifacts.
@@ -184,7 +190,7 @@ jobs:
         # Publishing must not start before this step is green — it is the only reason
         # the `publish` job sits behind `needs`. `verify:release` is
         # `validate-manifest` + the full repository suite + `bin/check-release.mjs`,
-        # which demands all three declared targets, matches every receipt hash against
+        # which demands all four declared targets, matches every receipt hash against
         # the staged bytes, and re-checks the Windows IPC binary and source digests.
         # A partial download, a foreign-architecture binary, a stale receipt or a
         # manifest/target disagreement fails here instead of shipping.

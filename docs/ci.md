@@ -8,23 +8,26 @@ a reviewer can trust a green PR without re-running anything by hand.
 
 | Workflow | Trigger | Blocks a merge? | Purpose |
 | --- | --- | --- | --- |
-| `ci.yml` — **Cross-platform validation** | `push: main`, `pull_request: main`, `merge_group`, manual dispatch | **Yes** (via the single `CI required` check) | The functional gate on Linux and macOS (blocking) and on Windows (a non-blocking signal), plus the Node floor, the source size gate, workflow lint and the tool trial |
+| `ci.yml` — **Cross-platform validation** | `push: main`, `pull_request: main`, `merge_group`, manual dispatch | **Yes** (via the single `CI required` check) | The functional gate on Linux and macOS arm64 (blocking), macOS Intel and Windows (non-blocking signals), plus the Node floor, the source size gate, workflow lint and the tool trial |
 | `sync-master.yml` — **Sync master with main** | `push: main`, manual dispatch | No | Fast-forwards the `master` mirror; fast-forward only, so a divergent `master` fails loudly |
-| `release.yml` — **Release** | `push: v*` tags, manual dispatch | No (`disabled_manually` today) | Builds the three declared targets, gates them, and publishes the GitHub Release. Nothing here runs on a branch or a pull request |
+| `release.yml` — **Release** | `push: v*` tags, manual dispatch | No (`disabled_manually` today) | Builds the four declared targets, gates them, and publishes the GitHub Release. Nothing here runs on a branch or a pull request |
 
 ### Jobs inside `ci.yml`
 
 | Job | Runner | Blocking? | What it proves |
 | --- | --- | --- | --- |
 | `validate-posix` | `ubuntu-24.04` (linux-x64), `macos-latest` (darwin-arm64) | **Yes** | `cargo test --workspace --locked`, the native worker builds, then `scripts/verify-gate.mjs --skip-install`: no unauthorised skips (`DSH_OPS_REQUIRE_RUNTIME=1` on POSIX turns a missing runtime into a failure), every suite file on disk was collected, and the packed artifact unpacks and passes `native-runtime check` |
+| `validate-macos-intel` | `macos-15-intel` (darwin-x64) | **No** (`continue-on-error`) | The same gate on Intel macOS, including the Mach-O x86_64 worker and its receipt; it runs on every push, pull request and merge group and uploads `native-darwin-x64`. The leg measured **318 s**, past the >300 s line (#316), so it is a signal, not a gate (see below) |
 | `validate-windows` | `windows-latest` (win32-x64) | **No** (`continue-on-error`) | The same gate on Windows, and it still runs on every push, pull request and merge group — the result is a **signal, not a gate**: a red Windows leg is a defect to fix, but it does not hold a merge (see below) |
 | `node-floor` | `ubuntu-24.04` | **Yes** | `package.json` promises `^22.19 \|\| >=24`; this runs the same gate on the declared **floor** so the promise is exercised rather than asserted |
 | `workflow-lint` | `ubuntu-24.04` | **Yes** | `scripts/check-workflows.mjs`: every workflow parses, declares triggers/jobs/permissions, bounds each job with `timeout-minutes`, avoids `write-all` and `pull_request_target`, and keeps `ci.yml`'s aggregate check wired to every blocking job — in `needs` and in its failure loop — while keeping every `continue-on-error` job out of both |
 | `source-size` | `ubuntu-24.04` | **Yes** | `scripts/check-file-size.mjs`: every tracked code file stays at or under 1000 lines. The file set comes from `git ls-files`, so a new module is in scope the moment it is added |
 | `tools-trial` | `ubuntu-24.04` | **No** (`continue-on-error`) | Boots a real host and calls every published tool; a broken tool shows up in its own job and in the uploaded `tools-trial-report` without blocking unrelated work |
-| `ci-required` | `ubuntu-24.04` | — (this is the check to require) | Collapses the matrix into one status: it fails unless every blocking job succeeded, and it waits only on blocking jobs — `validate-windows`, `tools-trial` and `bench-smoke` are `continue-on-error` and are deliberately not in its `needs` |
+| `ci-required` | `ubuntu-24.04` | — (this is the check to require) | Collapses the matrix into one status: it fails unless every blocking job succeeded, and it waits only on blocking jobs — `validate-windows`, `validate-macos-intel`, `tools-trial` and `bench-smoke` are `continue-on-error` and are deliberately not in its `needs` |
 
 `validate-windows` is non-blocking by measurement, not by preference: on `main` after #307 the leg took **527 / 529 s** — up from 482 s before #307, because `npm ci` now downloads the 411 MB Windows Bash payload — while the blocking legs took 136–139 s (Linux x64) and 168–182 s (macOS arm64). That is well past the approved ">300 s → non-blocking" line (#316); splitting the leg into shards was measured at 1.5–2.4× the runner minutes and still stayed above 300 s on a slow runner. It is still a signal worth reading — a red Windows run is a defect — but the aggregate check does not wait for it, so a merge does not pay for the slowest leg.
+
+`validate-macos-intel` follows the same rule. On the PR run that added the target it took **318 s**, against 174 s for Linux x64 and 146 s for macOS arm64 in the same run. It still runs on every event and uploads `native-darwin-x64`; a red Intel run is a defect to fix, not a reason to hold the merge. The blocking set remains Linux x64 and macOS arm64, plus `node-floor`, `workflow-lint` and `source-size`.
 
 `connectivity` of the required check matters more than its name: require **`CI required`**, not the
 per-platform names. The blocking matrix expands into one check per runner, so requiring those names

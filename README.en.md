@@ -25,6 +25,9 @@ OPS adds bounded file and document tools to DSH. Native mode returns compact, li
 PTC code receives typed Outcome values from the same one-shot Rust worker. Host integration is
 strict TypeScript, compiled to the existing JavaScript package paths.
 
+Supported: Windows x64, Linux x64, and macOS 13+ on Apple Silicon or Intel
+(`darwin-arm64`, `darwin-x64`). See [macOS](docs/macos.md).
+
 > [!IMPORTANT]
 > This branch is the **0.4.0 release candidate**, not a published release. Approved acceptance requires
 > at least 40% less BM-01 output than OPS 0.3.x; the official reader is a separate comparison.
@@ -96,6 +99,10 @@ dsh plugin --profile dsh-tui add dsh-ops
 A regular DSH CLI cannot manage the reserved `desktop` profile; do not confuse it with the desktop app's own entry point.
 
 #### Update
+
+Host compatibility is declared for DSH **0.2.0-rc.2 and 0.2.1-rc.2**. See
+[host versions and display metadata](docs/usage.md#host-compatibility-and-display-metadata)
+for component icon exports, profile refresh and config/schema checks.
 
 Re-run the same `npx --yes dsh-ops@latest install --profile ...`, or use the official CLI `add dsh-ops@latest`. Reload when the app asks; restart the app when replacing code that is already loaded.
 

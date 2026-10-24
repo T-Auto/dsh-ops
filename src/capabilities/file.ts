@@ -53,6 +53,7 @@ export const PARAMETERS = Object.freeze({
     multiline: { type: 'boolean', description: 'Search whole-file text instead of individual lines; default false.' },
     offset: integer,
     limit: range(1, 10000, 'Default 100.'),
+    exactTotal: { type: 'boolean', description: 'Default true. False stops at the row limit with lower bounds and no stable cursor; summary and continuation still scan fully.' },
     continuation: { ...string, description: 'Opaque cursor from a complete scan. Keep query options unchanged; omit offset or use nextOffset. SEARCH_STALE requires a fresh query.' },
   }, ['pattern']),
   stat: bounded({ path: filePath }, ['path']),

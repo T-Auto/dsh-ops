@@ -152,12 +152,13 @@ export function defaultShellPath() {
 
 /** The defaults, before any flag is read.
  * @returns {Options} the defaults. */
-function defaultOptions() {
+function defaultOptions(platform = process.platform) {
   return {
     baseProfile: 'bench-base', candProfile: 'bench-ops', template: 'headless',
     // There is no Windows PowerShell to pin off Windows, and `dsh-pwsh-sandbox` is
     // Windows-gated in the composition anyway, so the default is "no pin" there.
-    pinShell: process.platform === 'win32' ? defaultShellPath() : null,
+    pinShell: platform === 'win32' ? defaultShellPath() : null,
+    platform,
     permissionMode: 'danger-full-access',
     // The candidate measures the working tree: the default install is this checkout, so a
     // sweep prepares itself from the code under edit without a publish or a version bump.
@@ -175,7 +176,7 @@ function defaultOptions() {
  * @returns {Options} the options.
  */
 export function parseArgs(argv, extra = {}) {
-  const options = defaultOptions()
+  const options = defaultOptions(extra.platform)
   const values = { ...VALUE_FLAGS, ...extra.value }
   const booleans = { ...BOOLEAN_FLAGS, ...extra.boolean }
   for (let i = 0; i < argv.length; i += 1) {
@@ -200,7 +201,7 @@ export function parseArgs(argv, extra = {}) {
     }
   }
   if (options.baseProfile === options.candProfile) throw new Error('--base-profile and --cand-profile must differ')
-  if (options.pinShell && process.platform === 'win32' && !path.isAbsolute(options.pinShell)) {
+  if (options.pinShell && options.platform === 'win32' && !path.isAbsolute(options.pinShell)) {
     throw new Error(`--pin-shell must be an absolute path, got "${options.pinShell}"`)
   }
   if (!PERMISSION_MODES.includes(options.permissionMode)) {
@@ -590,7 +591,9 @@ function ensureProfile(name, context) {
  */
 function pinBaselineShell(options, context) {
   if (!options.pinShell) {
-    context.log('  --no-pin: nothing was touched. The baseline then hits the PATH pwsh alias, so both sides run PowerShell 7')
+    context.log(options.platform !== 'win32'
+      ? '  skipped: Windows PowerShell pin is inapplicable on this platform; the host selects its configured shell'
+      : '  --no-pin: nothing was touched; the host selects its configured shell')
     return 'skipped'
   }
   const file = path.join(context.home, 'profiles', options.baseProfile, 'cordis.patch.yml')

@@ -50,7 +50,7 @@ await test('ops_bash runs the resolved bash as `bash -c <command>` through ctx.s
     // The spawn env is the overrides as they must reach a child given THIS host environment: a
     // host that sets `LC_ALL` gets it neutralized (see the locale case below).
     assert.deepEqual(spawned.env, shellEnvOverrides(process.env))
-    assert.equal(spawned.stdio.stdin, 'ignore')
+    assert.deepEqual(spawned.stdio.stdin, { data: '' })
     assert.equal(typeof spawned.stdio.stdout.maxBytes, 'number')
     assert.equal(typeof spawned.stdio.stderr.maxBytes, 'number')
     assert.equal(spawned.stdio.stdout.spill.maxBytes, spawned.stdio.stderr.spill.maxBytes)
@@ -177,7 +177,7 @@ await test('ops_bash executes a script_path without embedding its contents in ar
 
     assert.deepEqual(specs[0].argv, [bash, script])
     assert.equal(specs[0].cwd, dir)
-    assert.equal(specs[0].stdio.stdin, 'ignore')
+    assert.deepEqual(specs[0].stdio.stdin, { data: '' })
   })
 })
 

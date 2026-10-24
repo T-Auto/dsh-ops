@@ -69,7 +69,7 @@ export function abUsage() {
     '                            [--base <label>] [--cand <label>] [--show] [runner flags...]',
     '',
     'Runs the baseline side, the candidate side, then the comparison, all inside ONE',
-    'bench/runs/benchmark-test-NN group: the number is allocated once here because a',
+    'bench/runs/benchmark-YYYY-MM-DD-NN group: the name is allocated once here because a',
     'per-process default would put each side in a different group and leave nothing to pair.',
     'Flag meanings are in `--help`; the group is created by the runner (P7/P8) and the',
     'comparison by P11.',
@@ -114,15 +114,16 @@ export function parseAbArgs(argv) {
  * sharing the one group folder allocated here. Pure: it reserves the name but writes
  * nothing, so `--show` and a real run report the same plan.
  * @param {string[]} argv - the `ab` arguments, parsed by {@link parseAbArgs}.
- * @param {{runsDir?: string, repoRoot?: string}} [options] - where group folders live and
- *   the checkout the three commands run in; injectable so a suite allocates nothing real.
+ * @param {{runsDir?: string, repoRoot?: string, now?: Date}} [options] - where group folders live,
+ *   the checkout the three commands run in, and the clock the auto folder name stamps
+ *   (injectable so a suite allocates nothing real and asserts exact names).
  * @returns {{base: string, cand: string, tasks: string[], repeat: string|null, folder: string, show: boolean, extra: string[], help: boolean, allocated: boolean, commands: {label: string, target: string, args: string[], argv: string[]}[], repoRoot: string}} the plan.
  */
 export function planAb(argv, options = {}) {
   const { runsDir = RUNS_DIR, repoRoot = REPO_ROOT } = options
   const parsed = parseAbArgs(argv)
   const allocated = parsed.folder === null
-  const folder = parsed.folder ?? nextFolderName(runsDir)
+  const folder = parsed.folder ?? nextFolderName(runsDir, options.now)
   const shared = parsed.tasks.flatMap((task) => ['--task', task])
   if (parsed.repeat !== null) shared.push('--repeat', parsed.repeat)
   shared.push('--folder', folder, ...parsed.extra)

@@ -1,4 +1,4 @@
-# Native PTC enhancement — Windows x64, Linux x64, Apple Silicon
+# Native PTC enhancement — Windows x64, Linux x64, macOS arm64/x64
 
 0.4.0 PTC callers use [Outcome contracts](ptc-outcomes.md) / [PTC 结果契约](PTC结果契约.md).
 The historical worker/recovery details below remain applicable; SDK results now wrap canonical facts in `data`.
@@ -9,7 +9,7 @@ background component has been removed.
 
 ## Runtime-bearing installation and original DSH permission linkage
 
-0.3.1 ships native workers for `win32-x64`, `linux-x64` and `darwin-arm64`, each with a version/checksum receipt, plus the Windows Bash IPC proxies. Formal `verify:release` requires all three target pairs and validates every PE/ELF/Mach-O worker and the Windows IPC binary/source closure. Local `check --staged` verifies only local development outputs. Intel Mac and Windows/Linux ARM64 are not supported. The Windows Bash payload remains a Windows-only optional dependency; PowerShell is host-managed. POSIX uses host Bash. There is no postinstall download/build. Source builds use `npm run build:ptc`, plus `npm run build:bash-ipc` on Windows.
+The current release ships native workers for `win32-x64`, `linux-x64`, `darwin-arm64` and `darwin-x64`, each with a version/checksum receipt, plus the Windows Bash IPC proxies. 0.3.1 shipped the first three; current support adds Intel macOS on macOS 13+. Formal `verify:release` requires all four target pairs and validates every PE/ELF/Mach-O worker and the Windows IPC binary/source closure. Local `check --staged` verifies only local development outputs. Windows/Linux ARM64 are not supported. macOS 12 lacks `CLONE_ACL`; its write-path fallback is a separate follow-up, not part of this support claim. The Windows Bash payload remains a Windows-only optional dependency; PowerShell is host-managed. POSIX uses host Bash. There is no postinstall download/build. Source builds use `npm run build:ptc`, plus `npm run build:bash-ipc` on Windows.
 
 PTC/Bash use original per-call sandboxPolicy and sandbox.confine, reporting the
 host's full/partial enforcement honestly. Read-only permits existing result pages
@@ -25,7 +25,7 @@ Real Windows provider and pure PTC SDK acceptance is covered in the release gate
 
 The fixed file component follows DSH fs-sandbox's trusted-operation policy fence,
 not arbitrary-code isolation; shell and PTC code still require confinement.
-Runtime binaries target Windows x64, Linux x64 and macOS Apple Silicon; IPC proxies remain Windows x64 only.
+Runtime binaries target Windows x64, Linux x64 and macOS arm64/x64; IPC proxies remain Windows x64 only.
 
 In `workspace-write`, native batch/result operations and their audit records are
 permitted under the selected workspace root through DSH confinement. Read-only
@@ -362,9 +362,12 @@ Linux x64 (`x86_64-unknown-linux-gnu`): release build, `cargo test`, full
 `npm run verify` (every suite that does not need a FastCtx runtime, i.e. 28 passed
 and 2 skipped) and the native worker scenarios executed on the platform, including
 the DSH local sandbox's workspace/temporary-area policy fence.
-macOS arm64 (`aarch64-apple-darwin`) is `cargo check --locked` only: compiling the
-platform-specific code is not a run, and macOS is not a release claim. Actual
-on-platform macOS run and real sandbox denial tests **still required before release**.
+macOS arm64 (`aarch64-apple-darwin`) and macOS Intel (`x86_64-apple-darwin`) now run
+the full gate in CI: `macos-latest` (arm64) is blocking, and `macos-15-intel` (x64)
+is a non-blocking signal because the leg measured 318 s > 300 s. Both build and stage
+their Mach-O worker, run the suite, and verify the receipt. The earlier 0.3.1
+`cargo check --locked`-only record is superseded. A local Intel macOS 12.7.6 run
+still has one expected `CLONE_ACL` failure, so macOS 12 remains a follow-up.
 No fixed token/time saving percentage, actual model-turn benchmark,
 live Desktop upgrade, npm release or GitHub push is claimed.
 
