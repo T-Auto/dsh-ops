@@ -111,7 +111,10 @@ export async function withTempDir(prefix, body) {
   try {
     return await body(dir)
   } finally {
-    rmSync(dir, { recursive: true, force: true })
+    // maxRetries: Windows transiently denies a just-touched path (Defender scans,
+    // handle handoff), and one EPERM here crashes the whole gate at cleanup.
+    // Documented rmSync contract: retries apply to EPERM on recursive removal.
+    rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 120 })
   }
 }
 
