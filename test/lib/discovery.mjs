@@ -8,10 +8,11 @@ import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import * as discovery from '../../lib/components/discovery/index.js'
 import { definition } from '../../lib/file/contract.js'
 import { publicToolName } from '../../lib/policy.js'
+import { DISCOVERY_TOOL_NAME } from '../../lib/capabilities/registry.js'
 import { assert, test, waitFor, withTempDir } from './harness.mjs'
 import { bootHost, registryHasOwnRegister, scopedToolNames, shutdown } from './host.mjs'
 
-const DISCOVER = publicToolName('discover_tools')
+const DISCOVER = publicToolName(DISCOVERY_TOOL_NAME)
 async function boot(config = {}) {
   const { ctx } = await bootHost()
   await ctx.plugin(Subprocess)

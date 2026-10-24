@@ -12,6 +12,10 @@ export interface CapabilityMetadata {
   readonly component: Component
   readonly presentations: readonly ToolPresentationMode[]
   readonly availability: 'resident' | 'discoverable'
+  /** PTC publication is independent of the Native tier. */
+  readonly ptcAvailability?: 'resident' | 'discoverable'
+  readonly supportsContinuation?: boolean
+  readonly observesRead?: boolean
   /** Conservative per-tool flag: some actions (batch plan/result page) remain read-only. */
   readonly mutates: boolean
   readonly concurrencySafe: boolean

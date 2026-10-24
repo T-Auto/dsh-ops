@@ -3,12 +3,12 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { ToolDefinition, ToolExecution, ToolExecutionResult, ToolExecutionToken } from '@deepseek-ai/dsh-tools'
 import { publicToolName } from '../../policy.js'
-import { CAPABILITIES } from '../../capabilities/registry.js'
+import { CAPABILITIES, OBSERVED_READ_TOOLS } from '../../capabilities/registry.js'
 import { exactJson, observeRead, unchangedContent } from './read-observation.js'
 import { generation, readRecord, requestProof } from './read-evidence.js'
 import type { EvidenceState, ReadRecord } from './read-evidence.js'
 
-const READS = new Set([publicToolName('inspect_local_file'), publicToolName('read_files')])
+const READS = new Set(OBSERVED_READ_TOOLS.map(publicToolName))
 const harmless = new Set(CAPABILITIES.filter(entry => !entry.mutates).map(entry => publicToolName(entry.rawName)))
 const MAX_AGENTS = 16, MAX_RECORDS = 32, MAX_BODY_BYTES = 2 * 1024 * 1024
 

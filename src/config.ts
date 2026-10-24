@@ -19,6 +19,10 @@
  * config update 2 removes them from saved rows (`lib/config-updates.js`).
  */
 export const LEGACY_FASTCTX_KEYS = Object.freeze(['serverName', 'enableShellTools', 'toolCallTimeoutMs'])
+export const CORE_CONFIG_KEYS = Object.freeze([
+  ...LEGACY_FASTCTX_KEYS, 'binaryPath', 'required', 'shellPolicy', 'deniedHostTools', 'promptPolicy',
+  'extraGuidance', 'bashPath', 'publishBashTool', 'allowSystemShellFallback', 'denyCredentialReads', 'configUpdateVersion',
+])
 
 /** Upper bound accepted for the legacy `toolCallTimeoutMs`, matching the loader's timer ceiling. */
 const MAX_TOOL_CALL_TIMEOUT_MS = 2_147_483_647
@@ -121,22 +125,7 @@ export function resolveConfig(rawConfig?: unknown): ResolvedConfig {
     throw new ConfigError(`config must be an object, got ${JSON.stringify(rawConfig)}`)
   }
   const raw = rawConfig as Record<string, unknown>
-  rejectUnknownKeys(raw, [
-    'binaryPath',
-    'serverName',
-    'enableShellTools',
-    'toolCallTimeoutMs',
-    'required',
-    'shellPolicy',
-    'deniedHostTools',
-    'promptPolicy',
-    'extraGuidance',
-    'bashPath',
-    'publishBashTool',
-    'allowSystemShellFallback',
-    'denyCredentialReads',
-    'configUpdateVersion',
-  ])
+  rejectUnknownKeys(raw, CORE_CONFIG_KEYS)
 
   const configUpdateVersion = raw.configUpdateVersion ?? 0
   if (typeof configUpdateVersion !== 'number' || !Number.isSafeInteger(configUpdateVersion) || configUpdateVersion < 0) {

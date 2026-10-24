@@ -10,7 +10,7 @@ import { ownScopes } from '../scoped-ownership.js'
 import { isNativePresentation, isPresentationProbe } from '../presentation.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
 import { failure, resolveWorker } from '../file/worker.js'
-import { capability } from '../capabilities/registry.js'
+import { capability, DISCOVERY_TOOL_NAME } from '../capabilities/registry.js'
 import { DISCOVERY_DESCRIPTION, DISCOVERY_PARAMETERS, DISCOVERY_OUTPUT } from '../capabilities/discovery.js'
 import { publicToolName, renderToolingPolicy } from '../policy.js'
 import { DISCOVERABLE_TOOLS } from './config.js'
@@ -28,7 +28,7 @@ interface Entry {
   ready: Promise<void>
   releaseSelection?: () => void
 }
-const DISCOVER = publicToolName('discover_tools')
+const DISCOVER = publicToolName(DISCOVERY_TOOL_NAME)
 const advanced = DISCOVERABLE_TOOLS.map(publicToolName)
 export const name = 'dsh-ops-discovery'
 

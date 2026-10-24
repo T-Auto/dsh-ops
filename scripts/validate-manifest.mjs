@@ -18,6 +18,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { componentChecks, defaultChecks } from './lib/catalogue-checks.mjs'
 import { parse as parseYaml } from 'yaml'
 import {
   IN_PROCESS_TOOLS,
@@ -239,7 +240,10 @@ if (typeof patch === 'string' && fs.existsSync(path.join(PACKAGE_ROOT, patch))) 
           : component === 'hide-official' ? resolveHidingConfig
             : component === 'panel' ? resolvePanelConfig
               : resolveConfig
-      try { resolve(row.config); check(true, `${component} config is valid`) }
+      try {
+        resolve(row.config); check(true, `${component} config is valid`)
+        for (const fact of defaultChecks(component, row.config, resolve)) check(...fact)
+      }
       catch (error) { check(false, `${component} config is valid`, String(error?.message ?? error)) }
     }
   }
@@ -485,6 +489,8 @@ if (display !== undefined) {
 
 /** Payload the published package must carry, as `files` entries or paths they cover. */
 const ptc = manifestRaw.contributes?.['x-components']?.find(c => c.id === 'dsh-ops-ptc')
+const components = manifestRaw.contributes?.['x-components'] ?? []
+for (const fact of componentChecks(components)) check(...fact)
 check(ptc?.entry === 'dsh-ops/ptc' && ptc?.defaultEnabled === true, 'native PTC enhancement is enabled by default; presentation stays scoped')
 check(JSON.stringify(ptc?.tools) === JSON.stringify([...PTC_API_TOOLS, 'load_sdk'].map(publicToolName)), 'PTC declaration matches the generated tool contract')
 check(PTC_API_TOOLS.every(t => definition(t, () => {}).parameters.type === 'object'), 'PTC schemas remain structured')

@@ -1,4 +1,4 @@
-import { FILE_TOOLS, NATIVE_FILE_TOOLS, IN_PROCESS_TOOLS } from './capabilities/registry.js'
+import { FILE_TOOLS, NATIVE_FILE_TOOLS, IN_PROCESS_TOOLS, DISCOVERY_TOOL_NAME } from './capabilities/registry.js'
 export { FILE_TOOLS, FILE_MUTATIONS, IN_PROCESS_TOOLS } from './capabilities/registry.js'
 
 /** Model-facing routing, kept in one section. No shared registry mutation. */
@@ -35,7 +35,7 @@ export function renderToolingPolicy({ published, mounted, levels, shellComponent
     ? [...NATIVE_FILE_TOOLS, ...(levels?.bash ? IN_PROCESS_TOOLS : [])].map(publicToolName) : []))
   if (levels?.pwsh) names.add('pwsh')
   if (!shellComponent) names.delete('pwsh')
-  const hasDiscovery = names.has(publicToolName('discover_tools'))
+  const hasDiscovery = names.has(publicToolName(DISCOVERY_TOOL_NAME))
   const hasFiles = NATIVE_FILE_TOOLS.some(name => names.has(publicToolName(name)))
   const hasBash = names.has(BASH_TOOL)
   const hasPwsh = shellComponent && names.has('pwsh')
@@ -46,7 +46,7 @@ export function renderToolingPolicy({ published, mounted, levels, shellComponent
   const row = (raw: string, task: string) => {
     if (names.has(publicToolName(raw))) lines.push(`| ${task} | ${publicToolName(raw)} |`)
   }
-  row('discover_tools', 'Find advanced capabilities for the next model step')
+  row(DISCOVERY_TOOL_NAME, 'Find advanced capabilities for the next model step')
   row('read_files', 'Read UTF-8 ranges from multiple files')
   row('read_table', 'Read bounded CSV / TSV lexical rows')
   row('read_docx', 'Read DOCX main-body paragraphs')

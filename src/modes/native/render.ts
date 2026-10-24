@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer'
+import { FILE_MUTATIONS } from '../../capabilities/registry.js'
 import { compactRanges } from './ranges.js'
 import { encodeSourceLine } from './line-encoding.js'
 import { renderDocument } from './documents.js'
@@ -103,7 +104,7 @@ function failure(value: Row): string[] {
   return output
 }
 
-const mutations = new Set(['replace', 'write_file', 'edit_file', 'copy', 'move', 'remove'])
+const mutations = new Set<string>(FILE_MUTATIONS)
 function receiptItems(value: Row): string[] {
   return rows(value.items).map(item => `${label(item.path ?? '(path unavailable)')}: ${facts(item, [
     'removed', 'changed', 'revision', 'revisionBefore', 'revisionAfter', 'bytes', 'bytesBefore', 'bytesAfter',

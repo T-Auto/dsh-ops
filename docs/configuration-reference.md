@@ -228,6 +228,8 @@ selection is rejected before writing. The host persists accepted changes and rel
 row, so the running configuration follows the saved selection. Ordinary row fields are preserved.
 A disabled row has no editable form; re-enable it with the host's built-in row switch first.
 
+The shell descriptor includes routing policy, prompt guidance and system-shell fallback alongside Bash selection. Its internal revision marker, file-only and retired FastCtx compatibility keys are deliberately excluded. Discovery exposes all seven accepted fields, including `binaryPath`, `required` and `denyCredentialReads`. The release gate checks component entries, targets, published tool declarations, retained host commands and explicit bundle defaults against their runtime definitions.
+
 Runtime actions use the host's authenticated gateway and managed subprocess service. Installation,
 removal and upgrade require a preview followed by execution of that current preview; expired,
 changed or reused plans are refused. Only one action runs at a time. Closing/unloading the owning

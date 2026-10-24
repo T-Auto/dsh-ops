@@ -1,8 +1,8 @@
-import { FILE_TOOLS, PTC_TOOLS } from '../capabilities/registry.js'
+import { FILE_TOOLS, PTC_TOOLS, PTC_RESIDENT_TOOLS } from '../capabilities/registry.js'
+export { PTC_RESIDENT_TOOLS } from '../capabilities/registry.js'
 import type { FileToolName, PtcToolName } from '../capabilities/registry.js'
 import { migrateRawNames } from '../compat/alias.js'
 export type ApiName = FileToolName | PtcToolName
-export const PTC_RESIDENT_TOOLS: readonly ApiName[] = ['inspect_local_file', 'result']
 export const PTC_LOADABLE_TOOLS: readonly ApiName[] = [...FILE_TOOLS, ...PTC_TOOLS].filter(tool => !PTC_RESIDENT_TOOLS.includes(tool))
 export interface PtcConfig { binaryPath?: string; required: boolean; allowedTools: ApiName[]; alwaysLoaded: ApiName[] }
 export function parsePtcConfig(raw: unknown = {}): PtcConfig {
