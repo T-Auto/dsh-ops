@@ -43,7 +43,9 @@ export class NativeFileTools {
       return []
     }
     const definitions = names.map(rawName => this.definition(rawName))
-    this.unregisterProvider = await registerNativeProvider(this.ctx, definitions, tool => this.ctx.tools.register(tool))
+    // Discovery starts a worker without a resident surface. Do not emit a
+    // registry change for an empty provider on every newly attached agent.
+    if (definitions.length) this.unregisterProvider = await registerNativeProvider(this.ctx, definitions, tool => this.ctx.tools.register(tool))
     return names.map(publicToolName)
   }
 
