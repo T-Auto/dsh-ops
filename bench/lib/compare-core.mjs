@@ -33,6 +33,8 @@
  */
 
 import { CORE_BUCKETS, median, minValue, pairMetrics } from './aggregate.mjs'
+import { assertSameCondition } from './condition.mjs'
+import { compareEnvironment } from './environment.mjs'
 
 export { median, minValue }
 
@@ -228,6 +230,10 @@ export function aggregateTask(metricsList = []) {
   const steps = numeric((metrics) => metrics?.steps ?? 0)
   const toolCalls = numeric((metrics) => metrics?.toolCalls ?? 0)
   const toolErrors = numeric((metrics) => metrics?.toolErrors ?? 0)
+  // Wall-clock per repeat, aggregated like steps. A failed row records 0 ms (it never
+  // ran), which drags the median down exactly the way a 0-steps row does — the pass
+  // columns are what tell the reader which rows actually measured something.
+  const durations = numeric((metrics) => metrics?.durationMs ?? 0)
   // The prompt shape: the first request (no history yet — system prompt + tool
   // schemas + task text) is the per-request fixed cost, and the per-step average
   // says how much context each subsequent request re-sent. Older archives predate
@@ -282,6 +288,8 @@ export function aggregateTask(metricsList = []) {
     stepsMin: minValue(steps),
     toolCallsMedian: median(toolCalls),
     toolCallsMin: minValue(toolCalls),
+    durationMsMedian: median(durations),
+    durationMsMin: minValue(durations),
     toolCallsByName,
     toolErrorsMedian: median(toolErrors),
     toolErrorsMin: minValue(toolErrors),
@@ -368,6 +376,7 @@ function statisticKeys(aggregate) {
     toolsKey: useMin ? 'toolCallsMin' : 'toolCallsMedian',
     errorsKey: useMin ? 'toolErrorsMin' : 'toolErrorsMedian',
     firstPromptKey: useMin ? 'firstRequestPromptMin' : 'firstRequestPromptMedian',
+    durationKey: useMin ? 'durationMsMin' : 'durationMsMedian',
     promptTotalKey: useMin ? 'promptTotalMin' : 'promptTotalMedian',
     inputKey: useMin ? 'inputMin' : 'inputMedian',
     outputKey: useMin ? 'outputMin' : 'outputMedian',
@@ -474,6 +483,8 @@ export function classifyExcluded(pairs, taskId = null) {
  * @returns {object} the noise-floor document; `pct: null` when nothing could be paired.
  */
 export function noiseFloor(baseA, baseB, options = {}) {
+  assertSameCondition(baseA, baseB)
+  compareEnvironment(baseA, baseB, options)
   const aggregate = AGGREGATES.includes(options.aggregate) ? options.aggregate : 'median'
   const merged = pairMetrics(normalizeResults(baseA), normalizeResults(baseB))
   const usablePairs = merged.pairs.filter((pair) => passed(pair.base) && passed(pair.cand))
@@ -540,7 +551,9 @@ export function resolveNoiseFloor(options = {}, base = null, cand = null) {
   }
   const noise = options.noise
   if (noise && typeof noise === 'object' && !Array.isArray(noise) && (noise.base || noise.cand)) {
-    return noiseFloor(noise.base ?? base, noise.cand ?? base, { aggregate: options.aggregate })
+    assertSameCondition(base, noise.base ?? base)
+    assertSameCondition(base, noise.cand ?? base)
+    return noiseFloor(noise.base ?? base, noise.cand ?? base, { aggregate: options.aggregate, allowCrossPlatform: options.allowCrossPlatform })
   }
   return {
     format: NOISE_FORMAT,
@@ -695,6 +708,9 @@ export function formatNumber(value) {
  * @returns {object} the comparison structure, including the gate and the verdict.
  */
 export function compareSummaries(base, cand, options = {}) {
+  const condition = assertSameCondition(base, cand)
+  const environment = compareEnvironment(base, cand, options)
+  if (options.noise) compareEnvironment(base, options.noise.base, options)
   const aggregate = AGGREGATES.includes(options.aggregate) ? options.aggregate : 'median'
   const tolerancePct = isNumber(options.tolerancePct) ? options.tolerancePct : 2
   const failOn = FAIL_ON.includes(options.failOn) ? options.failOn : 'both'
@@ -745,6 +761,7 @@ export function compareSummaries(base, cand, options = {}) {
         stepsPct: percentChange(baseSide[keys.stepsKey], candSide[keys.stepsKey]),
         toolCallsPct: percentChange(baseSide[keys.toolsKey], candSide[keys.toolsKey]),
         toolErrorsPct: percentChange(baseSide[keys.errorsKey], candSide[keys.errorsKey]),
+        durationPct: percentChange(baseSide[keys.durationKey], candSide[keys.durationKey]),
         passRateAbs: candSide.passRate - baseSide.passRate,
       },
     }
@@ -845,6 +862,8 @@ export function compareSummaries(base, cand, options = {}) {
 
   return {
     format: COMPARE_FORMAT,
+    condition,
+    environment,
     base: { label: sideLabel(base, 'base'), profile: sideProfile(base, 'base'), model: baseModel, dshVersion: sideDshVersion(base, 'base') },
     cand: { label: sideLabel(cand, 'cand'), profile: sideProfile(cand, 'cand'), model: candModel, dshVersion: sideDshVersion(cand, 'cand') },
     aggregate,
@@ -874,6 +893,8 @@ export function compareSummaries(base, cand, options = {}) {
       candToolCalls: sumStat(tasks, (task) => task.cand[keys.toolsKey]),
       baseToolErrors: sumStat(tasks, (task) => task.base[keys.errorsKey]),
       candToolErrors: sumStat(tasks, (task) => task.cand[keys.errorsKey]),
+      baseDurationMs: sumStat(tasks, (task) => task.base[keys.durationKey]),
+      candDurationMs: sumStat(tasks, (task) => task.cand[keys.durationKey]),
       basePasses,
       baseRuns: baseRunsCount,
       candPasses,

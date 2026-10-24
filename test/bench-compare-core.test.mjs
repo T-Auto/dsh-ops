@@ -26,6 +26,7 @@ import {
   FAIL_ON,
   NOISE_FORMAT,
   REGRESSION_SCOPES,
+  aggregateTask,
   compareSummaries,
   geometricMeanPct,
   median,
@@ -58,6 +59,7 @@ function run(taskId, tokens, pass, extra = {}) {
     steps: extra.steps ?? 4,
     toolCalls: extra.toolCalls ?? 6,
     toolErrors: extra.toolErrors ?? 0,
+    durationMs: extra.durationMs ?? 60_000,
     toolCallsByName: {},
     verify: { passed: pass, checks: [] },
     exitCode: 0,
@@ -129,6 +131,28 @@ await test('the vocabularies and the scalar helpers are pinned', () => {
   assert.equal(percentChange(200, 150), -25)
   assert.equal(percentChange(0, 5), null)
   assert.equal(percentChange(0, 0), 0)
+})
+
+await test('durations aggregate like steps: median/min per task, totals summed, gate unchanged', () => {
+  const aggregate = aggregateTask([
+    run('csv-sum', 1000, true, { repeatIndex: 1, durationMs: 60_000 }),
+    run('csv-sum', 1000, true, { repeatIndex: 2, durationMs: 62_000 }),
+  ])
+  assert.equal(aggregate.durationMsMedian, 61_000, 'the wall-clock median follows the same aggregate as steps')
+  assert.equal(aggregate.durationMsMin, 60_000)
+
+  // 60.0s of base work against 55.0s of candidate work: the delta and the sums are
+  // evidence in the document, and the gate still judges tokens and pass rate.
+  const base = summary('bench-base', [run('csv-sum', 1000, true, { durationMs: 60_000 })])
+  const faster = compareSummaries(base, summary('bench-ops', [run('csv-sum', 1000, true, { durationMs: 55_000 })]), { noiseFloorPct: 3.1, failOn: 'both' })
+  assert.equal(faster.tasks[0].delta.durationPct, -8.3)
+  assert.equal(faster.totals.baseDurationMs, 60_000)
+  assert.equal(faster.totals.candDurationMs, 55_000)
+  assert.equal(faster.gate.fail, false, 'identical tokens and passes gate clean')
+
+  const slower = compareSummaries(base, summary('bench-ops', [run('csv-sum', 1000, true, { durationMs: 600_000 })]), { noiseFloorPct: 3.1, failOn: 'both' })
+  assert.equal(slower.tasks[0].delta.durationPct, 900)
+  assert.equal(slower.gate.fail, false, 'the gate still judges tokens and pass rate, not wall-clock')
 })
 
 await test('pass-drop outranks a token win and is the first reason given', () => {

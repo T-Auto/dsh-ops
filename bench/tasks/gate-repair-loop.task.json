@@ -1,16 +1,16 @@
 {
   "id": "gate-repair-loop",
-  "title": "Repair a 24-stage release gate that stops at the first broken stage",
+  "title": "Repair a 12-stage release gate that stops at the first broken stage",
   "prompt": "check.js is a generated release gate. It loads the stage modules in gates/ (gates/gate_00.js, gates/gate_01.js, and so on) in order, validates each stage against fixed golden values, and stops at the first stage that disagrees; exit code 0 means every stage passed. Run it, find the failing stage, and repair the stage modules in gates/ until the gate passes. Each stage module documents its own contract; make the code agree with it. Do not change check.js or package.json, and do not add or remove files. When the gate exits 0 it prints the pipeline's final value; write that integer, and nothing else, into answer.txt.",
   "fixture": {
     "generator": "gatePipeline",
-    "params": { "seed": 53, "gates": 24, "probes": 40, "linesPerGate": 70 }
+    "params": { "seed": 53, "gates": 12, "probes": 40, "linesPerGate": 70 }
   },
   "verify": [
     { "type": "command", "command": "node", "args": ["check.js"], "exitCode": 0 },
     { "type": "fileEquals", "path": "answer.txt", "expect": "answer" },
     { "type": "fileEquals", "path": "check.js", "expect": "checkSource", "invariant": true }
   ],
-  "repeat": 2,
+  "repeat": 1,
   "timeoutMs": 2400000
 }

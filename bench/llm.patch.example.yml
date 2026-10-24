@@ -1,44 +1,20 @@
-# dsh-ops benchmark —— LLM 路由 overlay 模板
-#
-# 用法（详见 bench/PLAN.md §8、bench/README.md）：
-#   1) 复制本文件为 bench/llm.patch.yml（已在 .gitignore，不进仓库）；
-#   2) 填写你的 OpenAI 兼容服务器与模型 id（下面所有 <...> 占位符）；
-#   3) 设置 apiKeyEnv 指向的环境变量（如 BENCH_SERVER_API_KEY），
-#      密钥只放环境变量或 $DSH_HOME/.credentials.yaml，**绝不写进本文件**；
-#   4) node bench/run.mjs 会自动把它以 --patch 传给每次 dsh 调用
-#      （含 dump-config 存档）→ bench-base / bench-ops 两侧
-#      provider/model 一致性由构造保证（PLAN §2.7）；
-#      换别的 overlay 用 --llm-patch <path>；确实不想用 overlay（两侧各跑
-#      各自 profile 自带的路由）用 --no-llm-patch，sweep 会把"两侧不共享
-#      任何路由"这句话说出口。文件不存在又没给 --no-llm-patch 时，
-#      runner 在 spawn 之前就拒绝（退 2），不会静默换一条路由开跑。
-#
-# 注意：
-#   - 路由名 bench-server 可自定，但 llm-pi-ai 与 agent-default-model
-#     两处必须一致；
-#   - api 按服务器协议选择，自托管（vLLM / sglang / llama.cpp 的
-#     OpenAI 兼容端点）用 openai-completions；
-#   - 服务器必须在流式响应里回报 usage（stream_options.include_usage），
-#     否则 harness 拒绝给出 token 结论（PLAN §2.6）；
-#   - contextWindow 要按模型真实窗口填：现有语料里最长的题峰值 prompt 约 2 万 token，
-#     这个值不影响它们；但填小了仍会让 compaction-basic（0.8 × contextWindow）
-#     提前触发压缩，想跑长上下文任务时尤其要注意；
-#   - patch 语义是"整段替换 config"：llm-pi-ai 的 config 只有 providers
-#     一个字段、agent-default-model 只有 provider/model，直接照抄结构即可。
+- insert:
+    - id: credentials-local
+      name: "@deepseek-ai/dsh-credentials-local"
 
 - id: llm-pi-ai
   config:
     providers:
       bench-server:
-        baseURL: https://<你的服务器>/v1
-        apiKeyEnv: BENCH_SERVER_API_KEY
+        baseURL: https://<your-server>/v1
+        apiKeyEnv: DSH_API_KEY_ENV_NAME
         api: openai-completions
         models:
-          - id: <模型id>
+          - id: <model-id>
             contextWindow: 262144
-            maxTokens: 16384
+            maxTokens: 32768
 
 - id: agent-default-model
   config:
     provider: bench-server
-    model: <模型id>
+    model: <model-id>

@@ -203,6 +203,14 @@ await test('archive + metrics + trace: NDJSON appended verbatim, usage folded, t
     assert.deepEqual(row.toolCallsByName, { read: 1 })
     assert.deepEqual(row.usage, { inputTokens: 10, outputTokens: 5, cacheReadTokens: 2, cacheWriteTokens: 1, reasoningTokens: 0 })
     assert.equal(row.usageReported, false, 'one step without usage degrades the whole row instead of understating it')
+    assert.deepEqual(row.prompt, {
+      reported: false,
+      firstStep: 13,
+      median: 13,
+      max: 13,
+      total: 13,
+      perTurn: [{ turn: 1, tokens: 13 }],
+    }, 'the first request is 10+2+1 prompt tokens; the step without usage keeps the summary incomplete')
     assert.equal(row.turnEndReason, 'completed')
     assert.equal(row.verifyPassed, false, 'the fake child wrote no answer, so the check fails')
 
@@ -221,6 +229,29 @@ await test('archive + metrics + trace: NDJSON appended verbatim, usage folded, t
     assert.equal(metrics.traceRows, trace.length)
     assert.equal(metrics.stderrFile, 'results/grep-tree-r1.stderr.log')
     assert.equal(metrics.traceFile, 'results/grep-tree-r1.trace.ndjson')
+  })
+})
+
+await test('the fold records the prompt shape: first request, per-step sizes, per-turn firsts', async () => {
+  await withTempDir('bench-session-prompt', async (root) => {
+    const events = [
+      { type: 'status', phase: 'step_end', step: 1, turn: 1, usage: { inputTokens: 10, outputTokens: 5, cacheReadTokens: 2, cacheWriteTokens: 1 } },
+      { type: 'status', phase: 'step_end', step: 2, turn: 1, usage: { inputTokens: 40, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 } },
+      { type: 'status', phase: 'step_end', step: 3, turn: 2, usage: { inputTokens: 100, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0 } },
+    ]
+    const rig = spawnRig((child) => child.emitFrom({ events, stderr: '', exit: 0 }))
+    const row = await runSession(
+      { task: { ...TASK, verify: [{ type: 'fileExists', path: 'answer.txt' }] }, repeatIndex: 1 },
+      optionsFor(root, { spawn: rig.spawn }),
+    )
+    assert.deepEqual(row.prompt, {
+      reported: true,
+      firstStep: 13,
+      median: 40,
+      max: 100,
+      total: 153,
+      perTurn: [{ turn: 1, tokens: 13 }, { turn: 2, tokens: 100 }],
+    }, 'prompt size is input + cacheRead + cacheWrite per step; each turn contributes its first request')
   })
 })
 

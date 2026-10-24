@@ -17,6 +17,9 @@
         "node": { "description": "Node.js version the runner ran on, e.g. v24.21.0.", "type": "string" },
         "dsh": { "description": "Version of the dsh launcher both arms were measured with, or null when unknown.", "type": ["string", "null"] },
         "model": { "description": "Model id both arms used, or null for the model-free mode.", "type": ["string", "null"] },
+        "condition": { "description": "Explicit shared routing condition; absent/null means unknown for historical or unconfigured runs. Null reasoning effort means the host default was not pinned.", "type": ["object", "null"], "additionalProperties": false, "required": ["provider", "model", "reasoningEffort"], "properties": {
+          "provider": { "description": "Configured provider identifier shared by both arms.", "type": "string" }, "model": { "description": "Configured model identifier shared by both arms.", "type": "string" }, "reasoningEffort": { "description": "Pinned reasoning level, or null when the host default was not explicitly pinned.", "enum": ["off", "low", "high", "max", null] }
+        } },
         "gitSha": { "description": "Commit the checkout was on, or null when it could not be read.", "type": ["string", "null"] },
         "gitBranch": { "description": "Branch the checkout was on, or null when it could not be read.", "type": ["string", "null"] },
         "argv": { "description": "The command line that produced this document, one array element per argv entry.", "type": "array", "items": { "type": "string" } },
@@ -73,6 +76,7 @@
   "$defs": {
     "arm": { "description": "One arm of the comparison: what it was called, which profile contents it ran, and how it was launched.", "type": "object", "additionalProperties": false, "required": ["label", "profile", "profileHash"],
       "properties": {
+        "components": { "description": "Component states read from composed configuration, not a publication/readiness receipt. Null for older or injected records.", "type": ["object", "null"], "additionalProperties": { "type": "string", "enum": ["enabled", "disabled", "absent", "unknown"] } },
         "label": { "description": "Arm label, also the profile name it ran, e.g. bench-base.", "type": "string" },
         "profile": { "description": "Profile name whose resolved configuration was measured.", "type": "string" },
         "profileHash": { "description": "SHA-256 in hex of the arm's dumped configuration, the single-variable fingerprint.", "type": "string" },

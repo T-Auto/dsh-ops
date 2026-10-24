@@ -41,7 +41,7 @@ export const SUMMARY_FORMAT = 'dsh-ops-bench-summary-v1'
 /** The sweep document tag this module returns; the seal step turns it into run.json. */
 export const SWEEP_FORMAT = 'dsh-ops-bench-sweep-v1'
 /** Repeats per task when neither `--repeat` nor the task's own `repeat` field says. */
-export const DEFAULT_REPEAT = 3
+export const DEFAULT_REPEAT = 1
 /** The two sides an arm may play. `--aa` uses `base` twice, with distinct labels. */
 export const SIDES = ['base', 'cand']
 
@@ -186,6 +186,7 @@ function sessionOptions(arm, pair, spec, options, ctx) {
     entry: spec.entry,
     profile: arm.profile,
     llmPatch: spec.llmPatch ?? null,
+    conditionPatch: spec.conditionPatch ?? null,
     workspaceRoot: spec.workspaceRoot,
     timeoutMs: spec.timeoutMs ?? null,
     keep: options.keep === true,
@@ -204,11 +205,15 @@ function sessionOptions(arm, pair, spec, options, ctx) {
 /** One arm's summary: the shape `bench/compare.mjs` reads as a side. */
 function buildSummary(arm, rows, ctx) {
   return {
+    meta: { platform: ctx.spec.meta?.platform ?? `${process.platform}-${process.arch}` },
+    profileHash: arm.profileHash ?? null,
+    components: arm.components ?? null,
     format: SUMMARY_FORMAT,
     label: arm.label,
     profile: arm.profile,
     aa: ctx.spec.aa === true,
     model: ctx.spec.model ?? null,
+    condition: ctx.spec.condition ?? null,
     argv: ctx.spec.argv ?? [],
     dir: ctx.dirs[arm.side],
     startedAt: ctx.startedAt,
@@ -237,6 +242,7 @@ function noiseFor(spec, summaries, arms) {
 /** The arm descriptor the seal step (P8a) lifts into `run.json`'s `arms`. */
 function descriptor(arm) {
   return {
+    components: arm.components ?? null,
     label: arm.label,
     profile: arm.profile,
     profileHash: arm.profileHash ?? null,
@@ -259,6 +265,7 @@ function sealContext(result, spec, summaryFile) {
       ...(spec.meta ?? {}),
       mode: 'ab',
       model: spec.model ?? null,
+      condition: spec.condition ?? null,
       argv: spec.argv ?? [],
       startedAt: result.startedAt,
       endedAt: result.endedAt,
@@ -450,7 +457,7 @@ export async function runSweep(spec = {}, options = {}) {
       observer.note('warn', `sealing failed: ${result.sealError} — the per-row archives and summary.json are on disk, but run.json was not written`)
     }
   } else {
-    observer.note('warn', 'no seal callback was injected: this sweep has results/ and summary.json, but no run.json')
+    observer.note('info', 'sealing was not requested: this sweep has results/ and summary.json, and no run.json')
   }
   observer.dispose?.()
   return result

@@ -70,7 +70,7 @@ export async function main(argv, io = {}) {
   const out = io.out ?? ((line) => console.log(line))
   const err = io.err ?? ((line) => console.error(line))
   let options
-  try { options = parseArgs(argv, EXTRA_FLAGS) } catch (error) {
+  try { options = parseArgs(argv, { ...EXTRA_FLAGS, platform: io.platform }) } catch (error) {
     err(`${error.message}\n\n${USAGE}`)
     return EXIT.usage
   }
