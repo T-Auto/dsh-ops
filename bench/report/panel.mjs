@@ -375,6 +375,10 @@ function renderConclusion() {
     : '噪声底(A/A)±' + SUMMARY.noise.pct.toFixed(1) + '% → ' + (SUMMARY.readable ? '超过噪声 ⇒ 可读方向' : '落在噪声内 ⇒ 只报区间,不报方向')
 }
 function renderOverview(node) {
+  const environment = el('div', 'card')
+  environment.appendChild(el('h3', null, 'Platform / component configuration'))
+  environment.appendChild(el('pre', null, JSON.stringify({ platform: obj(RUN.meta).platform || 'unknown', components: Object.fromEntries(Object.entries(obj(RUN.arms)).map(([key, arm]) => [key, obj(arm).components || null])) }, null, 2)))
+  node.appendChild(environment)
   const keys = pairKeys()
   const taskRows = SUMMARY.tasks.map((task) => {
     const base = task.arms[keys[0]]

@@ -73,6 +73,7 @@
   "$defs": {
     "arm": { "description": "One arm of the comparison: what it was called, which profile contents it ran, and how it was launched.", "type": "object", "additionalProperties": false, "required": ["label", "profile", "profileHash"],
       "properties": {
+        "components": { "description": "Component states read from composed configuration, not a publication/readiness receipt. Null for older or injected records.", "type": ["object", "null"], "additionalProperties": { "type": "string", "enum": ["enabled", "disabled", "absent", "unknown"] } },
         "label": { "description": "Arm label, also the profile name it ran, e.g. bench-base.", "type": "string" },
         "profile": { "description": "Profile name whose resolved configuration was measured.", "type": "string" },
         "profileHash": { "description": "SHA-256 in hex of the arm's dumped configuration, the single-variable fingerprint.", "type": "string" },

@@ -7,6 +7,6 @@
     "params": { "seed": 21, "packages": 12, "env": "production" }
   },
   "verify": [{ "type": "fileEquals", "path": "answer.txt", "expect": "answer" }],
-  "repeat": 2,
+  "repeat": 1,
   "timeoutMs": 900000
 }

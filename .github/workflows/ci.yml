@@ -238,7 +238,7 @@ jobs:
           retention-days: 7
 
   # The bench smoke: `workflow_dispatch` only, off by default, and informational (like `tools-trial`
-  # above). One platform is enough, because it exercises the harness rather than the platform — the
+  # above). Three host platforms exercise the portable harness; the
   # `validate-posix` matrix is the gate and `validate-windows` its non-blocking counterpart. Both
   # sides are the *same* staged worker, so the run
   # proves only what a harness self-check can prove: the corpus builds and is removed, the worker
@@ -248,7 +248,20 @@ jobs:
   # **never** run in CI.
   bench-smoke:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.bench }}
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: linux-x64
+            worker: dsh-ops-worker
+          - os: windows-latest
+            target: win32-x64
+            worker: dsh-ops-worker.exe
+          - os: macos-latest
+            target: darwin-arm64
+            worker: dsh-ops-worker
+    runs-on: ${{ matrix.os }}
     continue-on-error: true
     timeout-minutes: 30
     env:
@@ -293,7 +306,7 @@ jobs:
       - name: Tool-level comparison, one binary on both sides
         shell: bash
         run: |
-          worker="runtime/linux-x64/dsh-ops-worker"
+          worker="runtime/${{ matrix.target }}/${{ matrix.worker }}"
           mkdir -p bench/runs/smoke/fixtures
           node bench/cli.mjs tools \
             --baseline "$worker" --candidate "$worker" \
@@ -309,7 +322,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: bench-smoke-report
+          name: bench-smoke-${{ matrix.target }}-report
           path: |
             bench/runs/smoke/**
             bench/runs/*/run.json
