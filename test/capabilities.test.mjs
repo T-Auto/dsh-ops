@@ -65,9 +65,10 @@ await test('business file and batch definitions retain their original serialized
   assert.ok(batch.output.schema.oneOf.every(branch => branch.properties.status))
 })
 
-await test('file parameter help changes no structural schema constraints', () => {
+await test('file parameter schemas preserve their reviewed structural constraints', () => {
+  // #384 intentionally adds the optional exactTotal boolean; all other constraints remain pinned.
   const hash = createHash('sha256').update(JSON.stringify(withoutDescriptions(fileParameters))).digest('hex')
-  assert.equal(hash, '572d173fa3ca83606448134b591f4aa8b40b225f236b68a47b011ae177863590')
+  assert.equal(hash, '637df1383940fa6fdb2d65a68e67ce1e333a7e2ecbfceff5ffef7a4c1133ea8b')
 })
 
 await test('native registration consumes the catalogue while execute values stay unchanged', async () => {

@@ -1,6 +1,7 @@
 //! Search execution streams bounded files and keeps only the requested output page.
 use super::*;
 use super::{scan::Scan, paging::{Cursor, Page, finish}};
+use ops_protocol::search::TruncatedBy;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -25,6 +26,7 @@ struct GrepArgs {
     #[serde(default)] multiline: bool,
     #[serde(default)] offset: usize,
     #[serde(default = "one_hundred")] limit: usize,
+    #[serde(default = "yes")] exact_total: bool,
     continuation: Option<String>,
 }
 
@@ -75,18 +77,21 @@ pub fn grep(request: &Request) -> Result<Value> {
     let mut scan = Scan::new(); let mut page = Page::new(cursor.offset, args.limit, request.output_sink.clone());
     let mut file_count = 0; let mut match_count = 0;
     let content = matches!(args.output_mode.as_str(), "" | "content");
+    // Cursors must revalidate a complete snapshot; summaries always need every match.
+    let early = !args.exact_total && args.continuation.is_none() && args.output_mode != "summary";
+    let wanted = cursor.offset.saturating_add(args.limit);
     scan.walk(&root, &args.glob, request, |file, _, scan| {
         let Some(bytes) = scan.read(file) else { return Ok(()); };
         let text = match String::from_utf8(bytes) { Ok(text) => text, Err(_) => { scan.skip("invalid-encoding", true, true); return Ok(()); } };
         if text.is_empty() { return Ok(()); }
         let mut hits = 0;
-        let mut hit = |first: usize, last: usize, line: usize| -> Result<()> {
+        let mut hit = |first: usize, last: usize, line: usize| -> Result<bool> {
             let ordinal = match_count + hits; hits += 1;
             if content && page.wants(ordinal) {
                 page.push(json!({"path":file,"line":if args.line_numbers {line} else {0},
                     "text":excerpt(&text, first, last, args.before_context, args.after_context)}), ordinal)?;
             }
-            Ok(())
+            Ok(early && content && ordinal.saturating_add(1) >= wanted)
         };
         if args.multiline {
             let mut previous = 0; let mut line = 1;
@@ -94,14 +99,20 @@ pub fn grep(request: &Request) -> Result<Value> {
                 if !scan.running() { break; }
                 if found.start() >= text.len() && text.ends_with('\n') { continue; }
                 line += text[previous..found.start()].bytes().filter(|byte| *byte == b'\n').count(); previous = found.start();
-                hit(found.start(), found.end().saturating_sub(1).max(found.start()), line)?;
+                if hit(found.start(), found.end().saturating_sub(1).max(found.start()), line)? {
+                    if content { scan.stopped = Some(TruncatedBy::RowLimit); }
+                    break;
+                }
             }
         } else {
             let mut start = 0;
             for (index, raw) in text.split_inclusive('\n').enumerate() {
                 if !scan.running() { break; }
                 let line = raw.strip_suffix('\n').map(|line| line.strip_suffix('\r').unwrap_or(line)).unwrap_or(raw);
-                if regex.is_match(line) { hit(start, start + line.len().saturating_sub(1), index + 1)?; }
+                if regex.is_match(line) && hit(start, start + line.len().saturating_sub(1), index + 1)? {
+                    if content { scan.stopped = Some(TruncatedBy::RowLimit); }
+                    break;
+                }
                 start += raw.len();
             }
         }
@@ -110,6 +121,7 @@ pub fn grep(request: &Request) -> Result<Value> {
             if !content && args.output_mode != "summary" {
                 page.push(if args.output_mode == "count" { json!({"path":file,"count":hits}) } else { json!({"path":file}) }, ordinal)?;
             }
+            if early && !content && file_count >= wanted { scan.stopped = Some(TruncatedBy::RowLimit); }
         }
         Ok(())
     })?;

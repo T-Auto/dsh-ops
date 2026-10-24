@@ -86,7 +86,9 @@ Find regular files below `path`. `pattern` is an **array** of globs matched segm
 
 Search UTF-8 files below `path` with Rust regex, bounded output, paging and optional line context. `pattern` is **one** regex string; filter files with `glob`, an array in the same syntax as `ops_glob`. **There is no `include` field.** `glob` may contain only exclusions ("everything except"); when `path` is a single file, `glob` is ignored.
 
-Use `summary` for aggregate file/match totals, `count` for per-file counts, `content` for matching text (default). Each item page defaults to 100 entries. Every call scans candidates to count global totals while materializing only the requested window, so later matches are not silently lost at the first page boundary. Follow `nextOffset` for remaining pages; `truncated`/`failed` scans are not exhaustive and must not be blindly retried. Non-UTF-8 and oversized files are excluded and counted in `skippedFiles`; read failures increment `failed` and prevent completion. Traversal/file-size bounds still apply, and repeated pages rescan rather than use a persistent cursor.
+Use `summary` for aggregate file/match totals, `count` for per-file counts, `content` for matching text (default). Each item page defaults to 100 entries. By default (`exactTotal: true`), each call scans candidates to count global totals while materializing only the requested window. Set `exactTotal: false` for a first-prefix query that stops at `offset + limit` matching rows; content stops within a file, while count/file modes finish that file so per-file counts remain exact. An early stop reports `scanComplete: false`, `truncatedBy: row-limit` and `matchedObserved` as a lower bound, with no `matchedTotal`, `total` or stable continuation. Start a fresh exact query for complete totals. Summary mode and requests with a continuation always scan fully.
+
+Follow a returned continuation for stable remaining pages, keeping query options unchanged; incomplete scans must not be blindly retried. Non-UTF-8 and oversized files are coverage gaps counted in `skippedFiles`, so they prevent exact totals even when `failed` is zero. Invalid UTF-8 can contain matching ASCII bytes or other encoded text; skipping it does not establish absence. Filter out unwanted files explicitly with `glob`. Read failures also increment `failed`. Traversal/file-size bounds still apply, and repeated pages rescan rather than use a persistent cursor.
 
 | Parameter | Type | Notes |
 | --- | --- | --- |
@@ -98,6 +100,7 @@ Use `summary` for aggregate file/match totals, `count` for per-file counts, `con
 | `lineNumbers` | boolean | Show line numbers |
 | `beforeContext` / `afterContext` | integer ≤ 32 | Context lines |
 | `multiline` | boolean | Multi-line matching |
+| `exactTotal` | boolean | Default true; false permits a bounded prefix with lower-bound totals; summary/continuation still scan fully |
 | `offset` / `limit` | integer ≥ 0 / integer 1–10000 | 0-based offset (default 0); limit default 100 |
 
 ### `ops_replace`
