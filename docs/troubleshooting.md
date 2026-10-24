@@ -46,6 +46,20 @@ The provisioned copy lives in `<DSH_HOME>/dsh-ops/shells` (shared across profile
 
 When the bundled bash payload remains declared in the profile lockfile but its package directory has been removed by the host package manager, `ops_bash` returns a readable `ENOENT` diagnostic instead of exposing a raw `spawn` exception to the model. Restore the dependency with the profile's frozen install or official plugin manager; it does not silently switch to an unauthorized system bash.
 
+### How do I verify what I downloaded from a Release
+
+Two checksums are involved and they cover different bytes: `SHA256SUMS` lists the released tarballs, while each tarball records the digest of the native worker it contains in `runtime/<target>/provenance.json`. Neither value is defined by the Release body.
+
+The tarball ships its own checker, so no platform-specific hashing tool is needed:
+
+```console
+tar -xzf dsh-ops-<version>.tgz
+node package/bin/native-runtime.mjs check --root package --platform win32-x64
+# win32-x64: <bytes> bytes, sha256 <digest>
+```
+
+That digest is the one `package/runtime/<target>/provenance.json` holds. Run `tar` from inside the download directory with the bare file name: Git for Windows ships GNU tar, which reads a `C:\...` argument as a remote host. `SHA256SUMS` covers every tarball of that release — including the Windows Bash payload — so `sha256sum -c SHA256SUMS` only passes when all of them sit side by side; macOS has no `sha256sum` and uses `shasum -a 256 -c SHA256SUMS`.
+
 ---
 
 ## Command execution

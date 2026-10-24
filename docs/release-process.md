@@ -2,6 +2,8 @@
 
 > 0.4.0 仍是[未发布候选](0.4.0发布候选.md)，验收采用已批准的 OPS 0.3.x BM-01 基线与文件/发现 BM-03 预算，最终结果须单独核验。下面的仓库工作流状态是历史记录，实际发布前须重新检查；本次更新不启用发布、不打 tag、不发布包。
 > The [0.4.0 candidate](release-0.4.0.md) uses the approved OPS 0.3.x BM-01 comparator and file/discovery BM-03 budget; verify final results separately. Workflow state below is historical and must be checked before any release; this update does not enable publishing, tag or publish packages.
+> 指纹口径：外部产物的字节以 `SHA256SUMS` 为准；Release 正文（notes）不是摘要的权威，本工作流发布时抄进 run summary 的只是它的副本。由维护者本机发布的旧版本没有 run summary，也不一定带 `SHA256SUMS` 资产；它们的指纹以包内 `runtime/<target>/provenance.json` 为准（历史正文里的数值，见 `docs/PROVENANCE.md` 的更正记录）。任何公布的指纹都必须写明对象（哪一个文件的指纹），不得只手抄数值。
+> Checksum scope: the bytes of every external artifact are authoritative in `SHA256SUMS`; the Release body (notes) never defines a checksum, and the run summary is only a copy of that manifest. Releases published from a maintainer machine have no run summary and did not always carry a `SHA256SUMS` asset; for those, the in-package `runtime/<target>/provenance.json` is the record (see the correction in `docs/PROVENANCE.md`). Every published checksum must name its object, never a bare number.
 
 对象是 `.github/workflows/release.yml`（workflow 名 `Release`）。发布目标只有一个：**GitHub Release**（tag + 自动 notes + 一个可安装主包 tarball + `SHA256SUMS`）。npm publish 不在这条流水线里，理由见下。
 

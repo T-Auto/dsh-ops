@@ -74,6 +74,14 @@ payload dependency (see the 0.2.1 historical limitation below).
 
 All three workers are staged with version/target/hash receipts. Formal release closure requires every exact target and the Windows IPC binary/source closure. Local `check --staged` is a development check, not release approval. Final verification is linked in `docs/release-0.3.1.md` and the GitHub Release; early contributor measurements are not substituted for the integrated revision. GitHub publication does not automatically publish npm.
 
+The 0.3.1 Release notes headed that asset table `Target | SHA-256` and listed the
+**worker** digest — the value `runtime/<target>/provenance.json` records — not the
+digest of the attached `native-<target>-runtime-v0.3.1.zip`; the 0.3.2 notes kept
+the same heading and listed the **ZIP** digest. Both values are meaningful and
+they cover different bytes, so comparing one against the other reports a false
+mismatch. The published bodies are left as they were; this paragraph is the
+correction, recorded here the same way as the notes-only Releases below.
+
 ## Historical development evidence
 
 The file component is no longer a FastCtx client. `native/src/file.rs` implements
