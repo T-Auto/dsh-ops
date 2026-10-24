@@ -10,6 +10,7 @@ import { assert, test, report, withTempDir, waitFor } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
 import * as ptc from '../lib/ptc/index.js'
+import { withToolChange } from '../lib/tool-changes.js'
 import { mountNativeCatalogue } from './lib/native-catalogue.mjs'
 import { resolvePtcConfig } from '../lib/config.js'
 import { sdkDefinition, requestedApis } from '../lib/ptc/sdk.js'
@@ -180,6 +181,55 @@ await test('nearer overlapping PTC rows own their scopes without duplicate regis
       await waitFor(() => !visible(ctx, parent).includes('ops_stat') && !visible(ctx, child).includes('ops_stat') && visible(ctx, parent).includes('ops_load_sdk') && visible(ctx, child).includes('ops_load_sdk'), { timeoutMs: 5000, what: 'outer row restored' })
       assert.equal((await direct(ctx, parent, 'ops_load_sdk', { tools: ['batch'] })).status, 'completed')
     } finally { await shutdown(ctx) }
+  })
+})
+await test('same-surface both to ptc and unsignalled prompt flips publish the resident SDK', async () => {
+  await withTempDir('ptc-verdict-transition', async root => {
+    const {ctx,agent}=await setup(root)
+    try {
+      const owner=await agent('both')
+      assert.equal(visible(ctx,owner).includes('ops_load_sdk'),false)
+      owner.lift()
+      await owner.ctx.plugin({inject:['tools'],apply(inner){owner.lift=inner.tools.presentAs('ptc')}})
+      await step(ctx,owner)
+      assert.ok(visible(ctx,owner).includes('ops_load_sdk'))
+      let collapse=false
+      const other=await agent('both')
+      // A waterfall can alter presentation without a tool-registry event.
+      ctx.on('system-prompt/assemble',async (_a,context,next)=>{
+        const result=await next()
+        if(context.scope!==other || !collapse)return result
+        return {...result,tools:result.tools.filter(t=>t.name==='run_code'),sections:[...result.sections,{name:'tools:ptc-only',text:'PTC only'}]}
+      })
+      collapse=true
+      await step(ctx,other)
+      assert.ok(visible(ctx,other).includes('ops_load_sdk'),'fresh verdict change must publish even with no pending SDK selection')
+    } finally {await shutdown(ctx)}
+  })
+})
+await test('nested foreign ancestor masks cannot borrow an unrelated OPS attribution', async () => {
+  await withTempDir('ptc-nested-mask',async root=>{
+    const {ctx,agent}=await setup(root,{native:true})
+    try {
+      const parent=await agent(),child=await agent('native',parent),unrelated=await agent()
+      await waitFor(()=>ctx.get('tools').get('ops_read_files',child)!==undefined)
+      const retained=ctx.get('tools').get('ops_read_files',child)
+      let parentTools, unrelatedTools
+      await parent.ctx.plugin({inject:['tools'],apply(inner){parentTools=inner.tools}})
+      await unrelated.ctx.plugin({inject:['tools'],apply(inner){unrelatedTools=inner.tools}})
+      let mask,armed=true
+      ctx.on('tools/change',()=>{
+        if(!armed)return
+        armed=false
+        mask=parentTools.restrict({deny:['ops_read_files']})
+      })
+      const remove=withToolChange([unrelated],()=>unrelatedTools.register({name:'nested_trigger',description:'fixture',parameters:{type:'object'},output:{schema:{type:'object'},render:()=>[]},execute:async()=>({})}))
+      await waitFor(()=>ctx.get('tools').get('ops_read_files',child)===undefined,{timeoutMs:5000,what:'nested foreign restriction'})
+      const stale=await retained.execute({files:[{path:'never-read'}]},{agent:child,signal:new AbortController().signal})
+      assert.equal(stale.error.code,'POLICY_DENIED')
+      mask();remove()
+      await waitFor(()=>ctx.get('tools').get('ops_read_files',child)!==undefined)
+    } finally {await shutdown(ctx)}
   })
 })
 report('ptc-sdk')
