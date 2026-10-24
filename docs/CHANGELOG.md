@@ -36,6 +36,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Relicense the current distribution as MIT. FastCtx was removed in 0.3.2, so the composite `MIT AND Apache-2.0` statement no longer describes the code; earlier releases keep their own notices, and FastCtx's Apache-2.0 text and required attribution remain in `licenses/fastctx/` and `NOTICE` for them.
 - 当前发行版改为 MIT 许可。FastCtx 已在 0.3.2 移除，复合 `MIT AND Apache-2.0` 不再描述现有代码；早期版本保留各自声明，FastCtx 的 Apache-2.0 文本与要求转载的归属仍保留在 `licenses/fastctx/` 与 `NOTICE` 中。
 
+- Fix independent restricted Windows Bash roots failing to reopen the current user's MSYS shared section while another root is alive (#363). Preserve the original ACL and the existing verified object-directory, pagefile-only and Low restricted-token boundaries; unrelated sections and filesystem permissions are unchanged.
+- 修复 Windows 受限模式中，一个 Bash 根进程仍在运行时，独立根进程无法重新打开当前用户的 MSYS 共享段的问题（#363）。保留原有 ACL，以及经过验证的对象目录、仅分页文件共享段、Low 受限令牌边界；不改变其它共享段和文件系统权限。
+
 ## [0.4.1] — 2026-10-20 — Update locks stop leaving files behind
 
 - Stop the update lock from leaving `.dsh-ops-update-*.lock` sidecars behind (#319). The writer that takes the lock removes it on release, and only after proving the name still leads to the inode it locked, so a waiter that opened the old inode can never publish under it. A published write, a request refused after the lock and a directory-wide `replace` now leave the directory exactly as they found it; a sidecar left by a killed writer is not a stuck lock — the next write of that name binds to it, publishes under it and removes it.

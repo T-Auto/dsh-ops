@@ -14,9 +14,11 @@ unchanged except:
 - `CreatePipe`: newly created anonymous process-tracking pipes.
 - `NtCreateNamedPipeFile`: new single-instance MSYS data pipes, relative to the
   verified `\Device\NamedPipe\` root, with the current PID in their name.
-- `NtCreateSection`: pagefile-backed `cygpid.<digits>` process trackers under a
-  verified MSYS installation object-directory root. Disk-backed mappings and
-  all other names are unchanged.
+- `NtCreateSection`: pagefile-backed `cygpid.<digits>` process trackers and the
+  current token user's `S-<SID>.<digits>` shared section under a verified MSYS
+  installation object-directory root. Independent Bash roots can reopen that
+  shared section while another root remains alive. Disk-backed mappings, other
+  users' SIDs and names outside that object directory are unchanged.
 
 For those new objects only, retain the original DACL/denies, add the current
 logon SID already present in the host restricting list, and use a Low integrity
@@ -60,4 +62,7 @@ Node PTC runtime with the generated tools SDK: workspace-write command,
 script_path, external executable pipeline, inside writes, outside writes denied,
 read-only downgrade denied, and full access. Test failures are gate failures.
 `test/bash-ipc.test.mjs` pins untouched file/token APIs and unsupported-version
-rejection. GUI Desktop acceptance is separate and requires a restart.
+rejection. `test/bash-ipc-roots.test.mjs` keeps one restricted MSYS root alive
+while eight independent roots execute, checks their output and file effects,
+and verifies an outside-workspace write is still denied. GUI Desktop acceptance
+is separate and requires a restart.

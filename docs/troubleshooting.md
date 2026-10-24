@@ -74,6 +74,17 @@ What to do:
 - Or switch the session to `danger-full-access`, where `bashPath` runs directly.
 - Check with the profile's own copy: `node "<profile>\node_modules\dsh-ops\bin\dsh-ops.mjs" ladder --config <file>` reports `restricted: yes/no` for the resolved bash.
 
+### A second restricted Bash fails while another Bash is still running
+
+The `CreateFileMapping S-<user SID>.<version>, Win32 error 5` failure in #363 came
+from a shared MSYS section missing the current logon SID. The IPC proxy now
+preserves that section's existing ACL and adds the same logon permission already
+used for private MSYS process trackers. This applies only to the current user's
+pagefile-backed section inside the verified MSYS object directory; filesystem
+permissions and sandbox modes are unchanged. Update to a build containing this
+fix and restart DSH after stopping its jobs. A DLL-not-found startup failure or
+an empty false-success result is a separate problem (#374 and #373).
+
 ### Bash approval is rejected or unavailable
 
 `ops_bash` uses host approval for a strictly wider `sandbox_permissions` mode. Supply a non-empty `justification` for that exact command. A rejection or missing approval service prevents execution; do not retry through another shell. Approval does not repair an incompatible restricted Bash runtime.
