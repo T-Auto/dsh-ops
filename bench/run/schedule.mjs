@@ -41,7 +41,7 @@ export const SUMMARY_FORMAT = 'dsh-ops-bench-summary-v1'
 /** The sweep document tag this module returns; the seal step turns it into run.json. */
 export const SWEEP_FORMAT = 'dsh-ops-bench-sweep-v1'
 /** Repeats per task when neither `--repeat` nor the task's own `repeat` field says. */
-export const DEFAULT_REPEAT = 3
+export const DEFAULT_REPEAT = 1
 /** The two sides an arm may play. `--aa` uses `base` twice, with distinct labels. */
 export const SIDES = ['base', 'cand']
 
@@ -450,7 +450,7 @@ export async function runSweep(spec = {}, options = {}) {
       observer.note('warn', `sealing failed: ${result.sealError} — the per-row archives and summary.json are on disk, but run.json was not written`)
     }
   } else {
-    observer.note('warn', 'no seal callback was injected: this sweep has results/ and summary.json, but no run.json')
+    observer.note('info', 'sealing was not requested: this sweep has results/ and summary.json, and no run.json')
   }
   observer.dispose?.()
   return result

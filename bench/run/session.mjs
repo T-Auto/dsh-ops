@@ -30,6 +30,8 @@ import { DEFAULT_TIMEOUT_MS } from '../lib/tasks.mjs'
 
 /** The five token buckets `run.schema.json $defs/usage` requires, in its order. */
 const USAGE_BUCKETS = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens']
+/** The buckets a step re-sends to the model: its prompt size. */
+const PROMPT_BUCKETS = ['inputTokens', 'cacheReadTokens', 'cacheWriteTokens']
 
 /** Cap on the stdout-close barrier; it matters only for a spawn that left a stream open. */
 const DEFAULT_STREAM_FLUSH_GRACE_MS = 1_000
@@ -136,9 +138,10 @@ export function toVerifyChecks(outcome) {
 /**
  * A streaming fold of the event stream into the schema's `metrics` fields, deliberately
  * narrow: steps, tool calls, tool errors, the five usage buckets, the all-or-nothing
- * `usageReported` and the last turn's end reason. Prompt-shape analysis belongs to the
- * aggregate slice; this keeps its invariant — one step without usage makes the totals a
- * lower bound.
+ * `usageReported`, the prompt shape the report's per-request overhead table reads, and
+ * the last turn's end reason. This keeps the aggregate invariant — one step without
+ * usage makes the totals a lower bound, and one step without a prompt size makes the
+ * prompt summary incomplete.
  * @returns {{push(line: string): void, finish(): object}} the fold.
  */
 function createFold() {
@@ -149,6 +152,14 @@ function createFold() {
     toolErrors: 0,
     toolCallsByName: Object.create(null),
     usage: emptyUsage(),
+    // `promptSizes` is every step that reported a size, in order; `firstPrompt` is set
+    // only by the run's **first** step, so a run whose step 1 lost its usage reports an
+    // unknown first request instead of silently promoting step 2's smaller, already-warm
+    // prompt to "the request with no history".
+    promptSizes: [],
+    firstPrompt: null,
+    firstStepSeen: false,
+    turnFirsts: [],
     turnEndReason: null,
   }
   return {
@@ -164,7 +175,20 @@ function createFold() {
       if (event.type === 'status') {
         if (event.phase === 'step_end') {
           state.steps += 1
-          if (addUsage(state, event.usage)) state.stepsWithUsage += 1
+          const firstStep = !state.firstStepSeen
+          state.firstStepSeen = true
+          if (addUsage(state, event.usage)) {
+            state.stepsWithUsage += 1
+            const size = promptTokens(event.usage)
+            if (size !== null) {
+              state.promptSizes.push(size)
+              if (firstStep) state.firstPrompt = size
+              const turn = stepIndex(event.turn)
+              if (turn !== null && !state.turnFirsts.some((entry) => entry.turn === turn)) {
+                state.turnFirsts.push({ turn, tokens: size })
+              }
+            }
+          }
           return
         }
         if (event.phase === 'turn_end') {
@@ -190,6 +214,14 @@ function createFold() {
         toolCallsByName: { ...state.toolCallsByName },
         usage: { ...state.usage },
         usageReported: state.steps > 0 && state.stepsWithUsage === state.steps,
+        prompt: {
+          reported: state.steps > 0 && state.stepsWithUsage === state.steps && state.promptSizes.length === state.steps,
+          firstStep: state.firstPrompt,
+          median: state.promptSizes.length > 0 ? medianSize(state.promptSizes) : null,
+          max: state.promptSizes.length > 0 ? Math.max(...state.promptSizes) : null,
+          total: state.promptSizes.length > 0 ? state.promptSizes.reduce((sum, value) => sum + value, 0) : null,
+          perTurn: state.turnFirsts,
+        },
         turnEndReason: state.turnEndReason,
       }
     },
@@ -210,6 +242,43 @@ function addUsage(state, usage) {
     state.usage[bucket] += Math.max(0, Math.round(value))
   }
   return true
+}
+
+/**
+ * One step's prompt size: the buckets re-sent to the model (input + cacheRead +
+ * cacheWrite), falling back to `totalTokens - outputTokens` when a provider reports
+ * only a total, and `null` when nothing usable is there.
+ * @param {object} usage - the `step_end` event's usage object.
+ * @returns {number|null} the prompt token count, or null.
+ */
+function promptTokens(usage) {
+  let sum = 0
+  let seen = false
+  for (const bucket of PROMPT_BUCKETS) {
+    const value = usage[bucket]
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue
+    sum += Math.max(0, Math.round(value))
+    seen = true
+  }
+  if (seen) return sum
+  const total = usage.totalTokens
+  const output = usage.outputTokens
+  if (typeof total === 'number' && Number.isFinite(total)) {
+    return Math.max(0, Math.round(total) - (typeof output === 'number' && Number.isFinite(output) ? Math.round(output) : 0))
+  }
+  return null
+}
+
+/** A numeric event field as a number, or null. */
+function stepIndex(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+/** The median of the step prompt sizes (the midpoint of an even count halves). */
+function medianSize(sizes) {
+  const sorted = [...sizes].sort((left, right) => left - right)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
 }
 
 /**
@@ -490,6 +559,7 @@ export async function runSession(spec, options = {}) {
       toolErrors: counted.toolErrors,
       usage: counted.usage,
       usageReported: counted.usageReported,
+      prompt: counted.prompt,
       toolCallsByName: counted.toolCallsByName,
       turnEndReason: counted.turnEndReason,
       // Identity and archive pointers the seal step lifts into `results[]` / `archive[]`.

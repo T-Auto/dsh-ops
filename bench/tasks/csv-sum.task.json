@@ -7,6 +7,6 @@
     "params": { "seed": 7, "rows": 8000, "targetRegion": "EU", "regions": ["EU", "US", "APAC", "LATAM"] }
   },
   "verify": [{ "type": "fileEquals", "path": "answer.txt", "expect": "sum" }],
-  "repeat": 2,
+  "repeat": 1,
   "timeoutMs": 900000
 }

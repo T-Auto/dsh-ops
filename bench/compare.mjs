@@ -15,18 +15,14 @@
  * the two sides, calls it, and renders what it returned. With no noise floor the
  * report says so and abstains from every cost direction (`noise-floor-unknown`).
  *
- * The report opens with its fixed title and then the evidence a reviewer works
- * through — the per-task paired table, the pairs a failed side forced out of the cost
- * statistics, the A/A band, and the diagnostic sections #183 carried (per-task bucket
- * detail, the usage-bucket split and the token attribution), which say *why* the
- * number moved (a bigger per-request prompt is a tool-schema cost, extra steps are a
- * model-behaviour cost, fatter tool results are a context cost; the fixes are
- * opposite, so the report has to say which one it was) — and closes with the conclusion:
- * pass rate, paired token Δ, the noise band, whether a direction is readable and the
- * gate. None of the diagnostics can change the gate.
+ * The report opens with its fixed title and then the data a reviewer works
+ * through — the per-task paired table, the tool table and the diagnostic sections
+ * (per-task bucket detail, per-request overhead) which say
+ * *why* the number moved. It prints no verdict prose and no side paths: the gate's
+ * verdict travels through the exit code and the comparison document, not the markdown.
  *
- * Time is evidence only: the comparison never reads `durationMs`, and nothing here
- * turns a duration into a verdict.
+ * Durations are displayed like any other metric (the per-task table's time column);
+ * the verdict's cost basis remains paired tokens.
  *
  * @module dsh-ops/bench/compare
  */
@@ -37,7 +33,6 @@ import { fileURLToPath } from 'node:url'
 
 import {
   AGGREGATES,
-  COMPARE_FORMAT,
   FAIL_ON,
   REGRESSION_SCOPES,
   compareSummaries,
@@ -52,8 +47,8 @@ const SEALED_RUN = 'run.json'
 const LEGACY_SUMMARY = 'summary.json'
 /** The summary document's format tag. */
 const SUMMARY_FORMAT = 'dsh-ops-bench-summary-v1'
-/** The report's fixed title; the two sides are named in Evidence, not in the heading. */
-const REPORT_TITLE = '# DSH-OPS Benchmark Report'
+/** The report's fixed title, marked (beta); the two sides are named in Evidence, not in the heading. */
+const REPORT_TITLE = '# DSH-OPS Benchmark Report (beta)'
 /** The file name stem: the title's words, so the artifact is recognizable in a folder listing. */
 const REPORT_STEM = 'DSH-OPS Benchmark Report'
 /** The panel's palette: the report and `panel.html` must agree on what green and red mean. */
@@ -344,17 +339,6 @@ function signed(value) {
 }
 
 /**
- * Paint every percent inside a string the core produced. Gate reasons and warnings are
- * quoted verbatim — the digits stay the core's, only the colour is added — so they read
- * in the same two colours as the percents this module formats itself.
- * @param {string} text - the core's string.
- * @returns {string} the same text, percents wrapped.
- */
-function paintPercents(text) {
-  return text.replace(/[+-]?\d+(?:\.\d+)?%/g, (whole) => color(whole, Number.parseFloat(whole)))
-}
-
-/**
  * Paint one rendered value: a drop (or no change) is green, a rise is red — the same
  * two colours `panel.html` uses, inline because a markdown file cannot carry a
  * stylesheet. A value with no number behind it is returned unwrapped.
@@ -374,69 +358,6 @@ function percent(value) {
 }
 
 /**
- * A percent the core stated as a bare number — a band half-width, a tolerance, a share
- * of the delta. Printed verbatim (no sign is invented) and painted like every other
- * percent in the report.
- * @param {number|null} value - the number, with `%` appended as-is.
- * @returns {string} the painted text.
- */
-function rawPercent(value) {
-  if (value === null || value === undefined || !Number.isFinite(value)) return 'n/a'
-  return color(`${value}%`, value)
-}
-
-/**
- * The direction sentence — the one place the three noise outcomes are worded.
- * The core's conclusion names travel verbatim so the report and the JSON cannot drift.
- * @param {object} cost - `verdict.cost` from the comparison.
- * @returns {string} the sentence.
- */
-function directionSentence(cost) {
-  if (cost.conclusion === 'incomparable') {
-    return 'Direction: no pair passed on both sides with complete usage ⇒ cost is incomparable; no direction is read'
-  }
-  if (cost.conclusion === 'noise-floor-unknown') {
-    return `Direction: Δ ${percent(cost.pct)}, but the noise floor is unknown ⇒ abstaining, no direction is read (noise-floor-unknown); supply one with --noise-floor-pct N or --noise <base> <cand>`
-  }
-  if (cost.conclusion === 'within-noise') {
-    return `Direction: Δ ${percent(cost.pct)} sits inside the noise band ±${rawPercent(cost.noiseFloorPct)} ⇒ interval only, no direction is read (within-noise)`
-  }
-  if (cost.conclusion === 'cheaper' || cost.conclusion === 'costlier') {
-    return `Direction: Δ ${percent(cost.pct)}, beyond the noise floor ±${rawPercent(cost.noiseFloorPct)} ⇒ readable direction: ${cost.conclusion}`
-  }
-  return `Direction: Δ ${percent(cost.pct)}, no readable direction (${cost.conclusion ?? 'no-change'})`
-}
-
-/**
- * The conclusion that closes the report: pass rate, paired token Δ, noise floor, direction
- * and gate, in that order, plus the reasons the gate gave. It ends the document, so a
- * reviewer meets the verdict after the evidence instead of before it.
- * @param {object} comparison - the comparison structure.
- * @returns {string[]} the section lines.
- */
-function verdictSection(comparison) {
-  const { gate, totals, verdict, noiseFloor } = comparison
-  const passes = `${totals.basePasses}/${totals.baseRuns} → ${totals.candPasses}/${totals.candRuns}`
-  const pairs = `${gate.usablePairs}/${gate.usablePairs + gate.excludedPairs}`
-  const tokenLine = gate.tokensComparable && gate.costComparable
-    ? `💰 tokens (paired ${pairs}): ${number(totals.baseGrandTotal)} → ${number(totals.candGrandTotal)}, Δ ${percent(totals.grandTotalPct)}`
-    : `💰 tokens: incomparable (${gate.tokensComparable ? `no pair passed on both sides, ${gate.excludedPairs} pair(s) excluded` : 'usage incomplete on at least one side'})`
-  const gateLine = gate.fail ? `🚦 failed (${gate.primary})` : '🚦 passed'
-  const lines = [
-    '## Conclusion',
-    '',
-    `- pass rate: ${passes}${gate.passDropFailed ? ' (drop; decided before cost)' : totals.candPassRate > totals.basePassRate ? ' (up)' : ' (flat)'}`,
-    `- ${tokenLine.replace('💰 ', '')}`,
-    `- noise floor (A/A): ${noiseFloor.comparable ? `±${rawPercent(noiseFloor.pct)}, method \`${noiseFloor.method}\`` : 'unknown (noise-floor-unknown)'}`,
-    `- ${directionSentence(verdict.cost)}`,
-    `- gate: ${gateLine} · \`--fail-on ${gate.failOn}\` · regression scope \`${gate.regressionScope}\` · tolerance ${rawPercent(gate.tolerancePct)} · cost basis \`${gate.costBasis}\``,
-    `- basis: ${comparison.aggregate} · profile ${comparison.base.profile ?? '?'} → ${comparison.cand.profile ?? '?'} · model ${comparison.base.model ?? '?'} → ${comparison.cand.model ?? '?'}`,
-  ]
-  for (const reason of gate.reasons) lines.push(`- reason: ${paintPercents(reason)}`)
-  return lines
-}
-
-/**
  * The per-task paired table: cost, the behaviour behind it (steps, tool calls, tool
  * errors) and the pass migration, all on the row a reviewer reads first.
  * @param {object} comparison - the comparison structure.
@@ -445,25 +366,28 @@ function verdictSection(comparison) {
 function taskSection(comparison) {
   const { totals } = comparison
   const useMin = comparison.aggregate === 'min'
-  const keys = { steps: useMin ? 'stepsMin' : 'stepsMedian', toolCalls: useMin ? 'toolCallsMin' : 'toolCallsMedian', toolErrors: useMin ? 'toolErrorsMin' : 'toolErrorsMedian' }
+  const keys = { steps: useMin ? 'stepsMin' : 'stepsMedian', toolCalls: useMin ? 'toolCallsMin' : 'toolCallsMedian', toolErrors: useMin ? 'toolErrorsMin' : 'toolErrorsMedian', duration: useMin ? 'durationMsMin' : 'durationMsMedian' }
   // The change rides inside the cell it belongs to (`1,050 (+5.0%)`, `4 → 3 (−25%)`):
   // one number per row, with its Δ% in parentheses rather than a column of its own.
   const candCell = (value, pct) => `${number(value)}${Number.isFinite(pct) ? ` (${percent(pct)})` : ''}`
   const deltaCell = (baseValue, candValue, pct) => `${count(baseValue)} → ${count(candValue)}${Number.isFinite(pct) ? ` (${percent(pct)})` : ''}`
   const countCell = (baseValue, candValue) => `${count(baseValue)} → ${count(candValue)}`
+  // Time renders like every other metric: same aggregate, same direction colouring.
+  const seconds = (ms) => (Number.isFinite(ms) ? `${(ms / 1000).toFixed(1)}s` : '—')
+  const timeCell = (baseMs, candMs, pct) => `${seconds(baseMs)} → ${seconds(candMs)}${Number.isFinite(pct) ? ` (${percent(pct)})` : ''}`
   const passCell = (side) => `${side.base.passed}/${side.base.repeats}→${side.cand.passed}/${side.cand.repeats}`
   const lines = [
     '## Per-task pairs',
     '',
-    '| task | base | cand (Δ%) | steps base→cand (Δ%) | tool calls base→cand (Δ%) | tool errors | pass |',
-    '| --- | --- | --- | --- | --- | --- | --- |',
+    '| task | base | ops (Δ%) | steps: base→ops (Δ%) | tool calls: base→ops (Δ%) | time: base→ops (Δ%) | tool errors | pass |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- |',
   ]
   for (const task of comparison.tasks) {
     const pair = task.paired
-    const name = task.inBase && task.inCand ? task.id : `${task.id}${task.inBase ? '(base only)' : '(cand only)'}`
-    lines.push(`| ${name} | ${number(pair.baseValue)} | ${candCell(pair.candValue, pair.pct)} | ${deltaCell(task.base[keys.steps], task.cand[keys.steps], task.delta.stepsPct)} | ${deltaCell(task.base[keys.toolCalls], task.cand[keys.toolCalls], task.delta.toolCallsPct)} | ${countCell(task.base[keys.toolErrors], task.cand[keys.toolErrors])} | ${passCell(task)} |`)
+    const name = task.inBase && task.inCand ? task.id : `${task.id}${task.inBase ? '(base only)' : '(ops only)'}`
+    lines.push(`| ${name} | ${number(pair.baseValue)} | ${candCell(pair.candValue, pair.pct)} | ${deltaCell(task.base[keys.steps], task.cand[keys.steps], task.delta.stepsPct)} | ${deltaCell(task.base[keys.toolCalls], task.cand[keys.toolCalls], task.delta.toolCallsPct)} | ${timeCell(task.base[keys.duration], task.cand[keys.duration], task.delta.durationPct)} | ${countCell(task.base[keys.toolErrors], task.cand[keys.toolErrors])} | ${passCell(task)} |`)
   }
-  lines.push(`| **TOTAL** | ${number(totals.baseGrandTotal)} | ${candCell(totals.candGrandTotal, totals.grandTotalPct)} | ${deltaCell(totals.baseSteps, totals.candSteps, percentChange(totals.baseSteps, totals.candSteps))} | ${deltaCell(totals.baseToolCalls, totals.candToolCalls, percentChange(totals.baseToolCalls, totals.candToolCalls))} | ${countCell(totals.baseToolErrors, totals.candToolErrors)} | ${totals.basePasses}/${totals.baseRuns}→${totals.candPasses}/${totals.candRuns} |`)
+  lines.push(`| **TOTAL** | ${number(totals.baseGrandTotal)} | ${candCell(totals.candGrandTotal, totals.grandTotalPct)} | ${deltaCell(totals.baseSteps, totals.candSteps, percentChange(totals.baseSteps, totals.candSteps))} | ${deltaCell(totals.baseToolCalls, totals.candToolCalls, percentChange(totals.baseToolCalls, totals.candToolCalls))} | ${timeCell(totals.baseDurationMs, totals.candDurationMs, percentChange(totals.baseDurationMs, totals.candDurationMs))} | ${countCell(totals.baseToolErrors, totals.candToolErrors)} | ${totals.basePasses}/${totals.baseRuns}→${totals.candPasses}/${totals.candRuns} |`)
   return lines
 }
 
@@ -477,9 +401,9 @@ function bucketSection(comparison) {
   const keys = { input: useMin ? 'inputMin' : 'inputMedian', output: useMin ? 'outputMin' : 'outputMedian', cacheRead: useMin ? 'cacheReadMin' : 'cacheReadMedian' }
   const cell = (baseValue, candValue) => `${number(baseValue)} → ${number(candValue)} (${percent(percentChange(baseValue, candValue))})`
   const lines = [
-    `## Per-task bucket detail (${comparison.aggregate})`,
+    '## Per-task bucket detail',
     '',
-    '| task | input base→cand (Δ%) | output base→cand (Δ%) | cache read base→cand (Δ%) |',
+    '| task | input: base→ops (Δ%) | output: base→ops (Δ%) | cache read: base→ops (Δ%) |',
     '| --- | --- | --- | --- |',
   ]
   for (const task of comparison.tasks) {
@@ -493,53 +417,33 @@ function bucketSection(comparison) {
 }
 
 /**
- * The usage split: how the TOTAL delta divides between uncached input, output and
- * cache reads, with each bucket's share of the delta. The gate judges the total.
+ * The per-request overhead table: the first request of a run carries no history, so its
+ * delta is the fixed cost a tool surface or prompt policy adds, paid on every request.
+ * Archives without `metrics.prompt` cannot separate that request, so the section says
+ * so instead of inventing numbers.
  * @param {object} comparison - the comparison structure.
  * @returns {string[]} the section lines.
  */
-function usageSplitSection(comparison) {
-  const buckets = comparison.totals.buckets
-  const lines = [`## usage split (TOTAL, ${comparison.aggregate})`, '']
-  if (!buckets.comparable) {
-    lines.push('Skipped: at least one side lost `step_end.usage`, so per-bucket Δs would present a lower bound as a measurement.')
+function overheadSection(comparison) {
+  const lines = ['## Per-request overhead (what every request costs before any work)', '']
+  const prompted = comparison.tasks.some((task) => Number.isFinite(task.base.firstRequestPromptMedian) || Number.isFinite(task.cand.firstRequestPromptMedian))
+  if (!prompted) {
+    lines.push('Skipped: neither side recorded `metrics.prompt`, so the first request cannot be separated from the run.')
     return lines
   }
-  const row = (label, bucket) => `| ${label} | ${number(bucket.base)} | ${number(bucket.cand)} | ${signed(bucket.delta)} (${percent(percentChange(bucket.base, bucket.cand))}) | ${rawPercent(bucket.sharePct)} |`
-  lines.push(
-    '| bucket | base | cand | Δ (Δ%) | share of Δ |',
-    '| --- | --- | --- | --- | --- |',
-    row('uncached input', buckets.input),
-    row('output', buckets.output),
-    row('cache read', buckets.cacheRead),
-    row('**TOTAL**', buckets.grandTotal),
-  )
-  return lines
-}
-
-/**
- * The behaviour behind the token delta: steps and tool calls, per task and summed.
- * The extra-steps term in token attribution is this table's Δ steps at the baseline's prompt
- * size, so a cost move can be read against the behaviour that produced it. Neither
- * count can change the gate.
- * @param {object} comparison - the comparison structure.
- * @returns {string[]} the section lines.
- */
-function stepsSection(comparison) {
-  const useMin = comparison.aggregate === 'min'
-  const keys = { steps: useMin ? 'stepsMin' : 'stepsMedian', toolCalls: useMin ? 'toolCallsMin' : 'toolCallsMedian' }
-  const cell = (baseValue, candValue, pct) => `${count(baseValue)} → ${count(candValue)} (${percent(pct)})`
-  const lines = [
-    `## steps and tool calls (${comparison.aggregate})`,
-    '',
-    '| task | steps base→cand (Δ%) | tool calls base→cand (Δ%) |',
-    '| --- | --- | --- |',
-  ]
-  for (const task of comparison.tasks) {
-    lines.push(`| ${task.id} | ${cell(task.base[keys.steps], task.cand[keys.steps], task.delta.stepsPct)} | ${cell(task.base[keys.toolCalls], task.cand[keys.toolCalls], task.delta.toolCallsPct)} |`)
+  const firstCell = (task) => {
+    const base = task.base.firstRequestPromptMedian
+    const cand = task.cand.firstRequestPromptMedian
+    if (!Number.isFinite(base) || !Number.isFinite(cand)) return 'n/a'
+    return `${number(base)} → ${number(cand)} (${signed(task.delta.firstRequestPromptAbs)}, ${percent(task.delta.firstRequestPromptPct)})`
   }
-  const totals = comparison.totals
-  lines.push(`| **TOTAL** | ${cell(totals.baseSteps, totals.candSteps, percentChange(totals.baseSteps, totals.candSteps))} | ${cell(totals.baseToolCalls, totals.candToolCalls, percentChange(totals.baseToolCalls, totals.candToolCalls))} |`)
+  lines.push(
+    '| task | first request: base→ops |',
+    '| --- | --- |',
+  )
+  for (const task of comparison.tasks) {
+    lines.push(`| ${task.id} | ${firstCell(task)} |`)
+  }
   return lines
 }
 
@@ -575,7 +479,7 @@ function toolSection(comparison) {
     }
     return { id: task.id, counts }
   })
-  const lines = ['## Tool calls (per-side overlap counts)', '']
+  const lines = ['## Tool calls', '']
   if (totals.size === 0) {
     lines.push('Skipped: neither side recorded `toolCallsByName`.')
     return lines
@@ -589,7 +493,7 @@ function toolSection(comparison) {
   const cell = (name, counts) => (counts ? `${number(counts.base)} → ${cand(name, counts)}` : '—')
   const rows = [...totals.entries()].sort((left, right) => (Number(own(right[0])) - Number(own(left[0]))) || (right[1].cand - left[1].cand) || left[0].localeCompare(right[0]))
   lines.push(
-    `| tool | base | cand | ${comparison.tasks.map((task) => task.id).join(' | ')} |`,
+    `| tool | base | ops | ${comparison.tasks.map((task) => task.id).join(' | ')} |`,
     `| --- | --- | --- | ${comparison.tasks.map(() => '---').join(' | ')} |`,
   )
   for (const [name, counts] of rows) {
@@ -600,27 +504,15 @@ function toolSection(comparison) {
 }
 
 /**
- * Every warning the core recorded (model mismatch, incomplete usage, one-sided
- * tasks, pairing leftovers) — nothing measured is allowed to disappear quietly.
- * @param {object} comparison - the comparison structure.
- * @returns {string[]} the section lines.
- */
-function warningSection(comparison) {
-  if (comparison.warnings.length === 0) return ['## Warnings', '', 'No warnings.']
-  return ['## Warnings', '', ...comparison.warnings.map((warning) => `- ${paintPercents(warning)}`)]
-}
-
-/**
  * Render the comparison as the report document — the text `reportFileName` names and
  * `main` writes.
  *
- * Pure: same comparison and sources in, byte-identical text out. No timestamps are
- * written, so the report is reproducible and diffable.
+ * Pure: same comparison in, byte-identical text out. No timestamps are written, so the
+ * report is reproducible and diffable.
  * @param {object} comparison - the structure from `compareSummaries`.
- * @param {{base?: object, cand?: object}} [sources] - the two resolved sides.
  * @returns {string} the report text (no trailing newline).
  */
-export function renderReport(comparison, sources = {}) {
+export function renderReport(comparison) {
   const lines = [
     REPORT_TITLE,
     '',
@@ -630,21 +522,7 @@ export function renderReport(comparison, sources = {}) {
     '',
     ...bucketSection(comparison),
     '',
-    ...usageSplitSection(comparison),
-    '',
-    ...stepsSection(comparison),
-    '',
-    ...warningSection(comparison),
-    '',
-    '## Evidence',
-    '',
-    `- base:${sources.base?.file ?? '?'}(spec \`${sources.base?.spec ?? '?'}\`,${sources.base?.kind ?? '?'})`,
-    `- cand:${sources.cand?.file ?? '?'}(spec \`${sources.cand?.spec ?? '?'}\`,${sources.cand?.kind ?? '?'})`,
-    `- document: format \`${comparison.format}\` · aggregate \`${comparison.aggregate}\` · tolerance ${rawPercent(comparison.tolerancePct)}`,
-    '',
-    `Time fields are evidence only: the cost basis of this report is paired tokens, and the comparison does not read duration into the verdict (${COMPARE_FORMAT} carries no time statistics).`,
-    '',
-    ...verdictSection(comparison),
+    ...overheadSection(comparison),
   ]
   return lines.join('\n')
 }
@@ -755,13 +633,9 @@ export async function main(argv, io = {}) {
     noiseFloorPct: options.noiseFloorPct ?? undefined,
     noise: noise ?? undefined,
   })
-  const sources = {
-    base: { spec: options.base, file: base.file, kind: base.kind },
-    cand: { spec: options.cand, file: cand.file, kind: cand.kind },
-  }
   const payload = options.json
     ? `${JSON.stringify(comparison, null, 2)}\n`
-    : `${renderReport(comparison, sources)}\n`
+    : `${renderReport(comparison)}\n`
   out(payload)
 
   const target = reportPath(options, cand, now())

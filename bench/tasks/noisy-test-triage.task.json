@@ -10,6 +10,6 @@
     { "type": "fileEquals", "path": "failure.txt", "expect": "failingName" },
     { "type": "command", "command": "node", "args": ["runner.js"], "exitCode": 1, "invariant": true }
   ],
-  "repeat": 2,
+  "repeat": 1,
   "timeoutMs": 900000
 }

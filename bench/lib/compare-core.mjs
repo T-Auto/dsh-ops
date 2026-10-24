@@ -228,6 +228,10 @@ export function aggregateTask(metricsList = []) {
   const steps = numeric((metrics) => metrics?.steps ?? 0)
   const toolCalls = numeric((metrics) => metrics?.toolCalls ?? 0)
   const toolErrors = numeric((metrics) => metrics?.toolErrors ?? 0)
+  // Wall-clock per repeat, aggregated like steps. A failed row records 0 ms (it never
+  // ran), which drags the median down exactly the way a 0-steps row does — the pass
+  // columns are what tell the reader which rows actually measured something.
+  const durations = numeric((metrics) => metrics?.durationMs ?? 0)
   // The prompt shape: the first request (no history yet — system prompt + tool
   // schemas + task text) is the per-request fixed cost, and the per-step average
   // says how much context each subsequent request re-sent. Older archives predate
@@ -282,6 +286,8 @@ export function aggregateTask(metricsList = []) {
     stepsMin: minValue(steps),
     toolCallsMedian: median(toolCalls),
     toolCallsMin: minValue(toolCalls),
+    durationMsMedian: median(durations),
+    durationMsMin: minValue(durations),
     toolCallsByName,
     toolErrorsMedian: median(toolErrors),
     toolErrorsMin: minValue(toolErrors),
@@ -368,6 +374,7 @@ function statisticKeys(aggregate) {
     toolsKey: useMin ? 'toolCallsMin' : 'toolCallsMedian',
     errorsKey: useMin ? 'toolErrorsMin' : 'toolErrorsMedian',
     firstPromptKey: useMin ? 'firstRequestPromptMin' : 'firstRequestPromptMedian',
+    durationKey: useMin ? 'durationMsMin' : 'durationMsMedian',
     promptTotalKey: useMin ? 'promptTotalMin' : 'promptTotalMedian',
     inputKey: useMin ? 'inputMin' : 'inputMedian',
     outputKey: useMin ? 'outputMin' : 'outputMedian',
@@ -745,6 +752,7 @@ export function compareSummaries(base, cand, options = {}) {
         stepsPct: percentChange(baseSide[keys.stepsKey], candSide[keys.stepsKey]),
         toolCallsPct: percentChange(baseSide[keys.toolsKey], candSide[keys.toolsKey]),
         toolErrorsPct: percentChange(baseSide[keys.errorsKey], candSide[keys.errorsKey]),
+        durationPct: percentChange(baseSide[keys.durationKey], candSide[keys.durationKey]),
         passRateAbs: candSide.passRate - baseSide.passRate,
       },
     }
@@ -874,6 +882,8 @@ export function compareSummaries(base, cand, options = {}) {
       candToolCalls: sumStat(tasks, (task) => task.cand[keys.toolsKey]),
       baseToolErrors: sumStat(tasks, (task) => task.base[keys.errorsKey]),
       candToolErrors: sumStat(tasks, (task) => task.cand[keys.errorsKey]),
+      baseDurationMs: sumStat(tasks, (task) => task.base[keys.durationKey]),
+      candDurationMs: sumStat(tasks, (task) => task.cand[keys.durationKey]),
       basePasses,
       baseRuns: baseRunsCount,
       candPasses,
