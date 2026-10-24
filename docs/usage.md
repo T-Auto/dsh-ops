@@ -102,6 +102,9 @@ The ordinary DSH CLI cannot manage the reserved `desktop` profile; do not confus
 
 ## Update
 
+For inherited whitelist limits, missing discovery rows and provider tool-change
+errors, see [host integration troubleshooting](host-integration.md).
+
 Repeat the same `npx --yes dsh-ops@latest install --profile ...` command, or use the official CLI's `add dsh-ops@latest`. Reload as requested by the application; restart it when replacing already-loaded code.
 
 ---
