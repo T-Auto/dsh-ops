@@ -21,7 +21,7 @@
     "x64",
     "arm64"
   ],
-  "description": "Native file and PTC tools for DSH on Windows x64, Linux x64 and macOS Apple Silicon; Windows-only optional Bash payload and host PowerShell integration",
+  "description": "Native file and PTC tools for DSH on Windows x64, Linux x64 and macOS arm64/x64; Windows-only optional Bash payload and host PowerShell integration",
   "icon": "./docs/assets/icon.png",
   "keywords": [
     "dsh",

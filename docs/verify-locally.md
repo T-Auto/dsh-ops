@@ -74,11 +74,14 @@ that breaks is visible without blocking a merge.
 
 | Host | Suites | Skipped, and why |
 | --- | --- | --- |
-| `linux-x64`, `darwin-arm64` | all of `test/*.test.mjs` | `tui-host` and `tui-native` unless an optional DSH-TUI checkout is present (`DSH_OPS_TUI_ROOT`, plus `DSH_OPS_TUI_WORKER` for the native one); `mount` only when no native worker can be resolved there |
+| `linux-x64`, `darwin-arm64`, `darwin-x64` | all of `test/*.test.mjs` | `tui-host` and `tui-native` unless an optional DSH-TUI checkout is present (`DSH_OPS_TUI_ROOT`, plus `DSH_OPS_TUI_WORKER` for the native one); `mount` only when no native worker can be resolved there |
 | `win32-x64` | same inventory | the two above, plus `file-metadata` and `linux-attributes` (mode bits, POSIX ACLs, user xattrs, inode identity, sparse allocation) and `linux-shell` (the POSIX bash rung, which is its own subject) |
 
 `DSH_OPS_REQUIRE_RUNTIME=1` — which turns any skip into a failure — is set on the POSIX hosts
-only. On Windows the three suites above skip by platform, and `test/run.mjs` cannot tell that
+only. CI runs this same gate on `macos-15-intel` as a non-blocking signal because that leg takes
+318 s (>300 s, see [ci.md](ci.md)); locally it is still the full gate.
+
+On Windows the three suites above skip by platform, and `test/run.mjs` cannot tell that
 apart from a missing runtime, so the script keeps its protection there through the skip set
 instead: anything skipped outside that list fails. The suites that would betray a worker that was
 never built (`permissions`, `ptc`) are not in the list.

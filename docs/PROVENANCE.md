@@ -50,6 +50,12 @@ FastCtx, `vendor/fastctx/`, the background component, or the FastCtx payload
 package, they describe those releases, not this one; those files remain in the
 repository history and in the published tarballs of the versions that carried them.
 
+## Current target matrix (0.4.x)
+
+The current package declares `win32-x64`, `linux-x64`, `darwin-arm64` and `darwin-x64`.
+The 0.3.1 record below is historical: it shipped Apple Silicon only and did not include
+Intel. macOS 12's `CLONE_ACL` fallback is a separate follow-up; see [macOS](macos.md).
+
 ## 0.3.1 release scope and verification
 
 0.3.1 targets Windows x64, Linux x64 and macOS Apple Silicon (`darwin-arm64`). Intel Mac and other ARM64 targets are not supported. Exact target pairs live in `PLATFORMS` and component `targets`; npm os/cpu filters are only their coarse projection. Windows Bash/pwsh remain pinned Windows-only optional dependencies; POSIX uses host Bash. No postinstall downloader is included.

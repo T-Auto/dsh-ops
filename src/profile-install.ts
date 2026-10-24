@@ -15,7 +15,7 @@ import { PLATFORMS } from './ptc/runtime.js'
  * the native payloads are a separate question with their own gate in
  * `lib/ptc/runtime.js`.
  */
-const SUPPORTED_TARGETS: Readonly<Partial<Record<NodeJS.Platform, readonly string[]>>> = Object.freeze({ win32: ['x64'], linux: ['x64'], darwin: ['arm64'] })
+const SUPPORTED_TARGETS: Readonly<Partial<Record<NodeJS.Platform, readonly string[]>>> = Object.freeze({ win32: ['x64'], linux: ['x64'], darwin: ['arm64', 'x64'] })
 
 /**
  * Where each platform's desktop application keeps its own CLI.

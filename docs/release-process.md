@@ -23,7 +23,7 @@ Sync master with main | active
 
 | 触发 | 行为 |
 | --- | --- |
-| `push` tag `v*` | 完整跑：三个平台构建 → 门禁 → 打包 → 创建/更新 GitHub Release |
+| `push` tag `v*` | 完整跑：四个目标构建 → 门禁 → 打包 → 创建/更新 GitHub Release |
 | `workflow_dispatch`（在 `main` 等分支上） | 干跑：构建 → 门禁 → 打包 → 上传 artifact，**不发布**（`publish` job 被 `github.ref_type == 'tag'` 挡掉，运行期也不授予写权限） |
 | `workflow_dispatch`（tag 选为 ref） | 完成一次中断的发布：每个发布步骤幂等，重跑不会重复上传或重造内容 |
 
@@ -31,8 +31,8 @@ Sync master with main | active
 
 ## 流水线三段与失败语义
 
-1. **`native`（矩阵：`windows-latest`/`win32-x64`、`ubuntu-24.04`/`linux-x64`、`macos-latest`/`darwin-arm64`）**
-   - 只构建 [lib/ptc/runtime.js](../lib/ptc/runtime.js) 里声明的那三个目标；Intel macOS 与两种 arm64 变体不在矩阵内。
+1. **`native`（矩阵：`windows-latest`/`win32-x64`、`ubuntu-24.04`/`linux-x64`、`macos-latest`/`darwin-arm64`、`macos-15-intel`/`darwin-x64`）**
+   - 只构建 [lib/ptc/runtime.js](../lib/ptc/runtime.js) 里声明的那四个目标；Windows ARM64 与 Linux ARM64 不在矩阵内。
    - 固定 Rust 1.97.1 与已锁定的 `Cargo.lock`；npm 平台名和 Rust triple 分列（例如 `win32-x64` 对应 `x86_64-pc-windows-msvc`），`cargo build --release --locked --target <triple>` 失败即整次发布失败。
    - `bin/native-runtime.mjs stage` 为目标写入 `runtime/<target>/provenance.json`（version／target／executable／sha256）——这就是本仓库的 provenance 约定；缺二进制或不是常规文件都会报错。
    - Windows 目标额外跑 `npm run build:bash-ipc`，其 receipt 由门禁按仓库内的 `native/bash-ipc/*` 源码哈希复核。
@@ -40,9 +40,9 @@ Sync master with main | active
    - 这里**故意不做 `actions/cache` 恢复**：发布二进制在冷目录里由该 tag 的源码构建，不会被上一次运行的缓存顶替。
 2. **`gate`（`windows-latest`，只读权限）**
    - tag 与 `package.json` 版本不一致 → 直接失败（不进入打包）。
-   - 下载三个 artifact 分别放回 `runtime/win32-x64`、`runtime/linux-x64`、`runtime/darwin-arm64`，不把各目标的 `provenance.json` 展平覆盖。
+   - 下载四个 artifact 分别放回 `runtime/win32-x64`、`runtime/linux-x64`、`runtime/darwin-arm64`、`runtime/darwin-x64`，不把各目标的 `provenance.json` 展平覆盖。
    - 单独编译 gate 宿主 worker 到 `native/target/release` 供固定路径的真实套件使用；这份测试 build 不替换来自冷构建矩阵的 staged 发布产物。
-   - **`npm run verify:release`**（`validate-manifest` + 全部仓库测试 + `bin/check-release.mjs`）是硬门禁：三目标缺一、receipt 与字节哈希不符、Windows IPC 二进制/源码哈希不符、`dsh-plugin.json` 与 runtime 白名单不一致，任一都失败。
+   - **`npm run verify:release`**（`validate-manifest` + 全部仓库测试 + `bin/check-release.mjs`）是硬门禁：四目标缺一、receipt 与字节哈希不符、Windows IPC 二进制/源码哈希不符、`dsh-plugin.json` 与 runtime 白名单不一致，任一都失败。
    - 之后才 `build-platform-packages.mjs --dist`（组装主包与固定的 Windows bash 载荷包并打 tarball，写 `provenance.json` 与 `SHA256SUMS`），再 `... check --dist`（只重读已记录的摘要，不下载不构建）。
    - dist 目录以 `release-dist` 上传，`if-no-files-found: error`。
    - 同号载荷包的权威字节在 npm registry：Release 里附带的 `dsh-ops-bash-win32-x64-<pin>.tgz` 是本次构建记录（`provenance.json` 带 `builtAt`/`builtFromCommit`），与 registry 上同版本 tarball 不会字节相同；离线校验以 registry 的 `integrity` 为准。
@@ -74,7 +74,7 @@ gh api repos/T-Auto/dsh-ops/actions/workflows --jq '.workflows[]|select(.name=="
 
 ## 启用后：先手动干跑一次，再打 tag
 
-1. Actions → Release → **Run workflow**，分支选 `main`，不选 tag。预期：`native` 矩阵三个分支全绿、`gate` 绿、`publish` **skipped**，并产出 `native-win32-x64`／`native-linux-x64`／`native-darwin-arm64`／`release-dist` 四个 artifact。
+1. Actions → Release → **Run workflow**，分支选 `main`，不选 tag。预期：`native` 矩阵四个分支全绿、`gate` 绿、`publish` **skipped**，并产出 `native-win32-x64`／`native-linux-x64`／`native-darwin-arm64`／`native-darwin-x64`／`release-dist` 五个 artifact。
 2. 检查 `release-dist` 里有一个主包 tarball、`SHA256SUMS`、`provenance.json`；把 `SHA256SUMS` 与 run summary 里的摘要对上。
 3. 干跑全绿之前**不要**打 tag：`push` tag 会立即发布，而 Release 一旦创建就对外可见（可以改 notes、可以替换资产，但"没发布过"这件事收不回来）。
 4. 需要真正发布时：`git tag v<package.json 版本>` → push tag（或按上面第 1 步改用 tag 作为 ref 手动 dispatch）。tag 与 `package.json` 版本必须一致，否则 `gate` 会拒绝。

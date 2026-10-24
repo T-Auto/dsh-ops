@@ -180,15 +180,25 @@ Legacy explicitly provisioned `<DSH_HOME>/dsh-ops/` files must be cleaned separa
 
 No. It is FastCtx's reusable shared process, started by earlier versions with the background component; this version starts none. With no clients and about ten minutes of inactivity, it exits normally. Do not kill it by process-name sweeps. This release does not automatically sweep processes left by older versions.
 
-## macOS arm64
+## macOS (arm64 and Intel)
 
 ### There is no bundled bash or PowerShell payload
 
-macOS ships no `@dsh-ops/bash-darwin-arm64` or `@dsh-ops/pwsh-darwin-arm64`
+macOS ships no `@dsh-ops/bash-darwin-*` or `@dsh-ops/pwsh-darwin-*`
 package, and no portable upstream bash exists for macOS. Select the shell the
-plugin should use with `bashPath` (for example `/opt/homebrew/bin/bash`) on the
-`dsh-ops/shell` row. PowerShell 7 can be provisioned, but the host disables its `pwsh-sandbox` and
+plugin should use with `bashPath` (for example `/opt/homebrew/bin/bash` on Apple
+Silicon, `/usr/local/bin/bash` on Intel, or `/bin/bash`) on the `dsh-ops/shell`
+row. PowerShell 7 can be provisioned, but the host disables its `pwsh-sandbox` and
 `tool-pwsh` rows outside Windows, so no pwsh tool appears on macOS.
+
+### macOS 12: replace or copy fails with `METADATA_UNSUPPORTED`
+
+Overwriting an existing file, `replace` and `copy` use `fclonefileat(..., CLONE_ACL)`
+to preserve APFS ACLs. macOS 12's kernel does not implement that flag and returns
+`EINVAL`; the worker fails closed with `METADATA_UNSUPPORTED` and publishes
+nothing. This is an OS-version limit, not an Intel-specific defect. Use macOS 13+
+for the write path, or keep to read-only tools; a macOS 12 fallback is tracked as
+a separate follow-up. See [macOS](macos.md) for the full matrix.
 
 ### The file tools reject a path under `/tmp`
 

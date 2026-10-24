@@ -75,7 +75,7 @@ if (!ci) {
     check(triggers?.[event]?.branches?.includes('release/0.4.0'), `ci.yml: ${event} includes the 0.4.0 staging branch`)
   }
   const jobs = ci.doc.jobs ?? {}
-  checkPluginBuild('ci.yml', jobs, ['validate-posix', 'validate-windows', 'node-floor', 'tools-trial', 'bench-smoke'])
+  checkPluginBuild('ci.yml', jobs, ['validate-posix', 'validate-macos-intel', 'validate-windows', 'node-floor', 'tools-trial', 'bench-smoke'])
   const entry = Object.entries(jobs).find(([, job]) => job?.name === 'CI required')
   check(entry !== undefined, 'ci.yml: exposes one aggregate check named "CI required"')
   if (entry) {

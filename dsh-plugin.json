@@ -109,7 +109,7 @@
         "defaultEnabled": true,
         "platforms": ["win32", "linux", "darwin"],
         "architectures": ["x64", "arm64"],
-        "targets": ["win32-x64", "linux-x64", "darwin-arm64"],
+        "targets": ["win32-x64", "linux-x64", "darwin-arm64", "darwin-x64"],
         "presentation": "PTC-only; reader/result/SDK loader resident, other APIs become visible on the next agent step",
         "runtime": "independent native Rust file worker",
         "tools": ["ops_inspect_local_file","ops_grep","ops_glob","ops_replace","ops_write_file","ops_edit_file","ops_diff","ops_stat","ops_copy","ops_move","ops_remove","ops_read_files","ops_read_table","ops_read_docx","ops_read_pdf","ops_batch","ops_result","ops_load_sdk"],
@@ -120,21 +120,21 @@
         "entry": "dsh-ops/shell",
         "defaultEnabled": true,
         "platforms": ["win32", "linux", "darwin"],
-        "targets": ["win32-x64", "linux-x64", "darwin-arm64"]
+        "targets": ["win32-x64", "linux-x64", "darwin-arm64", "darwin-x64"]
       },
       {
         "id": "dsh-ops-file",
         "entry": "dsh-ops/file",
         "defaultEnabled": true,
         "platforms": ["win32", "linux", "darwin"],
-        "targets": ["win32-x64", "linux-x64", "darwin-arm64"]
+        "targets": ["win32-x64", "linux-x64", "darwin-arm64", "darwin-x64"]
       },
       {
         "id": "dsh-ops-discovery",
         "entry": "dsh-ops/discovery",
         "defaultEnabled": true,
         "platforms": ["win32", "linux", "darwin"],
-        "targets": ["win32-x64", "linux-x64", "darwin-arm64"],
+        "targets": ["win32-x64", "linux-x64", "darwin-arm64", "darwin-x64"],
         "presentation": "Native scopes; activation on the next admitted model step",
         "tools": ["ops_discover_tools"]
       },
@@ -144,7 +144,7 @@
         "defaultEnabled": false,
         "presentation": "Disabled by default; enabling the row captures subsequent events. Explicit legacy capture:false stays off until changed.",
         "platforms": ["win32", "linux", "darwin"],
-        "targets": ["win32-x64", "linux-x64", "darwin-arm64"],
+        "targets": ["win32-x64", "linux-x64", "darwin-arm64", "darwin-x64"],
         "tools": []
       },
       {

@@ -25,6 +25,9 @@ OPS adds bounded file and document tools to DSH. Native mode returns compact, li
 PTC code receives typed Outcome values from the same one-shot Rust worker. Host integration is
 strict TypeScript, compiled to the existing JavaScript package paths.
 
+Supported: Windows x64, Linux x64, and macOS 13+ on Apple Silicon or Intel
+(`darwin-arm64`, `darwin-x64`). See [macOS](docs/macos.md).
+
 > [!IMPORTANT]
 > This branch is the **0.4.0 release candidate**, not a published release. Approved acceptance requires
 > at least 40% less BM-01 output than OPS 0.3.x; the official reader is a separate comparison.

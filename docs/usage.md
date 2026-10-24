@@ -20,21 +20,22 @@ forms and the optional browser carrier. Use [manual acceptance](manual-validatio
 
 | Item | Requirement |
 | --- | --- |
-| OS | Windows x64, Linux x64 or macOS arm64; OPS Bash is on by default on all three (pinned payload on Windows, distribution Bash on POSIX) |
+| OS | Windows x64, Linux x64 or macOS 13+ (arm64 or Intel x64); OPS Bash is on by default on all of them (pinned payload on Windows, distribution Bash on POSIX) |
 | Node.js | `^22.19 \|\| >=24` (the `engines` field in `package.json`) |
 | Host | DSH `0.2.0-rc.2` |
 | Target application | Initialized |
 
-### macOS arm64
+### macOS (arm64 and Intel)
 
 macOS carries no bundled shell payload, and the native worker is not part of the
-repository on any platform, so two extra steps apply.
-
-Build and stage the worker once from the checkout (Rust >= 1.88):
+repository on any platform. Build and stage the worker for the host:
 
 ```console
 cargo build --release --manifest-path native/Cargo.toml
+# Apple Silicon
 node bin/native-runtime.mjs stage --platform darwin-arm64
+# Intel
+node bin/native-runtime.mjs stage --platform darwin-x64
 ```
 
 Then point the shell row at a bash the machine already has:
@@ -44,14 +45,18 @@ Then point the shell row at a bash the machine already has:
   name: dsh-ops/shell
   disabled: false
   config:
-    bashPath: /opt/homebrew/bin/bash
+    bashPath: /opt/homebrew/bin/bash   # Intel Homebrew: /usr/local/bin/bash
 ```
+
+`/bin/bash` also works. macOS 12 is not fully supported: the write path needs
+`CLONE_ACL`, which macOS 13+ provides; read-only tools still work. See
+[macOS (arm64 and Intel)](macos.md) for the capability matrix and the known
+limitations.
 
 The desktop application's bundled CLI lives inside its own installation, at
 `.../Contents/Resources/runtime/cli/bin/dsh` on macOS, rather than at the
 `%LOCALAPPDATA%` path used on Windows. The host exposes no pwsh row on macOS, so
-PowerShell 7 is unavailable there. See [macOS arm64](macos-arm64.md) for the
-capability matrix and the known limitations.
+PowerShell 7 is unavailable there.
 
 ---
 

@@ -87,4 +87,4 @@ DSH_OPS_TUI_ROOT=/path/to/dsh-TUI DSH_OPS_TUI_WORKER=/absolute/path/to/dsh-ops/n
 
 使用真实 Rust worker、OPS 文件运行时、DSH 工具运行时、AgentLoop、Session 提交后通知，以及真实准入的侧栏与渲染器。模型响应和策略选择是脚本夹具，不调用在线模型。覆盖原生文件读取、有界列表、dry-run 替换和只读拒绝；**不覆盖** PTC batch/result 执行、生产 PTC-only 发布门禁、run_code 执行、磁盘持久化耐久性、Windows 沙箱或手工 PTY 验收。只修改测试自有临时文件，隔离 HOME/USERPROFILE/DSH_HOME。用例本身不构建/下载 worker，也不改发布平台解析器。缺少 opt-in 前提时记为跳过，required 标志使其失败。
 
-侧栏不改变整包声明的 Windows x64、Linux x64 和 macOS arm64 目标；UI 测试本身不能替代原生执行或 OS 沙箱验收。
+侧栏不改变整包声明的 Windows x64、Linux x64、macOS arm64 与 macOS Intel x64 目标；UI 测试本身不能替代原生执行或 OS 沙箱验收。

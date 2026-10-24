@@ -15,7 +15,7 @@ node bench/cli.mjs gates --baseline-source baseline-031 --baseline-worker baseli
 
 On Windows append `.exe` to the baseline worker. To measure the complete Bash surface, first install an optional fixture into a dedicated temporary `DSH_HOME` with `node bin/dsh-ops.mjs bash-runtime install`, then set `DSH_OPS_TEST_BASH` to its validated absolute executable (the release gate uses the same fixture API). The benchmark records this explicit selection; it changes no schema options. A fresh home without an installed Bash correctly blocks BM-03 instead of counting only the file schemas. The manual workflow acquires this fixture explicitly. Use a new output filename for each run. The command refuses to overwrite either JSON evidence or its `.md` summary. It retains its exclusively owned temporary fixture directory for inspection. `--task BM-02` selects one gate; selected success never means that all five passed. Any failed or unavailable selected gate exits 1; malformed arguments or missing build inputs exit 2.
 
-The manual `Opt-in OPS acceptance benchmarks` workflow runs the same command on Windows x64, Linux x64 and Apple Silicon, independently builds the baseline, and uploads both artifacts even when a gate fails. It changes no default CI requirement and uses no model credentials.
+The manual `Opt-in OPS acceptance benchmarks` workflow runs the same command on Windows x64, Linux x64 and Apple Silicon, independently builds the baseline, and uploads both artifacts even when a gate fails. The functional CI and release matrix also cover macOS Intel (`darwin-x64`), but the opt-in benchmark sweep does not include it yet. It changes no default CI requirement and uses no model credentials.
 
 ## Fixed workloads and comparisons
 
