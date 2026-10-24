@@ -97,6 +97,10 @@ A regular DSH CLI cannot manage the reserved `desktop` profile; do not confuse i
 
 #### Update
 
+Host compatibility is declared for DSH **0.2.0-rc.2 and 0.2.1-rc.2**. See
+[host versions and display metadata](docs/usage.md#host-compatibility-and-display-metadata)
+for component icon exports, profile refresh and config/schema checks.
+
 Re-run the same `npx --yes dsh-ops@latest install --profile ...`, or use the official CLI `add dsh-ops@latest`. Reload when the app asks; restart the app when replacing code that is already loaded.
 
 #### Uninstall and status

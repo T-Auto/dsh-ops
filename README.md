@@ -75,6 +75,10 @@ dsh plugin --profile dsh-tui add dsh-ops
 
 #### 更新方法
 
+宿主兼容范围明确声明为 DSH **0.2.0-rc.2 与 0.2.1-rc.2**。
+组件图标导出、profile 刷新及配置/schema 检查见
+[宿主兼容范围与展示元数据](docs/使用指南.md#宿主兼容范围与展示元数据)。
+
 重新运行相同的 `npx --yes dsh-ops@latest install --profile ...`，或用官方 CLI `add dsh-ops@latest`。按应用提示重载；替换已加载代码时重启应用。
 
 #### 卸载与查看状态

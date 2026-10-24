@@ -98,6 +98,39 @@ dsh plugin --profile dsh-tui add dsh-ops
 
 The ordinary DSH CLI cannot manage the reserved `desktop` profile; do not confuse it with the desktop app's bundled entry point.
 
+### Host compatibility and display metadata
+
+The package declares **DSH 0.2.0-rc.2 and 0.2.1-rc.2** explicitly in both `engines.dsh`
+and the legacy DSH peer dependency. DSH 0.2.1 uses `engines.dsh` in preference to peers.
+Other prereleases, including 0.2.1-rc.3, are outside this declaration: accepting its
+text-only prompt hook does not establish compatibility with all presentation and
+official-tool replacement APIs.
+
+The bundle icon comes from the root manifest. Each component exports its own
+`dsh-ops/<component>/icon` and `locale/*.json`; DSH 0.2.1 does not use a component's
+`package.json` for these resources. The metadata gate resolves the PNG bytes and
+bilingual text through host APIs. This is resource-loading evidence, not a Desktop
+screenshot or a claim about a particular theme.
+
+Keep `--profile` before `add` and its package-manager arguments. For an existing
+test profile, refresh the bundle through the official installer, then inspect the
+composition and schema without starting a model request:
+
+```console
+dsh plugin --profile ops-test add dsh-ops@latest
+dsh --profile ops-test --dump-config
+dsh --profile ops-test --dump-config-schema
+```
+
+Use the intended package version or a packed checkout instead of `@latest` when
+testing an unpublished change. The dump must contain the seven `dsh-ops-*` rows
+(`shell`, `file`, `ptc`, `discovery`, `panel`, `tui`, `hide-official`) with no
+`patch: entry ... not found` diagnostic. Saved profile overrides remain effective;
+new opt-in rows remain disabled until enabled. CI's manifest validation runs the
+same public host patch composer and rejects skipped overrides, alongside each
+component's config validator. A regression removes an override target and verifies
+the resulting warning fails the gate.
+
 ---
 
 ## Update
