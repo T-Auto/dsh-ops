@@ -2,6 +2,9 @@
 
 The complete install, update and remove flow, plus every option of the command-line interface.
 
+Before replacing a running installation, read [Upgrade and uninstall safely](upgrading.md)
+for stopping the host, registry-policy failures and the 0.3.x-to-0.4.x migration checklist.
+
 ## 0.4.0 candidate and component defaults
 
 This checkout is an unreleased candidate; acceptance uses the approved OPS 0.3.x BM-01 comparator and file/discovery BM-03 budget, with Bash still resident and the full total reported separately.

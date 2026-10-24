@@ -209,6 +209,7 @@ effect without a restart.
 
 ## See also
 
+- [Upgrade and uninstall safely](upgrading.md) — Windows file locks, registry policy checks and 0.3.x migration
 - [Usage](usage.md) — the complete install flow and CLI
 - [Configuration reference](configuration-reference.md) — keys and owning components
 - [Component reference](component-reference.md) — tools and permissions

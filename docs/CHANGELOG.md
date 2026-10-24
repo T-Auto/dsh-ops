@@ -48,6 +48,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 恢复扩展属性时改在写入最终模式之前进行，只读文件不再丢失 `user.*` 属性，macOS 的 `0400` 替换也不再报告 `com.apple.provenance` 未恢复；模式矩阵用例改为携带用户属性，使该顺序在所有平台都受断言约束，而不只依赖 macOS 自带的属性（#324）。
 - Stop inventing audit references for new batch validation failures that occur before a job is saved, and for synchronous failures before worker creation. Preserve worker-provided references, existing resume identities and recovery ids for interrupted or ambiguous execution; no additional worker calls are made (#78).
 - 新批次在审计记录创建前发生已确认的校验失败，或工作进程创建前同步失败时，不再返回不存在的审计引用。保留 worker 返回的引用、已有 resume 标识，以及执行中断或状态不明时的恢复标识；不增加 worker 调用（#78）。
+- Document stopped-host upgrades and removal, explicit trusted-registry selection for lockfile policy checks, and the 0.3.x-to-0.4.x migration contracts (#175, #335, #372). Distinguish file locks, missing registry metadata and unconfirmed native crash causes; retain security policies and provide scoped crash-evidence guidance.
+- 补充停止宿主后升级/卸载、锁文件策略检查时显式选择可信 registry，以及 0.3.x 到 0.4.x 的迁移契约（#175、#335、#372）。区分文件占用、registry 元数据缺失与未确认的原生崩溃原因；保留安全策略并提供按应用收集证据的方法。
 - Validate the selected profile CLI before both dry-run and execution (#100): reject missing or unusable launchers and missing Node bin targets, preserve PATH lookup and Windows PATHEXT/batch launchers, and apply Windows command-script path checks during preview. Dry-run never executes the candidate or changes the profile.
 - 在安装/卸载的预演与实际执行前共用 CLI 静态检查（#100）：拒绝缺失或不可用的启动文件及缺失的 Node bin 入口，保留 PATH 查找与 Windows PATHEXT/命令脚本，并在预演时同样检查 Windows 命令脚本路径。预演不启动候选程序、不修改 profile。
 
