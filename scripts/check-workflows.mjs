@@ -71,9 +71,13 @@ if (!ci) {
   check(triggers?.push !== undefined, 'ci.yml: runs on push to the protected branch')
   check(triggers?.pull_request !== undefined, 'ci.yml: runs on pull_request before a merge')
   check(triggers?.merge_group !== undefined, 'ci.yml: runs on merge_group, so a merge queue can use it')
-  for (const event of ['push', 'pull_request']) {
+  for (const event of ['push']) {
     check(triggers?.[event]?.branches?.includes('release/0.4.0'), `ci.yml: ${event} includes the 0.4.0 staging branch`)
   }
+  check(triggers?.pull_request?.branches === undefined && triggers?.pull_request?.['branches-ignore'] === undefined,
+    'ci.yml: pull_request has no target-branch filter, including stacked PRs')
+  check(triggers?.pull_request?.paths === undefined && triggers?.pull_request?.['paths-ignore'] === undefined,
+    'ci.yml: pull_request has no path filter')
   const jobs = ci.doc.jobs ?? {}
   checkPluginBuild('ci.yml', jobs, ['validate-posix', 'validate-windows', 'node-floor', 'tools-trial', 'bench-smoke'])
   const entry = Object.entries(jobs).find(([, job]) => job?.name === 'CI required')
@@ -112,6 +116,15 @@ if (!ci) {
     check(job.if === 'always()', 'ci.yml: "CI required" runs even when a dependency fails, so the result is reported')
   }
 }
+
+const ruleset = JSON.parse(await readFile(join(root, '.github', 'required-ci-ruleset.json'), 'utf8'))
+check(ruleset.target === 'branch' && ruleset.enforcement === 'active', 'ruleset template enforces branches')
+check(JSON.stringify(ruleset.conditions?.ref_name) === JSON.stringify({ include: ['refs/heads/main', 'refs/heads/0.3.2', 'refs/heads/release/0.4.0'], exclude: [] }), 'ruleset template targets the three maintained branches')
+check(Array.isArray(ruleset.bypass_actors) && ruleset.bypass_actors.length === 0, 'ruleset template has no bypass actors')
+check(ruleset.rules.some(rule => rule.type === 'pull_request'), 'ruleset template requires a pull request')
+const statusRule = ruleset.rules.find(rule => rule.type === 'required_status_checks')?.parameters
+check(statusRule?.strict_required_status_checks_policy === true, 'ruleset template requires validation against current base')
+check(JSON.stringify(statusRule?.required_status_checks) === JSON.stringify([{ context: 'CI required', integration_id: 15368 }]), 'ruleset template requires CI required from GitHub Actions')
 
 // The release path is deliberately secret-free (see its header); that promise is enforced, not
 // documented, because a half-wired publish is worse than none. The assertion is tied to the gated

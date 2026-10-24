@@ -6,11 +6,9 @@ on:
   # staging branch before the final release PR.
   push:
     branches: [main, 0.3.2, release/0.4.0]
-  # And a pull request has to show its result before it is merged, not after. GitHub reads this
-  # file from the pull request's own head, so listing the release branch here is what makes a
-  # pull request against a release branch run the gate at all.
+  # Every PR needs evidence, including stacked changes targeting a feature branch.
+  # No target-branch or path filter: an omitted run cannot satisfy CI required.
   pull_request:
-    branches: [main, 0.3.2, release/0.4.0]
   # A merge queue builds the queued commits before they reach `main`, and it only accepts a group
   # whose required checks passed there. Without this trigger the workflow simply never runs for a
   # queued group, so enabling a merge queue would silently un-gate every merge.
