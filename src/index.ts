@@ -11,6 +11,7 @@ import { resolveShells } from './shells.js'
 import { mountSessionBash } from './session-shells.js'
 import { NativeFileTools } from './file/runtime.js'
 import { resolveWorker } from './ptc/runtime.js'
+import { visibleNames } from './surface.js'
 import { mountWorkspacePreparation } from './workspace-preparation.js'
 import { safeDispose, safeDisposeAll } from './teardown.js'
 import { mountResultLifecycle } from './kernel/result-lifecycle.js'
@@ -31,8 +32,11 @@ function report(ctx: Context, message: string, level = 'error'): void {
 }
 function visibleTools(ctx: Context, agent?: Agent): string[] {
   try {
-    return (ctx.get('tools')?.schemas(agent) ?? []).map(schema => schema.name)
-      .filter(tool => typeof tool === 'string')
+    const tools = ctx.get('tools')
+    // Names only, through the view: `schemas()` projected every visible definition —
+    // 34.2 ms for 258 tools at the published runtime's surface shape — to keep a
+    // handful of owned names, and this section renders once per assembly.
+    return tools ? visibleNames(tools, agent) : []
   } catch { return [] }
 }
 
@@ -44,7 +48,7 @@ function installHostShellDenial(ctx: Context, config: ResolvedConfig): void {
   const hide = (agent: Agent) => {
     if (lifts.has(agent) || !agent?.ctx) return
     try {
-      const names = (ctx.tools.schemas(agent) ?? []).map(tool => tool.name).filter(name => denied.has(name))
+      const names = visibleNames(ctx.tools, agent).filter(name => denied.has(name))
       if (names.length) lifts.set(agent, agent.ctx.tools.restrict({ deny: names }))
     } catch (error) {
       if (!warned) {
