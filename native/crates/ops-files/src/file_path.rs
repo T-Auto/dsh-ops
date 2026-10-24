@@ -6,6 +6,10 @@ use cap_fs_ext::OsMetadataExt;
 use cap_std::{ambient_authority, fs::{Dir, File, Metadata, OpenOptions}};
 use std::path::{Component, Path, PathBuf};
 
+#[cfg(test)]
+#[path = "file_path_tests.rs"]
+mod audit_tests;
+
 pub struct Target { pub parent: Dir, pub name: String, pub display: PathBuf }
 pub fn checked(raw: &str) -> Result<Target> {
     checked_leaf(raw, false)
@@ -62,6 +66,9 @@ pub fn checked_leaf(raw: &str, allow_missing: bool) -> Result<Target> {
 pub fn validate_name(name: &str) -> Result<()> {
     if name.is_empty() || name == "." || name == ".." || name.contains('\0') {
         return Err(Failure::new("INVALID_ARGUMENT", format!("Invalid path component {name:?}")));
+    }
+    if name.eq_ignore_ascii_case(crate::paths::STORE) {
+        return Err(Failure::new("PATH_RESTRICTED", "Audit storage is reserved for internal operations"));
     }
     #[cfg(windows)]
     {

@@ -102,6 +102,12 @@ impl Scan {
         for name in names {
             if !self.running() { break; }
             let child = display.join(&name);
+            // Reserved audit entries remain intentional exclusions, not scan gaps.
+            if name.eq_ignore_ascii_case(ops_files::paths::STORE) {
+                let file = directory.symlink_metadata(&name).is_ok_and(|metadata| metadata.is_file());
+                self.skip("excluded", file, false);
+                continue;
+            }
             if file_path::validate_name(&name).is_err() { self.skip("invalid-path", false, true); continue; }
             let metadata = match directory.symlink_metadata(&name) {
                 Ok(metadata) => metadata, Err(_) => { self.skip("unreadable-entry", false, true); continue; }

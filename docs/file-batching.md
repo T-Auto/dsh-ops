@@ -22,6 +22,17 @@ checks every path and refuses links/junctions. Read-only calls create no audit o
 Successful observations update the host read-before-edit table using versions captured before
 reading; failed and pending entries do not produce observations.
 
+The exact path component `.dsh-ops` is reserved case-insensitively on every platform, including
+absolute paths, ancestors above the session cwd, and missing create targets. Public file reads
+(including document readers, `stat`, `diff` and each `read_files` entry), writes, edits, copies,
+moves and removals reject it with `PATH_RESTRICTED`; copy/move check both source and destination.
+An explicitly requested search/replace path follows the same rule. Ordinary directory searches
+continue to exclude hidden audit entries without treating that exclusion as a coverage gap.
+Near names such as `.dsh-ops-backup` and `.dsh-ops.json` are not reserved, though normal hidden
+search exclusions still apply. This public-path restriction does not block trusted batch
+plan/run/resume, audit paging, or result/cache lifecycle APIs. It does not authenticate audit
+records against writes made outside these public file tools.
+
 `nextIndex` is the first unreturned input entry and `pending` counts remaining entries. Resume
 those files by sending the remaining slice of the original `files` array. Separately, an included
 file's `complete: false` and `nextOffset` describe unread lines in that file. Aggregate `complete`

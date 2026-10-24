@@ -35,6 +35,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - Relicense the current distribution as MIT. FastCtx was removed in 0.3.2, so the composite `MIT AND Apache-2.0` statement no longer describes the code; earlier releases keep their own notices, and FastCtx's Apache-2.0 text and required attribution remain in `licenses/fastctx/` and `NOTICE` for them.
 - 当前发行版改为 MIT 许可。FastCtx 已在 0.3.2 移除，复合 `MIT AND Apache-2.0` 不再描述现有代码；早期版本保留各自声明，FastCtx 的 Apache-2.0 文本与要求转载的归属仍保留在 `licenses/fastctx/` 与 `NOTICE` 中。
+- Reserve the exact `.dsh-ops` component case-insensitively on absolute public file-tool paths as well as relative batch paths. Reads, writes, edits, copy/move sources and destinations, removals, and explicit search/replace paths return `PATH_RESTRICTED` before content access or publication. Preserve ordinary hidden-search exclusions and trusted batch audit/result/cache lifecycle access (#329).
+- 绝对路径公开文件工具与相对 batch 通道统一将完整组件 `.dsh-ops` 视为保留名，忽略大小写。读取、写入、编辑、复制/移动的源与目标、删除及显式搜索/替换路径均在内容访问或发布前返回 `PATH_RESTRICTED`；保留普通隐藏搜索排除规则，以及可信 batch 审计、结果和缓存生命周期访问（#329）。
 
 ## [0.4.1] — 2026-10-20 — Update locks stop leaving files behind
 
