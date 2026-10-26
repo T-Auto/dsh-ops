@@ -250,11 +250,16 @@ fn clone_macos_source(original: &File, parent: &Dir, temporary: &str) -> Result<
             // An ACL added between the caller's check and the clone would be
             // dropped by the plain clone. Nothing is published yet, so remove
             // the sibling and fail closed instead of widening access.
-            if let Err(error) = dsh_ops_darwin_metadata::require_no_extended_acl(
-                &original.try_clone()?.into_std(),
-            ) {
+            let recheck = original
+                .try_clone()
+                .map_err(Failure::from)
+                .and_then(|file| {
+                    dsh_ops_darwin_metadata::require_no_extended_acl(&file.into_std())
+                        .map_err(|error| Failure::new("METADATA_UNSUPPORTED", error))
+                });
+            if let Err(error) = recheck {
                 let _ = parent.remove_file(temporary);
-                return Err(Failure::new("METADATA_UNSUPPORTED", error));
+                return Err(error);
             }
             Ok(())
         }
