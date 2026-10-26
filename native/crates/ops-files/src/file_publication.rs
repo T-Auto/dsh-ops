@@ -142,8 +142,9 @@ mod tests {
         let parent = Dir::open_ambient_dir(&root, cap_std::ambient_authority()).unwrap();
         // macOS 13+ takes the CLONE_ACL branch; macOS 12 takes the plain retry.
         clone_macos_source(&original, &parent, "clone").unwrap();
-        // The retry primitive must create the sibling on every supported macOS.
-        clone_macos_source_plain(&original, &parent, "clone-plain").unwrap();
+        // The fallback body (plain clone plus the post-clone ACL re-check) must
+        // work on every supported macOS, including the CI macOS 15 runner.
+        clone_macos_source_fallback(&original, &parent, "clone-plain").unwrap();
         for name in ["clone", "clone-plain"] {
             assert_eq!(std::fs::read(root.join(name)).unwrap(), b"payload");
         }
@@ -246,25 +247,30 @@ fn clone_macos_source(original: &File, parent: &Dir, temporary: &str) -> Result<
     ) {
         Ok(()) => Ok(()),
         Err(rustix::io::Errno::INVAL) => {
-            clone_macos_source_plain(original, parent, temporary)?;
-            // An ACL added between the caller's check and the clone would be
-            // dropped by the plain clone. Nothing is published yet, so remove
-            // the sibling and fail closed instead of widening access.
-            let recheck = original
-                .try_clone()
-                .map_err(Failure::from)
-                .and_then(|file| {
-                    dsh_ops_darwin_metadata::require_no_extended_acl(&file.into_std())
-                        .map_err(|error| Failure::new("METADATA_UNSUPPORTED", error))
-                });
-            if let Err(error) = recheck {
-                let _ = parent.remove_file(temporary);
-                return Err(error);
-            }
-            Ok(())
+            clone_macos_source_fallback(original, parent, temporary)
         }
         Err(error) => Err(clone_macos_failure(error)),
     }
+}
+
+#[cfg(target_os = "macos")]
+fn clone_macos_source_fallback(original: &File, parent: &Dir, temporary: &str) -> Result<()> {
+    clone_macos_source_plain(original, parent, temporary)?;
+    // An ACL added between the caller's check and the clone would be dropped by
+    // the plain clone. Nothing is published yet, so remove the sibling and fail
+    // closed instead of widening access.
+    let recheck = original
+        .try_clone()
+        .map_err(Failure::from)
+        .and_then(|file| {
+            dsh_ops_darwin_metadata::require_no_extended_acl(&file.into_std())
+                .map_err(|error| Failure::new("METADATA_UNSUPPORTED", error))
+        });
+    if let Err(error) = recheck {
+        let _ = parent.remove_file(temporary);
+        return Err(error);
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
