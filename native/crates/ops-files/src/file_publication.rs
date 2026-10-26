@@ -128,6 +128,30 @@ mod tests {
         assert_eq!(check_revision(Some(b"old"), &hash.to_uppercase()).unwrap_err().code, "INVALID_ARGUMENT");
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn plain_clone_is_available_without_the_acl_flag() {
+        let root = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!("ops-clone-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let source_path = root.join("source");
+        std::fs::write(&source_path, b"payload").unwrap();
+        let source = crate::file_path::checked(source_path.to_str().unwrap()).unwrap();
+        let original = crate::file_path::read_file(&source).unwrap();
+        let parent = Dir::open_ambient_dir(&root, cap_std::ambient_authority()).unwrap();
+        // macOS 13+ takes the CLONE_ACL branch; macOS 12 takes the plain retry.
+        clone_macos_source(&original, &parent, "clone").unwrap();
+        // The retry primitive must create the sibling on every supported macOS.
+        clone_macos_source_plain(&original, &parent, "clone-plain").unwrap();
+        for name in ["clone", "clone-plain"] {
+            assert_eq!(std::fs::read(root.join(name)).unwrap(), b"payload");
+        }
+        drop(original);
+        drop(parent);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     #[cfg(windows)]
     #[test]
     fn unsupported_lock_errors_are_classified_apart_from_contention() {
@@ -163,20 +187,7 @@ pub(super) fn create_sibling(
         let original = crate::file_path::read_file(source)?;
         dsh_ops_darwin_metadata::require_no_extended_acl(&original.try_clone()?.into_std())
             .map_err(|error| Failure::new("METADATA_UNSUPPORTED", error))?;
-        // CLONE_ACL (0x0004) is an Apple public flag not named by rustix 1.1.
-        // Without it clonefile inherits the destination ACL and drops source denies.
-        rustix::fs::fclonefileat(
-            &original,
-            parent,
-            temporary,
-            rustix::fs::CloneFlags::from_bits_retain(0x0004),
-        )
-        .map_err(|error| {
-            Failure::new(
-                "METADATA_UNSUPPORTED",
-                format!("APFS metadata-preserving clone is required; nothing published: {error}"),
-            )
-        })?;
+        clone_macos_source(&original, parent, temporary)?;
         let prepared = (|| -> Result<File> {
             let cloned = parent.open_with(
                 temporary,
@@ -217,6 +228,52 @@ pub(super) fn create_sibling(
     {
         Ok(parent.open_with(temporary, &options)?)
     }
+}
+
+/// Clone a source that the caller has already accepted after checking it has no
+/// extended ACL. macOS 13+ implements `CLONE_ACL`; macOS 12 (`xnu-8020`) returns
+/// `EINVAL` for that flag. A plain APFS clone is equivalent for an accepted
+/// source, so retry once and re-check the source before the caller writes.
+#[cfg(target_os = "macos")]
+fn clone_macos_source(original: &File, parent: &Dir, temporary: &str) -> Result<()> {
+    // CLONE_ACL (0x0004) is an Apple public flag not named by rustix 1.1.
+    const CLONE_ACL: u32 = 0x0004;
+    match rustix::fs::fclonefileat(
+        original,
+        parent,
+        temporary,
+        rustix::fs::CloneFlags::from_bits_retain(CLONE_ACL),
+    ) {
+        Ok(()) => Ok(()),
+        Err(rustix::io::Errno::INVAL) => {
+            clone_macos_source_plain(original, parent, temporary)?;
+            // An ACL added between the caller's check and the clone would be
+            // dropped by the plain clone. Nothing is published yet, so remove
+            // the sibling and fail closed instead of widening access.
+            if let Err(error) = dsh_ops_darwin_metadata::require_no_extended_acl(
+                &original.try_clone()?.into_std(),
+            ) {
+                let _ = parent.remove_file(temporary);
+                return Err(Failure::new("METADATA_UNSUPPORTED", error));
+            }
+            Ok(())
+        }
+        Err(error) => Err(clone_macos_failure(error)),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn clone_macos_source_plain(original: &File, parent: &Dir, temporary: &str) -> Result<()> {
+    rustix::fs::fclonefileat(original, parent, temporary, rustix::fs::CloneFlags::empty())
+        .map_err(clone_macos_failure)
+}
+
+#[cfg(target_os = "macos")]
+fn clone_macos_failure(error: rustix::io::Errno) -> Failure {
+    Failure::new(
+        "METADATA_UNSUPPORTED",
+        format!("APFS metadata-preserving clone is required; nothing published: {error}"),
+    )
 }
 
 #[cfg(windows)]

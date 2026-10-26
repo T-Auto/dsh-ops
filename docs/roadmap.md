@@ -17,15 +17,14 @@
 
 Separate Native/PTC projections, scoped discovery, bounded CSV/TSV, DOCX and restricted PDF readers, runtime/settings changes and strict TypeScript source are implemented. This is not a release announcement: final evidence must satisfy the approved OPS 0.3.x BM-01 threshold and file/discovery BM-03 budget, while separately reporting the official comparison and full Bash-inclusive startup total. See [candidate status and format limits](release-0.4.0.md).
 
-- macOS Intel (`darwin-x64`) on macOS 13+ is implemented and in review; macOS 12's
-  `CLONE_ACL` fallback remains a separate follow-up. See [macOS](macos.md).
+- macOS Intel (`darwin-x64`) is merged; macOS 12 support uses the plain APFS clone
+  retry after the extended-ACL check and is in review. See [macOS](macos.md).
 
 ## Later
 
 ### Platform coverage
 
 - Windows ARM64 and Linux ARM64 targets.
-- macOS 12 (`CLONE_ACL` fallback for Intel and arm64) after the macOS 13+ support lands.
 
 ### Tool surface (progressive disclosure)
 

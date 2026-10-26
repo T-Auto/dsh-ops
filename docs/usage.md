@@ -39,7 +39,7 @@ aggregates bounded PR, claim, CI and base-head facts without adding resident too
 
 | Item | Requirement |
 | --- | --- |
-| OS | Windows x64, Linux x64 or macOS 13+ (arm64 or Intel x64); OPS Bash is on by default on all of them (pinned payload on Windows, distribution Bash on POSIX) |
+| OS | Windows x64, Linux x64 or macOS 12+ (arm64 or Intel x64); OPS Bash is on by default on all of them (pinned payload on Windows, distribution Bash on POSIX) |
 | Node.js | `^22.19 \|\| >=24` (the `engines` field in `package.json`) |
 | Host | DSH `0.2.0-rc.2` |
 | Target application | Initialized |
@@ -64,8 +64,9 @@ standard:
   bashPath: /opt/homebrew/bin/bash   # Intel Homebrew: /usr/local/bin/bash
 ```
 
-`/bin/bash` also works. macOS 12 is not fully supported: the write path needs
-`CLONE_ACL`, which macOS 13+ provides; read-only tools still work. See
+`/bin/bash` also works. macOS 12 lacks `CLONE_ACL`; the worker retries a plain
+APFS clone after refusing a source with an extended ACL, and re-checks the source
+before writing. Sources with an extended ACL still fail closed. See
 [macOS (arm64 and Intel)](macos.md) for the capability matrix and the known
 limitations.
 

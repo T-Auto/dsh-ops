@@ -329,6 +329,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Embed the complete frozen official Niubash v1.5.0 Windows x64 payload as the default shell backend; verify source and per-call execution trees, include preparation in cancellation/deadlines, preserve results on cleanup failure, and integrate managed install/status/select/removal. Missing payloads never switch implicitly to ambient Bash; explicit Git Bash and POSIX system Bash remain supported. This full-package-first choice does not rule out rubash-only later.
 - Windows x64 默认 Shell 改为固定官方 Niubash v1.5.0 完整载荷；校验源树及每调用执行树，准备阶段纳入取消/超时，清理失败不覆盖结果，并接通托管安装/状态/选择/卸载。缺载荷不隐式切换环境 Bash，保留显式 Git Bash 与 POSIX 系统 Bash。这是先完整包的阶段选择，不否定后续 rubash-only。
 
+- Retry the macOS APFS clone without `CLONE_ACL` on macOS 12 after the existing extended-ACL check, re-checking the source before writing; `replace`, `copy` and overwrite writes now work on macOS 12, while a source with an extended ACL still fails closed (#371 follow-up).
+- macOS 12 在既有的扩展 ACL 检查之后以不带 `CLONE_ACL` 的 APFS clone 重试，并在写入前复查源文件；`replace`、`copy` 与覆盖写现在可用，带扩展 ACL 的源文件仍然 fail closed（#371 后续）。
+
 - Let `/Prev` and `/XRefStm` be ordinary PDF dictionary keys: they mark an unsupported
   incremental update only as trailer keys, so an outline item's `/Prev` no longer makes the
   whole document unreadable (#427).
