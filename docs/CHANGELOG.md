@@ -329,8 +329,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Embed the complete frozen official Niubash v1.5.0 Windows x64 payload as the default shell backend; verify source and per-call execution trees, include preparation in cancellation/deadlines, preserve results on cleanup failure, and integrate managed install/status/select/removal. Missing payloads never switch implicitly to ambient Bash; explicit Git Bash and POSIX system Bash remain supported. This full-package-first choice does not rule out rubash-only later.
 - Windows x64 默认 Shell 改为固定官方 Niubash v1.5.0 完整载荷；校验源树及每调用执行树，准备阶段纳入取消/超时，清理失败不覆盖结果，并接通托管安装/状态/选择/卸载。缺载荷不隐式切换环境 Bash，保留显式 Git Bash 与 POSIX 系统 Bash。这是先完整包的阶段选择，不否定后续 rubash-only。
 
-- Retry the macOS APFS clone without `CLONE_ACL` on macOS 12 after the existing extended-ACL check, re-checking the source before writing; `replace`, `copy` and overwrite writes now work on macOS 12, while a source with an extended ACL still fails closed (#371 follow-up).
-- macOS 12 在既有的扩展 ACL 检查之后以不带 `CLONE_ACL` 的 APFS clone 重试，并在写入前复查源文件；`replace`、`copy` 与覆盖写现在可用，带扩展 ACL 的源文件仍然 fail closed（#371 后续）。
+- Add a best-effort macOS 12 plain-APFS-clone fallback for ACL-free sources and destination directories, rechecking both source and clone before writing. Report failed staging cleanup as `CLEANUP_FAILED` / `effectState=unknown`; add real Darwin ACL regressions. Keep macOS 13+ as the general support statement; Intel macOS 12.7.6 is manual source-build evidence under host/Node version limits (#428).
+- 为源文件和目标目录均无扩展 ACL 的场景增加 macOS 12 普通 APFS clone 尽力兼容回退，写入前复查源文件和副本；临时副本清理失败报告 `CLEANUP_FAILED` / `effectState=unknown`，并增加真实 Darwin ACL 回归。通用支持声明保持 macOS 13+；Intel macOS 12.7.6 为受宿主/Node 版本限制的手动源码构建证据（#428）。
 
 - Let `/Prev` and `/XRefStm` be ordinary PDF dictionary keys: they mark an unsupported
   incremental update only as trailer keys, so an outline item's `/Prev` no longer makes the
@@ -354,8 +354,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Document the owned Bash restriction boundary and publication switch (#380),
   provider tool-change error ownership (#367), and scoped discovery troubleshooting (#346).
 - 说明 Bash 自有工具的掩码边界与发布开关、提供商工具变更错误的职责边界及 discovery 作用域排查方法。
-- Add macOS Intel (`darwin-x64`) as a first-class native target on macOS 13+: accept it in the resolver and profile commands, declare it in every component row, ship its Mach-O worker with a receipt, and add a non-blocking `macos-15-intel` CI leg plus the fourth release artifact. The Intel leg measured 318 s, so it follows the >300 s non-blocking rule. macOS 12 is not part of this support: its kernel lacks `CLONE_ACL`, so the write path fails closed; that fallback is a separate follow-up. See [macOS](macos.md).
-- 将 macOS Intel（`darwin-x64`）作为 macOS 13+ 的一等原生目标：解析器与 profile 命令接受它，所有组件行声明它，发布其 Mach-O worker 与收据，并新增非阻塞的 `macos-15-intel` CI leg 与第四个发布 artifact。Intel leg 实测 318 秒，因此按 >300 秒规则作为非阻塞信号。macOS 12 不在本次支持范围内：其内核缺少 `CLONE_ACL`，写路径会 fail closed；该回退是独立后续项。说明见 [macOS](macos.zh.md)。
+- Add macOS Intel (`darwin-x64`) as a first-class native target on macOS 13+: accept it in the resolver and profile commands, declare it in every component row, ship its Mach-O worker with a receipt, and add a non-blocking `macos-15-intel` CI leg plus the fourth release artifact. The Intel leg measured 318 s, so it follows the >300 s non-blocking rule. The macOS 12 best-effort fallback is a separate follow-up described above; it does not extend this general support guarantee. See [macOS](macos.md).
+- 将 macOS Intel（`darwin-x64`）作为 macOS 13+ 的一等原生目标：解析器与 profile 命令接受它，所有组件行声明它，发布其 Mach-O worker 与收据，并新增非阻塞的 `macos-15-intel` CI leg 与第四个发布 artifact。Intel leg 实测 318 秒，因此按 >300 秒规则作为非阻塞信号。macOS 12 的尽力兼容回退作为独立后续项在上文说明，不扩大此处的通用支持保证。说明见 [macOS](macos.zh.md)。
 - Declare DSH 0.2.0-rc.2 and 0.2.1-rc.2 consistently in engines/peers, export every
   component icon, and validate bundle composition with the host patch API (#200).
   中英文兼容范围、组件图标导出与升级检查同步更新；宿主 patch 校验拒绝丢失目标的 override。

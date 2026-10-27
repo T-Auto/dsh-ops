@@ -281,14 +281,15 @@ Silicon, `/usr/local/bin/bash` on Intel, or `/bin/bash`) on a mode
 row. PowerShell 7 can be provisioned, but the host disables its `pwsh-sandbox` and
 `tool-pwsh` rows outside Windows, so no pwsh tool appears on macOS.
 
-### macOS 12: an extended ACL still fails with `METADATA_UNSUPPORTED`
+### macOS 12: source or destination directory ACL returns `METADATA_UNSUPPORTED`
 
-macOS 12's kernel lacks `CLONE_ACL`, so the worker retries the APFS clone without
-it after the publication pipeline has refused a source with an extended ACL.
-Ordinary files now work. A source that carries an extended ACL still fails closed
-with `METADATA_UNSUPPORTED` and publishes nothing, the same ACL boundary as
-macOS 13+. If the failure is not ACL-related, check that the filesystem supports
-APFS cloning. See [macOS](macos.md) for the full matrix.
+The best-effort macOS 12 fallback requires an ACL-free source and destination directory.
+Ordinary clone inherits directory ACLs; `chmod 0600` cannot remove them. Source/clone ACLs
+are checked again before writing. Use a suitable directory or a metadata-preserving tool;
+do not remove intentional access controls just to make the call succeed. `CLEANUP_FAILED`
+with `effectState=unknown` means a staging sibling may remain: inspect it before retrying.
+For other failures, check APFS clone support and host/Node compatibility.
+See [macOS](macos.md) for the support matrix.
 
 ### The file tools reject a path under `/tmp`
 

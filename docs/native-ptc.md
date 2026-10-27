@@ -9,7 +9,7 @@ background component has been removed.
 
 ## Runtime-bearing installation and original DSH permission linkage
 
-The current release ships native workers for `win32-x64`, `linux-x64`, `darwin-arm64` and `darwin-x64`, each with a version/checksum receipt, plus the Windows Bash IPC proxies. 0.3.1 shipped the first three; current support adds Intel macOS on macOS 12+. Formal `verify:release` requires all four target pairs and validates every PE/ELF/Mach-O worker and the Windows IPC binary/source closure. Local `check --staged` verifies only local development outputs. Windows/Linux ARM64 are not supported. macOS 12 lacks `CLONE_ACL`; the worker retries a plain APFS clone after the extended-ACL check, and a source with an extended ACL still fails closed. The Windows Bash payload remains a Windows-only optional dependency; PowerShell is host-managed. POSIX uses host Bash. There is no postinstall download/build. Source builds use `npm run build:ptc`, plus `npm run build:bash-ipc` on Windows.
+The current release ships native workers for `win32-x64`, `linux-x64`, `darwin-arm64` and `darwin-x64`, each with a version/checksum receipt, plus the Windows Bash IPC proxies. 0.3.1 shipped the first three; current support adds Intel macOS on macOS 13+, with manually tested, best-effort Intel macOS 12.7.6 compatibility under a compatible host and Node 22. Formal `verify:release` requires all four target pairs and validates every PE/ELF/Mach-O worker and the Windows IPC binary/source closure. Local `check --staged` verifies only local development outputs. Windows/Linux ARM64 are not supported. macOS 12 lacks `CLONE_ACL`; its fallback requires an ACL-free source and destination directory and rechecks the source and clone. A failed cleanup reports `CLEANUP_FAILED` with `effectState=unknown`. The Windows Bash payload remains a Windows-only optional dependency; PowerShell is host-managed. POSIX uses host Bash. There is no postinstall download/build. Source builds use `npm run build:ptc`, plus `npm run build:bash-ipc` on Windows.
 
 PTC/Bash use original per-call sandboxPolicy and sandbox.confine, reporting the
 host's full/partial enforcement honestly. Read-only permits existing result pages
@@ -373,7 +373,7 @@ the full gate in CI: `macos-latest` (arm64) is blocking, and `macos-15-intel` (x
 is a non-blocking signal because the leg measured 318 s > 300 s. Both build and stage
 their Mach-O worker, run the suite, and verify the receipt. The earlier 0.3.1
 `cargo check --locked`-only record is superseded. A local Intel macOS 12.7.6 run
-passes the workspace tests with the plain-clone retry; macOS 12 is not in CI.
+passes the workspace tests with the plain-clone retry; macOS 12 is not in CI, and this does not verify a CI-built release artifact on macOS 12. See [macOS](macos.md) for host/Node limits.
 No fixed token/time saving percentage, actual model-turn benchmark,
 live Desktop upgrade, npm release or GitHub push is claimed.
 

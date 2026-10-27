@@ -153,6 +153,133 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
+    #[cfg(target_os = "macos")]
+    mod macos_fallback {
+        use super::*;
+
+        struct Fixture {
+            root: PathBuf,
+            original: File,
+            parent: Dir,
+        }
+
+        impl Fixture {
+            fn new() -> Self {
+                let root = std::fs::canonicalize(std::env::temp_dir()).unwrap()
+                    .join(format!("ops-clone-acl-{}", uuid::Uuid::new_v4()));
+                std::fs::create_dir(&root).unwrap();
+                let source = root.join("source");
+                std::fs::write(&source, b"private payload").unwrap();
+                let target = crate::file_path::checked(source.to_str().unwrap()).unwrap();
+                let original = crate::file_path::read_file(&target).unwrap();
+                rustix::fs::fchmod(&original, rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR).unwrap();
+                let parent = Dir::open_ambient_dir(&root, cap_std::ambient_authority()).unwrap();
+                Self { root, original, parent }
+            }
+
+            fn add_acl(&self, name: &str, entry: &str) {
+                let path = self.root.join(name);
+                assert!(std::process::Command::new("/bin/chmod")
+                    .args(["+a", entry]).arg(&path).status().unwrap().success());
+                let file = std::fs::File::open(&path).unwrap();
+                assert!(dsh_ops_darwin_metadata::require_no_extended_acl(&file).is_err(),
+                    "the fixture must have a real extended ACL");
+            }
+
+            fn clone_plain(&self) {
+                clone_macos_source_plain(&self.original, &self.parent, "clone").unwrap();
+            }
+        }
+
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                // Clear fixture deny-delete entries even when an assertion panics.
+                for path in std::iter::once(self.root.clone()).chain(
+                    std::fs::read_dir(&self.root).unwrap().map(|entry| entry.unwrap().path()),
+                ) {
+                    let _ = std::process::Command::new("/bin/chmod")
+                        .arg("-N").arg(path).status();
+                }
+                std::fs::remove_dir_all(&self.root).unwrap();
+            }
+        }
+
+        #[test]
+        fn directory_acl_is_refused_before_plain_clone() {
+            let fixture = Fixture::new();
+            fixture.add_acl("", "everyone allow read,file_inherit,directory_inherit");
+            let error = clone_macos_source_fallback(&fixture.original, &fixture.parent, "clone")
+                .unwrap_err();
+            assert_eq!(error.code, "METADATA_UNSUPPORTED");
+            assert_eq!(&*error.effect_state, "none");
+            assert!(!fixture.root.join("clone").exists());
+            assert_eq!(std::fs::read(fixture.root.join("source")).unwrap(), b"private payload");
+        }
+
+        #[test]
+        fn clone_acl_is_refused_and_the_clone_is_removed() {
+            let fixture = Fixture::new();
+            fixture.clone_plain();
+            fixture.add_acl("clone", "everyone allow read");
+            let error = recheck_macos_clone(&fixture.original, &fixture.parent, "clone").unwrap_err();
+            assert_eq!(error.code, "METADATA_UNSUPPORTED");
+            assert!(!fixture.root.join("clone").exists());
+        }
+
+        #[test]
+        fn source_acl_added_after_cloning_removes_the_clone() {
+            let fixture = Fixture::new();
+            fixture.clone_plain();
+            fixture.add_acl("source", "everyone deny delete");
+            let error = recheck_macos_clone(&fixture.original, &fixture.parent, "clone").unwrap_err();
+            assert_eq!(error.code, "METADATA_UNSUPPORTED");
+            assert_eq!(&*error.effect_state, "none");
+            assert!(!fixture.root.join("clone").exists());
+        }
+
+        #[test]
+        fn failed_clone_cleanup_reports_remaining_effects() {
+            let fixture = Fixture::new();
+            fixture.clone_plain();
+            fixture.add_acl("source", "everyone deny delete");
+            fixture.add_acl("clone", "everyone deny delete");
+            let error = recheck_macos_clone(&fixture.original, &fixture.parent, "clone").unwrap_err();
+            assert_eq!(error.code, "CLEANUP_FAILED");
+            assert_eq!(&*error.phase, "cleanup");
+            assert_eq!(&*error.effect_state, "unknown");
+            assert!(error.next_action.contains("Inspect"));
+            assert!(fixture.root.join("clone").exists());
+        }
+
+        #[test]
+        fn missing_clone_fails_the_metadata_recheck() {
+            let fixture = Fixture::new();
+            let error = recheck_macos_clone(&fixture.original, &fixture.parent, "clone").unwrap_err();
+            assert_eq!(error.code, "METADATA_UNSUPPORTED");
+            assert_eq!(&*error.effect_state, "none");
+        }
+
+        #[test]
+        fn clone_recheck_never_follows_a_substituted_symlink() {
+            let fixture = Fixture::new();
+            std::os::unix::fs::symlink("source", fixture.root.join("clone")).unwrap();
+            let error = recheck_macos_clone(&fixture.original, &fixture.parent, "clone").unwrap_err();
+            assert_eq!(error.code, "METADATA_UNSUPPORTED");
+            assert!(!fixture.root.join("clone").exists());
+            assert_eq!(std::fs::read(fixture.root.join("source")).unwrap(), b"private payload");
+        }
+
+        #[test]
+        fn plain_clone_failure_keeps_an_existing_destination() {
+            let fixture = Fixture::new();
+            std::fs::write(fixture.root.join("clone"), b"existing").unwrap();
+            let error = clone_macos_source_fallback(&fixture.original, &fixture.parent, "clone")
+                .unwrap_err();
+            assert_eq!(error.code, "METADATA_UNSUPPORTED");
+            assert_eq!(std::fs::read(fixture.root.join("clone")).unwrap(), b"existing");
+        }
+    }
+
     #[cfg(windows)]
     #[test]
     fn unsupported_lock_errors_are_classified_apart_from_contention() {
@@ -194,8 +321,9 @@ pub(super) fn create_sibling(
                 temporary,
                 OpenOptions::new().read(true).follow(FollowSymlinks::No),
             )?;
-            // Mask inherited grants before writing new bytes. The caller restores
-            // the captured original mode after writing, before publication.
+            // Restrict mode bits before writing; chmod does not remove Darwin ACLs.
+            // The plain-clone fallback checks ACLs separately. The caller restores
+            // the captured original mode before publication.
             rustix::fs::fchmod(&cloned, rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR)
                 .map_err(|error| Failure::new("METADATA_UNSUPPORTED", error))?;
             Ok(parent.open_with(
@@ -206,10 +334,10 @@ pub(super) fn create_sibling(
                     .follow(FollowSymlinks::No),
             )?)
         })();
-        if prepared.is_err() {
-            let _ = parent.remove_file(temporary);
+        return match prepared {
+            Ok(file) => Ok(file),
+            Err(error) => reject_macos_clone(parent, temporary, error),
         }
-        return prepared;
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     let _ = source;
@@ -233,8 +361,8 @@ pub(super) fn create_sibling(
 
 /// Clone a source that the caller has already accepted after checking it has no
 /// extended ACL. macOS 13+ implements `CLONE_ACL`; macOS 12 (`xnu-8020`) returns
-/// `EINVAL` for that flag. A plain APFS clone is equivalent for an accepted
-/// source, so retry once and re-check the source before the caller writes.
+/// `EINVAL` for that flag. The plain retry also requires an ACL-free destination
+/// directory and rechecks both source and clone before the caller writes.
 #[cfg(target_os = "macos")]
 fn clone_macos_source(original: &File, parent: &Dir, temporary: &str) -> Result<()> {
     // CLONE_ACL (0x0004) is an Apple public flag not named by rustix 1.1.
@@ -255,22 +383,48 @@ fn clone_macos_source(original: &File, parent: &Dir, temporary: &str) -> Result<
 
 #[cfg(target_os = "macos")]
 fn clone_macos_source_fallback(original: &File, parent: &Dir, temporary: &str) -> Result<()> {
+    // A plain clone inherits the destination directory ACL, even if the source
+    // has none. Refuse before copying any source bytes into inherited grants.
+    let directory = parent.try_clone()
+        .map_err(|error| Failure::new("METADATA_UNSUPPORTED", error))?
+        .into_std_file();
+    dsh_ops_darwin_metadata::require_no_extended_acl(&directory)
+        .map_err(|error| Failure::new("METADATA_UNSUPPORTED",
+            format!("Plain APFS clone requires a destination directory without an extended ACL: {error}")))?;
     clone_macos_source_plain(original, parent, temporary)?;
-    // An ACL added between the caller's check and the clone would be dropped by
-    // the plain clone. Nothing is published yet, so remove the sibling and fail
-    // closed instead of widening access.
-    let recheck = original
-        .try_clone()
-        .map_err(Failure::from)
-        .and_then(|file| {
-            dsh_ops_darwin_metadata::require_no_extended_acl(&file.into_std())
-                .map_err(|error| Failure::new("METADATA_UNSUPPORTED", error))
-        });
+    recheck_macos_clone(original, parent, temporary)
+}
+
+#[cfg(target_os = "macos")]
+fn recheck_macos_clone(original: &File, parent: &Dir, temporary: &str) -> Result<()> {
+    // The source may have gained an ACL, or the clone may have inherited one
+    // since the directory probe. Neither is safe to publish. chmod cannot fix it.
+    let recheck = (|| -> std::io::Result<()> {
+        dsh_ops_darwin_metadata::require_no_extended_acl(&original.try_clone()?.into_std())?;
+        let cloned = parent.open_with(temporary,
+            OpenOptions::new().read(true).follow(FollowSymlinks::No))?;
+        dsh_ops_darwin_metadata::require_no_extended_acl(&cloned.into_std())
+    })().map_err(|error| Failure::new("METADATA_UNSUPPORTED",
+        format!("Post-clone metadata check failed; destination not published: {error}")));
     if let Err(error) = recheck {
-        let _ = parent.remove_file(temporary);
-        return Err(error);
+        return reject_macos_clone(parent, temporary, error);
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn reject_macos_clone<T>(parent: &Dir, temporary: &str, error: Failure) -> Result<T> {
+    if let Err(cleanup) = parent.remove_file(temporary) {
+        if cleanup.kind() != std::io::ErrorKind::NotFound {
+            let mut failure = Failure::new("CLEANUP_FAILED",
+                format!("{}; could not remove staging sibling {temporary}: {cleanup}", error.message));
+            failure.phase = "cleanup".into();
+            failure.effect_state = "unknown".into();
+            failure.next_action = "Inspect the staging sibling and target before retrying; unpublished bytes may remain.".into();
+            return Err(failure);
+        }
+    }
+    Err(error)
 }
 
 #[cfg(target_os = "macos")]
