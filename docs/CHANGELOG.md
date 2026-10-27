@@ -5,6 +5,19 @@ All notable changes to this package are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A new file published by `ops_write_file` keeps the directory's inherited grants.** Staging
+  objects are created with a protected, creator-only DACL, and publication never restored
+  inheritance for the create path (#420), so the published file carried exactly one explicit ACE.
+  Any principal that authorizes through the directory — a confined workspace token, another tool,
+  another user — was cut off, and the sandbox that wrote the file could not unlink it. `publish_new`
+  now adopts the directory's object-inherit ACEs before the hard link is made, which is after the
+  bytes are complete, so the private staging DACL keeps its purpose. Overwrites are unchanged: they
+  still capture and restore the target's own descriptor.
+
 ## [0.5.0] — 2026-10-27 — Preset-mode component roster
 
 ### Breaking changes

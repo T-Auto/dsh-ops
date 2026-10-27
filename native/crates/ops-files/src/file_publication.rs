@@ -220,7 +220,7 @@ pub(super) fn create_sibling(
 }
 
 #[cfg(windows)]
-fn metadata_error(error: std::io::Error) -> Failure {
+pub(super) fn metadata_error(error: std::io::Error) -> Failure {
     // The source was opened separately: failures inside capture/restore prove
     // metadata cannot be guaranteed, not that the DSH selector denied a write.
     Failure::new("METADATA_UNSUPPORTED", error)

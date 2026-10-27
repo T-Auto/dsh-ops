@@ -414,6 +414,21 @@ fn publish_new(
             return Err(error);
         }
     }
+    #[cfg(windows)]
+    if source.is_none() {
+        // The private staging DACL exists to hide half-written bytes; it must not outlive
+        // publication. Adopt the directory's inheritable grants before the link is made so
+        // the workspace token that owns the new file can still unlink it afterwards.
+        let parent = checked.parent.try_clone()?.into_std_file();
+        let child = file.try_clone()?.into_std();
+        let adopted = dsh_ops_windows_metadata::adopt_parent_dacl(&parent, &child)
+            .map_err(publication::metadata_error);
+        drop(child);
+        if let Err(error) = adopted {
+            publication::discard_sibling(&checked.parent, &temporary, file)?;
+            return Err(error);
+        }
+    }
     #[cfg(target_os = "macos")]
     {
         // RENAME_EXCL publishes an absent destination without a staging unlink.
@@ -636,6 +651,77 @@ mod tests {
         assert!(!dest.exists());
         assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
         drop(checked);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    fn fixture() -> std::path::PathBuf {
+        let root = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!("dsh-ops-inherit-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        root
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn new_file_adopts_directory_grants() {
+        use windows_permissions::{
+            LocalBox, SecurityDescriptor,
+            constants::{AceFlags, SeObjectType::SE_FILE_OBJECT, SecurityInformation as Info},
+            wrappers::{GetNamedSecurityInfo, SetNamedSecurityInfo},
+        };
+        let root = fixture();
+        let creator = windows_permissions::utilities::current_process_sid().unwrap();
+        // A confined token authorizes through inherited grants, never through the creator,
+        // so the directory carries a mask the private staging DACL does not name.
+        let directory: LocalBox<SecurityDescriptor> =
+            format!("D:(A;OICI;FA;;;{creator})(A;OICI;0x10001;;;S-1-5-32-545)").parse().unwrap();
+        SetNamedSecurityInfo(&root, SE_FILE_OBJECT, Info::Dacl, None, None, directory.dacl(), None)
+            .unwrap();
+        let destination = root.join("published");
+        publish_new(&destination, b"payload", None, None).unwrap();
+        let published: LocalBox<SecurityDescriptor> =
+            GetNamedSecurityInfo(&destination, SE_FILE_OBJECT, Info::Dacl).unwrap();
+        let granted = published.dacl().expect("a published file has a DACL");
+        let inherited = (0..granted.len()).any(|index| {
+            granted.get_ace(index).is_some_and(|ace| {
+                ace.flags().contains(AceFlags::Inherited)
+                    && ace.mask().bits() == 0x10001
+                    && ace.sid().is_some_and(|sid| {
+                        windows_permissions::wrappers::ConvertSidToStringSid(sid)
+                            .is_ok_and(|sid| sid == "S-1-5-32-545")
+                    })
+            })
+        });
+        assert!(
+            inherited,
+            "a published file must inherit the directory grants the staging DACL hid: {:?}",
+            published.as_sddl().map(|text| text.to_string_lossy().into_owned())
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_directory_without_inheritable_grants_still_publishes_an_accessible_file() {
+        use windows_permissions::{
+            LocalBox, SecurityDescriptor,
+            constants::{SeObjectType::SE_FILE_OBJECT, SecurityInformation as Info},
+            wrappers::SetNamedSecurityInfo,
+        };
+        let root = fixture();
+        let creator = windows_permissions::utilities::current_process_sid().unwrap();
+        // Nothing here is inheritable, so adoption has no grant to copy; the publisher must
+        // still be able to read back and delete what it published.
+        let locked: LocalBox<SecurityDescriptor> =
+            format!("D:P(A;;FA;;;{creator})").parse().unwrap();
+        SetNamedSecurityInfo(&root, SE_FILE_OBJECT, Info::Dacl | Info::ProtectedDacl, None, None, locked.dacl(), None)
+            .unwrap();
+        let destination = root.join("published");
+        publish_new(&destination, b"payload", None, None).unwrap();
+        std::fs::File::open(&destination).unwrap();
+        std::fs::remove_file(&destination).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
 }
