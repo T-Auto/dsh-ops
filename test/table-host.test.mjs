@@ -8,8 +8,8 @@ import { requireWorker } from './lib/boundary.mjs'
 import { documentHost, documentNames, documentCall, documentCode, activateDocument } from './lib/document-host.mjs'
 import { capability } from '../lib/capabilities/registry.js'
 import { publicToolName } from '../lib/policy.js'
-import { canonicalOutput } from '../lib/modes/ptc/canonical-schema.js'
-import { decodeContinuation, continuationFor } from '../lib/modes/ptc/continuation.js'
+import { canonicalOutput } from '../lib/ptc/projection/canonical-schema.js'
+import { decodeContinuation, continuationFor } from '../lib/ptc/projection/continuation.js'
 import { definition } from '../lib/file/contract.js'
 requireWorker('table-host')
 const TOOL = publicToolName('read_table')

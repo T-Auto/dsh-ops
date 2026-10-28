@@ -1,51 +1,32 @@
-/**
- * Official-tool replacement for one enhanced preset mode.
- *
- * A mode hides only the official names whose OPS counterpart is visible in the
- * same Agent scope, and only while Compatibility mode is off. Nothing is hidden
- * when the counterpart is missing: a session keeps the official workflow rather
- * than losing a capability to an unfinished publication.
- */
+/** Scoped replacement controller. Missing counterparts always leave official tools available. */
 import type { Context } from '../adapter/dsh/types.js'
 import type { Agent } from '../adapter/dsh/types.js'
 import type { ToolGuard } from '../adapter/dsh/types.js'
 import type {} from '../adapter/dsh/types.js'
-import { OFFICIAL_REPLACEMENTS } from '../official-tool-catalog.js'
-import { BASH_TOOL } from '../policy.js'
-import { visibleNames } from '../surface.js'
 import { onToolChange } from '../tool-changes.js'
-import type { ModeConfig } from './config.js'
-import { modeOf } from './detect.js'
-import { MODE_PLANS, SHELL_OFFICIAL_NAMES } from './plan.js'
-import { compatibilityOn, onModesChange } from './registry.js'
-import type { ModeId } from './types.js'
+import { visibleNames } from '../surface.js'
+import type { PublicationGate } from './types.js'
 
 interface Entry { lifts: (() => void)[]; deny: string[] }
 
-/** Official names one mode can hide, with the OPS tool that replaces each. */
-export function replacementTargets(mode: ModeId, platform: string = process.platform): ReadonlyMap<string, string> {
-  const targets = new Map<string, string>()
-  for (const official of MODE_PLANS[mode].replacements) targets.set(official, OFFICIAL_REPLACEMENTS[official])
-  if (MODE_PLANS[mode].shell && platform === 'win32') for (const official of SHELL_OFFICIAL_NAMES) targets.set(official, BASH_TOOL)
-  return targets
+/** Product-independent mapping; publication and replacement remain separate choices. */
+export interface ReplacementPublication {
+  id: string
+  targets: ReadonlyMap<string, string>
+  gate: PublicationGate
+  keepOfficial(): boolean
 }
 
-/**
- * Hide the official tools one mode replaces, for sessions composed from that mode.
- * @param root - the mode row's context.
- * @param config - the row's resolved configuration.
- * @param mode - the mode the row enables.
- * @returns void; the caller owns the row lifetime through `ctx.effect`.
- */
-export function mountReplacements(root: Context, _config: ModeConfig, mode: ModeId): void {
-  const targets = replacementTargets(mode)
+/** Hide only ready replacements. All registrations and guards follow the row lifetime. */
+export function mountReplacements(root: Context, publication: ReplacementPublication): void {
+  const { id: mode, targets, gate, keepOfficial } = publication
   if (targets.size === 0) return
   root.inject(['tools'], ctx => {
     const tools = ctx.get('tools')
     if (!tools || typeof tools.restrict !== 'function') return
     const entries = new Map<Agent, Entry>()
     let stopped = false, mutating = false
-    const matches = (agent: Agent): boolean => modeOf(ctx, agent) === mode
+    const matches = (agent: Agent): boolean => gate.allows(agent)
     const lift = (entry: Entry): void => {
       entry.deny = []
       for (const dispose of entry.lifts.splice(0)) {
@@ -58,7 +39,7 @@ export function mountReplacements(root: Context, _config: ModeConfig, mode: Mode
     // this row. Reading only current visibility would lift and re-apply the mask
     // on every registry change and oscillate forever.
     const plan = (agent: Agent, entry: Entry): string[] => {
-      if (compatibilityOn(ctx)) return []
+      if (keepOfficial()) return []
       const visible = new Set(visibleNames(tools, agent))
       return [...targets]
         .filter(([official, counterpart]) => visible.has(counterpart) && (visible.has(official) || entry.deny.includes(official)))
@@ -90,13 +71,13 @@ export function mountReplacements(root: Context, _config: ModeConfig, mode: Mode
       entries.delete(agent)
     })
     ctx.on('session/event', (_session, event) => { if ((event as { type: string }).type === 'agent-preset/selected') reconcile() })
-    ctx.effect(() => onModesChange(ctx, reconcile), `dsh-ops: ${mode} replacement registry observer`)
+    if (gate.watch) ctx.effect(() => gate.watch!(reconcile), `dsh-ops: ${mode} replacement observer`)
     onToolChange(ctx, () => reconcile())
     // Reconcile on the way into an assembly so a Compatibility change is visible
     // for the request being assembled, not one request later.
     ctx.on('system-prompt/assemble', async (_assembly, _context, next) => { reconcile(); return next() })
     const refusal: ToolGuard = exec => {
-      if (stopped || compatibilityOn(ctx)) return undefined
+      if (stopped || keepOfficial()) return undefined
       const agent = exec?.agent
       if (!agent || !matches(agent)) return undefined
       const counterpart = targets.get(String(exec.name ?? ''))

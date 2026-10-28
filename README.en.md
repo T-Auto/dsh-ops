@@ -126,6 +126,8 @@ Enable the `dsh-ops/tui` row in dsh-TUI and restart to add the OPS sidebar witho
 
 ## Documentation
 
+- [Third-party preset integration API](docs/integration-api.md) · [External Native providers](docs/external-provider.md) · [Scoped diagnostics](docs/diagnostics.md)
+
 - [Usage](docs/usage.md) · [Troubleshooting](docs/troubleshooting.md) · [Component reference](docs/component-reference.md) · [Configuration reference](docs/configuration-reference.md)
 - [Native PTC](docs/native-ptc.md) · [Manual validation](docs/manual-validation.md)
 - [Contributing](docs/CONTRIBUTING.md) · [Roadmap](docs/roadmap.md) · [Changelog](docs/CHANGELOG.md) · [Provenance](docs/PROVENANCE.md)

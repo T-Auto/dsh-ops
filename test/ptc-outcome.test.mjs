@@ -1,8 +1,8 @@
 import { assertSupportedJsonSchema, jsonSchemaToTs, validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
-import { toOutcome } from '../lib/modes/ptc/outcome.js'
-import { continuationFor, decodeContinuation } from '../lib/modes/ptc/continuation.js'
-import { outcomeSchema } from '../lib/modes/ptc/schema.js'
-import { canonicalOutput } from '../lib/modes/ptc/canonical-schema.js'
+import { toOutcome } from '../lib/ptc/projection/outcome.js'
+import { continuationFor, decodeContinuation } from '../lib/ptc/projection/continuation.js'
+import { outcomeSchema } from '../lib/ptc/projection/schema.js'
+import { canonicalOutput } from '../lib/ptc/projection/canonical-schema.js'
 import { assert, test, report } from './lib/harness.mjs'
 
 await test('successful observations retain exact canonical values without Native text', () => {

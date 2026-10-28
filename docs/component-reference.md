@@ -4,6 +4,10 @@ What each of the eight components publishes, with parameters and permission requ
 
 ## Components at a glance
 
+Third-party presets should use [`dsh-ops/integration`](integration-api.md) rather than mounting
+one of the four built-in identities. It adds independently configured tools and `ops_status`
+diagnostics, while external Native plugins may use the [provider contract](external-provider.md).
+
 | Row `name` | Description | Default | Published tools |
 | --- | --- | --- | --- |
 | `dsh-ops/mode-minimal` | Enhanced Minimal preset: dynamic loading and the Windows official shell replacement | On | `ops_bash`; no resident file tool |

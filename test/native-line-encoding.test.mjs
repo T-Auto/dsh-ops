@@ -1,5 +1,5 @@
-import { encodeSourceLine } from '../lib/modes/native/line-encoding.js'
-import { renderNative } from '../lib/modes/native/render.js'
+import { encodeSourceLine } from '../lib/file/native/line-encoding.js'
+import { renderNative } from '../lib/file/native/render.js'
 import { assert, report, test } from './lib/harness.mjs'
 import path from 'node:path'
 // Use the independent platform JSON decoder, not a copy of the source encoder.

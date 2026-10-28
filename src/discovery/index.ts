@@ -17,15 +17,25 @@ import { DISCOVERY_DESCRIPTION, DISCOVERY_PARAMETERS, DISCOVERY_OUTPUT } from '.
 import { publicToolName, renderToolingPolicy } from '../policy.js'
 import { DISCOVERABLE_TOOLS } from './config.js'
 import type { DiscoverableName } from './config.js'
+import { prepareProviders, providers, onProvidersChange, type Provider } from './providers.js'
+import { searchProviders } from './provider-search.js'
 import { parseRequest, search } from './search.js'
 import { scopedReconciliation, scopeFamilies } from '../scoped-reconciliation.js'
 import { modeOf } from '../modes/detect.js'
 import { residentTools } from '../modes/plan.js'
+import { observeSelection } from '../integration/diagnostics.js'
+import { integrationFor } from '../integration/registry.js'
 import { enabledModes, onModesChange } from '../modes/registry.js'
 
+export interface DiscoveryGate {
+  allows(agent: Agent): boolean; watch?(notify: () => void): () => void; guidance?: boolean; extraGuidance?: string
+  external?: { allowed: readonly string[]; alwaysLoaded: readonly string[]; disabled: readonly string[] }
+}
 interface Entry {
   ctx?: Context
   fiber?: Fiber
+  externalSelected: Set<string>
+  externalPending: Set<string>
   runtime: NativeFileTools
   selected: Set<DiscoverableName>
   pending: Set<DiscoverableName>
@@ -34,24 +44,26 @@ interface Entry {
   ready: Promise<void>
   revision: number
   presentation?: { inputs: unknown[]; native: boolean }
+  releaseObservation?: () => void
   releaseSelection?: () => void
 }
 const DISCOVER = publicToolName(DISCOVERY_TOOL_NAME)
 const advanced = DISCOVERABLE_TOOLS.map(publicToolName)
 export const name = 'dsh-ops-discovery'
 
-export function apply(root: Context, raw: unknown): void {
+export function apply(root: Context, raw: unknown, gate: DiscoveryGate = { allows: agent => !integrationFor(root, agent) && modeOf(root, agent) !== undefined }): void {
   const config = resolveDiscoveryConfig(raw)
-  let worker: string
-  try { worker = resolveWorker(config) }
+  let worker: string | undefined
+  const externalEnabled = Boolean(gate.external?.allowed.length)
+  try { if (config.allowedTools.length || config.alwaysLoaded.length) worker = resolveWorker(config) }
   catch (error) {
     if (config.required) throw error
-    root.logger.warn('dsh-ops: discovery worker unavailable; no tools published.')
-    return
+    root.logger.warn('dsh-ops: discovery worker unavailable; built-in tools stay unpublished.')
+    if (!externalEnabled) return
   }
-  root.inject(['tools', 'systemPrompt', 'sandboxPolicy', 'subprocess'], async ctx => {
+  root.inject(externalEnabled ? ['tools', 'systemPrompt'] : ['tools', 'systemPrompt', 'sandboxPolicy', 'subprocess'], async ctx => {
     const tools = ctx.get('tools'), prompt = ctx.get('systemPrompt'), policyService = ctx.get('sandboxPolicy')
-    if (!tools || !prompt || !policyService) return
+    if (!tools || !prompt || !externalEnabled && !policyService) return
     const entries = new Map<Agent, Entry>()
     const retired = new WeakSet<Agent>()
     let scopeChainOf: (scope: object) => object[] = scope => [scope]
@@ -69,6 +81,9 @@ export function apply(root: Context, raw: unknown): void {
     // of the mode rows. Only capabilities a running mode already publishes resident
     // are excluded from the discovery pool.
     const residentSet = (agent: Agent): ReadonlySet<string> => {
+      const integration = integrationFor(ctx, agent)
+      if (integration) return new Set(integration.files && integration.presentation === 'native'
+        ? ['inspect_local_file', 'glob', 'grep', 'read_files', 'result'].map(publicToolName) : [])
       const mode = modeOf(ctx, agent)
       // A mode row that is off publishes nothing resident, so its names stay in the
       // discovery pool even though the preset matches.
@@ -76,27 +91,33 @@ export function apply(root: Context, raw: unknown): void {
       return new Set(residentTools(mode))
     }
     const permitted = (agent: Agent, rawName?: DiscoverableName): boolean => {
+      if (!gate.allows(agent)) return false
       try {
-        const policy = policyService.resolve({ session: agent.session })
-        return ['read-only', 'workspace-write', 'danger-full-access'].includes(policy.mode)
+        const policy = policyService?.resolve({ session: agent.session })
+        return policy !== undefined && Boolean(worker && ctx.get('subprocess')) && ['read-only', 'workspace-write', 'danger-full-access'].includes(policy.mode)
           && (!rawName || rawName === 'result' || !capability(rawName)?.mutates || policy.mode !== 'read-only')
       } catch { return false }
     }
     // A tool the mode already publishes resident is not a discovery choice.
     const selectable = (agent: Agent, rawName: DiscoverableName): boolean =>
       !residentSet(agent).has(publicToolName(rawName)) && permitted(agent, rawName)
+    const externalPool = (agent: Agent): Provider[] => providers(ctx, agent).filter(provider => gate.allows(agent)
+      && gate.external?.allowed.includes(provider.capability.definition.name) && !gate.external.disabled.includes(provider.capability.definition.name))
+    const externalAvailable = (provider: Provider, agent: Agent): boolean => {
+      try { return provider.active && provider.capability.available?.(agent) !== false } catch { return false }
+    }
     const ptcOnly = (assembly: PromptAssembly): boolean => assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
     const invalidate = (entry: Entry) => { ++entry.revision; entry.presentation = undefined }
     const inputs = (agent: Agent): unknown[] => {
-      const policy = policyService.resolve({ session: agent.session })
-      return [agent.ctx, agent.session, agent.session.header.cwd, policy.mode, policy.workspaceRoot, policy.sessionId]
+      const policy = policyService?.resolve({ session: agent.session })
+      return [agent.ctx, agent.session, agent.session.header.cwd, policy?.mode, policy?.workspaceRoot, policy?.sessionId]
     }
     const same = (left: unknown[], right: unknown[]) => left.length === right.length && left.every((value, index) => value === right[index])
     // Only background reconciliation reuses a probe. A step or execution can
     // observe arbitrary dynamic prompt providers with no registry notification.
     const native = async (agent: Agent, fresh = false, signal?: AbortSignal): Promise<boolean> => {
       const entry = entries.get(agent)
-      if (!entry) return false
+      if (!entry || !gate.allows(agent)) return false
       if (fresh) invalidate(entry)
       const current = inputs(agent), revision = entry.revision
       if (entry.presentation && same(entry.presentation.inputs, current)) return entry.presentation.native
@@ -112,8 +133,8 @@ export function apply(root: Context, raw: unknown): void {
       const registration: ToolDefinition = { ...tool, execute: async (args, exec) => {
         await work.drain(agent)
         const version = work.version(agent)
-        const available = () => ownership?.owns(agent) && !stopped && !exec.signal?.aborted && entries.get(agent) === entry && exec.agent === agent && entry.owned.has(tool.name)
-        if (!available() || !permitted(agent) || !await native(agent, true, exec.signal).catch(() => false) || !available() || version !== work.version(agent)) {
+        const available = () => ownership?.owns(agent) && !stopped && !exec.signal?.aborted && entries.get(agent) === entry && exec.agent === agent && entry.owned.has(tool.name) && tools.get(tool.name, agent) === registration
+        if (!available() || !(externalEnabled ? gate.allows(agent) : permitted(agent)) || !await native(agent, true, exec.signal).catch(() => false) || !available() || version !== work.version(agent)) {
           return failure('POLICY_DENIED', 'Discovery capability belongs to a different or inactive scope.')
         }
         return execute(args, exec)
@@ -130,7 +151,7 @@ export function apply(root: Context, raw: unknown): void {
       return advanced.filter(name => !resident.has(name))
     }
     const inheritedNative = (agent: Agent, entry: Entry): string[] => {
-      const foreign = new Set(foreignAdvanced(agent))
+      const foreign = new Set([...foreignAdvanced(agent), ...providers(ctx, agent).map(provider => provider.capability.definition.name)])
       return nativeProviders(ctx, agent).map(provider => provider.definition.name)
         .filter(name => (foreign.has(name) || name === DISCOVER) && !entry.owned.has(name))
     }
@@ -142,7 +163,7 @@ export function apply(root: Context, raw: unknown): void {
         for (const agent of family) {
           if (stopped || !task.current()) return
           const entry = entries.get(agent)
-          if (entry?.ctx && ownership?.owns(agent) && permitted(agent) && await task.wait(native(agent, false, task.signal)).catch(() => false)) ready.add(agent)
+          if (entry?.ctx && ownership?.owns(agent) && (externalEnabled ? gate.allows(agent) : permitted(agent)) && await task.wait(native(agent, false, task.signal)).catch(() => false)) ready.add(agent)
         }
         if (stopped || !task.current()) return
         mutating = true; ownership?.begin()
@@ -153,7 +174,9 @@ export function apply(root: Context, raw: unknown): void {
             entry.releaseSelection ??= claimNativeSelection(ctx, agent, new Set(foreignAdvanced(agent)))
             const isReady = ready.has(agent)
             const wanted = isReady ? [...new Set([...config.alwaysLoaded, ...entry.selected])].filter(tool => selectable(agent, tool)) : []
-            const desired = new Set([...(isReady && config.enabled ? [DISCOVER] : []), ...wanted.map(publicToolName)])
+            const external = isReady ? externalPool(agent).filter(provider => externalAvailable(provider, agent) && (entry.externalSelected.has(provider.token)
+              || gate.external?.alwaysLoaded.includes(provider.capability.definition.name) || provider.capability.disclosure === 'resident')) : []
+            const desired = new Set([...(isReady && config.enabled ? [DISCOVER] : []), ...wanted.map(publicToolName), ...external.map(provider => provider.capability.definition.name)])
             const inherited = inheritedNative(agent, entry)
             // Registry changes from other components must not republish an unchanged
             // surface, or independent lifecycle listeners can amplify one another.
@@ -165,21 +188,45 @@ export function apply(root: Context, raw: unknown): void {
               execute: async args => {
                 const request = parseRequest(args)
                 if (typeof request === 'string') return failure('INVALID_ARGUMENT', request)
-                const matches = search(request.query, config.allowedTools.filter(tool => selectable(agent, tool)), Math.min(request.maxResults, config.maxResults))
+                const maximum = Math.min(request.maxResults, config.maxResults)
+                const matches = search(request.query, config.allowedTools.filter(tool => selectable(agent, tool)), maximum)
+                const externalMatches = searchProviders(request.query, externalPool(agent).filter(provider => externalAvailable(provider, agent)), maximum - matches.length)
                 const activated = matches.filter(tool => !entry.selected.has(tool) && !config.alwaysLoaded.includes(tool))
+                const externalActivated = externalMatches.filter(provider => !entry.owned.has(provider.capability.definition.name))
+                for (const provider of externalActivated) entry.externalPending.add(provider.token)
                 for (const tool of activated) entry.pending.add(tool)
-                return { status: 'completed', activated: activated.map(publicToolName),
-                  alreadyActive: matches.filter(tool => !activated.includes(tool)).map(publicToolName),
-                  message: matches.length ? `Selected ${matches.map(publicToolName).join(', ')}. Newly selected tools become available on the next model step; no file action was executed.` : 'No allowed, implemented capability matched. Refine the query; unavailable formats cannot be activated.' }
+                const selected = [...matches.map(publicToolName), ...externalMatches.map(provider => provider.capability.definition.name)]
+                return { status: 'completed', activated: [...activated.map(publicToolName), ...externalActivated.map(provider => provider.capability.definition.name)],
+                  alreadyActive: [...matches.filter(tool => !activated.includes(tool)).map(publicToolName), ...externalMatches.filter(provider => !externalActivated.includes(provider)).map(provider => provider.capability.definition.name)],
+                  message: selected.length ? `Selected ${selected.join(', ')}. Newly selected tools become available on the next model step; no tool action was executed.` : 'No allowed, implemented capability matched. Refine the query; unavailable formats cannot be activated.' }
               },
             })
-            for (const tool of wanted) {
-              own(agent, entry, entry.runtime.definition(tool))
+            for (const tool of wanted) own(agent, entry, entry.runtime.definition(tool))
+            for (const provider of external) {
+              const definition = provider.capability.definition
+              const existing = tools.get(definition.name, agent)
+              if (existing && !nativeProviders(ctx, agent).some(source => source.definition === existing && !source.inheritable)) continue
+              const registration: ToolDefinition = { ...definition,
+                output: definition.output,
+                execute: async (args, exec) => {
+                const current = () => provider.active && externalPool(agent).includes(provider) && externalAvailable(provider, agent)
+                  && gate.allows(agent) && ownership?.owns(agent) && !stopped && entries.get(agent) === entry && exec.agent === agent
+                  && tools.get(definition.name, agent)?.output === registration.output
+                  && (entry.externalSelected.has(provider.token) || gate.external?.alwaysLoaded.includes(definition.name) || provider.capability.disclosure === 'resident')
+                if (!current() || !await Promise.resolve().then(() => provider.capability.authorize(exec)).catch(() => false) || !current()) return failure('POLICY_DENIED', 'External provider is inactive, disabled or unauthorized; no action executed.')
+                const controller = new AbortController(), abort = () => controller.abort(exec.signal?.reason)
+                exec.signal?.addEventListener('abort', abort, { once: true }); if (exec.signal?.aborted) abort()
+                provider.calls.add(controller)
+                try { return await definition.execute(args, { ...exec, signal: controller.signal }) }
+                finally { provider.calls.delete(controller); exec.signal?.removeEventListener('abort', abort) }
+              } }
+              own(agent, entry, registration)
             }
           }
           // A child must not inherit its parent's activation or an old global advanced surface.
-          for (const [agent, entry] of entries) if (family.has(agent) && entry.ctx && ownership?.owns(agent)) {
-            const deny = inheritedNative(agent, entry)
+          for (const [agent, entry] of entries) if (family.has(agent) && entry.ctx) {
+            const deny = ownership?.owns(agent) ? inheritedNative(agent, entry)
+              : nativeProviders(ctx, agent).filter(provider => provider.scope !== agent && providers(ctx, agent).some(external => external.capability.definition.name === provider.definition.name)).map(provider => provider.definition.name)
             if (deny.length) entry.disposers.push(entry.ctx.tools.restrict({ deny }))
           }
         } catch (error) {
@@ -200,8 +247,9 @@ export function apply(root: Context, raw: unknown): void {
         if (!fresh) { invalidate(prior); changed.add(other) }
       }
       if (changed.size) void reconcile(changed)
-      const entry: Entry = { runtime: new NativeFileTools({ ctx, config: { ...config, workerPath: worker }, report: undefined }),
-        selected: new Set(), pending: new Set(), disposers: [], owned: new Set(), ready: Promise.resolve(), revision: 0 }
+      const entry: Entry = { runtime: new NativeFileTools({ ctx, config: { ...config, required: Boolean(worker) && config.required, workerPath: worker }, report: undefined }),
+        selected: new Set(), pending: new Set(), externalSelected: new Set(), externalPending: new Set(), disposers: [], owned: new Set(), ready: Promise.resolve(), revision: 0 }
+      entry.releaseObservation = observeSelection(ctx, agent, entry.externalPending)
       entries.set(agent, entry); ownership?.track(agent)
       entry.fiber = agent.ctx.plugin({ inject: ['tools'], apply(scoped) { entry.ctx = scoped } })
       entry.ready = Promise.resolve(entry.fiber).then(async () => { await entry.runtime.start([]); await reconcile([agent]) })
@@ -214,7 +262,8 @@ export function apply(root: Context, raw: unknown): void {
       if (entry && ownership?.owns(payload.agent) && !payload.signal.aborted && await native(payload.agent, true, payload.signal).catch(() => false)
         && !payload.signal.aborted && entries.get(payload.agent) === entry && ownership?.owns(payload.agent)) {
         for (const tool of entry.pending) if (permitted(payload.agent, tool)) entry.selected.add(tool)
-        entry.pending.clear()
+        for (const provider of externalPool(payload.agent)) if (entry.externalPending.has(provider.token) && externalAvailable(provider, payload.agent)) entry.externalSelected.add(provider.token)
+        entry.externalPending.clear(); entry.pending.clear()
         await reconcile([payload.agent])
       }
       return next()
@@ -224,7 +273,7 @@ export function apply(root: Context, raw: unknown): void {
       const entry = entries.get(agent)
       if (!entry) return
       const affected = scopeFamilies(entries.keys(), [agent], scopeChainOf).flatMap(family => [...family]).filter(member => member !== agent)
-      entries.delete(agent); ownership?.forget(agent); mutating = true
+      entries.delete(agent); entry.releaseObservation?.(); ownership?.forget(agent); mutating = true
       try { clear(entry); entry.releaseSelection?.() } finally { mutating = false }
       await entry.runtime.stop(); await entry.fiber?.dispose(); await reconcile(affected)
     })
@@ -234,6 +283,21 @@ export function apply(root: Context, raw: unknown): void {
       void reconcile()
     }
     ;({ scopeChainOf } = await loadScopes())
+    if (externalEnabled) {
+      await prepareProviders(ctx)
+      ctx.effect(() => onProvidersChange(ctx, () => {
+        mutating = true
+        try {
+          for (const [agent, entry] of entries) {
+            const active = new Set(externalPool(agent).map(provider => provider.token))
+            for (const token of entry.externalSelected) if (!active.has(token)) entry.externalSelected.delete(token)
+            for (const token of entry.externalPending) if (!active.has(token)) entry.externalPending.delete(token)
+            clear(entry)
+          }
+        } finally { mutating = false }
+        refresh()
+      }), 'dsh-ops: external provider lifecycle')
+    }
     onToolChange(ctx, scopes => {
       if (mutating || ownership?.publishing()) return
       if (!scopes?.length) { refresh(); return }
@@ -241,9 +305,15 @@ export function apply(root: Context, raw: unknown): void {
       for (const [agent, entry] of entries) if (scopes.some(scope => scopeChainOf(agent).includes(scope))) { invalidate(entry); affected.add(agent) }
       void reconcile(affected)
     })
+    if (externalEnabled) {
+      ctx.inject(['sandboxPolicy', 'subprocess'], inner => {
+        refresh(); inner.effect(() => () => refresh())
+      })
+    }
     ctx.on('system-prompt/change', refresh)
     // A mode row toggling changes which capabilities stay resident and therefore
     // must leave the discovery pool.
+    if (gate.watch) ctx.effect(() => gate.watch!(refresh), 'dsh-ops: discovery integration observer')
     ctx.effect(() => onModesChange(ctx, refresh), 'dsh-ops: discovery mode observer')
     // Observe in-place hooks and the default asynchronous Fiber.restart().
     // Await the runtime result even though the pinned next() type says void.
@@ -278,9 +348,18 @@ export function apply(root: Context, raw: unknown): void {
       return prompt.assemble(context)
     })
     ctx.on('session/event', (session, event) => {
+      if ((event as { type: string }).type === 'agent-preset/selected') {
+        const affected = new Set<Agent>()
+        for (const [agent, entry] of entries) if (agent.session === session) {
+          entry.pending.clear(); entry.selected.clear(); entry.externalSelected.clear(); entry.externalPending.clear(); invalidate(entry); affected.add(agent)
+        }
+        void reconcile(affected); return
+      }
       if (event.type === 'step/end') {
         const affected = new Set<Agent>()
-        for (const [agent, entry] of entries) if (agent.session === session && ownership?.owns(agent) && entry.pending.size) {
+        for (const [agent, entry] of entries) if (agent.session === session && ownership?.owns(agent) && (entry.pending.size || entry.externalPending.size)) {
+          for (const provider of externalPool(agent)) if (entry.externalPending.has(provider.token) && externalAvailable(provider, agent)) entry.externalSelected.add(provider.token)
+          entry.externalPending.clear()
           for (const tool of entry.pending) if (permitted(agent, tool)) entry.selected.add(tool)
           entry.pending.clear(); affected.add(agent)
         }
@@ -294,7 +373,7 @@ export function apply(root: Context, raw: unknown): void {
         for (const [agent, entry] of entries) if (agent.session === session) {
           invalidate(entry)
           affected.add(agent)
-          entry.pending.clear(); entry.runtime.cancel('Sandbox authority changed'); clear(entry)
+          entry.pending.clear(); entry.externalPending.clear(); entry.runtime.cancel('Sandbox authority changed'); clear(entry)
         }
       } finally { mutating = false }
       void reconcile(affected)
@@ -304,23 +383,23 @@ export function apply(root: Context, raw: unknown): void {
       mutating = true
       try {
         for (const [agent, entry] of entries) if (!ownership?.owns(agent)) {
-          entry.pending.clear(); entry.runtime.cancel('Discovery row ownership changed'); clear(entry)
+          entry.pending.clear(); entry.externalPending.clear(); entry.externalSelected.clear(); entry.runtime.cancel('Discovery row ownership changed'); clear(entry)
           entry.releaseSelection?.(); entry.releaseSelection = undefined
         }
       } finally { mutating = false }
       void reconcile()
-    })
+    }, gate.allows)
     ctx.effect(() => prompt.section({
       name: ownership.sectionName('dsh-ops:discovery-tools'), order: 3253, interpolate: false,
       text: context => {
         const entry = entries.get(context.scope as Agent)
-        return entry ? renderToolingPolicy({ published: entry.owned, shellComponent: false }) : ''
+        return gate.guidance !== false && entry ? renderToolingPolicy({ published: entry.owned, shellComponent: false, extraGuidance: gate.extraGuidance }) : ''
       },
     }), 'dsh-ops: discovered capability guidance')
     ctx.effect(() => async () => {
       stopped = true; mutating = true
       const cancelled = work.stop()
-      for (const entry of entries.values()) { clear(entry); entry.releaseSelection?.() }
+      for (const entry of entries.values()) { clear(entry); entry.releaseSelection?.(); entry.releaseObservation?.() }
       await Promise.allSettled([...entries.values()].map(async entry => { await entry.runtime.stop(); await entry.fiber?.dispose() }))
       entries.clear(); ownership?.dispose(); await cancelled
     }, 'dsh-ops: discovery lifecycle')

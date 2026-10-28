@@ -8,7 +8,7 @@ export type Field = {
   inner?: Field
   dict?: Record<string, Field>
 }
-interface Descriptor extends Field {
+export interface Descriptor extends Field {
   meta: NonNullable<Field['meta']>
   inner?: Descriptor
   dict?: Record<string, Descriptor>

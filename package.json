@@ -122,6 +122,10 @@
     "./compat/package.json": "./lib/components/compat/package.json",
     "./compat/locale/*.json": "./lib/components/compat/locale/*.json",
     "./compat/icon": "./lib/components/compat/icon.png",
+    "./integration": {
+      "types": "./lib/integration/index.d.ts",
+      "default": "./lib/integration/index.js"
+    },
     "./adapter/dsh": {
       "default": "./lib/adapter/dsh/host.js"
     },

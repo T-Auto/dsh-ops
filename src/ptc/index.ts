@@ -52,6 +52,10 @@ const isPtcPresentation = (presentation: Presentation): boolean =>
 
 /** A mode row's per-Agent permission to publish the PTC surface. */
 export interface PtcGate {
+  /** Optional public-consumer routing switch; execution remains independent. */
+  guidance?: boolean
+  /** Whether advanced SDK selection is enabled. */
+  dynamic?: boolean
   /** Whether the row owns this Agent's mode. */
   allows(agent: Agent): boolean
   /** Subscribe to gate changes; the callback runs a full reconcile. */
@@ -90,15 +94,15 @@ export function apply(root: Context, rawConfig: unknown, gate: PtcGate = { allow
       for (const [controller, work] of active) if (work.owner === agent) controller.abort(new Error(reason))
     }
     let ownership: Awaited<ReturnType<typeof ownPtcScopes>> | undefined
-    const execute = (agent: Agent, entry: Entry, tool: ApiName | 'load_sdk'): ToolDefinition['execute'] => async (args, exec) => {
+    const execute = (agent: Agent, entry: Entry, tool: ApiName | 'load_sdk', publication = entry.published): ToolDefinition['execute'] => async (args, exec) => {
       await reconciliation.drain(agent)
       const version = entry.published, revision = entry.revision
-      const available = () => !stopped && !exec.signal?.aborted && entries.get(agent) === entry && ownership?.owns(agent) && exec.agent === agent && entry.ptc && entry.owned.has(publicToolName(tool))
+      const available = () => publication === entry.published && !stopped && !exec.signal?.aborted && entries.get(agent) === entry && ownership?.owns(agent) && exec.agent === agent && entry.ptc && entry.owned.has(publicToolName(tool))
       if (!available() || !await ptcOnly(agent, exec.signal).catch(() => false) || !available() || version !== entry.published || revision !== entry.revision) {
         return failure('POLICY_DENIED', 'The calling scope must own this API in authoritative PTC-only presentation.')
       }
       if (tool === 'load_sdk') {
-        const requested = requestedApis(args, config.allowedTools)
+        const requested = requestedApis(args, gate.dynamic === false ? [] : config.allowedTools)
         if (typeof requested === 'string') return failure('INVALID_ARGUMENT', requested)
         for (const name of requested) entry.pending.add(name)
         return { status: 'completed', tools: requested, nextTurn: true }
@@ -143,7 +147,11 @@ export function apply(root: Context, rawConfig: unknown, gate: PtcGate = { allow
         for (const [agent, entry] of entries) {
           if (stopped || !task.current()) return
           if (!family.has(agent)) continue
-          if (!entry.ctx || !ownership?.owns(agent)) continue
+          if (!entry.ctx) continue
+          if (!ownership?.owns(agent)) {
+            if (entry.ptc || entry.disposers.length) { dirty = true; changed.add(agent) }
+            continue
+          }
           if (!requests.has(agent)) { if (entry.ptc) ready.add(agent); continue }
           const surface = surfaceOf(agent)
           const fresh = requests.get(agent) === true
@@ -166,7 +174,10 @@ export function apply(root: Context, rawConfig: unknown, gate: PtcGate = { allow
           // Every ancestor that could suppress a Native origin is lifted with its family.
           const native = new Map(publications.map(([agent, entry]) => [agent, nativeProviders(entry.ctx ?? ctx, agent, true)]))
           for (const [agent, entry] of publications) {
-            if (!entry.ctx || !ownership?.owns(agent)) continue
+            if (!entry.ctx) continue
+            if (!ownership?.owns(agent)) {
+              entry.ptc = false; entry.pending.clear(); entry.selected.clear(); abortOwner(agent, 'PTC row ownership changed'); continue
+            }
             if (entry.ptc) { if (!probedBefore.has(agent)) ready.add(agent) }
             entry.ptc = ready.has(agent)
             if (!entry.ptc) { entry.pending.clear(); abortOwner(agent, 'PTC presentation withdrawn'); continue }
@@ -174,7 +185,7 @@ export function apply(root: Context, rawConfig: unknown, gate: PtcGate = { allow
             try {
               const wanted = new Set([...PTC_RESIDENT_TOOLS, ...config.alwaysLoaded, ...entry.selected])
               const definitions = [...wanted].map(tool => definition(tool, execute(agent, entry, tool)))
-              definitions.push(sdkDefinition(config.allowedTools, execute(agent, entry, 'load_sdk')))
+              if (gate.dynamic !== false) definitions.push(sdkDefinition(config.allowedTools, execute(agent, entry, 'load_sdk')))
               for (const def of definitions) { ptcDefinitions.add(def); entry.disposers.push(withToolChange([agent], () => entry.ctx!.tools.register(def))); entry.owned.set(def.name, def) }
               entry.disposers.push(releaseNative)
             } catch (error) { releaseNative(); throw error }
@@ -292,7 +303,9 @@ export function apply(root: Context, rawConfig: unknown, gate: PtcGate = { allow
       return prompt.assemble(context)
     })
     ctx.on('session/event', (session, event) => {
-      if ((event as { type: string }).type === 'agent-preset/selected') { void reconcile(true); return }
+      if ((event as { type: string }).type === 'agent-preset/selected') {
+        void reconcile(true, new Set([...entries.keys()].filter(agent => agent.session === session))); return
+      }
       if (event.type === 'step/end') {
         let changed = false
         const affected = new Set<Agent>()
@@ -319,11 +332,11 @@ export function apply(root: Context, rawConfig: unknown, gate: PtcGate = { allow
         }
       } finally { mutating = false }
       void reconcile(true)
-    })
+    }, gate.allows)
     ctx.effect(() => prompt.section({ name: ownership.sectionName(PTC_SECTION), order: 3252, interpolate: false, text: context => {
       const entry = entries.get(context.scope as Agent)
-      return entry?.ptc && entry.owned.has(publicToolName('load_sdk'))
-        ? 'OPS APIs return typed Outcome values. Inspect status before data; preserve partial coverage and continuation. Use ' + publicToolName('load_sdk') + ' to request advanced APIs by raw name; they become callable on the next model step. Process results locally in run_code and return only needed summaries. References do not grant authority.' : ''
+      return gate.guidance !== false && entry?.ptc && entry.owned.size > 0
+        ? 'OPS APIs return typed Outcome values. Inspect status before data; preserve partial coverage and continuation. ' + (gate.dynamic !== false ? 'Use ' + publicToolName('load_sdk') + ' to request advanced APIs by raw name; they become callable on the next model step. ' : '') + 'Process results locally in run_code and return only needed summaries. References do not grant authority.' : ''
     } }), 'dsh-ops: progressive PTC guidance')
     ctx.effect(() => async () => {
       stopped = true; mutating = true

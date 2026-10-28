@@ -19,7 +19,8 @@ await test('npm pack includes compiled host code and native sources, never host 
     'lib/components/mode-minimal/index.js', 'lib/components/mode-minimal/package.json', 'lib/components/mode-minimal/icon.png',
     'lib/components/mode-standard/index.js', 'lib/components/mode-standard/locale/en.json', 'lib/components/mode-standard/locale/zh.json',
     'lib/components/mode-ptc/index.js', 'lib/components/mode-cordis/index.js', 'lib/components/compat/index.js',
-    'lib/modes/plan.js', 'lib/modes/apply.js', 'lib/modes/detect.js', 'lib/modes/replacements.js',
+    'lib/modes/plan.js', 'lib/modes/apply.js', 'lib/modes/detect.js', 'lib/publication/replacements.js',
+    'lib/publication/native.js', 'lib/file/native/render.js', 'lib/ptc/projection/schema.js',
     'native/Cargo.toml', 'native/Cargo.lock', 'native/src/lib.rs',
     'native/windows-metadata/Cargo.toml', 'native/windows-metadata/src/lib.rs',
     'native/darwin-metadata/Cargo.toml', 'native/darwin-metadata/src/lib.rs',
@@ -34,6 +35,10 @@ await test('npm pack includes compiled host code and native sources, never host 
     'licenses/documents/THIRD-PARTY-NOTICES.txt']
   for (const name of required) assert.ok(files.includes(name), `missing source-build dependency: ${name}`)
   for (const name of ['lib/adapter/dsh/host.js', 'lib/adapter/dsh/types.js']) assert.ok(files.includes(name), `adapter resource missing: ${name}`)
+  assert.ok(files.includes('lib/integration/index.js'), 'public integration entry missing')
+  assert.ok(files.includes('lib/integration/config.js'), 'public integration config missing')
+  assert.ok(files.includes('lib/integration/diagnostics.js'), 'public diagnostics entry missing')
+  assert.ok(files.includes('lib/discovery/providers.js'), 'external provider implementation missing')
   assert.equal(files.some(name => name.startsWith('src/')), false, 'host source must not ship beside compiled lib/')
   assert.equal(files.some(name => /^native\/(?:target[^/]*|(?:windows|darwin)-metadata\/target)\//u.test(name)), false)
   const pending = ['native/Cargo.toml'], visited = new Set()

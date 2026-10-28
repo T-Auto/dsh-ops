@@ -3,7 +3,7 @@ import type { ToolRunContext } from '../adapter/dsh/types.js'
 import { FILE_TOOLS } from '../capabilities/registry.js'
 import { invoke as fileInvoke } from '../file/worker.js'
 import { invoke } from './worker.js'
-import { record } from '../modes/ptc/outcome.js'
+import { record } from './projection/outcome.js'
 import { publicToolName } from '../policy.js'
 import type { ApiName, PtcConfig } from './config.js'
 interface JobHooks { updateProgress(text: string): void }

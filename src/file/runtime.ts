@@ -9,7 +9,7 @@ import { resultDefinition, invokeResult } from './result.js'
 import { registerNativeProvider } from './result-provider.js'
 import { safeDisposeAll } from '../teardown.js'
 import { invoke, failure } from './worker.js'
-import { createNativeReadDedup } from '../modes/native/read-dedup.js'
+import { createNativeReadDedup } from './native/read-dedup.js'
 
 type Execution = Parameters<ToolDefinition['execute']>[1]
 type NativeToolName = FileToolName | 'result'

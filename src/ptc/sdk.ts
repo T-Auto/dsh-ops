@@ -2,8 +2,8 @@ import type { ToolDefinition } from '../adapter/dsh/types.js'
 import { SDK_CAPABILITIES } from '../capabilities/sdk.js'
 import { publicToolName } from '../policy.js'
 import { migrateRawNames } from '../compat/alias.js'
-import { toOutcome } from '../modes/ptc/outcome.js'
-import { outcomeSchema } from '../modes/ptc/schema.js'
+import { toOutcome } from './projection/outcome.js'
+import { outcomeSchema } from './projection/schema.js'
 import type { ApiName } from './config.js'
 export function sdkDefinition(allowed: readonly ApiName[], execute: ToolDefinition['execute']): ToolDefinition {
   const entry = SDK_CAPABILITIES[0]

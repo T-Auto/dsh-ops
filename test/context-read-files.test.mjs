@@ -4,7 +4,7 @@ import { assert, test, report } from './lib/harness.mjs'
 import { requireWorker } from './lib/boundary.mjs'
 import { fixture, text, full, elided } from './lib/context-read.mjs'
 import { publicToolName } from '../lib/policy.js'
-import { observeRead } from '../lib/modes/native/read-observation.js'
+import { observeRead } from '../lib/file/native/read-observation.js'
 requireWorker('context-read-many')
 const MANY = publicToolName('read_files')
 const setup = ({ dir, file, read }) => {

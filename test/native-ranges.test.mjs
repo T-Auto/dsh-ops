@@ -2,8 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { callTool, envelopeOf, requireWorker } from './lib/boundary.mjs'
-import { renderNative, NATIVE_OUTPUT_BYTES } from '../lib/modes/native/render.js'
-import { compactRanges } from '../lib/modes/native/ranges.js'
+import { renderNative, NATIVE_OUTPUT_BYTES } from '../lib/file/native/render.js'
+import { compactRanges } from '../lib/file/native/ranges.js'
 requireWorker('native-ranges')
 const render = (args, value) => renderNative('read_files', args, value)
 const observed = (root, args) => callTool('read_files', args, { root, readOnly: true }).then(reply => envelopeOf(reply, assert))

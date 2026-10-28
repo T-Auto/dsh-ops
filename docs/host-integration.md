@@ -6,6 +6,14 @@ These checks separate plugin configuration from host presentation and provider
 transport failures. They do not establish that an unobserved Desktop freeze or
 an old conversation has been repaired.
 
+## Source ownership
+
+`src/modes/` owns built-in preset policy only. Scoped Native publication and official-tool
+replacement controllers live in `src/publication/` and accept an explicit eligibility gate;
+Native result rendering/read evidence lives in `src/file/native/`, while typed PTC outcome
+projection lives in `src/ptc/projection/`. These are internal implementation paths, not public
+plugin-author import specifiers. Existing package component exports keep their semantics.
+
 ## A whitelist does not hide `ops_bash` (#380)
 
 In the pinned DSH tools API, `tools.restrict()` masks inherited registrations.

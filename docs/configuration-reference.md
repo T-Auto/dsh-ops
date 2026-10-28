@@ -1,5 +1,9 @@
 # Configuration reference
 
+Third-party preset authors: use the explicit [integration API](integration-api.md), not private mode
+files or a frozen preset map. Its independent option defaults and [diagnostics](diagnostics.md) are
+separate from the eight built-in component rows documented below.
+
 Every configuration key, and **which component row owns it**.
 
 ## Built-in row configuration

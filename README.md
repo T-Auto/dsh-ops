@@ -103,6 +103,8 @@ npx --yes dsh-ops@latest uninstall --profile desktop
 
 ## 文档
 
+- [第三方预设集成接口](docs/集成接口.md) · [外部 Native 提供者](docs/外部工具提供者.md) · [作用域诊断](docs/集成诊断.md)
+
 - [使用指南](docs/使用指南.md) · [常见问题](docs/常见问题.md) · [组件参考](docs/组件参考.md) · [配置参考](docs/配置参考.md)
 - [PTC 设计与使用](docs/native-ptc.md) · [手动验证](docs/手动验收.md)
 - [贡献指南](docs/贡献指南.md) · [路线图](docs/路线图.md) · [变更日志](docs/CHANGELOG.md) · [溯源记录](docs/PROVENANCE.md)
@@ -112,6 +114,30 @@ npx --yes dsh-ops@latest uninstall --profile desktop
 当前 `dsh-ops` 源码以 **MIT** 许可分发，见 [LICENSE](LICENSE)。`0.3.2` 之前的版本曾内置以 Apache-2.0 许可的 FastCtx 源码；该源码随后台组件一并移除，当前发行版不再包含任何 FastCtx 代码或二进制。FastCtx 的许可文本与上游声明保留在 `licenses/fastctx/`，历史归属见 [NOTICE](NOTICE)。
 
 独立的 Windows bash 载荷包（npm 可选依赖 `@dsh-ops/bash-win32-x64`）另按上游组件许可证分发：Git for Windows 包含 GPL-2.0 等许可组件，其原始许可证、声明及来源记录随载荷保留；PowerShell 由宿主管理，按其 MIT 与第三方组件许可分发。插件的 MIT 许可不替代这些许可。详见 [PROVENANCE.md](docs/PROVENANCE.md)。
+
+## 联动！
+
+dsh-ops和很多优质的项目互相之间有联动，如果你觉得帮到了你的话，记得给大家star哦~
+
+### 相关dsh插件
+
+dsh-ops与以下dsh插件存在双向之间的代码联动，同时安装并启动后有额外的联动功能
+
+| 插件                                                         | Stars | 介绍                                                         | 联动项                             |
+| ------------------------------------------------------------ | ------ | ------------------------------------------------------------ | ---------------------------------- |
+| [dsh-TUI](https://github.com/ccch1mneyyy/dsh-TUI)            | 6k⭐    | DSH 社区内首个被官方推荐的插件！为DSH补上了缺失的TUI，高性能低占用，界面顶级，交互流畅 | 同时开启后在dsh-tui中可显示ops侧栏 |
+| [DeepSeek-Balance-Whale-Widget](https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget) | 6k⭐    | 可以随时看余额的可爱小鲸鱼！几乎登上所有榜单的DSH必装插件之一！ | 暂时保密~                          |
+| ...                                                          |        | ...                                                          | ...                                |
+
+### 相关项目
+
+dsh-ops与以下项目有协作关系
+
+| 项目                                                         | Stars | 介绍                                             | 协作内容                               |
+| ------------------------------------------------------------ | ------ | ------------------------------------------------ | -------------------------------------- |
+| [dsh-tauri](https://github.com/dsh-tauri/deepseek-harness-desktop) | 3k   ⭐    | 稳定，安全且非常有技术品味的tauri版本dsh客户端！ | dsh-tauri内置了dsh-ops并联合调优       |
+| [niubash](https://github.com/unixwin/niubash)                | 300⭐   | 比Git bash更轻量，更高性能的 Bash For Windows    | dsh-ops使用niubash的bash实现并联合调优 |
+| ...                                                          |        | ...                                              | ...                                    |
 
 ## 致谢
 

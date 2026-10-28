@@ -103,6 +103,8 @@ npx --yes dsh-ops@latest uninstall --profile desktop
 
 ## 文档
 
+- [第三方预设集成接口](docs/集成接口.md) · [外部 Native 提供者](docs/外部工具提供者.md) · [作用域诊断](docs/集成诊断.md)
+
 - [使用指南](docs/使用指南.md) · [常见问题](docs/常见问题.md) · [组件参考](docs/组件参考.md) · [配置参考](docs/配置参考.md)
 - [PTC 设计与使用](docs/native-ptc.md) · [手动验证](docs/手动验收.md)
 - [贡献指南](docs/贡献指南.md) · [路线图](docs/路线图.md) · [变更日志](docs/CHANGELOG.md) · [溯源记录](docs/PROVENANCE.md)

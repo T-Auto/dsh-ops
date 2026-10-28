@@ -5,7 +5,7 @@ import type { FileToolName } from '../capabilities/registry.js'
 import { PARAMETERS, DESCRIPTIONS, OUTPUT, fileOutput } from '../capabilities/file.js'
 export { FILE_TOOLS } from '../capabilities/registry.js'
 export { PARAMETERS, DESCRIPTIONS, OUTPUT }
-import { renderNative } from '../modes/native/render.js'
+import { renderNative } from './native/render.js'
 import { presentationMeta } from '../kernel/presentation-outcome.js'
 
 /** Drop unused empty placeholders strict adapters send for optional fields; never mutate the caller's object. */
