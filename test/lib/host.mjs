@@ -15,14 +15,22 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { TOOL_PREFIX } from '../../lib/policy.js'
 import { PACKAGE_ROOT } from './harness.mjs'
+import { installPresentationCompat } from './tools-presentation.mjs'
 
 /**
  * Boot a context with the real prompt and tool services installed.
+ *
+ * DSH 0.2.2 removed the tools service's `mode` config: presentation is now owned
+ * by a plugin-supplied executor mounted through `tools.setExecutor()`. The native
+ * executor mirrors the harness's production `NativeToolExecutor` (published
+ * pipeline primitives); the PTC fixture presents only the `run_code` transport,
+ * the part of the collapsed surface these suites observe.
+ *
  * @param {object} [options] - boot inputs.
  * @param {boolean} [options.withTools] - install the tool registry (default true).
  * @param {boolean} [options.withSystemPrompt] - install the prompt registry (default true).
  * @param {boolean} [options.keepLogger] - keep Cordis's console logging (default false).
- * @param {'native'|'ptc'} [options.toolsMode] - deployment presentation mode (default native).
+ * @param {'native'|'ptc'} [options.toolsMode] - which executor presents the tools (default native).
  * @returns {Promise<{ctx: Context, tools: any, prompt: any}>} the host.
  */
 export async function bootHost({ withTools = true, withSystemPrompt = true, keepLogger = false, toolsMode = 'native' } = {}) {
@@ -37,8 +45,21 @@ export async function bootHost({ withTools = true, withSystemPrompt = true, keep
     await ctx.plugin(SystemPrompt, {})
   }
   if (withTools) {
-    const ToolRuntime = (await import('@deepseek-ai/dsh-tools')).default
-    await ctx.plugin(ToolRuntime, { mode: toolsMode })
+    const tools = await import('@deepseek-ai/dsh-tools')
+    const executorArchitecture = await installPresentationCompat(tools)
+    if (executorArchitecture) {
+      // DSH 0.2.2: presentation is executor-owned; mount the published executor
+      // plugins — the same production ones the harness deploys.
+      await ctx.plugin(tools.default, {})
+      if (toolsMode === 'ptc') {
+        await ctx.plugin(await import('@deepseek-ai/dsh-tool-executor-ptc'))
+      } else {
+        await ctx.plugin(await import('@deepseek-ai/dsh-tool-executor-native'))
+      }
+    } else {
+      // rc2 line: the tools row's `mode` config selects the presentation.
+      await ctx.plugin(tools.default, { mode: toolsMode })
+    }
   }
   return { ctx, tools: ctx.get('tools'), prompt: ctx.get('systemPrompt') }
 }
