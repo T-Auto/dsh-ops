@@ -20,7 +20,7 @@ export function useEditor<T>(form: ConfigPageForm | undefined, read: (value: Rec
   // The host omits `mode` for a row page in this version; absence means "host",
   // and only an explicit non-host mode (or a read-only form) blocks editing.
   const ready = form?.state.status === 'ready' && form.state.writable !== false
-    && (form.state.mode === undefined || form.state.mode === 'host')
+    && (!('mode' in form.state) || form.state.mode === undefined || form.state.mode === 'host')
   useEffect(() => {
     if (!dirty) { setDraft(read(form?.state.value ?? {})); setBaseline(form?.state.value ?? {}); setRevision(form?.state.revision) }
   }, [form?.state.revision, form?.state.status, read, dirty])

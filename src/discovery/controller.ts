@@ -112,7 +112,7 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
       .filter(provider => externalAvailable(provider, agent) && providerDiscoverable(provider, agent))
     const catalog = (agent: Agent, callable: ReadonlySet<string>) => nativeCatalog(
       config.allowedTools.filter(tool => selectable(agent, tool)), externalDiscoverable(agent), callable)
-    const ptcOnly = (assembly: PromptAssembly): boolean => assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
+    const ptcOnly = (assembly: Pick<PromptAssembly, 'sections'>): boolean => assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
     const invalidate = (entry: Entry) => { ++entry.revision; entry.presentation = undefined }
     const inputs = (agent: Agent): unknown[] => {
       const policy = ctx.get('sandboxPolicy')?.resolve({ session: agent.session })

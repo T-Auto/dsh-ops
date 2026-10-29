@@ -1,6 +1,13 @@
-import type { JsonSchemaNode, ObjectJsonSchema, ToolPresentationMode } from '../adapter/dsh/types.js'
+import type { JsonSchemaNode, ObjectJsonSchema } from '../adapter/dsh/types.js'
 
 export type Component = 'file' | 'ptc' | 'shell' | 'discovery'
+/**
+ * Where this catalogue publishes a capability. DSH 0.2.2 removed the host's
+ * `ToolPresentationMode` in favour of per-call presenters; this vocabulary
+ * describes the plugin's own publication tiers, so it is declared locally and
+ * its members are unchanged.
+ */
+export type PresentationMode = 'native' | 'ptc' | 'both'
 export type ParameterSchema = ObjectJsonSchema & Record<string, unknown> & {
   properties: Record<string, JsonSchemaNode>
   required: string[]
@@ -10,7 +17,7 @@ export type ParameterSchema = ObjectJsonSchema & Record<string, unknown> & {
 export interface CapabilityMetadata {
   readonly rawName: string
   readonly component: Component
-  readonly presentations: readonly ToolPresentationMode[]
+  readonly presentations: readonly PresentationMode[]
   readonly availability: 'resident' | 'discoverable'
   /** PTC publication is independent of the Native tier. */
   readonly ptcAvailability?: 'resident' | 'discoverable'
