@@ -10,7 +10,9 @@ export function useEditor<T>(form: ConfigPageForm | undefined, read: (value: Rec
   const [draft, setDraft] = useState(() => read(form?.state.value ?? {}))
   const [revision, setRevision] = useState(form?.state.revision)
   const [dirty, setDirty] = useState(false), [busy, setBusy] = useState(false), [message, setMessage] = useState('')
-  const ready = form?.state.status === 'ready' && form.state.writable && form.state.mode === 'host'
+  // DSH 0.2.2 dropped the snapshot's `mode: 'host' | 'memory'` field: a memory-backed
+  // form never reports `writable`, so the writable flag alone keeps the same gate.
+  const ready = form?.state.status === 'ready' && form.state.writable
   useEffect(() => {
     if (!dirty) { setDraft(read(form?.state.value ?? {})); setRevision(form?.state.revision) }
   }, [form?.state.revision, form?.state.status, read, dirty])

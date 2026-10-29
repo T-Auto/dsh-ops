@@ -7,6 +7,13 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Accept the validated DSH `0.2.2-alpha.2` prerelease in the bounded host range
+  (`>=0.2.0-rc.2 <0.2.2-0 || 0.2.2-alpha.2`), while still rejecting `0.2.2-alpha.1`, other
+  `0.2.2` prereleases, `0.2.2` itself and `0.3.0`. The host-metadata suite passes against a real
+  `0.2.2-alpha.2` installation.
+- 在有界宿主范围中接受已验证的 DSH `0.2.2-alpha.2` 预发布
+  （`>=0.2.0-rc.2 <0.2.2-0 || 0.2.2-alpha.2`），同时继续拒绝 `0.2.2-alpha.1`、其它 `0.2.2`
+  预发布、`0.2.2` 本身与 `0.3.0`；宿主元数据套件已在真实的 `0.2.2-alpha.2` 安装上通过。
 - Verify the hide-official assembled surface through the scope view when the host withholds the tool array. DSH 0.2.1 transforms a `PromptPresentation` in `system-prompt/assemble` and attaches `tools` afterwards, so the guard's `Array.isArray(result?.tools)` threw `assembled tool schemas unavailable` for every scoped assembly once `replaceTools` was non-empty — every turn was blocked, not one tool. A host that still supplies schemas keeps the stricter assembled-surface assertion (#413).
 - 宿主不再提供工具数组时，hide-official 改由作用域视图核验组装面。DSH 0.2.1 的 `system-prompt/assemble` 只变换 `PromptPresentation`，`tools` 在瀑布之后才追加，于是 `replaceTools` 非空时该校验的 `Array.isArray(result?.tools)` 对每个作用域都抛出 `assembled tool schemas unavailable`——整轮不可用，而非某个工具不可用。仍提供 schema 的宿主保留更严格的组装面断言（#413）。
 - Add candidate-only benchmark component switches with conservative patch editing, composed-config verification and a bounded readiness turn. Archive effective switches, show them in reports, and reject comparisons across different candidate switch sets (#296).

@@ -1,7 +1,7 @@
 import type { Context, Fiber } from '../adapter/dsh/types.js'
 import type { Agent } from '../adapter/dsh/types.js'
 import type { ToolDefinition } from '../adapter/dsh/types.js'
-import type { PromptAssembly } from '../adapter/dsh/types.js'
+import type { PromptPresentation } from '../adapter/dsh/types.js'
 import type {} from '../adapter/dsh/types.js'
 import { resolveDiscoveryConfig } from '../config.js'
 import { NativeFileTools } from '../file/runtime.js'
@@ -106,7 +106,9 @@ export function apply(root: Context, raw: unknown, gate: DiscoveryGate = { allow
     const externalAvailable = (provider: Provider, agent: Agent): boolean => {
       try { return provider.active && provider.capability.available?.(agent) !== false } catch { return false }
     }
-    const ptcOnly = (assembly: PromptAssembly): boolean => assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
+    // DSH 0.2.2: the waterfall hands back the presentation; tool declarations are
+    // attached by the caller afterwards, so judging the sections needs no assembly.
+    const ptcOnly = (assembly: PromptPresentation): boolean => assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
     const invalidate = (entry: Entry) => { ++entry.revision; entry.presentation = undefined }
     const inputs = (agent: Agent): unknown[] => {
       const policy = policyService?.resolve({ session: agent.session })

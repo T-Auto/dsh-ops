@@ -95,7 +95,7 @@ use the PTC SDK loader under the host's `run_code` presentation. Check the scope
 assembled tools and presentation, not just a global registry or a prompt section
 name. An empty discovery section alone does not identify the cause.
 
-Host support declarations and component resource exports are covered by the current adapter boundary. The package declares and tests the bounded range `>=0.2.0-rc.2 <0.2.2-0`, including rc2, rc3, rc4 and the 0.2.1 stable line; the isolated host matrix compares the rc4 graph against the locked rc2 control. The text-only PTC hook adaptation is not used as the sole compatibility proof.
+Host support declarations and component resource exports are covered by the current adapter boundary. The package declares and tests the bounded range `>=0.2.0-rc.2 <0.2.2-0 || 0.2.2-alpha.2`, including rc2, rc3, rc4, the 0.2.1 stable line and the validated `0.2.2-alpha.2` prerelease; the isolated host matrix compares the rc4 graph against the locked rc2 control. The text-only PTC hook adaptation is not used as the sole compatibility proof.
 
 The original #346 report also describes an enabled row and a stalled publication
 chain. The profile checks above do not prove that failure fixed. If the row is

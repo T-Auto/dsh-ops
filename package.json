@@ -200,7 +200,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",
-    "@deepseek-ai/dsh": ">=0.2.0-rc.2 <0.2.2-0"
+    "@deepseek-ai/dsh": ">=0.2.0-rc.2 <0.2.2-0 || 0.2.2-alpha.2"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
@@ -260,6 +260,6 @@
   },
   "engines": {
     "node": "^22.19 || >=24",
-    "dsh": ">=0.2.0-rc.2 <0.2.2-0"
+    "dsh": ">=0.2.0-rc.2 <0.2.2-0 || 0.2.2-alpha.2"
   }
 }
