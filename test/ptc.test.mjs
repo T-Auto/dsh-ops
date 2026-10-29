@@ -30,7 +30,7 @@ const ptc = legacyComponent(ptcModule)
  * tests the worker rather than the build invocation.
  */
 const workerTriples = { 'darwin-arm64': 'aarch64-apple-darwin', 'darwin-x64': 'x86_64-apple-darwin',
-  'linux-arm64': 'aarch64-unknown-linux-gnu', 'linux-x64': 'x86_64-unknown-linux-gnu',
+  'linux-arm64': 'aarch64-unknown-linux-musl', 'linux-x64': 'x86_64-unknown-linux-musl',
   'win32-arm64': 'aarch64-pc-windows-msvc', 'win32-x64': 'x86_64-pc-windows-msvc' }
 const workerName = process.platform === 'win32' ? 'dsh-ops-worker.exe' : 'dsh-ops-worker'
 const workerCandidates = [

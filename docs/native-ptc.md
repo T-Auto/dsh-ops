@@ -361,7 +361,10 @@ DSH process sandbox acceptance executed.
 Linux x64 (`x86_64-unknown-linux-gnu`): release build, `cargo test`, full
 `npm run verify` (every suite that does not need a FastCtx runtime, i.e. 28 passed
 and 2 skipped) and the native worker scenarios executed on the platform, including
-the DSH local sandbox's workspace/temporary-area policy fence.
+the DSH local sandbox's workspace/temporary-area policy fence. The *released* Linux
+x64 worker is built for `x86_64-unknown-linux-musl` and statically linked, so the
+shipped artifact no longer requires a `GLIBC_*` floor; reproduce it with
+`npm run build:ptc -- --target x86_64-unknown-linux-musl`.
 macOS arm64 (`aarch64-apple-darwin`) and macOS Intel (`x86_64-apple-darwin`) now run
 the full gate in CI: `macos-latest` (arm64) is blocking, and `macos-15-intel` (x64)
 is a non-blocking signal because the leg measured 318 s > 300 s. Both build and stage
