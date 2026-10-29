@@ -17,15 +17,29 @@ import * as discovery from '../../lib/components/discovery/index.js'
 import * as ptc from '../../lib/components/ptc/index.js'
 import { assert } from './harness.mjs'
 import { WORKER } from './boundary.mjs'
+import { installPresentationCompat } from './tools-presentation.mjs'
 let identity = 0
 export async function bootLoop(root, { ptcMode = false, discoveryConfig = {} } = {}) {
   const ctx = new Context(); ctx.logger.level = 0
   const queues = new Map(), requests = [], results = [], errors = []
   for (const plugin of [Agents, Sessions, Projections, Prompt]) await ctx.plugin(plugin, {})
-  await ctx.plugin(Tools, { mode: ptcMode ? 'ptc' : 'native' })
+  // 0.2.2 drives presentation through executor plugins; the rc2 line uses `mode` config.
+  const executorArchitecture = await installPresentationCompat(Tools)
+  if (executorArchitecture) {
+    await ctx.plugin(Tools, {})
+  } else {
+    await ctx.plugin(Tools, { mode: ptcMode ? 'ptc' : 'native' })
+  }
   await ctx.plugin(Policy, { mode: 'workspace-write', workspaceRoot: root })
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem, { cwd: root })
-  if (ptcMode) await ctx.plugin(NodePtc, {})
+  if (ptcMode) {
+    await ctx.plugin(NodePtc, {})
+    // 0.2.2's PTC executor resolves each program's working directory through a service.
+    await ctx.plugin(inner => { inner.provide('workingDirectory', { ensure: () => root }) })
+    if (executorArchitecture) await ctx.plugin(await import('@deepseek-ai/dsh-tool-executor-ptc'))
+  } else if (executorArchitecture) {
+    await ctx.plugin(await import('@deepseek-ai/dsh-tool-executor-native'))
+  }
   await ctx.plugin(inner => {
     inner.provide('llm', { async prepareCall(config) { return { config, adapterDefaults: {}, stream: async function* (request) {
       assert.equal(request.purpose, undefined)
@@ -54,7 +68,7 @@ export async function bootLoop(root, { ptcMode = false, discoveryConfig = {} } =
   async function run(agent, scripts) {
     const start = { requests: requests.length, results: results.length, errors: errors.length }
     queues.set(agent.session.id, [...scripts])
-    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Run the deterministic fixture.' }] }))
+    agent.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Run the deterministic fixture.' }] }))
     await agent.whenIdle()
     assert.deepEqual(errors.slice(start.errors), [])
     assert.equal(queues.get(agent.session.id).length, 0)
