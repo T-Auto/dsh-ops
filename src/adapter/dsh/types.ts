@@ -13,11 +13,24 @@ export type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 export type { Session } from '@deepseek-ai/dsh-session'
 export type { SettingsPathOpView } from '@deepseek-ai/dsh-settings/types'
 export type { AssembleContext, PromptAssembly, SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
+/**
+ * The waterfall's presentation shape, declared structurally. The rc2 line only
+ * ships `PromptAssembly` (sections, contexts, variables and the tool array in one
+ * interface), while DSH 0.2.2 splits the presentation from the assembly and
+ * attaches tools after the waterfall. Both satisfy these fields, so assemble-path
+ * code that judges sections and contexts compiles against either end of the
+ * declared host range without importing a version-specific name.
+ */
+export interface PromptPresentation {
+  sections: ReadonlyArray<{ name: string; text: string }>
+  contexts: readonly unknown[]
+  variables: Record<string, string | undefined>
+}
 export type { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
 export type { SubprocessHandle, SubprocessOutputRead, SubprocessOutputReader, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 export type { InvocationDescriptor, RemoteResult, TypertCodec, TypertGatewayBinding } from '@deepseek-ai/dsh-typert-protocol'
 export type { JsonSchemaNode, JsonSchemaType, ObjectJsonSchema, ToolDefinition, ToolExecution,
-  ToolExecutionResult, ToolExecutionToken, ToolGuard, ToolPresentationMode, ToolRunContext } from '@deepseek-ai/dsh-tools'
+  ToolExecutionResult, ToolExecutionToken, ToolGuard, ToolRunContext } from '@deepseek-ai/dsh-tools'
 export type { default as ToolRuntime } from '@deepseek-ai/dsh-tools'
 export type { ConfinedArgv, RunnerFailureRule, SandboxExecutionPolicy, SandboxMode, SandboxProvider } from '@deepseek-ai/dsh-sandbox'
 export type { ConfigPageForm, PluginConfigViewProps } from '@deepseek-ai/dsh-client-ui-plugin-manager/client'

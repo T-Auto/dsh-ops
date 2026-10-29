@@ -37,7 +37,10 @@ export function apply(ctx: Context, rawConfig?: unknown): void {
     catch { /* A presentation failure cannot escape into the committed event observer. */ }
   })
   ctx.on('session/event', (session, event) => {
-    if (store.observe(session.id, event) && (event.type === 'tool/result' || event.type === 'tool/ptc-dispatch')) {
+    // 0.2.2's SessionEventMap no longer declares `tool/ptc-dispatch`, but hosts
+    // across the supported range still emit it on the wire; compare the wire type.
+    const type: string = event.type
+    if (store.observe(session.id, event) && (type === 'tool/result' || type === 'tool/ptc-dispatch')) {
       attention.observe(store.snapshot(session.id).recent[0])
     }
   })

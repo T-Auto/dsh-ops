@@ -160,7 +160,12 @@ export function apply(root: Context, raw?: unknown): void {
       try { result = await next() }
       catch (error) { throw block(context.scope, `agent prompt assembly could not be verified: ${message(error)}`) }
       reconcile()
-      const wire = Array.isArray(result?.tools) ? result.tools.map(schema => schema.name) : []
+      // DSH 0.2.2 narrows the waterfall's type to the bare presentation: the tool
+      // array is attached after it. Hosts ≤0.2.1 still supply schemas inside this
+      // waterfall, so the runtime keeps inspecting the structural shape and the
+      // scope-view fallback covers the deferred case.
+      const wireView = result as (typeof result & { tools?: { name: string }[] }) | undefined
+      const wire = Array.isArray(wireView?.tools) ? wireView.tools.map(schema => schema.name) : []
       // A collapsed scope receives one program entry and nothing else: its selected
       // official tools are not native duplicates there, and their OPS counterparts can
       // only ever be SDK functions, so readiness is unprovable by construction. Fail
@@ -173,7 +178,7 @@ export function apply(root: Context, raw?: unknown): void {
       // rather than by the configuration view, which answers for `both` as well.
       const ptcOnly = Array.isArray(result?.sections)
         && result.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
-      const collapsed = Array.isArray(result?.tools)
+      const collapsed = Array.isArray(wireView?.tools)
         ? wire.length > 0 && wire.every(name => name === RUN_CODE)
         : ptcOnly
       const entry = entries.get(context.scope)
@@ -191,7 +196,7 @@ export function apply(root: Context, raw?: unknown): void {
       // program calls their OPS counterparts) and owns no mask, so there is no assembled
       // surface to leak there; the guard still refuses to dispatch them.
       const leaked = collapsed ? []
-        : Array.isArray(result?.tools)
+        : Array.isArray(wireView?.tools)
           ? wire.filter(hideable)
           : replaceTools.filter(tool => typeof tools.get === 'function' && tools.get(tool, context.scope) !== undefined)
       if (leaked.length) throw block(context.scope, `assembled surface still contains hidden official tools: ${leaked.join(', ')}`)

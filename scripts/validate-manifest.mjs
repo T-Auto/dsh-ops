@@ -562,10 +562,10 @@ check(
   typeof pkg.engines?.dsh === 'string' && pkg.engines.dsh === pkg.peerDependencies?.['@deepseek-ai/dsh'],
   'engines.dsh and the legacy DSH peer declare the same compatibility range',
 )
-for (const version of ['0.2.0-rc.2', '0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.4', '0.2.1']) {
+for (const version of ['0.2.0-rc.2', '0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.4', '0.2.1', '0.2.2-alpha.2']) {
   check(evaluatePluginCompatibility(pkg, {}, version) === undefined, `the declared range accepts DSH ${version}`)
 }
-for (const version of ['0.2.0-rc.1', '0.2.2-rc.1', '0.3.0']) {
+for (const version of ['0.2.0-rc.1', '0.2.2-alpha.1', '0.2.2-rc.1', '0.3.0']) {
   check(evaluatePluginCompatibility(pkg, {}, version) !== undefined, `the declared range rejects DSH ${version}`)
 }
 for (const component of [...COMPONENTS, 'background']) {
