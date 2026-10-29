@@ -160,7 +160,7 @@ await test('a complete matrix uses identical routing patches in both arms and ar
   const left = json(path.join(out, manifest.groups[0].base)), right = json(path.join(out, manifest.groups[0].cand))
   delete left.condition; delete right.condition
   assert.equal(compareSummaries(left, right).condition, null)
-  assert.match(renderReport(compareSummaries(left, right)), /Condition: unknown/)
+  assert.doesNotMatch(renderReport(compareSummaries(left, right)), /Condition:/, 'a report names no condition: the comparison document carries it')
   assert.throws(() => compareSummaries(left, { ...right, condition: manifest.groups[0].condition }), /Conditions differ.*unknown/)
   const docPath = path.join(out, manifest.groups[0].directory, 'run.json')
   const panel = renderPanel({ runJsonPath: docPath, outDir: path.dirname(docPath) })

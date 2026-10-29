@@ -75,7 +75,9 @@ await test('candidate switch conditions differ across sweeps, never across the t
   const cand = { results: [], switches, candidateSwitches: switches }
   assert.doesNotThrow(() => compareSummaries(base, cand))
   assert.throws(() => compareSummaries(base, { ...cand, candidateSwitches: { 'mode-ptc': { enabled: false } } }), /Candidate switches differ/)
-  assert.match(renderReport(compareSummaries(base, cand)), /Candidate switches/)
+  const comparison = compareSummaries(base, cand)
+  assert.deepEqual(comparison.switches, switches, 'the comparison document still records the candidate switches')
+  assert.doesNotMatch(renderReport(comparison), /Candidate switches/, 'the report itself carries no switch line')
 })
 
 await test('dynamic and non-mapping configuration is refused before candidate planning', () => {

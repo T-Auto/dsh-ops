@@ -40,11 +40,6 @@ export function compareEnvironment(base, cand, options = {}) {
 }
 
 export function environmentLines(environment) {
-  if (!environment) return []
-  return [
-    `Platform: base=${environment.platforms.base}; cand=${environment.platforms.cand}.`,
-    ...(environment.crossPlatform ? ['WARNING: cross-platform diagnostic; differences are not a plugin effect.'] : []),
-    `Component rows (configuration, not a readiness receipt): base=${JSON.stringify(environment.components.base)}; cand=${JSON.stringify(environment.components.cand)}.`,
-    '',
-  ]
+  if (!environment?.crossPlatform) return []
+  return ['WARNING: cross-platform diagnostic; differences are not a plugin effect.', '']
 }
