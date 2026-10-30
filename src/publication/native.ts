@@ -8,7 +8,7 @@ import { resolveWorker } from '../execution/files.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
 import { BASH_TOOL, modeSectionName, MODE_SECTION_ORDERS, renderToolingPolicy } from '../policy.js'
 import { visibleNames } from './surface.js'
-import { isNativePresentation, isPresentationProbe } from './presentation.js'
+import { claimPresentationRebuild, isNativePresentation, isPresentationProbe } from './presentation.js'
 import { onToolChange } from './changes.js'
 import type { ResolvedConfig } from '../config.js'
 import { ownScopes } from './ownership.js'
@@ -123,7 +123,9 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
         if (!allowed) detach(agent)
         else attach(agent)
         if (entries.has(agent)) await entries.get(agent)?.ready
-        return prompt.assemble(context)
+        // Same one-rebuild budget as every other publication hook: the surface
+        // this hook reacts to is the one another hook is retiring right now.
+        return claimPresentationRebuild(context) ? prompt.assemble(context) : result
       }
       return result
     })

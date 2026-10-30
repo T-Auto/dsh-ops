@@ -9,7 +9,7 @@ import { nativeProviders, registerNativeProviderAtScope, claimNativeSelection } 
 import { loadScopes } from '../adapter/dsh/host.js'
 import { onToolChange } from '../publication/changes.js'
 import { ownScopes } from '../publication/ownership.js'
-import { isNativePresentation, isPresentationProbe } from '../publication/presentation.js'
+import { claimPresentationRebuild, isNativePresentation, isPresentationProbe } from '../publication/presentation.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
 import { failure, resolveWorker } from '../execution/files.js'
 import { capability, DISCOVERY_TOOL_NAME } from '../capabilities/registry.js'
@@ -345,7 +345,7 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
       finally { mutating = false }
       // Rebuild through the public host service after removing only our tools.
       // This cannot activate pending requests or rewrite another provider's text.
-      return prompt.assemble(context)
+      return claimPresentationRebuild(context) ? prompt.assemble(context) : result
     })
     ctx.on('session/event', (session, event) => {
       if ((event as { type: string }).type === 'agent-preset/selected') {
