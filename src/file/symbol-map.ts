@@ -33,15 +33,15 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import type { Context, SandboxExecutionPolicy, SandboxPolicyService, ToolRunContext } from '../adapter/dsh/types.js'
-import type { WorkerInvokeConfig } from '../host/worker-boundary.js'
-import { record } from '../host/worker-boundary.js'
+import type { WorkerInvokeConfig } from '../worker-boundary.js'
+import { record } from '../worker-boundary.js'
 import { credentialPath, credentialRefusal } from '../credential-policy.js'
 import { anchoredPath, inside, sessionAnchors } from '../authority-paths.js'
-import { MODES, credentialDenied } from '../host/permissions.js'
+import { MODES, credentialDenied } from '../permissions.js'
 import { describe, encodeSymbol, fail, fileFingerprint, getSymbolMap, normalizeScope, paginate } from '../symbol-map/index.js'
 import type { SourceLanguage, SymbolMap, SymbolMapErrorCode, SymbolPage } from '../symbol-map/index.js'
 import { reparseEscape, REPARSE_DENIED } from './reparse.js'
-import { normalizeArguments } from '../host/contract.js'
+import { normalizeArguments } from './contract.js'
 
 const TOOL = 'symbol_map'
 const LANGS: readonly SourceLanguage[] = ['typescript', 'tsx', 'javascript']
@@ -108,13 +108,18 @@ function absoluteTarget(raw: unknown, cwd: string): string | undefined {
  * directory and not necessarily the session's. Two tools describing one file by two different
  * relative paths is exactly the kind of detail a model reasons wrongly about, so this overrides
  * the engine value instead of forwarding it.
+ *
+ * Separators are POSIX: a receipt path is the next call's `path` argument, and a backslash there
+ * has to be escaped by the caller before it can be written into JSON.
  */
 function shownPath(absolute: string, cwd: string): string {
   const relative = path.relative(cwd, absolute)
-  if (relative === '') return absolute
-  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return absolute
-  return relative
+  if (relative === '') return posix(absolute)
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return posix(absolute)
+  return posix(relative)
 }
+
+const posix = (value: string): string => value.replace(/\\/g, '/')
 
 /** A paging argument that is not a number is a caller mistake, not a silent default. */
 function count(raw: unknown, field: string): number | undefined {

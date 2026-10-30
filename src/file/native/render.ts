@@ -135,6 +135,14 @@ function diff(args: Row, value: Row): string[] {
   return output
 }
 
+function symbolMap(args: Row, value: Row): string[] {
+  const symbols = Array.isArray(value.symbols) ? value.symbols : []
+  const output = [`${label(value.file ?? args.path ?? '(path unavailable)')}: ${facts(value, ['lang', 'bytes', 'total', 'revision', 'fileHash', 'fileHashScope', 'partial'])}`]
+  for (const symbol of symbols) if (typeof symbol === 'string') output.push(label(symbol))
+  output.push(...notices(value, symbols.length))
+  return output
+}
+
 function listing(tool: string, args: Row, value: Row): string[] {
   const output: string[] = []
   if (value.scanComplete !== undefined) output.push(`[Notice: ${facts(value, ['scanComplete', 'pageComplete', 'scannedFiles', 'skippedFiles', 'skipReasons', 'matchedObserved', 'matchedTotal'])}.]`)
@@ -174,6 +182,7 @@ export function renderNative(tool: string, args: unknown, result: unknown): stri
   else if (mutations.has(tool)) lines = receipts(tool, result)
   else if (tool === 'stat') lines = stat(input, result)
   else if (tool === 'diff') lines = diff(input, result)
+  else if (tool === 'symbol_map') lines = symbolMap(input, result)
   else lines = listing(tool, input, result)
   // Keep the locator ahead of potentially clipped model text so its omitted suffix stays recoverable.
   if (record(result.reference)) lines.unshift('[Stored reference: ' + facts(result.reference, ['refId', 'producerTool', 'totalItems', 'totalBytes'])

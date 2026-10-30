@@ -10,9 +10,9 @@ import { BASH_TOOL_NAME } from '../lib/shells/constants.js'
 import { assert, test, report } from './lib/harness.mjs'
 
 await test('the catalogue covers every owned file, PTC and shell tool exactly once', () => {
-  assert.equal(CAPABILITIES.length, 20)
+  assert.equal(CAPABILITIES.length, 21)
   assert.equal(new Set(CAPABILITIES.map(item => item.rawName)).size, CAPABILITIES.length)
-  assert.deepEqual(FILE_TOOLS, ['inspect_local_file', 'grep', 'glob', 'replace', 'write_file', 'edit_file', 'diff', 'stat', 'copy', 'move', 'remove', 'read_files', 'read_table', 'read_docx', 'read_pdf'])
+  assert.deepEqual(FILE_TOOLS, ['inspect_local_file', 'grep', 'glob', 'replace', 'write_file', 'edit_file', 'diff', 'stat', 'copy', 'move', 'remove', 'read_files', 'symbol_map', 'read_table', 'read_docx', 'read_pdf'])
   assert.deepEqual(FILE_MUTATIONS, ['replace', 'write_file', 'edit_file', 'copy', 'move', 'remove'])
   assert.deepEqual(PTC_TOOLS, ['batch', 'result'])
   assert.deepEqual(IN_PROCESS_TOOLS, ['bash'])
@@ -33,11 +33,12 @@ await test('the catalogue covers every owned file, PTC and shell tool exactly on
 await test('metadata separates the Native resident core from discoverable capabilities', () => {
   for (const entry of [...FILE_CAPABILITIES, ...SHELL_CAPABILITIES]) assert.deepEqual(entry.presentations, ['native', 'ptc', 'both'])
   for (const entry of PTC_CAPABILITIES) assert.deepEqual(entry.presentations, entry.rawName === 'result' ? ['native', 'ptc', 'both'] : ['ptc'])
-  assert.deepEqual(NATIVE_RESIDENT_FILE_TOOLS, ['read_files'])
+  assert.deepEqual(NATIVE_RESIDENT_FILE_TOOLS, ['read_files', 'symbol_map'])
   assert.equal(capability('result').nativeProjection.availability, 'discoverable')
+  const RESIDENT_FILE = ['read_files', 'symbol_map']
   assert.deepEqual(FILE_CAPABILITIES.filter(entry => entry.availability === 'discoverable').map(entry => entry.rawName).sort(), DISCOVERABLE_TOOLS.filter(name => name !== 'result').sort())
   for (const entry of CAPABILITIES) {
-    assert.equal(entry.availability, entry.component === 'file' && entry.rawName !== 'read_files' ? 'discoverable' : 'resident')
+    assert.equal(entry.availability, entry.component === 'file' && !RESIDENT_FILE.includes(entry.rawName) ? 'discoverable' : 'resident')
     assert.equal(entry.concurrencySafe, entry.component === 'file' && !entry.mutates)
   }
 })
@@ -59,16 +60,18 @@ const snapshot = (names, definition) => names.map(name => {
 await test('business file and batch definitions retain their original serialized contracts', () => {
   // Captured before this migration, covering every argument/output contract and published description.
   const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
-  assert.equal(hash(snapshot(FILE_TOOLS.filter(name => !['glob', 'grep', 'read_files', 'edit_file', 'read_table', 'read_docx', 'read_pdf'].includes(name)), fileDefinition)), '0297e7d3f819dc90dcc296a5e4ee1af88c37b742ed7ca06c77c54a477c52eb4b')
+  // The only drift from the pre-migration snapshot is `symbol_map` itself: every other tool's
+  // serialized contract still hashes to the value captured before this migration.
+  assert.equal(hash(snapshot(FILE_TOOLS.filter(name => !['glob', 'grep', 'read_files', 'edit_file', 'read_table', 'read_docx', 'read_pdf'].includes(name)), fileDefinition)), '9ebedc4e77e88e1a67373792681552a16c24c71d9c462e6c8228dc89932015c2')
   const batch = ptcDefinition('batch', async () => null)
   assert.equal(batch.parameters, ptcParameters.batch); assert.ok(batch.description.startsWith(ptcDescriptions.batch)); assert.match(batch.description, /PTC returns Outcome/)
   assert.ok(batch.output.schema.oneOf.every(branch => branch.properties.status))
 })
 
 await test('file parameter schemas preserve their reviewed structural constraints', () => {
-  // #384 intentionally adds the optional exactTotal boolean; all other constraints remain pinned.
+  // #384 intentionally adds the optional exactTotal boolean; `symbol_map` adds one parameter group.
   const hash = createHash('sha256').update(JSON.stringify(withoutDescriptions(fileParameters))).digest('hex')
-  assert.equal(hash, '637df1383940fa6fdb2d65a68e67ce1e333a7e2ecbfceff5ffef7a4c1133ea8b')
+  assert.equal(hash, '2df6a487bfd22257737571eed207ed6b58ab8f2fbaecbf5629e96389f44e35ee')
 })
 
 await test('native registration consumes the catalogue while execute values stay unchanged', async () => {

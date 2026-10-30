@@ -10,7 +10,7 @@ import type { CapabilityMetadata, Component, SchemaCapability } from './types.js
 export type FileToolName = keyof typeof fileParameters
 export type PtcToolName = keyof typeof ptcParameters
 // Preserve the published registration order independently of schema object key order.
-const fileOrder = ['inspect_local_file', 'grep', 'glob', 'replace', 'write_file', 'edit_file', 'diff', 'stat', 'copy', 'move', 'remove', 'read_files', 'read_table', 'read_docx', 'read_pdf'] as const satisfies readonly FileToolName[]
+const fileOrder = ['inspect_local_file', 'grep', 'glob', 'replace', 'write_file', 'edit_file', 'diff', 'stat', 'copy', 'move', 'remove', 'read_files', 'symbol_map', 'read_table', 'read_docx', 'read_pdf'] as const satisfies readonly FileToolName[]
 const fileMutations = new Set<FileToolName>(['replace', 'write_file', 'edit_file', 'copy', 'move', 'remove'])
 const continuationReaders = new Set<FileToolName>(['inspect_local_file', 'read_files', 'glob', 'grep', 'diff', 'read_table', 'read_docx', 'read_pdf'])
 const observedReaders = new Set<FileToolName>(['inspect_local_file', 'read_files'])
@@ -18,7 +18,7 @@ const allPresentations = Object.freeze(['native', 'ptc', 'both'] as const)
 
 export const FILE_CAPABILITIES = Object.freeze(fileOrder.map(rawName => Object.freeze({
   rawName, component: 'file' as const, presentations: allPresentations,
-  availability: rawName === 'read_files' ? 'resident' as const : 'discoverable' as const, mutates: fileMutations.has(rawName),
+  availability: rawName === 'read_files' || rawName === 'symbol_map' ? 'resident' as const : 'discoverable' as const, mutates: fileMutations.has(rawName),
   concurrencySafe: !fileMutations.has(rawName),
   ptcAvailability: rawName === 'inspect_local_file' ? 'resident' as const : 'discoverable' as const,
   supportsContinuation: continuationReaders.has(rawName), observesRead: observedReaders.has(rawName),

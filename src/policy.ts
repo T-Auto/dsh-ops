@@ -58,6 +58,7 @@ export function renderToolingPolicy({ published, mounted, levels, shellComponent
   }
   row(DISCOVERY_TOOL_NAME, 'Find advanced capabilities for the next model step')
   row('read_files', 'Read UTF-8 ranges from multiple files')
+  row('symbol_map', 'Outline one TS/TSX/JS file: functions, classes and methods with line ranges')
   row('read_table', 'Read bounded CSV / TSV lexical rows')
   row('read_docx', 'Read DOCX main-body paragraphs')
   row('read_pdf', 'Read supported PDF text-layer pages')

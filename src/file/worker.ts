@@ -18,6 +18,7 @@ import { resolveWorker } from '../ptc/runtime.js'
 import { FILE_MUTATIONS } from '../policy.js'
 import { normalizeArguments } from './contract.js'
 import { resolveReadFiles } from './read-files.js'
+import { invokeSymbolMap } from './symbol-map.js'
 import { withCallBudget, CallBudgetError } from '../kernel/call-budget.js'
 import { withResultSession } from '../kernel/result-lifecycle.js'
 import { resultStorage } from '../kernel/result-storage.js'
@@ -96,6 +97,9 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
   const session = exec?.agent?.session
   const cwd = session?.header?.cwd
   if (!session?.id || typeof cwd !== 'string' || !path.isAbsolute(cwd)) return failure('EXECUTOR_UNAVAILABLE', 'An authoritative session identity and cwd are required.')
+  // symbol_map is answered in-process: Tree-sitter over bytes we already hold. The adapter
+  // re-establishes policy and the credential fence itself, so it runs before the spawn-only checks.
+  if (tool === 'symbol_map') return invokeSymbolMap(ctx, args, exec, signal, config)
   const policyService: SandboxPolicyService | undefined = ctx.get('sandboxPolicy')
   const subprocess: SubprocessRuntime | undefined = ctx.get('subprocess')
   if (!policyService?.resolve || !subprocess?.spawn) return failure('EXECUTOR_UNAVAILABLE', 'DSH policy and subprocess services are required.')

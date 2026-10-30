@@ -86,7 +86,7 @@ function whole(value: number | undefined, fallback: number): number {
  * The `name` match is **case-sensitive**, deliberately. Folding case here would make `name: "get"`
  * also return `GetValue` — a wider set than the caller asked for, hiding a distinction the file
  * really does make. It is also the contract the tool schema and `docs/component-reference.md`
- * publish, and what the standalone `ops-symbol-map` package does.
+ * publish.
  */
 export function paginate(map: SymbolMap, options: PageOptions = {}): SymbolPage {
   const needle = typeof options.name === 'string' && options.name !== '' ? options.name : undefined

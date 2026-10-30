@@ -108,6 +108,59 @@ function canonical(value: string): string {
 }
 
 /**
+ * The denied roots for one (home, environment) pair, memoised.
+ *
+ * Deriving the list costs thirteen `realpath` calls plus one per environment entry — measured at
+ * 1.9 ms on Windows, and paid by **every** file-tool call before it can do anything. On the symbol
+ * map path that was 99% of a warm call (the engine itself takes 0.011 ms). The list depends only
+ * on the home directory and one environment variable, so it is derived once and reused.
+ *
+ * `ROOT_TTL_MS` bounds the one thing that changes without either input changing: a suffix that did
+ * not exist at derivation time and was later created as a junction to somewhere else. Such a root
+ * is compared in its old spelling for at most this window. Five seconds is short against the
+ * lifetime of a session and long against a burst of tool calls; {@link resetCredentialCache} drops
+ * the whole thing.
+ */
+const ROOT_TTL_MS = 5_000
+
+/**
+ * One denied root: the canonical spelling for traversal callers, its lowercased form for the
+ * comparison, and the label a refusal names.
+ *
+ * Both spellings are computed once. Lowercasing the root inside the loop instead would re-case the
+ * same thirteen strings on every call *and* — as the first version of this cache did — silently
+ * compare a lowercased target against a mixed-case root on a drive-letter path, which denies
+ * nothing and looks like a working fence.
+ */
+interface DeniedRoot { root: string; lower: string; suffix: string }
+
+interface RootCache { key: string; roots: DeniedRoot[]; at: number }
+
+let rootCache: RootCache | undefined
+
+/** Drop the memoised root list. Tests use it; a host may call it after changing its home. */
+export function resetCredentialCache(): void {
+  rootCache = undefined
+}
+
+/** Every denied root, memoised per (home, env) pair. */
+function deniedRoots(resolvedHome: string | undefined, env: NodeJS.ProcessEnv): DeniedRoot[] {
+  const key = `${resolvedHome ?? ''}\u0000${env?.[DENY_ENV] ?? ''}`
+  const now = Date.now()
+  if (rootCache !== undefined && rootCache.key === key && now - rootCache.at < ROOT_TTL_MS) return rootCache.roots
+  const roots: DeniedRoot[] = []
+  if (typeof resolvedHome === 'string' && resolvedHome !== '') {
+    for (const suffix of CREDENTIAL_SUFFIXES) {
+      const root = canonical(path.join(resolvedHome, suffix))
+      roots.push({ root, lower: root.toLowerCase(), suffix })
+    }
+  }
+  for (const [root, suffix] of configuredRoots(env, resolvedHome)) roots.push({ root, lower: root.toLowerCase(), suffix })
+  rootCache = { key, roots, at: now }
+  return roots
+}
+
+/**
  * Whether one absolute path is inside a denied credential location.
  *
  * @param {string} candidate - the absolute path to test.
@@ -118,17 +171,12 @@ function canonical(value: string): string {
  */
 export function credentialPath(candidate: unknown, { home, env = process.env }: CredentialOptions = {}): CredentialVerdict {
   if (typeof candidate !== 'string' || candidate === '') return { denied: false }
+  // The candidate is resolved on every call and never memoised: that resolution is what stops a
+  // link created after this process started from being walked through. Only the roots are constant.
   const target = canonical(candidate)
-  const roots: Array<[string, string]> = []
-  const resolvedHome = home ?? env?.HOME ?? env?.USERPROFILE
-  if (typeof resolvedHome === 'string' && resolvedHome !== '') {
-    for (const suffix of CREDENTIAL_SUFFIXES) roots.push([canonical(path.join(resolvedHome, suffix)), suffix])
-  }
-  roots.push(...configuredRoots(env, resolvedHome))
-  for (const [root, suffix] of roots) {
-    const comparableTarget = target.toLowerCase()
-    const comparableRoot = root.toLowerCase()
-    if (comparableTarget === comparableRoot || comparableTarget.startsWith(`${comparableRoot}/`)) return { denied: true, matched: suffix }
+  const comparableTarget = target.toLowerCase()
+  for (const { lower, suffix } of deniedRoots(home ?? env?.HOME ?? env?.USERPROFILE, env)) {
+    if (comparableTarget === lower || comparableTarget.startsWith(`${lower}/`)) return { denied: true, matched: suffix }
   }
   for (const pattern of CREDENTIAL_NAMES) {
     if (pattern.test(target)) return { denied: true, matched: String(pattern) }
@@ -147,12 +195,8 @@ export function credentialPath(candidate: unknown, { home, env = process.env }: 
  * @returns {string[]} the absolute directories, deduplicated.
  */
 export function credentialRoots({ home, env = process.env }: CredentialOptions = {}): string[] {
-  const resolvedHome = home ?? env?.HOME ?? env?.USERPROFILE
   const roots = new Set<string>()
-  if (typeof resolvedHome === 'string' && resolvedHome !== '') {
-    for (const suffix of CREDENTIAL_SUFFIXES) roots.add(canonical(path.join(resolvedHome, suffix)))
-  }
-  for (const [root] of configuredRoots(env, resolvedHome)) roots.add(root)
+  for (const { root } of deniedRoots(home ?? env?.HOME ?? env?.USERPROFILE, env)) roots.add(root)
   return [...roots]
 }
 

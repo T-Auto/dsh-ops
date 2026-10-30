@@ -6,13 +6,12 @@
  * implementation detail: everything outside `src/symbol-map/` imports from here, so a module can
  * be moved or merged without touching the fence, the tool layer, or the tests.
  *
- * Two groups are exported. The first is the engine proper — the fifteen names the standalone
- * `ops-symbol-map` package also exports, kept identical so the two can be diffed against each
- * other. The second is what the `symbol_map` tool needs in order to turn a request into a map and
- * a failure into a receipt: the error type, the scope parser, the size and page defaults, and the
- * install hint for the missing-grammar case. Nothing here reads the filesystem on import, and
- * nothing here loads a grammar until the first parse, so importing this module is free even on a
- * machine with no C++ toolchain.
+ * Two groups are exported. The first is the engine proper — the fifteen names the `symbol_map`
+ * tool publishes as its public surface. The second is what the `symbol_map` tool needs in order to
+ * turn a request into a map and a failure into a receipt: the error type, the scope parser, the
+ * size and page defaults, and the install hint for the missing-grammar case. Nothing here reads
+ * the filesystem on import, and nothing here loads a grammar until the first parse, so importing
+ * this module is free even on a machine with no C++ toolchain.
  *
  * @module dsh-ops/symbol-map
  */

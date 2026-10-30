@@ -25,6 +25,15 @@ export const PARAMETERS = Object.freeze({
   read_files: bounded({ files: { type: 'array', description: '1-32 file ranges.', items: bounded({
     path: string, offset: { type: 'integer', description: 'Line >=1; default 1.' }, limit: range(1, 10000, 'Default 200.'),
   }, ['path']) } }, ['files']),
+  symbol_map: bounded({
+    path: filePath,
+    scope: { ...string, description: 'Line window "START-END", e.g. "40-120"; omitted means the whole file.' },
+    lang: { type: 'string', enum: ['typescript', 'tsx', 'javascript'], description: 'Force a grammar; omitted infers from the extension.' },
+    offset: integer,
+    limit: range(1, 10000, 'Default 512.'),
+    name: { ...string, description: 'Case-sensitive substring filter on symbol names; omitted means all symbols.' },
+    extended: { type: 'boolean', description: 'Include locals and arrow-function bindings; default false.' },
+  }, ['path']),
   inspect_local_file: bounded({
     path: filePath,
     offset: { type: 'integer', description: '1-based line or 16-byte hex row; default 1. Legacy 0 also reads the first unit.' },
@@ -97,6 +106,15 @@ export const READ_FILES_OUTPUT: JsonSchemaNode = {
   },
 }
 
+export const SYMBOL_MAP_OUTPUT: JsonSchemaNode = {
+  ...OUTPUT, properties: {
+    ...OUTPUT.properties,
+    file: string, lang: string, hash: string, partial: { type: 'boolean' }, offset: { type: 'integer' },
+    fileHash: string, fileHashScope: { type: 'string', enum: ['full', 'head+tail'] }, fileHashBytes: { type: 'integer' },
+    symbols: { type: 'array', items: string }, syntaxErrors: { type: 'integer' }, sandbox: { type: 'object' },
+  },
+}
+
 export const SEARCH_OUTPUT: JsonSchemaNode = {
   ...OUTPUT, properties: {
     ...OUTPUT.properties,
@@ -114,6 +132,7 @@ export function fileOutput(rawName: keyof typeof PARAMETERS): JsonSchemaNode {
   const document = documentOutput(rawName)
   if (document) return document
   if (rawName === 'read_files') return READ_FILES_OUTPUT
+  if (rawName === 'symbol_map') return SYMBOL_MAP_OUTPUT
   if (rawName === 'glob' || rawName === 'grep') return SEARCH_OUTPUT
   return OUTPUT
 }
@@ -124,6 +143,7 @@ const EDIT_DESCRIPTION = 'Precisely patch one UTF-8 file using 1-100 oldText/new
 export const DESCRIPTIONS = Object.freeze({
   ...DOCUMENT_DESCRIPTIONS,
   read_files: 'Read UTF-8 ranges relative to session cwd. Check each file complete/error; nextOffset continues lines, nextIndex resumes pending files. Binary needs a binary reader. Failures return status:error|rejected and error.code; never throw.',
+  symbol_map: 'List the functions, classes and methods of ONE TypeScript/TSX/JavaScript file as symbols[] entries "START-END TYPE name", answered in-process without spawning a worker. limit defaults to 512 rows and paging uses 0-based offset/nextOffset; name filters by substring; scope limits the line window; extended adds locals. The receipt carries fileHash over the parsed bytes (head+tail above 100 KiB, flagged by fileHashScope) plus revision, the full SHA-256 of the same bytes, so a caller can poll cheaply and still prove identity. Read-only: no file is written and no grammar means EXECUTOR_UNAVAILABLE, not a retry.' + RESULT,
   inspect_local_file: 'Read bounded UTF-8 text lines or a hex view from path relative to the DSH session cwd. Directories are rejected; use ops_glob or ops_grep.' + RESULT,
   glob: 'Find regular files below path relative to the current session cwd. pattern is an ARRAY of globs matched against paths relative to path: ["**/*.md","!vendor/**"]; "*.md" matches the top level only, "!" excludes, at least one positive entry. Symlinks, reparse points, hidden files and dependency/build directories are excluded. limit defaults to 100; paging uses 0-based offset/nextOffset. Check scanComplete and pageComplete; matchedTotal exists only after a complete scan. Prefer continuation with unchanged options; SEARCH_STALE means restart. Incomplete scans require a narrower query.' + RESULT,
   grep: 'Search UTF-8 files below path relative to the current session cwd. pattern is ONE Rust regex string; filter files with glob, an ARRAY of relative globs ("!" excludes). There is no include field. Use summary for aggregate file/match totals, count for per-file counts, files_with_matches for paths, content for text (default); limit defaults to 100 items. Optional line context. Paging uses 0-based offset/nextOffset; prefer continuation with unchanged options. Each page rescans; SEARCH_STALE means restart. Check scanComplete and pageComplete; matchedTotal exists only after a complete scan, matchedObserved is a lower bound otherwise. skipReasons explains gaps. Narrow incomplete scans instead of blindly paging.' + RESULT,
