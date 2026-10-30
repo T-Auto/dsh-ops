@@ -1,5 +1,9 @@
 # ops-ptc
 
+> **2.0.8**：`ops_ptc_audit` 的 `+/-` 行数不再恒为 0、"处改写"不再恒为 1（改用 difftastic 的
+> `aligned_lines`）；围栏拒绝回执报真实 `sandbox.mode`，`PATH_RESTRICTED` / `CREDENTIAL_DENIED`
+> 改为不可重试。详见 [FIXES.md](FIXES.md)。
+>
 > **2.0.6**：五个工具的 `inputSchema` 描述瘦身 `2,588 B → 2,328 B`（−10%）。常驻工具面每轮都在付
 > 这段字节，语义、`enum`、`required` 不变。详见 [FIXES.md](FIXES.md)。
 
@@ -152,13 +156,29 @@ node dist/ptc/mcp.js    # NDJSON JSON-RPC，stdout 只有协议帧，日志走 s
 
 失败固定形状：`{status:"error", code, stage, message, mode, stages, rollback}`。`code` 即熔断原因，不抛栈、不回显源码。
 
+## 变更（2.0.8，审计数字与围栏回执）
+
+**A. `ops_ptc_audit` 的行数统计此前是假的。** 工具把一份占位编辑塞进审计管线（`startByte: 0`、长度 0），
+于是 `addedLines` / `removedLines` 恒为 0，摘要里的"N 处改写"恒为 1。实测：同一文件比对报
+`+0/-0，1 处改写`，9000 行新增的文件之间的比对也报 `+9000 行以外` 同样的 `+0/-0`。现在纯审计
+（无编辑清单）从 difftastic 的 `aligned_lines` 取真实加减行，difftastic 缺席时退回"公共前缀/后缀
+裁剪"的行级对齐，都不再编数字。改后：同文件 `+0/-0`，改一行加一行 `+1/-0`，2 行 vs 144 KB
+`+9001/-0`。
+
+**B. 围栏拒绝回执丢了模式。** `PATH_RESTRICTED` / `POLICY_DENIED` 的 `sandbox.mode` 一律写
+`unknown`，而策略明明已经解析成功 —— "被哪一档拦下"这条信息当场丢失。现在报真实 `policy.mode`。
+
+**C. 不可重试的拒绝被标成可重试。** 此前只有 `INVALID_ARGUMENT` / `POLICY_DENIED` 是
+`retryable: false`；`PATH_RESTRICTED` 与 `CREDENTIAL_DENIED` 被标成 `true`，模型照着重试只是把
+同一次拒绝再买一遍。现在四类都是 `false`。
+
 ## 接入 dsh-ops
 
 2.0.3 保留独立 Tool adapter：从 `ops-ptc/tools` 导入 `registerHostTools`，传入插件当前作用域的 `ctx.tools`、`opsPtcAddition` 和宿主实现的可信 `HostBridge`，返回卸载清理函数。
 
-`opsPtcAddition` / `opsPtcDiscoveryEntry` 是自定义元数据，原包 `dsh-ops` 的固定 discovery registry 不会自动加载它们。**可信执行桥尚未在生产宿主接线，不能宣称原生直插兼容。** 缺 session、policy 或执行桥时关闭执行；裸 handlers 不提供宿主权限边界。
+`opsPtcAddition` / `opsPtcDiscoveryEntry` 是自定义元数据，原包 `dsh-ops` 的固定 discovery registry 不会自动加载它们。**在 dsh-ops 0.5.0 上这条桥已经接上了**：五个工具进 `NATIVE_RESIDENT_FILE_TOOLS`，经 `lib/file/ptc-inproc.js` 注册为常驻工具，`lib/ptc-engine/` 就是本包的 `dist/ptc/`（逐文件 sha256 一致）。围栏顺序是「策略解析 → 写意图 → 凭据名 → 词法锚点 → 重解析点 → 真实路径锚点 → 真实路径凭据」，缺 session / policy 时关闭执行，裸 handlers 不提供宿主权限边界。
 
-真实原包 Outcome schema、ToolDefinition 静态类型和 ToolRuntime 注册/执行/清理已通过兼容测试。桥接路径策略、凭证隔离、取消及授权重验仍由宿主实现，详见 [宿主接入与验证边界](HOST_INTEGRATION.md)。
+真实原包 Outcome schema、ToolDefinition 静态类型和 ToolRuntime 注册/执行/清理已通过兼容测试。路径策略、凭证隔离、取消及授权重验由宿主实现，详见 [宿主接入与验证边界](HOST_INTEGRATION.md)。
 
 MCP stdio 入口为 `node dist/ptc/mcp.js`；使用 MCP 也不会自动继承原包的权限实现。
 
