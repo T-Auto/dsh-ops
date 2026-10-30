@@ -1,5 +1,10 @@
 # ops_symbol_map — 只给行号的符号地图
 
+> **20261029.4**：语法包改为双锚点解析 —— 先包根 `node_modules`，缺失才回退 `vendor/deps`
+> （win32-x64 prebuild，`dsh-ops` 自带）。`dsh-ops/package.json` 的 `dependencies` 是 `null`，
+> 一次 `pnpm install` 就会清空 nested 依赖并让工具报 `E_ENGINE_UNAVAILABLE`；回退后重装不再
+> 影响可用性，命中第一锚点时行为与 20261029.3 逐字节一致。详见 [FIXES.md](FIXES.md)。
+>
 > **20261029.3**：`name` 过滤后的 `total` / `omitted` / `nextOffset` 改报**过滤后**的集合
 > （200 符号里 `name:"f15"` 由 `total:200, omitted:50` 变 `total:11, omitted:10`）。
 > **20261029**：`lstat` 与 `open` 之间的窗口用一次 `realpath` 收口；补 `package.json`
