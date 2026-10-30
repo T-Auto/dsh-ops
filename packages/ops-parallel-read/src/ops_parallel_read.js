@@ -15,12 +15,30 @@
  *   7. 全局预算  —— 全批最多 120,000 字符（对齐原装 128KiB 输出上限），按输入顺序确定性结算
  *
  * 返回 Key-Value（key = 文件路径），并发乱序也不影响"哪个文件报了什么错"。
+ *
+ * 本文件只留读取主引擎（池 / 闸门 / 解码 / 预算），其余三块按内聚性拆到同级模块：
+ *   - errors.js      OpsError（paths 与主引擎共用，下沉到最底层以免反向依赖）
+ *   - paths.js       Windows 路径校验 / root 围栏 / 重解析点拒绝
+ *   - read-cache.js  跨调用 LRU 缓存（进程级生命周期，与单批读取无关）
+ *   - compat.js      原装 dsh-ops `ops_read_files` 兼容层（由本文件注入读取原语）
+ * 依赖单向：errors/paths/read-cache -> 本文件 -> compat。尾部 module.exports 的键名与顺序
+ * 与拆分前逐字一致（含 `ops_read_files` 别名、`readCacheStats`、`clearReadCache`）。
  */
 
 const fsp = require('fs').promises;
-const path = require('path');
 const crypto = require('crypto');
 const { StringDecoder } = require('string_decoder');
+
+const { OpsError } = require('./errors');
+const {
+  resolveTarget,
+  fenceRealPath,
+  assertParentDirs,
+  startLeafCheck,
+  LINK_DENIED,
+} = require('./paths');
+const { readCacheGet, readCacheSet, readCacheStats, clearReadCache } = require('./read-cache');
+const { createCompat } = require('./compat');
 
 /** 默认参数：调用方按需覆盖 */
 const DEFAULTS = Object.freeze({
@@ -52,15 +70,6 @@ const DEFAULTS = Object.freeze({
 
 /** 截断标记，原样输出，便于上层用字符串匹配判断 */
 const TRUNCATED_MARK = '\n...[Warning: Content truncated]...';
-
-/** 带 error.code 的业务错误，方便上层按 code 分支处理 */
-class OpsError extends Error {
-  constructor(code, message) {
-    super(message);
-    this.name = 'OpsError';
-    this.code = code;
-  }
-}
 
 /** 统一的结果骨架：只在两处构造，避免字段漂移（隐藏类一致，V8 不会退化成字典模式） */
 function emptyResult(filePath) {
@@ -112,158 +121,6 @@ async function runPool(items, limit, worker) {
   return results;
 }
 
-/**
- * Windows 路径分量校验（对齐原装 Rust `validate_name`，逐条实测过）。
- *
- * 为什么必须有：Windows 把这些名字解析成**设备**而不是文件 ——
- *   `NUL` 读出来是空、`CON` 是控制台（读它会卡住等输入）、`x.txt:stream` 是 NTFS 备用数据流
- *   （内容不在目录列表里，扫描工具看不见）。
- * 对 AI Agent 来说这是"读到不存在的东西"和"读到看不见的东西"，两种都是静默错误，
- * 原装一律 INVALID_ARGUMENT 拒绝，这里保持一致。
- */
-const RESERVED_NAMES = new Set(['CON', 'PRN', 'AUX', 'NUL', 'CONIN$', 'CONOUT$']);
-const ILLEGAL_CHARS = /[:*?<>|"]/;
-
-function validateName(name) {
-  if (name === '') return;
-  if (name.includes('\u0000')) throw new OpsError('INVALID_PATH', `Invalid path component ${JSON.stringify(name)}`);
-  if (name === '.' || name === '..') return;
-  if (process.platform !== 'win32') return;
-  const base = name.split('.')[0].trimEnd().toUpperCase();
-  const port = base.startsWith('COM') || base.startsWith('LPT') ? base.slice(3) : null;
-  if (
-    name.endsWith('.') || name.endsWith(' ') ||
-    ILLEGAL_CHARS.test(name) ||
-    RESERVED_NAMES.has(base) ||
-    (port !== null && /^[1-9¹²³]$/.test(port))
-  ) {
-    throw new OpsError('INVALID_PATH', `Reserved, ambiguous or device path component ${JSON.stringify(name)}`);
-  }
-}
-
-/**
- * 快速排除：99% 的路径在这一次正则里就判定"干净"，不做分割与逐段判断。
- * 命中任何可疑形状（冒号、非法字符、设备名、尾点/尾空格）才走慢路径精确判定 ——
- * 慢路径会给出确切的分量名，快路径只需要回答"有没有可能有问题"。
- */
-const SUSPECT_PATH = /[:*?<>|"\u0000]|(^|[\\/])(?:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|[\\/]|$)|[. ][\\/]|[. ]$/i;
-
-/** 逐分量校验；盘符（`K:`）作为第一段放过，其余走 validateName */
-function validatePath(raw) {
-  let s = String(raw);
-  // canonicalize / 超长路径会给出 verbatim 形式：`\\?\K:\...`、`\\?\UNC\srv\shr\...`。
-  // 原装把这两种归一后接受，`\\.\`（设备）一律拒绝 —— 跟着做。
-  if (s.startsWith('\\\\?\\')) {
-    const rest = s.slice(4);
-    if (/^UNC[\\/]/i.test(rest)) s = '\\\\' + rest.slice(4);
-    else if (/^[A-Za-z]:/.test(rest)) s = rest;
-    else throw new OpsError('INVALID_PATH', 'Device and verbatim paths are unsupported');
-  } else if (s.startsWith('\\\\.\\')) {
-    throw new OpsError('INVALID_PATH', 'Device and verbatim paths are unsupported');
-  }
-  if (process.platform !== 'win32' || !SUSPECT_PATH.test(s)) return;
-  const parts = s.split(/[\\/]+/);
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i];
-    if (i === 0 && /^[A-Za-z]:$/.test(part)) continue;
-    validateName(part);
-  }
-}
-
-/**
- * 路径围栏（opt-in）。传了 root 时：
- *   - 相对路径按 root 解析；
- *   - 绝对路径必须落在 root 内；
- *   - 越界返回 ESCAPE_ROOT，而不是靠上层自己记得校验。
- * path.relative 对 win32 的大小写与盘符差异已经做过归一，无需自己拼字符串。
- */
-function resolveTarget(filePath, root) {
-  validatePath(filePath);
-  if (!root) return filePath;
-  const base = path.resolve(root);
-  const target = path.resolve(base, filePath);
-  const rel = path.relative(base, target);
-  // 越界只有三种形状：'..'、'..' + 分隔符 开头、或绝对路径（跨盘符）。
-  // rel 为空表示目标就是 root 自身 —— 那是围栏内，让它落到 fstat 去报 NOT_A_FILE，
-  // 别用 ESCAPE_ROOT 撒谎。也不能写 startsWith('..')：root 下名为 '..foo' 的合法子目录
-  // 会算出 rel='..foo'，被误杀成越界（Windows 上 '..foo' 是合法目录名）。
-  if (rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) {
-    throw new OpsError('ESCAPE_ROOT', `路径越出 root 围栏：${filePath}`);
-  }
-  return target;
-}
-
-/**
- * 重解析点复核（仅 root 模式）。
- *
- * 词法围栏（path.resolve + path.relative）看不穿 symlink / junction：root 下放一个指向
- * 栏外的目录联接，算出来的 rel 是 'link/secret.txt'，看着在栏内，实际读到栏外。
- * 这里把真实路径再判一次，并且**用真实路径去 open** —— 判的和开的必须是同一个东西。
- * root 的 realpath 每批只算一次（记忆在 opts 上），单文件只多一次 syscall。
- */
-async function fenceRealPath(target, root, opts) {
-  if (!opts.rootReal) {
-    opts.rootReal = fsp.realpath(path.resolve(root));
-    opts.rootReal.catch(() => {});     // 失败时不让它变成 unhandledRejection，下次调用会重算
-  }
-  const realRoot = await opts.rootReal;
-  const realTarget = await fsp.realpath(target);
-  const rel = path.relative(realRoot, realTarget);
-  if (rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) {
-    throw new OpsError('ESCAPE_ROOT', `路径越出 root 围栏（重解析点指向栏外）：${target}`);
-  }
-  return realTarget;
-}
-
-/**
- * 重解析点拒绝（兼容层默认开，对齐原装 Rust `regular()` 的 open_nofollow）。
- *
- * junction 能把 'repo/link/secret.txt' 拼成一个词法上完全合法的路径，读到的却是栏外文件，
- * 而目录联接在 Windows 上不需要管理员权限就能建 —— 原装因此对每一级都做 symlink_metadata。
- * 这里同样逐级验证，但把代价压到最低：目录链走批级缓存，叶子与 open 并发。
- */
-const LINK_DENIED = 'Links, reparse points and special objects are not traversed; inspect the target path for the offending entry';
-
-/** 目录链校验：缓存的是**进行中的 promise**，不是结果。
- *  20 个文件同目录时，若只缓存布尔结果，它们会在缓存填好之前各自 lstat 一遍
- *  同一条目录链（实测 20×5=100 次）；缓存 promise 之后整批只付 5 次。 */
-function dirLinkCheck(dir, cache) {
-  let p = cache.get(dir);
-  if (!p) {
-    p = fsp.lstat(dir).then((st) => {
-      if (st.isSymbolicLink()) throw new OpsError('PATH_RESTRICTED', LINK_DENIED);
-    });
-    p.catch(() => {});                     // 主流程可能已经失败退出，别让缓存里的 rejection 冒泡
-    cache.set(dir, p);
-  }
-  return p;
-}
-
-async function assertParentDirs(target, opts) {
-  const cache = opts.linkCache || (opts.linkCache = new Map());
-  const dirs = [];
-  let dir = path.dirname(target);
-  for (;;) {
-    dirs.push(dir);
-    if (cache.has(dir)) break;
-    const up = path.dirname(dir);
-    if (up === dir) break;                 // 到盘符根：它自己也要验一次
-    dir = up;
-  }
-  await Promise.all(dirs.map((d) => dirLinkCheck(d, cache)));
-}
-
-/**
- * 叶子校验：与 open 并发发起，不额外占墙钟时间。
- * open 本来就要一次 syscall（几十微秒），lstat 挤在同一个窗口里完成；
- * 句柄已拿到但 lstat 说是链接时，由 finally 关掉再抛。
- */
-function startLeafCheck(target) {
-  const p = fsp.lstat(target);
-  p.catch(() => {});                       // 主流程可能先抛，别让它变成 unhandledRejection
-  return p;
-}
-
 /** 数一段文本里的换行数（full 模式算 lineCount，不需要留存全文） */
 function countNewlines(text) {
   let n = 0;
@@ -308,55 +165,6 @@ async function openWithRetry(target, opts, guard, deadline, isAbandoned) {
       await sleep(8 * (attempt + 1));   // 让其它协程先把 FD 还回来
     }
   }
-}
-
-/**
- * 跨调用读取缓存（LRU，进程内）。
- *
- * 同一文件在一次会话里被读两遍是常态（读一次、改一次、再读一次确认），而每次都重新付
- * open + fstat + read + 解码 + SHA-256 + 切行。open 与 fstat 必须每次都付 —— 它们是"这个
- * 文件现在是什么"的唯一凭据；能省的是它们之后那段，也就是真正贵的部分。
- *
- * 键里带着 dev:ino:size:mtime 与全部影响正文的开关（full/hash/normalize/stripBom/strictUtf8、
- * 行窗口、字符额度）。inode 拿不到（部分网络盘报 0）就不缓存 —— 没有身份就没有命中判断，
- * 宁可慢也不能给出旧正文。
- */
-const READ_CACHE_MAX_ENTRIES = 64;
-const READ_CACHE_MAX_CHARS = 8 << 20;
-const readCache = new Map();
-let readCacheChars = 0;
-let readCacheHits = 0;
-let readCacheMisses = 0;
-
-function readCacheGet(key) {
-  const hit = readCache.get(key);
-  if (hit === undefined) {
-    readCacheMisses++;
-    return undefined;
-  }
-  // LRU：命中即挪到队尾
-  readCache.delete(key);
-  readCache.set(key, hit);
-  readCacheHits++;
-  return hit.value;
-}
-
-function readCacheSet(key, value) {
-  const chars = (value.content ? value.content.length : 0)
-    + (value.rows ? value.rows.reduce((n, row) => n + row.length, 0) : 0);
-  if (chars > READ_CACHE_MAX_CHARS) return;      // 单个巨块不值得占着窗口
-  readCache.set(key, { value, chars });
-  readCacheChars += chars;
-  while (readCache.size > READ_CACHE_MAX_ENTRIES || readCacheChars > READ_CACHE_MAX_CHARS) {
-    const oldest = readCache.keys().next();
-    if (oldest.done) break;
-    readCacheChars -= readCache.get(oldest.value).chars;
-    readCache.delete(oldest.value);
-  }
-}
-
-function readCacheStats() {
-  return { entries: readCache.size, chars: readCacheChars, hits: readCacheHits, misses: readCacheMisses };
 }
 
 /** 单文件读取（async 路径）：open -> fstat -> 分块读（边解码边判闸门）。
@@ -791,358 +599,8 @@ async function parallelRead(filePaths, options = {}) {
   return result;
 }
 
-// ---------------------------------------------------------------------------
-// 兼容层：对齐原装 dsh-ops 0.4.1 `ops_read_files` 的入参/出参
-// ---------------------------------------------------------------------------
-
-/** 原装 read_files 的 schema 上限：1-32 个文件，limit 1-10000 */
-const COMPAT_MAX_FILES = 32;
-const COMPAT_MAX_LIMIT = 10000;
-// 4.1.5：默认不再按 200 行截断。200 行是原装的静默上限，270 行的文件因此少 70 行
-// 且 status 仍是 complete —— 模型看不到 nextOffset 提示就会漏内容，或者多花一轮补读。
-// 现在缺省 limit = COMPAT_MAX_LIMIT，真正的闸门只剩输出预算（128 KiB JSON）。
-const COMPAT_DEFAULT_LIMIT = COMPAT_MAX_LIMIT;
-
-/**
- * 原装的输出预算是 **JSON 字节** 128 KiB，策略是：
- *   按输入顺序累加，超预算时把"当前文件"按行削到刚好放得下，然后停；
- *   nextIndex = 已返回的文件数，pending = 剩余文件数。
- * 实测 20×16KB：返回 3 项 / 第 3 项 169 行（共 186）/ 响应体 98293 字节。
- * 上一版直接套用 native 的字符预算，结果第 9 个文件起整条 BUDGET_EXHAUSTED、
- * 第 8 个文件静默少 129 行且 nextIndex 恒等于 20（上层无法续读）——这是真缺陷。
- */
-const COMPAT_OUTPUT_BUDGET = 128 * 1024;
-
-/** 错误码映射：这里全部来自对原装 worker 的实测，不是猜的 */
-const ERROR_MAP = Object.freeze({
-  ENOENT: { code: 'NOT_FOUND', nextAction: 'Correct the request or inspect the manifest.', retryable: false },
-  ENOTDIR: { code: 'NOT_FOUND', nextAction: 'Correct the request or inspect the manifest.', retryable: false },
-  EACCES: { code: 'PERMISSION_DENIED', nextAction: 'Correct the request or inspect the manifest.', retryable: false },
-  EPERM: { code: 'PERMISSION_DENIED', nextAction: 'Correct the request or inspect the manifest.', retryable: false },
-  NOT_A_FILE: { code: 'INVALID_ARGUMENT', message: 'path is a directory; use ops_glob or ops_grep', nextAction: 'Correct the request or inspect the manifest.', retryable: false },
-  BINARY_FILE: {
-    code: 'ERR_INVALID_ENCODING',
-    message: 'File is not valid UTF-8',
-    nextAction: 'Use a dedicated document/binary reader, or inspect with view=hex; do not replace invalid bytes with lossy text.',
-    retryable: false,
-  },
-  UNSUPPORTED_ENCODING: { code: 'ERR_INVALID_ENCODING', nextAction: 'Use a dedicated document/binary reader; convert to UTF-8 first.', retryable: false },
-  FILE_TOO_LARGE: { code: 'INVALID_ARGUMENT', nextAction: 'Read a line range instead of the whole file.', retryable: false },
-  TIMEOUT: { code: 'TIMEOUT', nextAction: 'Retry, or read fewer files at once.', retryable: true },
-  EMFILE: { code: 'RESOURCE_EXHAUSTED', nextAction: 'Retry with a smaller batch.', retryable: true },
-  ENFILE: { code: 'RESOURCE_EXHAUSTED', nextAction: 'Retry with a smaller batch.', retryable: true },
-  ABORTED: { code: 'ABORTED', nextAction: 'Retry if the work is still needed.', retryable: false },
-  ESCAPE_ROOT: { code: 'ACCESS_DENIED', nextAction: 'Correct the request or inspect the manifest.', retryable: false },
-  // 以下三条按原装 Rust 侧实测码对齐：路径分量非法 -> INVALID_ARGUMENT（消息原样带出去），
-  // 非法 UTF-8 -> ERR_INVALID_ENCODING "File is not valid UTF-8"，链接 -> PATH_RESTRICTED。
-  INVALID_PATH: { code: 'INVALID_ARGUMENT', nextAction: 'Correct the request or inspect the manifest.', retryable: false },
-  INVALID_UTF8: { code: 'ERR_INVALID_ENCODING', message: 'File is not valid UTF-8', nextAction: 'Use a dedicated document/binary reader, or inspect with view=hex; do not replace invalid bytes with lossy text.', retryable: false },
-  PATH_RESTRICTED: { code: 'PATH_RESTRICTED', nextAction: 'Inspect the target path for the offending entry.', retryable: false },
-});
-
-/** 把内层错误折成原装 error 对象的形状（多出 effectState / phase / retryable / nextAction） */
-function toCompatError(error, fallbackMessage) {
-  const mapped = ERROR_MAP[error && error.code] || {};
-  return {
-    code: mapped.code || (error && error.code) || 'UNKNOWN',
-    message: mapped.message || (error && error.message) || fallbackMessage || 'unknown error',
-    phase: 'preflight',
-    effectState: 'none',
-    retryable: mapped.retryable === true,
-    nextAction: mapped.nextAction || 'Correct the request or inspect the manifest.',
-  };
-}
-
-/**
- * 入参校验：对齐原装 schema（1-32 条、offset >= 1、limit 1..10000）。
- * 原装对非法入参是**整批拒绝**并返回 INVALID_ARGUMENT，不是逐条容错；
- * 兼容层必须一致，否则上层拿到的是"被悄悄纠正过的参数"而不是纠正信号。
- */
-function validateCompatInput(files) {
-  if (!Array.isArray(files) || files.length === 0 || files.length > COMPAT_MAX_FILES) {
-    return 'read_files: files must contain 1-32 items';
-  }
-  for (const f of files) {
-    if (typeof f === 'string') { if (f === '') return 'read_files: each item needs a non-empty path string'; continue; }
-    if (f === null || typeof f !== 'object' || typeof f.path !== 'string' || f.path === '') {
-      return 'read_files: each item needs a non-empty path string';
-    }
-    if (f.offset !== undefined && (!Number.isInteger(f.offset) || f.offset < 1)) {
-      return 'read_files: read_files offset starts at 1 and limit is 1-10000';
-    }
-    if (f.limit !== undefined && (!Number.isInteger(f.limit) || f.limit < 1 || f.limit > COMPAT_MAX_LIMIT)) {
-      return 'read_files: read_files offset starts at 1 and limit is 1-10000';
-    }
-  }
-  return null;
-}
-
-/** 只算 JSON 体积，不真的拼字符串（拼 128KB 字符串 ×32 次才是浪费） */
-function jsonBytes(value) {
-  return Buffer.byteLength(JSON.stringify(value), 'utf8');
-}
-
-/**
- * 单个文件 -> 原装 item 形状。room 是本文件可用的 JSON 字节额。
- * 放不下整页时按字节前缀二分（不构造中间对象），返回 null 表示一行都放不下。
- */
-function compatItem(f, r, room) {
-  // 展示路径统一成 POSIX：原生 worker 回的是 Windows 反斜杠，在 JSON 里每个分隔符都变成
-  // 两个字节，且与 symbol_map / ptc 的「相对 cwd + POSIX」口径不一致 —— 模型拿回执里的
-  // 路径当下一次调用的入参时要跨两套写法。I/O 仍用原始 f.path。
-  const shown = f.path.replace(/\\/g, '/');
-  if (!r || r.status !== 'success') {
-    const e = {
-      path: shown, status: 'error', complete: false, items: [],
-      error: toCompatError(r && r.error, 'missing result'),
-    };
-    let bytes = jsonBytes(e);
-    // 错误条目没有行可削，此前**完全不看 room** 就直接返回：一条 3000 字符的路径
-    // 能让 maxOutputBytes=2048 的调用吐出 6.6KB，预算契约当场失效。
-    // 这里按 message 折半缩，把整包拉回预算内。path 本身超预算（极端长路径）时仍然返回 ——
-    // 宁可超一点也不能不返回，否则 nextIndex 原地不动，上层按它续读会死循环。
-    if (bytes > room) {
-      const base = e.error.message;
-      let keepLen = base.length;
-      while (bytes > room && keepLen > 8) {
-        keepLen >>= 1;
-        e.error.message = base.slice(0, keepLen) + '…';
-        bytes = jsonBytes(e);
-      }
-    }
-    return [e, bytes];
-  }
-
-  const page = r.rows || [];
-  const total = r.lineCount == null ? page.length : r.lineCount;
-  const skeleton = (n) => ({
-    path: shown,
-    status: 'completed',
-    bytes: r.bytes,
-    revision: r.revision,
-    lineCount: total,
-    // 原装语义：complete = "这一页之后没有剩余行了"
-    complete: !r.truncated && f.offset + n > total,
-    truncated: r.truncated || r.rowsClipped || n < page.length,
-    skipped: f.offset - 1,
-    omitted: Math.max(0, total - (f.offset - 1) - n),
-    matched: total,
-    total,
-    failed: 0,
-    changed: 0,
-    phase: 'verify',
-    nextOffset: f.offset + n,
-  });
-  const make = (n) => ({
-    ...skeleton(n),
-    items: page.slice(0, n).map((text, i) => ({ line: f.offset + i, path: shown, text })),
-  });
-
-  // 每行 JSON 字节前缀和：每条一次小 stringify（行级，几 KB），不是整页 128KB。
-  // 旧实现按 33+路径字节 估算每行开销，遇到转义密集/中文行会估低 2-4 倍，而修正循环
-  // 每退一行就重序列化**整页**：1.2MB 的引号文件实测 38.6ms，比把文件读进来还贵 30 倍。
-  const prefix = new Float64Array(page.length + 1);
-  for (let i = 0; i < page.length; i++) {
-    prefix[i + 1] = prefix[i] + Buffer.byteLength(
-      JSON.stringify({ line: f.offset + i, path: shown, text: page[i] }), 'utf8');
-  }
-  // n 行的精确字节数 = 骨架去掉尾括号 + ',"items":' + 数组本体
-  // 数组本体：n=0 是 "[]"；n>=1 是 "[" + 各行 + (n-1) 个逗号 + "]"
-  const sizeOf = (n) => Buffer.byteLength(JSON.stringify(skeleton(n)), 'utf8') - 1 + 9
-    + (n === 0 ? 2 : prefix[n] + n + 1);
-
-  const full = make(page.length);
-  if (sizeOf(page.length) <= room) return [full, jsonBytes(full)];
-
-  let lo = 0;
-  let hi = page.length;
-  let best = 0;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (sizeOf(mid) <= room) { best = mid; lo = mid + 1; } else hi = mid - 1;
-  }
-  // omitted / nextOffset 的数字位数会变，sizeOf 不是严格单调，二分后小幅校正（每步只算骨架）
-  while (best > 0 && sizeOf(best) > room) best--;
-  while (best < page.length && sizeOf(best + 1) <= room) best++;
-  const entry = make(best);
-  if (best > 0) {
-    const b = jsonBytes(entry);
-    return b > room ? null : [entry, b];
-  }
-
-  // 一行都放不下（单行 1MB 这类）：按**行内截断**交付前缀，并把 nextOffset 停在原行 ——
-  // 对齐原装的 item.nextAction + line.truncatedInLine + bytesOmitted/bytesTotal。
-  // 直接返回 0 行会让上层 nextOffset 原地打转、永远拿不到内容，是死循环式的假成功。
-  if (page.length === 0) {
-    const b = jsonBytes(entry);
-    return b > room ? null : [entry, b];
-  }
-  const lineText = page[0];
-  const totalBytes = r.size;
-  const build = (n) => {
-    const text = cutChars(lineText, n);
-    const item = {
-      ...make(0),
-      complete: false,
-      truncated: true,
-      omitted: 1,
-      nextOffset: f.offset,
-      nextAction: 'A line was cut by the output budget. Inspect this file with view=hex and page its 16-byte rows; nextOffset retains the incomplete line, so text paging alone cannot recover its suffix.',
-    };
-    item.items = [{
-      line: f.offset,
-      path: shown,
-      text,
-      truncatedInLine: true,
-      bytesOmitted: totalBytes == null ? 0 : Math.max(0, totalBytes - Buffer.byteLength(text)),
-      bytesTotal: totalBytes,
-    }];
-    return item;
-  };
-  let lo2 = 0;
-  let hi2 = lineText.length;
-  let bestN = 0;
-  while (lo2 <= hi2) {
-    const mid = (lo2 + hi2) >> 1;
-    if (jsonBytes(build(mid)) <= room) { bestN = mid; lo2 = mid + 1; } else hi2 = mid - 1;
-  }
-  if (bestN === 0) return null;
-  const cut = build(bestN);
-  return [cut, jsonBytes(cut)];
-}
-
-/**
- * 兼容层：折成原装 dsh-ops `ops_read_files` 的 items 形状，方便原位替换。
- *
- * 原装契约（0.4.1 实测）：
- *   files: [{ path, offset >= 1, limit 1..10000 默认整文件（受 128 KiB 输出预算约束） }]（1-32 条）
- *   -> { status, complete, total, matched, failed, pending, nextIndex, truncated, effectState, items }
- *   items[]: { path, status, bytes, revision, lineCount, complete, truncated, skipped, omitted,
- *              matched, total, failed, changed, phase, nextOffset, items:[{line,path,text}] }
- *
- * 与内层 native 的差异点（全部按实测对齐，不是按文档猜的）：
- *   - text 去掉行尾 \r（CRLF 文件原装给的是 "line1"，不是 "line1\r"）；
- *   - lineCount 不数结尾伪空行（"x\n" × 5 = 5 行）；
- *   - nextOffset = offset + 本次实际返回行数，而不是 offset + limit；
- *   - complete 表示"整个文件都在这一页里"，不是"没报错"；
- *   - ENOENT -> NOT_FOUND，二进制 -> ERR_INVALID_ENCODING，目录 -> INVALID_ARGUMENT；
- *   - revision 用 SHA-256（原装同算法），代价是必须读到 EOF，只在这一层付；
- *   - 输出按 128KiB JSON 字节结算，超预算时**行级削减**并把 nextIndex 指回未返回的文件。
- */
-async function readFilesCompat(files, options = {}) {
-  const invalid = validateCompatInput(files);
-  if (invalid) {
-    return {
-      status: 'error',
-      error: {
-        code: 'INVALID_ARGUMENT', message: invalid, phase: 'preflight',
-        effectState: 'none', retryable: false, nextAction: 'Correct the request or inspect the manifest.',
-      },
-    };
-  }
-
-  // 入参归一一次，避免并发池和结算各算一遍 offset/limit
-  const list = files.map((f) => {
-    const o = typeof f === 'string' ? { path: f } : f;
-    return {
-      path: o.path,
-      offset: Math.max(1, Math.floor(o.offset || 1)),
-      limit: Math.min(COMPAT_MAX_LIMIT, Math.max(1, Math.floor(o.limit || COMPAT_DEFAULT_LIMIT))),
-    };
-  });
-  // 兼容层比 native 严三处，全部对齐原装实测行为：
-  //   strictUtf8 —— 非法 UTF-8 / UTF-16 一律 ERR_INVALID_ENCODING（原装不做有损替换）
-  //   allowLinks:false —— symlink / junction 不跟随（原装每级 open_nofollow）
-  //   maxFileSize —— 原装**没有** 2MB 上限：3MB / 30MB 文件带 offset/limit 照读（实测 30MB 72ms）。
-  //     native 入口保留 2MB 闸门（那是给 AI 直读整篇设计的），但替换路径若有大小限制，
-  //     所有 >2MB 的日志 / 构建产物当场变成 INVALID_ARGUMENT —— 这是替换后才会暴露的回归。
-  const opts = normalizeOptions({
-    strictUtf8: true,
-    allowLinks: false,
-    ...options,
-    stripBom: options.stripBom === true,   // 默认与原装一致：保留 BOM
-    normalize: options.normalize === true,  // 默认与原装一致：不清洗，键与正文都逐字节一致
-    maxFileSize: options.maxFileSize > 0 ? options.maxFileSize : Number.MAX_SAFE_INTEGER,
-    full: true,
-    hash: true,
-  });
-  // 链接检查的批级缓存：32 个文件通常同目录，逐级 lstat 只该付一次
-  const linkCache = new Map();
-  // 扣掉外层固定字段，保证整包 JSON 不越 128KiB。
-  // 下限 2KiB：预算小到连一个空 item 的骨架都放不下时，整批会返回 0 项且 nextIndex 不动，
-  // 上层按 nextIndex 续读会原地打转 —— 宁可给一个能推进的最小额度。
-  const budget = Math.max(2048, (options.maxOutputBytes > 0 ? options.maxOutputBytes : COMPAT_OUTPUT_BUDGET) - 1024);
-
-  const items = [];
-  let used = 0;
-  // 分批读：原装"边读边结算、预算满即停"，20×1MB 只读 1 个文件。一次并发 20 个会把
-  // 20MB 全读进来，所以首批保守只开 8 个；固定 4 个的代价是 20×2KB 全部放得下时
-  // 要跑 5 轮串行 await。自适应：用"已返回项的平均 JSON 字节"反推剩余预算还装得下几个。
-  //
-  // 上限默认放到 COMPAT_MAX_FILES 而不是 opts.concurrency：这个入口的契约本来就限死 32 个
-  // 文件（validateCompatInput 已拦），FD 峰值天然 <= 32，远低于任何系统的 soft limit。
-  // 实测 20×2KB 保 10 个上限要 2 轮（0.72ms），放到 20 就 1 轮（0.67ms）。
-  // 显式传了 concurrency 就尊重调用方（想要串行就给 1）。
-  const maxBatch = Number.isFinite(opts.concurrency) && opts.concurrency > 0
-    ? Math.max(1, Math.min(COMPAT_MAX_FILES, opts.concurrency))
-    : COMPAT_MAX_FILES;
-  let batch = Math.min(maxBatch, 4);
-  let cursor = 0;
-
-  outer:
-  while (cursor < list.length) {
-    if (used >= budget) break;
-    const slice = list.slice(cursor, cursor + batch);
-    const win = (f) => ({ from: f.offset, to: f.offset + f.limit - 1, maxBytes: budget });
-    // slice 的长度已经被 batch 限住（<= 32），这里不需要池：runPool 的 10 个 worker 协程
-    // 共享游标换来的只是"限并发"，而并发上限已经由 slice.length 保证。直接 all 省掉
-    // 一层闭包 + 游标自增 + 结果回填（实测 20×2KB 再快 6%）。
-    const raw = await Promise.all(
-      slice.map((f) => readOne(f.path, { ...opts, lineWindow: win(f), linkCache }, Date.now()))
-    );
-
-    for (let k = 0; k < slice.length; k++) {
-      if (used >= budget) break outer;
-      // compatItem 把算好的字节数一起带回来：主循环再 stringify 一次等于把每个文件
-      // 序列化两遍（CPU profile 里 jsonBytes 占 12.4%，一半是这次重复）
-      const packed = compatItem(slice[k], raw[k], budget - used);
-      if (!packed) break outer;                   // 连一行都放不下，留给下一批
-      const entry = packed[0];
-      items.push(entry);
-      used += packed[1];
-      if (entry.truncated) break outer;           // 当前文件被削过，预算已到边
-    }
-    cursor += slice.length;
-
-    if (items.length > 0 && used < budget) {
-      const avg = used / items.length;
-      batch = Math.max(1, Math.min(opts.concurrency, Math.ceil((budget - used) / avg)));
-    }
-  }
-
-  const failed = items.filter((i) => i.status !== 'completed').length;
-  const truncated = items.some((i) => i.truncated);
-  const complete = items.length === list.length && failed === 0 && !truncated && items.every((i) => i.complete);
-  const out = {
-    status: complete ? 'completed' : 'partial',
-    complete,
-    total: list.length,
-    matched: items.length - failed,     // 原装语义：顶层 matched = 成功返回的文件数，不是条目数
-    failed,
-    changed: 0,                          // 原装顶层有这个字段（恒 0），缺了会让严格 diff 的上层报字段缺失
-    pending: list.length - items.length,
-    nextIndex: items.length,
-    truncated,
-    effectState: 'none',
-    phase: 'verify',
-    items,
-  };
-  // 原装只在"没读完"时给顶层 nextAction；completed 时该字段根本不存在
-  if (!complete) {
-    out.nextAction = "Resume remaining files from nextIndex. Follow each file's nextOffset for more lines; for truncatedInLine use that file's hex inspection guidance.";
-  }
-  return out;
-}
+// 兼容层需要主引擎的读取原语；注入而不是让它反向 require 本文件（否则成环）
+const { readFilesCompat } = createCompat({ readOne, normalizeOptions, cutChars });
 
 module.exports = {
   parallelRead,
@@ -1155,5 +613,5 @@ module.exports = {
   DEFAULTS,
   TRUNCATED_MARK,
   readCacheStats,
-  clearReadCache: () => { readCache.clear(); readCacheChars = 0; readCacheHits = 0; readCacheMisses = 0; },
+  clearReadCache,
 };

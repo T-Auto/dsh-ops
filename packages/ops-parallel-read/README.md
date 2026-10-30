@@ -4,13 +4,20 @@
 
 ```
 packages/ops-parallel-read/
-├── src/ops_parallel_read.js   实现（零依赖 CommonJS）
+├── src/ops_parallel_read.js   主入口：并发池、解码闸门、字符预算、缓存（617 行）
+├── src/compat.js              dsh-ops `ops_read_files` 兼容层（工厂注入，零 require，393 行）
+├── src/paths.js               路径校验、反重解析点围栏（180 行）
+├── src/read-cache.js          跨调用读取缓存（76 行）
+├── src/errors.js              OpsError（21 行）
 ├── src/index.d.ts             类型声明
 ├── test/                      冒烟与清洗用例
 ├── docs/                      审计与修补记录
 ├── package.json
 └── README.md
 ```
+
+没有一个文件超过 1000 行；`compat.js` 通过 `createCompat({ readOne, normalizeOptions, cutChars })`
+从主入口拿三个函数，所以两边没有循环 require。
 
 ```bash
 cd packages/ops-parallel-read && npm test
