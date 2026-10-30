@@ -1,68 +1,8 @@
-# 审计报告 — ops-symbol-map 20261029.4
+# 审计报告 — ops-symbol-map 20261029
 
-范围：`ops_symbol_map` 并入 dsh-ops 后的第四轮审计。这一轮修的是「包在盘上、工具说没有」：
-`dsh-ops/package.json` 的 `dependencies` 是 `null`，语法包只在包自己的 `optionalDependencies`
-里声明过，所以任何一次清 `node_modules` 都会让工具报 `E_ENGINE_UNAVAILABLE`。
+范围：`ops_symbol_map` 并入 dsh-ops 后的第三轮审计。这一轮把「检查时没有链接」补成「读取时不可能有链接」，并补上一直缺的 manifest。
 
-历史轮次：20261029.3（过滤后分页统计）、20261029（`realpath` 收口 + manifest + 512）见文末各节。
-
-## 0. 本轮结论（20261029.4）
-
-| 项 | 20261029.3 | 20261029.4 |
-| --- | --- | --- |
-| 语法包解析锚点 | 1（包根） | **2**（包根 → `vendor/deps`） |
-| `pnpm install` 清空 nested 后 | `E_ENGINE_UNAVAILABLE` | 回退 `vendor/deps`，照常工作 |
-| 第一锚点命中时的行为 | — | 逐字节不变，无额外 syscall |
-| 回退发生时机 | — | 仅首次加载，不在每次调用 |
-| `DSH_OPS_SYMBOL_MAP_ROOT` | 覆盖包根 | 仍优先于两个锚点 |
-
-## 1. 缺陷：依赖是 `null`，于是重装就等于卸载
-
-`grammar.ts` 原本只有一条锚点：
-
-```ts
-const anchor = path.join(override ?? PACKAGE_ROOT, 'package.json')
-engine = createRequire(anchor)
-```
-
-这条锚点找的是 `dsh-ops/node_modules`。而 `dsh-ops/package.json` 的 `dependencies` 至今是
-`null` —— 三个语法包从来没被写进宿主 manifest，只是手工装进去的。一次
-`pnpm install --frozen-lockfile`、一次换机、一次 `rm -rf node_modules`，工具立刻变成
-`EXECUTOR_UNAVAILABLE`，而 `vendor/deps` 里那份完好的副本一直没被看过。
-
-改成按序试两个锚点：
-
-```ts
-const ENGINE_ANCHORS: readonly string[] = Object.freeze([
-  path.join(PACKAGE_ROOT, 'package.json'),
-  path.join(PACKAGE_ROOT, 'vendor', 'deps', 'package.json'),
-])
-
-function engineLoad(name: string): unknown {
-  let last: unknown
-  for (const chunk of engineAnchors()) {
-    try { return chunk(name) } catch (error) { last = error }
-  }
-  throw last
-}
-```
-
-`GRAMMAR_LOADERS` 的三个 thunk 与 `parserConstructor()` 的 `tree-sitter` 本体全部改走
-`engineLoad`；`engineRequire()` 保留，但只作为第一锚点的快捷方式。`anchors` 缓存一次
-`createRequire`，第二个锚点不在热路径上。
-
-**为什么不改宿主 manifest**：那是上游仓库的事，要等合并、要过 review，而且下一次 `pnpm install`
-仍可能按 lockfile 把它抹掉。让包自己带一份，代价是磁盘，收益是「重装之后什么都不发生」。
-
-| 项 | 说明 |
-| --- | --- |
-| 第一锚点命中 | 与 20261029.3 逐字节一致，无额外 syscall |
-| 回退代价 | 一次失败的 `require`（`MODULE_NOT_FOUND`）+ 一次成功，只发生在首次加载 |
-| 错误保真 | 最后一个错误原样重抛，仍能区分「模块不存在」与「原生 binding 坏了」 |
-| 平台 | `vendor/deps` 只带 win32-x64 prebuild；换平台要重裁一份，锚点不用改 |
-| 类型检查 | `tsc --noEmit` 只报 `../paths.js`（本包是 source drop），`grammar.ts` 本身零语法错误 |
-
-## 2. 结论（20261029.3）
+## 1. 结论
 
 | 项 | 20261028 | 20261029 |
 | --- | --- | --- |

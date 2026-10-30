@@ -1,9 +1,37 @@
+# ops-symbol-map：目录结构
+
+这个包在仓库里是 `packages/ops-symbol-map/`，**源码直接可读，不再以压缩包形式提交**。
+
+```
+packages/ops-symbol-map/
+├── src/                     源代码（Tree-sitter 符号表引擎 + dsh-ops 适配层）
+├── test/verify.mjs          落位校验：把 src/ 覆盖到宿主 src/ 上跑 tsc
+├── bench/symbol-map/        基准脚本
+├── docs/                    审计、技术说明、历史对比
+├── package.json
+└── README.md
+```
+
+`src/` 下的相对路径镜像 `dsh-ops/src/`：`src/file/symbol-map.ts` 就是宿主同路径文件的替换件，
+`src/symbol-map/` 是引擎本体。`src/symbol-map/grammar.ts` 会 `import '../paths.js'`、
+`src/file/symbol-map.ts` 会 `import '../worker-boundary.js'` —— 这些由宿主提供，包内不复制，
+所以**编译只能在落位之后做**：
+
+```bash
+cd packages/ops-symbol-map
+SYMBOL_MAP_DEPS=<含 typescript 的 node_modules> npm test
+```
+
+发布产物（`.tar.gz`）由 release 构建生成，不进仓库。
+
+---
+
 # ops_symbol_map — 只给行号的符号地图
 
 > **20261029.4**：语法包改为双锚点解析 —— 先包根 `node_modules`，缺失才回退 `vendor/deps`
 > （win32-x64 prebuild，`dsh-ops` 自带）。`dsh-ops/package.json` 的 `dependencies` 是 `null`，
 > 一次 `pnpm install` 就会清空 nested 依赖并让工具报 `E_ENGINE_UNAVAILABLE`；回退后重装不再
-> 影响可用性，命中第一锚点时行为与 20261029.3 逐字节一致。详见 [FIXES.md](FIXES.md)。
+> 影响可用性，命中第一锚点时行为与旧版逐字节一致。详见 [FIXES.md](FIXES.md)。
 >
 > **20261029.3**：`name` 过滤后的 `total` / `omitted` / `nextOffset` 改报**过滤后**的集合
 > （200 符号里 `name:"f15"` 由 `total:200, omitted:50` 变 `total:11, omitted:10`）。
