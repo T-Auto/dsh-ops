@@ -12,7 +12,7 @@ use std::{
 use winapi::shared::ntdef::{OBJECT_ATTRIBUTES, UNICODE_STRING};
 use windows_permissions::{
     LocalBox, SecurityDescriptor,
-    constants::{SeObjectType::SE_FILE_OBJECT, SecurityInformation as Info},
+    constants::{AceFlags, AceType, SeObjectType::SE_FILE_OBJECT, SecurityInformation as Info},
     wrappers,
 };
 use windows_sys::Win32::{
@@ -185,6 +185,50 @@ pub fn verify_cache(file: &File, write_sid: Option<&str>) -> io::Result<()> {
     let actual_dacl = sddl(&actual)?.to_string_lossy().split("D:").nth(1).unwrap_or("").replace("AI", "");
     let expected = sddl(&private)?.to_string_lossy().into_owned();
     if actual_dacl != expected.trim_start_matches("D:") { return Err(unsupported("Private creation DACL verification failed")); }
+    Ok(())
+}
+
+/// Give a just-published object the grants it would have inherited from `parent`.
+///
+/// Staging objects are created with a protected, creator-only DACL so partial bytes are
+/// never readable by anyone else. That protection must not outlive publication: a file
+/// left with only the creator's ACE ignores every other grant the directory carries,
+/// including the confined token that owns the workspace, so the file cannot even be
+/// unlinked by the sandbox that wrote it. Only object-inherit ACEs reach a non-container
+/// child; the creator keeps full control so publication never narrows its own access.
+pub fn adopt_parent_dacl(parent: &File, child: &File) -> io::Result<()> {
+    let parent_sd = descriptor(parent)?;
+    let Some(granted) = parent_sd.dacl() else {
+        // A null directory DACL grants everyone; the private DACL is the safe reading.
+        return Ok(());
+    };
+    let creator = windows_permissions::utilities::current_process_sid()?;
+    let mut aces = format!("(A;;FA;;;{creator})");
+    for index in 0..granted.len() {
+        let Some(ace) = granted.get_ace(index) else { continue };
+        if !ace.flags().contains(AceFlags::ObjectInherit) { continue; }
+        let kind = match ace.ace_type() {
+            AceType::ACCESS_ALLOWED_ACE_TYPE => 'A',
+            AceType::ACCESS_DENIED_ACE_TYPE => 'D',
+            // Object and callback ACEs carry GUID scoping this rebuild would drop.
+            _ => continue,
+        };
+        let Some(sid) = ace.sid() else { continue };
+        let sid = wrappers::ConvertSidToStringSid(sid)?;
+        aces.push_str(&format!("({kind};;0x{:x};;;{})", ace.mask().bits(), sid.to_string_lossy()));
+    }
+    let mut adopted: LocalBox<SecurityDescriptor> = format!("D:{aces}").parse()?;
+    // SAFETY: adopted is a live OS-owned descriptor, child is a borrowed live handle.
+    let result = unsafe {
+        SetKernelObjectSecurity(
+            child.as_raw_handle(),
+            Info::Dacl.bits(),
+            &mut *adopted as *mut _ as *mut _,
+        )
+    };
+    if result == 0 {
+        return Err(io::Error::last_os_error());
+    }
     Ok(())
 }
 

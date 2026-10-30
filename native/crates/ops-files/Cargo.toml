@@ -20,5 +20,8 @@ uuid = { version = "1.26", features = ["v4"] }
 [target.'cfg(windows)'.dependencies.dsh-ops-windows-metadata]
 path = "../../windows-metadata"
 
+[target.'cfg(windows)'.dev-dependencies]
+windows-permissions = "=0.2.4"
+
 [target.'cfg(target_os = "macos")'.dependencies.dsh-ops-darwin-metadata]
 path = "../../darwin-metadata"
