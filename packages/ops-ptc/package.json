@@ -1,0 +1,65 @@
+{
+  "name": "ops-ptc",
+  "version": "2.1.1",
+  "description": "进程内 AST 重构引擎：@ast-grep/napi + 分级寻址 + 语法级审计，默认零外部二进制",
+  "keywords": [
+    "ast-grep",
+    "codemod",
+    "refactor",
+    "ast",
+    "tree-sitter",
+    "mcp",
+    "dsh-ops"
+  ],
+  "license": "MIT",
+  "main": "dist/ptc/index.js",
+  "types": "dist/ptc/index.d.ts",
+  "bin": {
+    "ops-ptc": "dist/ptc/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/ptc/index.d.ts",
+      "require": "./dist/ptc/index.js",
+      "default": "./dist/ptc/index.js"
+    },
+    "./inproc": {
+      "types": "./dist/ptc/inproc.d.ts",
+      "require": "./dist/ptc/inproc.js",
+      "default": "./dist/ptc/inproc.js"
+    },
+    "./tools": {
+      "types": "./dist/ptc/tools.d.ts",
+      "require": "./dist/ptc/tools.js",
+      "default": "./dist/ptc/tools.js"
+    },
+    "./mcp": "./dist/ptc/mcp.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "src",
+    "vendor",
+    "README.md",
+    "docs"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepack": "node scripts/build.mjs",
+    "pretest": "node scripts/build.mjs",
+    "presmoke": "node scripts/build.mjs",
+    "smoke": "node test/smoke.mjs",
+    "smoke:mcp": "node test/mcp-smoke.mjs",
+    "smoke:inproc": "node test/inproc-smoke.mjs",
+    "test:host": "node test/host-compat-smoke.mjs --ops-root ..",
+    "test:regression": "node test/safety-regression.mjs && node test/ast-regression.mjs && node test/worker-regression.mjs && node test/protocol-regression.mjs && node test/pipeline-regression.mjs && node test/mode-audit-regression.mjs && node test/audit-root-cache-regression.mjs && node test/safe-write-cleanup-regression.mjs && node test/mode-audit-regression.mjs",
+    "verify": "npm run smoke && npm run smoke:mcp && npm run smoke:inproc && npm run test:regression",
+    "mcp": "node dist/ptc/mcp.js"
+  },
+  "dependencies": {
+    "@ast-grep/napi": "^0.51.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

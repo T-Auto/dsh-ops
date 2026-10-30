@@ -1,7 +1,7 @@
 # ops-ptc
 
 > **2.1.1**：修一个真事故 —— `proc.js` 的七个函数曾被改写成 `function safeStr($$$) { try {`
-> 并压成单行，`async` 一起丢掉，模块直接加载失败，`ops_ptc_find` / `ops_ptc_refactor` 的枚举段
+> 并压成单行，`async` 一起丢掉，模块直接加载失败，`ops_ptc_find` / `ops_ptc_refactor` 枚举段
 > 整体不可用。`checkedWrite` 现在先过一道占位符闸门（`E_INPROC_UNRESOLVED_PLACEHOLDER`），
 > 未解析的 `$$$` 不落盘。另加 `engine-load.js` 双锚点，`pnpm install` 清空 `node_modules` 后
 > 从 `vendor/deps` 回退，不再报 `E_ENGINE_UNAVAILABLE`。详见 [FIXES.md](FIXES.md)。
@@ -147,10 +147,10 @@ node dist/ptc/mcp.js    # NDJSON JSON-RPC，stdout 只有协议帧，日志走 s
 | 工具 | 作用 | 必填 |
 | --- | --- | --- |
 | `ops_ptc_refactor` | 五段全跑（或 preview） | `symbol` `pattern` `rewrite`，无 `file` 时需 `query` |
-| `ops_ptc_find` | 寻址 + 符号切片，只读 | `query`（`symbol` 可选，缺省只做文件发现） |
+| `ops_ptc_find` | 寻址 + 符号切片，只读 | `query` `symbol` |
 | `ops_ptc_audit` | 两个文件的结构 diff，只读 | `file` `beforeFile` |
 | `ops_ptc_inproc` | 进程内 AST 改写与审计 | `pattern` `rewrite` |
-| `ops_ptc_locate` | 进程内符号定位 | `symbol`（可选 `body`：`true`/数字/`false`） |
+| `ops_ptc_locate` | 进程内符号定位 | `symbol` |
 
 返回值固定形状（成功）：
 
@@ -160,42 +160,11 @@ node dist/ptc/mcp.js    # NDJSON JSON-RPC，stdout 只有协议帧，日志走 s
   "hunks": 1, "addedLines": 1, "removedLines": 1,
   "summary": "test3.js：1 个语法 hunk，1 处改写，+1/-1 行（TypeScript）",
   "stages": ["everything", "sane", "astgrep", "difftastic", "agentbox"],
-  "ms": 412
+  "savedTokensRatio": 0.87, "ms": 412
 }
 ```
 
 失败固定形状：`{status:"error", code, stage, message, mode, stages, rollback}`。`code` 即熔断原因，不抛栈、不回显源码。
-
-## 变更（2.1.1，写盘闸门 / 引擎自持 / 陈旧索引兜底）
-
-**A. `checkedWrite` 会把未解析的占位符写进源码（真事故）。** `proc.js` 的七个函数被改写成
-`function safeStr($$$) { try {` 这种形状：函数体压成单行、`async` 一起丢掉。`require('./proc')`
-直接抛 `await is only valid in async functions`，`pickBin` / `run` / `readRange` 全部不可用 ——
-`ops_ptc_find` 与 `ops_ptc_refactor` 的枚举段整体失效。`ptc_locate` 走 inproc 分支，所以这个
-破损在前几轮审计里一直没被撞上。
-
-成因是改写模板里的 `$$$`（ast-grep 的多节点占位符）没被解析就随 `after` 落盘。闸门加在
-`checkedWrite` 的最前面，在拿锁之前：
-
-```js
-const PLACEHOLDER_LEAK =
-  /function\s+\$\$\$|class\s+\$\$\$|=>\s*\$\$\$|\(\s*\$\$\$\s*[,)]|(?:const|let|var)\s+\$\$\$\s*=/;
-```
-
-命中即 `E_INPROC_UNRESOLVED_PLACEHOLDER`，不写盘、不留锁、不建临时文件。占位符只可能出现在
-字符串字面量里（`inproc.js` 的 pattern 数组就是），一旦落在声明名或参数位就必然是污染，与任何
-合法源码零重叠。
-
-**B. `engine-load.js` 双锚点。** `dsh-ops/package.json` 的 `dependencies` 是 `null`，一次
-`pnpm install` 就清掉 `dsh-ops/node_modules`，语法包随之消失、工具报 `E_ENGINE_UNAVAILABLE`，
-而包还好端端躺在 `vendor/deps` 里。`astdiff.js` / `inproc.js` / `pipeline.js` 的
-`require('@ast-grep/napi')` 全部改走 `require('./engine-load').napi`，按序试两个锚点：包根
-`node_modules` → `vendor/deps`。第一锚点命中时行为与 2.1.0 逐字节一致；回退只发生在首次加载。
-
-**C. Everything 索引「部分陈旧」时补一次 walk。** 索引命中了旧文件、漏了新建文件时枚举非空，
-原有的零命中兜底不会触发，工具报「符号不存在」而文件就在盘上。locate 主体改成
-`for (let pass = 0; ; pass++)`，`retryViaWalk()` 仅在 `pass === 0 && !file && via === 'everything'`
-为真，第二遍强制 `walk` 并 `refresh`；成功路径一分不付。
 
 ## 变更（2.1.0，命中正文附赠 / 回执闸门 / 字段瘦身 / 引擎懒加载）
 
@@ -221,10 +190,10 @@ const PLACEHOLDER_LEAK =
 `savedTokensRatio` 同步删除。
 
 **D. 引擎懒加载。** `ptc-engine` 一被 `require` 就把 `@ast-grep/napi`（原生 `.node`）拉进进程；
-而宿主 `capabilities/file.js` 为了读 `inputSchema` 直接 require 引擎，该模块在每个会话启动时都被
-import —— 从没调过 PTC 工具的会话也在付这笔账。实测 **19.01 ms**。改为 `dist/ptc/schema.json`
-单独承载 `inputSchema`（纯数据），引擎引用挪到首调用：**19.01 → 4.56 ms**，启动期 require 缓存里
-不再有 `@ast-grep/napi`。
+而 `capabilities/file.js` 为了读 `inputSchema` 直接 require 引擎，该模块在每个会话启动时都被 import ——
+从没调过 PTC 工具的会话也在付这笔账。实测 **19.01 ms**。改为 `dist/ptc/schema.json` 单独承载
+`inputSchema`（纯数据），引擎引用挪到首调用：**19.01 → 4.56 ms**，启动期 require 缓存里不再有
+`@ast-grep/napi`。
 
 ## 变更（2.0.8，审计数字与围栏回执）
 
@@ -324,3 +293,10 @@ VS_NATIVE.md              原生对照结果（bench:vs 生成）
 SMALL_TREE.md             小树结论与决策表（bench:small 生成数据）
 vendor/README.md          es.exe 放置说明（二进制不入库）
 ```
+
+### 2.1.0（本地构建）
+
+- `ops_ptc_locate` 新增 `body`：命中正文 ≤8 KiB 时随回执附赠，超了给 `readHint`（省一次往返）。
+- 适配层回执闸门 24 KiB：先退正文、再削条目、最后只留计数。
+- 命中字段删 `chars/bodyBytes/fileBytes/savedRatio`，回执删 `contextBytes`。
+- `schema.json` 与引擎解耦：宿主启动导入 19.01 → 4.56 ms，原生 AST 模块不再进启动路径。
