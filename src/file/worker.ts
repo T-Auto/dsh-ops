@@ -18,6 +18,7 @@ import { resolveWorker } from '../ptc/runtime.js'
 import { FILE_MUTATIONS } from '../policy.js'
 import { normalizeArguments } from './contract.js'
 import { resolveReadFiles } from './read-files.js'
+import { readFilesCompat } from './read-files-compat.js'
 import { withCallBudget, CallBudgetError } from '../kernel/call-budget.js'
 import { withResultSession } from '../kernel/result-lifecycle.js'
 import { resultStorage } from '../kernel/result-storage.js'
@@ -98,7 +99,8 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
   if (!session?.id || typeof cwd !== 'string' || !path.isAbsolute(cwd)) return failure('EXECUTOR_UNAVAILABLE', 'An authoritative session identity and cwd are required.')
   const policyService: SandboxPolicyService | undefined = ctx.get('sandboxPolicy')
   const subprocess: SubprocessRuntime | undefined = ctx.get('subprocess')
-  if (!policyService?.resolve || !subprocess?.spawn) return failure('EXECUTOR_UNAVAILABLE', 'DSH policy and subprocess services are required.')
+  // `read_files` is answered in-process, so it needs the policy but not a subprocess service.
+  if (!policyService?.resolve || (tool !== 'read_files' && !subprocess?.spawn)) return failure('EXECUTOR_UNAVAILABLE', 'DSH policy and subprocess services are required.')
   let policy: SandboxExecutionPolicy
   try { policy = policyService.resolve({ session }) } catch { return failure('EXECUTOR_UNAVAILABLE', 'DSH policy resolution failed.') }
   if (!['read-only', 'workspace-write', 'danger-full-access'].includes(policy?.mode)
@@ -191,7 +193,29 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
       if (mutates && (current.mode === 'read-only' || (current.mode === 'workspace-write' && required === 'danger-full-access'))) return denied(current, tool, required, 'Authority changed during preparation; no files were changed.')
       return authorityChanged(current, tool)
     }
-    const handle = subprocess.spawn({ argv, cwd, stdio: { stdin: { data: input }, stdout: { maxBytes: envelope.budget.maxBytes }, stderr: { maxBytes: 16 * 1024 } }, graceMs: 1000, signal })
+    // `read_files` is answered in-process: the pool, the per-file deadline and every read gate
+    // live in `parallel-read.ts`; the receipt is folded back into the native item shape by
+    // `read-files-compat.ts`. The fences above (policy, credential, anchoring) and the
+    // observations below are unchanged — only the process spawn in the middle is gone.
+    if (reads) {
+      const files = reads.files.map(item => ({
+        path: trustedPath(item.path),
+        ...(typeof item.offset === 'number' ? { offset: item.offset } : {}),
+        ...(typeof item.limit === 'number' ? { limit: item.limit } : {}),
+      }))
+      const value = await readFilesCompat(files, { signal })
+      if (signal?.aborted) return failure('RESULT_UNKNOWN', 'Read interrupted; inspect postconditions.', 'execute', 'unknown')
+      if (record(value) && Array.isArray(value.items)) {
+        for (const [index, item] of value.items.entries()) {
+          if (record(item) && item.status === 'completed') emitObserved(ctx, readObservations[index], exec)
+        }
+      }
+      const normalized = normalizeNativeDenial(record(value) ? value : {}, policy, tool, 'workspace-write')
+      return { ...normalized, sandbox: { mode: policy.mode, enforcement: 'policy', boundary: 'in-process-parallel-read' } }
+    }
+    const runtime = subprocess
+    if (!runtime?.spawn) return failure('EXECUTOR_UNAVAILABLE', 'DSH subprocess service is required for this tool.')
+    const handle = runtime.spawn({ argv, cwd, stdio: { stdin: { data: input }, stdout: { maxBytes: envelope.budget.maxBytes }, stderr: { maxBytes: 16 * 1024 } }, graceMs: 1000, signal })
     spawned = true
     const outcome = await handle.done
     if (!handle.collected.stdout || !handle.collected.stderr) return failure('RESULT_UNKNOWN', 'Worker output readers are unavailable; inspect postconditions.', 'verify', 'unknown')

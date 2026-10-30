@@ -44,9 +44,11 @@ fn text() -> String { "text".into() }
 
 pub fn dispatch(request: &Request) -> Result<Value> {
     if let Some(raw) = request.args.get("path").and_then(Value::as_str) { request.authorize_path(Path::new(raw))?; }
+    // `read_files` is answered in the host process (src/file/parallel-read.ts): a batch read is
+    // pure file I/O plus decoding, so spawning this worker first costs ~20 ms per call and buys
+    // nothing. The arm is intentionally absent here rather than kept as a second implementation.
     match request.tool.as_str() {
         "inspect_local_file" => inspect(request),
-        "read_files" => many::read_files(request),
         "stat" | "diff" | "write_file" | "edit_file" | "copy" | "move" | "remove" => single::run(request),
         _ => Err(Failure::new("INVALID_ARGUMENT", "Unknown file capability")),
     }.map_err(|mut error| { error.message = format!("{}: {}", request.tool, error.message); error })
@@ -69,8 +71,6 @@ pub fn read_bytes(path: &Path) -> Result<Vec<u8>> {
 }
 #[path = "file_output.rs"]
 mod output;
-#[path = "file_many.rs"]
-mod many;
 
 /// Reserve space for metadata added by search callers after this shared builder.
 pub fn result(request: &Request, items: Vec<Value>, total: usize, offset: usize, next_base: usize, matched: usize, truncated: bool) -> Value {
