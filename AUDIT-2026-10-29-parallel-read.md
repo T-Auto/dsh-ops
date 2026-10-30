@@ -59,3 +59,42 @@ PR default {"lines":270,"total":270,"status":"completed","truncated":false,"next
 ```
 
 包内 `FIXES.md` 逐条记录本轮与前三轮的修补点。
+
+---
+
+## 第十五轮（2026-10-30）：路径口径与正文保真解耦 → 4.1.7
+
+### 1. 这轮改的是口径，不是速度
+
+`normalize` 原本一个开关管三件事：CRLF→LF、剥/留 BOM、路径键 `\`→`/`。宿主 compat 层的要求正好
+是**反着的组合** —— 正文必须逐字节（上层拿返回文本回写，清洗过就是静默写坏），路径必须是 POSIX
+（回执里的 `path` 会被当成下一次调用的入参；`symbol_map` 与五个 `ops_ptc_*` 都已经是「相对 cwd +
+POSIX」，只有 `read_files` 还在回 `K:\ai\...`）。旧实现只能二选一。
+
+### 2. 改动
+
+| 位置 | 改动 |
+| --- | --- |
+| `DEFAULTS` | 新增 `normalizePaths: undefined`，未指定时跟随 `normalize`（老调用点行为不变） |
+| `normalizeOptions()` | 解析 `normalizePaths`，与 `normalize` 完全独立 |
+| `readOne()` | 键与 `path` 只看 `opts.normalizePaths` |
+| `compatItem()` | 外层 entry / `skeleton()` / 逐行 `items[]` / 行内截断 item / 字节前缀全部用同一条 POSIX 串；I/O 仍走原始 `f.path` |
+
+字节前缀必须同步换：`sizeOf(n)` 用 `JSON.stringify({line, path, text})` 累加每行开销，路径串若与
+最终回执不是同一串，128 KiB 预算会算歪，少算的部分直接变成超预算。
+
+### 3. 实测
+
+| 项 | 4.1.6 | 4.1.7 |
+| --- | --- | --- |
+| 单文件回执 | 2,186 B | **2,060 B**（−5.8%） |
+| 32 文件回执里的同一路径 | 出现 2 次、每次带转义对 | 出现 2 次、无反斜杠 |
+| `test_normalize.mjs` | 16 条 | **23 条**（新增 normalizePaths 4 条、compat 路径 3 条） |
+| 内容语义 | CRLF/BOM 保真 | 不变（23 条全过） |
+
+### 4. 回归
+
+宿主 7 个 resident 工具的联合审计 75 项全过，其中与 read_files 相关的 21 项覆盖：CRLF/LF 切行、
+无尾换行、UTF-16 与 GBK 的明确拒绝、代理对、300 KB 单行削减、越界 offset、32/33 文件边界、
+栏内/栏外 junction 拒绝、工作区内凭据名拒绝、批量内凭据 fail-closed、50 万字符预算削减后仍给
+`nextOffset`。

@@ -1,7 +1,7 @@
 # ops-parallel-read
 
-> **4.1.5**：缺省不再按 200 行截断。271 行的文件一次读满（2,625 → 3,713 token，省掉一整轮补读），
-> 显式 `limit` 行为不变。详见 [FIXES.md](FIXES.md)。
+> **4.1.7**：路径口径与正文保真解耦。新增 `normalizePaths`（未指定时跟随 `normalize`），compat 回执
+> 的 `path` 一律 POSIX 而正文仍逐字节；单文件回执 2186 B → 2060 B。详见 [FIXES.md](FIXES.md)。
 
 零依赖的批量文件并发读取器。给 AI Agent 当"眼睛"：一次问 20 个文件，读得动、读得完、不会把上下文和 FD 一起撑爆。
 
@@ -139,6 +139,7 @@ const out = await readFilesCompat([
 | `strictUtf8` | `false`（compat 恒 `true`） | 非法 UTF-8 直接报错，不做有损替换 |
 | `allowLinks` | `true`（compat 为 `false`） | `false` 时拒绝 symlink / junction（`PATH_RESTRICTED`） |
 | `stripBom` | `true`（compat 为 `false`） | 是否剥掉文件头的 UTF-8 BOM。**compat 默认保留**：原装实测保留 BOM，替换路径剥掉会让上层按返回文本回写时静默丢 3 个字节 |
+| `normalizePaths` | 跟随 `normalize` | 只切路径口径：`true` 时 key 与 `path` 转 POSIX，**不动正文**（不转 CRLF、不剥 BOM）。给"正文逐字节保真 + 路径统一"的场合用 |
 
 `maxOutputBytes` 只在兼容层生效，默认 `128 KiB - 1 KiB`，下限 2 KiB。
 
@@ -189,6 +190,51 @@ const out = await readFilesCompat([
 
 
 ---
+
+## 变更（4.1.7，路径口径与内容保真解耦）
+
+**为什么**：`normalize` 一个开关同时管了「正文 CRLF/BOM」和「路径分隔符」两件事。宿主 compat 层的
+要求正好相反 —— 正文必须逐字节（回写会写坏），路径必须 POSIX（回执里的 `path` 会被当成下一次调用的
+入参，反斜杠在 JSON 里还要写成转义对）。此前只能二选一。
+
+**改了什么**
+
+| 项 | 4.1.6 | 4.1.7 |
+| --- | --- | --- |
+| 选项 | `normalize` 控制三件事 | 新增 `normalizePaths`，未指定时跟随 `normalize`（老调用点行为不变） |
+| `readFilesCompat` 的 `path` | Windows 反斜杠原样回写 | POSIX（外层 entry 与逐行 `items[].path` 都是），**正文仍逐字节** |
+| 现有 16 条用例 | 全过 | 全过，另加 7 条覆盖新开关与 compat 路径 |
+
+**字节账**：一条 `…\audit\fx\src\alpha.ts` 形态的路径，POSIX 化后 JSON 少 6 字节；单文件回执实测
+2186 B → 2060 B（−5.8%）。路径越深、文件数越多，差额越大 —— 32 文件回执里同一路径出现两次
+（外层 + 逐行），省的是双份。
+
+**没有改**：`normalize: true` 的默认行为（CRLF 归一 + BOM 跟随剥）、compat 的正文语义、
+`maxOutputBytes` 结算（字节前缀用的是同一串路径，账不会被这次改动打歪）。
+
+## 变更（4.1.6，功能 A+B 合并）
+
+功能 B（跨平台清洗）已经内置进功能 A，不再是外挂步骤。三处清洗统一由 `normalize` 开关控制，默认 `true`：
+
+| 清洗项 | 生效位置 | 关闭后 |
+| --- | --- | --- |
+| UTF-8 BOM 剥离 | 解码后的第一个 chunk | 正文首字符是 `\uFEFF` |
+| `\r\n` → `\n` | 截断之后、补截断标记之前 | 保留 `\r\n` |
+| 路径 `\` → `/` | 返回对象的 key 与 `path` 字段 | 保留反斜杠 |
+
+```js
+const { parallelRead } = require('ops-parallel-read')
+
+await parallelRead(['C:\\src\\a.ts'])                        // 默认清洗
+await parallelRead(['C:\\src\\a.ts'], { normalize: false })  // 原汁原味：BOM、CRLF、键全部照抄磁盘
+await parallelRead(['C:\\src\\a.ts'], { normalize: true, stripBom: false })  // 只关 BOM
+```
+
+`normalize: false` 时 `stripBom` 若未显式指定会自动跟随关闭 —— 只关 CRLF 却仍剥掉 BOM，得到的既不是清洗版也不是原文。`readFilesCompat` 两个开关都显式传 `false`，替换路径的行为一个字节都没变。
+
+清洗放在截断之后，是因为截断标记自身含 `\n`：先归一不会把它切出半个 `\r`。`size` / `bytes` / `revision` 始终报磁盘原值，不受清洗影响。
+
+验证：`node test_normalize.mjs`（16 条，含 UTF-16LE 不被误转、纯 LF 文件零改动、两个开关正交）。
 
 ## 变更（4.1.1，第八轮审计）
 
