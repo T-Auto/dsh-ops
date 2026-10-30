@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-ops-download-guard",
+    "description": "Refuse shell downloads that write to disk, and name the faster downloader the operator configured. Does nothing until downloadGuard.template is set."
+  }
+}
