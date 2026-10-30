@@ -1,0 +1,41 @@
+{
+  "name": "ops-parallel-read",
+  "version": "4.1.8",
+  "description": "零依赖批量文件并发读取器：并发池 + 单文件 deadline + 二进制/超限闸门 + 字符预算，为 AI Agent 的上下文安全而设计。可原位替换 dsh-ops 的 ops_read_files。",
+  "main": "src/ops_parallel_read.js",
+  "types": "src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "require": "./src/ops_parallel_read.js",
+      "import": "./src/ops_parallel_read.js",
+      "default": "./src/ops_parallel_read.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE",
+    "docs"
+  ],
+  "scripts": {
+    "test": "node test/read-files.test.mjs && node test/normalize.test.mjs",
+    "test:normalize": "node test/normalize.test.mjs"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "keywords": [
+    "parallel",
+    "readfile",
+    "concurrency-pool",
+    "ai-agent",
+    "context-window",
+    "file-reader",
+    "zero-dependency"
+  ],
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {}
+}

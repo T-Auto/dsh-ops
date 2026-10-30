@@ -1,7 +1,29 @@
+# ops-parallel-read：目录结构
+
+这个包在仓库里是 `packages/ops-parallel-read/`，**源码直接可读，不再以压缩包形式提交**。
+
+```
+packages/ops-parallel-read/
+├── src/ops_parallel_read.js   实现（零依赖 CommonJS）
+├── src/index.d.ts             类型声明
+├── test/                      冒烟与清洗用例
+├── docs/                      审计与修补记录
+├── package.json
+└── README.md
+```
+
+```bash
+cd packages/ops-parallel-read && npm test
+```
+
+发布产物（`.tgz`）由 release 构建生成，不进仓库。
+
+---
+
 # ops-parallel-read
 
 > **4.1.8**：跨调用读取缓存。同一文件在一次会话里读第二遍不再重付解码 + 切行 + 行窗口结算，
-> `dev:ino:size:mtime` 命中即返回：`worker.js` 第二遍 1.07 ms → 0.67 ms，mtime 变即失效。
+> `dev:ino:size:mtime` 命中即返回；`worker.js` 第二遍 1.07 ms → 0.67 ms，mtime 变即失效。
 > 新增 `readCacheStats()` / `clearReadCache()`。详见 [FIXES.md](FIXES.md)。
 >
 > **4.1.7**：路径口径与正文保真解耦。新增 `normalizePaths`（未指定时跟随 `normalize`），compat 回执
@@ -119,7 +141,7 @@ const out = await readFilesCompat([
 
 ### 其它导出
 
-`runPool(items, limit, worker)`（并发池，可单独复用）、`truncate(text, maxChars)`、`OpsError`、`DEFAULTS`、`TRUNCATED_MARK`、`readCacheStats()`、`clearReadCache()`。
+`runPool(items, limit, worker)`（并发池，可单独复用）、`truncate(text, maxChars)`、`OpsError`、`DEFAULTS`、`TRUNCATED_MARK`。
 
 ---
 
@@ -355,3 +377,8 @@ npm run mem       # 堆占用前后对照（需 --expose-gc）
 ## License
 
 MIT
+
+### 4.1.8（本地构建）
+
+- 进程内 LRU：键含 `dev:ino:size:mtime` 与全部正文开关，命中即跳过 read/解码/SHA-256/切行；
+  同一文件第二遍 1.07 → 0.67 ms，改文件立即失效。`inode` 为 0 时禁用缓存。
