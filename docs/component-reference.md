@@ -255,7 +255,7 @@ official names stay refused in that scope. The replacement contract covers nativ
 
 All OPS calls keep their own session-cwd base, permission checks and output contracts. Replacing an official tool does not broaden authority.
 
-`write`, `edit`, and `str_replace_editor` are deliberately not replaced. OPS write/edit require an observed `expectedRevision` and CAS publication; host write and replace-all edit do not share that contract. A similarly named registration is not evidence of compatibility. Shells, `run_code`, delegation, jobs, media and third-party tools also remain visible without a warning list.
+`write`, `edit`, and `str_replace_editor` are deliberately not replaced. OPS write/edit publish under CAS: `edit` requires an observed `expectedRevision`, while `write` treats an omitted revision (or the literal `absent`) as create-only and refuses an existing file. Host write and replace-all edit do not share that contract. A similarly named registration is not evidence of compatibility. Shells, `run_code`, delegation, jobs, media and third-party tools also remain visible without a warning list.
 
 The `dsh-ops/compat` row is **disabled by default** and accepts no configuration. Enabling it keeps
 every official tool exposed and callable while OPS tools stay published, and lifts the per-scope

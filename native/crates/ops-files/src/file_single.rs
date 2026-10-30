@@ -10,6 +10,10 @@ struct StatArgs {
 struct WriteArgs {
     path: String,
     content: String,
+    // An omitted revision can only mean create-only, so the field defaults to the sentinel the
+    // publication layer already understands (#419). An explicit blank or null value stays a
+    // validation error: #422 keeps that decision open, and this change does not take it.
+    #[serde(default = "create_only_revision")]
     expected_revision: String,
     #[serde(default)]
     dry_run: bool,
@@ -141,6 +145,11 @@ pub(super) fn run(request: &Request) -> Result<Value> {
             "Unknown single file operation",
         )),
     }
+}
+/// The revision an omitted `expectedRevision` deserializes to. `write_single` still refuses an
+/// existing file, so the sentinel stays create-only and never becomes an overwrite wildcard.
+fn create_only_revision() -> String {
+    "absent".to_string()
 }
 fn valid_revision(revision: &str, absent: bool) -> Result<()> {
     if (absent && revision == "absent")
@@ -637,5 +646,29 @@ mod tests {
         assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
         drop(checked);
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn an_omitted_write_revision_defaults_to_the_create_only_sentinel() {
+        let omitted: WriteArgs = serde_json::from_value(json!({"path":"a","content":"b"})).unwrap();
+        assert_eq!(omitted.expected_revision, "absent");
+        let observed = "a".repeat(64);
+        let exact: WriteArgs =
+            serde_json::from_value(json!({"path":"a","content":"b","expectedRevision":observed}))
+                .unwrap();
+        assert_eq!(exact.expected_revision, observed);
+        // Blank stays blank: validation rejects it exactly as before, and null is a type error.
+        // #422 keeps the "blank means create-only" decision open, so this change must not take it.
+        let blank: WriteArgs =
+            serde_json::from_value(json!({"path":"a","content":"b","expectedRevision":" "}))
+                .unwrap();
+        assert_eq!(blank.expected_revision, " ");
+        assert!(valid_revision(&blank.expected_revision, true).is_err());
+        assert!(serde_json::from_value::<WriteArgs>(
+            json!({"path":"a","content":"b","expectedRevision":null})
+        )
+        .is_err());
+        // Only write_file relaxes the field: editing an existing file without a revision stays a
+        // deserialization error instead of turning into a silent create-only attempt.
+        assert!(serde_json::from_value::<EditArgs>(json!({"path":"a","edits":[]})).is_err());
     }
 }

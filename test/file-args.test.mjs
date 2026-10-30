@@ -12,6 +12,17 @@ await test('inspect_local_file drops empty encoding/view and keeps numeric bound
   assert.deepEqual(normalizeArguments('inspect_local_file', args), { path: 'a.txt', offset: 0, limit: 0 })
 })
 
+// write_file's expectedRevision stopped being required in #419, so this generic rule now turns a
+// blank or null reply into an omitted field — that is, create-only. #422 keeps the "blank means
+// create-only" decision open; this test pins the rule that already existed for every optional
+// string field rather than a new write-side rule.
+await test('write_file drops a blank or null expectedRevision, which the worker reads as create-only', () => {
+  assert.deepEqual(normalizeArguments('write_file', { path: 'a', content: 'b', expectedRevision: '' }), { path: 'a', content: 'b' })
+  assert.deepEqual(normalizeArguments('write_file', { path: 'a', content: 'b', expectedRevision: '   ' }), { path: 'a', content: 'b' })
+  assert.deepEqual(normalizeArguments('write_file', { path: 'a', content: 'b', expectedRevision: null }), { path: 'a', content: 'b' })
+  assert.deepEqual(normalizeArguments('write_file', { path: 'a', content: 'b', expectedRevision: 'absent' }), { path: 'a', content: 'b', expectedRevision: 'absent' })
+})
+
 await test('replace keeps an empty required replacement', () => {
   const args = { pattern: 'a', replacement: '', path: '', glob: [] }
   assert.deepEqual(normalizeArguments('replace', args), { pattern: 'a', replacement: '' })

@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Accept an omitted `expectedRevision` in `ops_write_file` as create-only instead of failing before publication; the field leaves the required list, an existing target still returns `REVISION_CONFLICT`, explicit blank or null values keep their previous refusals, and `ops_edit_file`/`copy`/`move`/`remove` still require an observed revision (#419).
+- `ops_write_file` 省略 `expectedRevision` 时按仅新建处理，不再在发布前直接失败；该字段移出必填列表，目标已存在仍返回 `REVISION_CONFLICT`，显式空串与 null 维持原有拒绝，`ops_edit_file`、`copy`、`move`、`remove` 继续要求已观测到的版本（#419）。
+
 - Preserve Unix worker executable modes in Windows-built release tarballs and reject invalid runtime TAR members before publishing checksum records.
 - 修复 Windows 构建发布包丢失 Unix worker 执行位，并在生成校验记录前拒绝异常运行时 TAR 成员。
 

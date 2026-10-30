@@ -58,17 +58,19 @@ const snapshot = (names, definition) => names.map(name => {
 })
 await test('business file and batch definitions retain their original serialized contracts', () => {
   // Captured before this migration, covering every argument/output contract and published description.
+  // #419 intentionally removes expectedRevision from write_file's required list and says so in its description.
   const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
-  assert.equal(hash(snapshot(FILE_TOOLS.filter(name => !['glob', 'grep', 'read_files', 'edit_file', 'read_table', 'read_docx', 'read_pdf'].includes(name)), fileDefinition)), '0297e7d3f819dc90dcc296a5e4ee1af88c37b742ed7ca06c77c54a477c52eb4b')
+  assert.equal(hash(snapshot(FILE_TOOLS.filter(name => !['glob', 'grep', 'read_files', 'edit_file', 'read_table', 'read_docx', 'read_pdf'].includes(name)), fileDefinition)), 'fbefabc7e2b61d6a431db1bb12f062bddc7073c12d401f2f04ee75e25d54a3e7')
   const batch = ptcDefinition('batch', async () => null)
   assert.equal(batch.parameters, ptcParameters.batch); assert.ok(batch.description.startsWith(ptcDescriptions.batch)); assert.match(batch.description, /PTC returns Outcome/)
   assert.ok(batch.output.schema.oneOf.every(branch => branch.properties.status))
 })
 
 await test('file parameter schemas preserve their reviewed structural constraints', () => {
-  // #384 intentionally adds the optional exactTotal boolean; all other constraints remain pinned.
+  // #384 intentionally adds the optional exactTotal boolean; #419 moves expectedRevision out of
+  // write_file's required list (the field stays declared). All other constraints remain pinned.
   const hash = createHash('sha256').update(JSON.stringify(withoutDescriptions(fileParameters))).digest('hex')
-  assert.equal(hash, '637df1383940fa6fdb2d65a68e67ce1e333a7e2ecbfceff5ffef7a4c1133ea8b')
+  assert.equal(hash, '4e9ba4af0f8cd1580bf848d0a491aa59ec98beded57e724bf4f151ef4f6ff2f1')
 })
 
 await test('native registration consumes the catalogue while execute values stay unchanged', async () => {

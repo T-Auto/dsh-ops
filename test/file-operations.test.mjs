@@ -27,7 +27,10 @@ await test('every new contract is strict, named consistently, and never marks wr
     assert.equal(tool.name, publicToolName(raw)); assert.equal(tool.parameters.additionalProperties, false)
     assert.equal(typeof tool.isConcurrencySafe === 'function', !FILE_MUTATIONS.includes(raw))
   }
-  for (const raw of ['write_file', 'edit_file', 'copy', 'move', 'remove']) assert.ok(PARAMETERS[raw].required.includes('expectedRevision'))
+  for (const raw of ['edit_file', 'copy', 'move', 'remove']) assert.ok(PARAMETERS[raw].required.includes('expectedRevision'))
+  // write_file keeps the field in its schema but not in its required list: an omitted revision is
+  // create-only, so strict adapters may leave it out (#419).
+  assert.deepEqual(PARAMETERS.write_file.required, ['path', 'content']); assert.ok(PARAMETERS.write_file.properties.expectedRevision)
   assert.deepEqual(normalizeArguments('write_file', { path: 'a', content: '', expectedRevision: 'absent', dryRun: false }), { path: 'a', content: '', expectedRevision: 'absent', dryRun: false })
 })
 await test('inspect/stat share exact hashes and total line counts even for a partial read, empty or binary file', async () => {
@@ -63,6 +66,30 @@ await test('full writes create empty/Unicode files, refuse stale/absent overwrit
     assert.equal(empty.lineCount, 0); assert.equal(empty.bytes, 0)
     const noop = await call('write_file', { path: target, expectedRevision: rev(target), content: fs.readFileSync(target, 'utf8') }, root)
     assert.equal(noop.changed, 0)
+  })
+})
+await test('an omitted expectedRevision is create-only while an explicit blank or null stays a refusal', async () => {
+  await withTempDir('file-write-create-only', async root => {
+    const target = path.join(root, 'omitted.txt')
+    const created = await call('write_file', { path: target, content: 'first\n' }, root)
+    mutation(created, target, 'first\n'); assert.equal(created.items[0].metadata.created, true)
+    failed(await call('write_file', { path: target, content: 'second\n' }, root), 'REVISION_CONFLICT')
+    assert.equal(fs.readFileSync(target, 'utf8'), 'first\n'); assert.equal(rev(target), created.revision)
+    // Only the omitted field is relaxed. Blank and null keep their pre-#419 refusals at the
+    // kernel boundary: #422 leaves "blank means create-only" open, so this worker does not take
+    // that decision. The host bridge drops blanks for optional string fields instead
+    // (src/file/contract.ts:22-25); test/file-args.test.mjs pins that lane separately.
+    for (const [name, value] of [['blank', '   '], ['empty', '']]) {
+      const explicit = path.join(root, name + '.txt')
+      failed(await call('write_file', { path: explicit, expectedRevision: value, content: 'x\n' }, root), 'INVALID_ARGUMENT')
+      assert.equal(fs.existsSync(explicit), false, name + ' must not be created')
+    }
+    const nulled = path.join(root, 'null.txt')
+    const refused = await call('write_file', { path: nulled, expectedRevision: null, content: 'null\n' }, root)
+    assert.equal(refused.status, 'error', JSON.stringify(refused)); assert.equal(refused.error.effectState, 'none')
+    assert.equal(fs.existsSync(nulled), false, 'null must not be created')
+    const preview = await call('write_file', { path: path.join(root, 'preview.txt'), content: 'dry\n', dryRun: true }, root)
+    assert.equal(preview.changed, 0); assert.equal(fs.existsSync(path.join(root, 'preview.txt')), false)
   })
 })
 await test('precise edits use one original, preserve Unicode/CRLF/BOM and reject all ambiguous/overlapping hunks', async () => {
