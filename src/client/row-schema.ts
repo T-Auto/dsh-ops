@@ -95,9 +95,16 @@ const DEFAULTS: Readonly<Record<string, boolean>> = Object.freeze({
 /** The draft key of one switch. */
 export const flatKey = (path: readonly string[]): string => path.join('.')
 
+/** What the saved config leaves open, decided by the host rather than by a stored boolean. */
+export interface ReadOptions {
+  /** Whether the companion plugin is installed; it decides an unsaved link. */
+  readonly pwsh7Installed?: boolean
+}
+
 /**
  * Read the page values out of the raw saved config.
  * @param raw - the host-provided saved values.
+ * @param options - detection inputs the saved values do not carry.
  * @returns one value per switch.
  */
 export function groupsFor(raw: Record<string, unknown>): readonly GroupSpec[] {
@@ -115,7 +122,7 @@ export function groupsFor(raw: Record<string, unknown>): readonly GroupSpec[] {
   return [...GROUPS.slice(0, -1), ...custom, GROUPS[GROUPS.length - 1]!]
 }
 
-export function readRowValues(raw: Record<string, unknown>, options: { pwsh7Installed?: boolean } = {}): RowDraft {
+export function readRowValues(raw: Record<string, unknown>, options: ReadOptions = {}): RowDraft {
   const draft: RowDraft = {}
   const section = (id: string): Record<string, unknown> => {
     const value = raw[id]
@@ -166,12 +173,21 @@ export function bundleGates(draft: RowDraft): Record<BundleGate, boolean> {
 
 /**
  * The nested write operations that turn the saved values into the draft.
+ *
+ * The baseline is read with the same detection the draft used. Without that, an
+ * unsaved link on an installed companion reads as `false` in the baseline and any
+ * save — even of an unrelated switch — writes it as an explicit `true`, freezing
+ * a value the operator never touched. With it, an untouched link produces no
+ * operation and keeps following detection, while a switch the operator flipped
+ * differs from the same baseline and is always written.
+ *
  * @param draft - the current page values.
  * @param raw - the saved values the draft was read from.
+ * @param options - detection inputs used to read `raw`, as the draft was.
  * @returns path operations for `form.mutate`.
  */
-export function changedFields(draft: RowDraft, raw: Record<string, unknown>): SettingsPathOpView[] {
-  const baseline = readRowValues(raw)
+export function changedFields(draft: RowDraft, raw: Record<string, unknown>, options: ReadOptions = {}): SettingsPathOpView[] {
+  const baseline = readRowValues(raw, options)
   const operations: SettingsPathOpView[] = []
   for (const group of groupsFor(raw)) {
     const paths = group.toggle

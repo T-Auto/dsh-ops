@@ -119,4 +119,64 @@ await test('custom preset switch paths preserve dotted identities and profile de
   assert.equal(groupsFor(raw).find(group => group.labelText === 'acme.chat').togglePath[1], 'acme.chat')
 })
 
+await test('the companion is detected from the profile that holds the loaded package', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-origin-'))
+  fs.mkdirSync(path.join(dir, 'node_modules', 'dsh-win-pwsh7'), { recursive: true })
+  fs.writeFileSync(path.join(dir, 'node_modules', 'dsh-win-pwsh7', 'package.json'), JSON.stringify({ name: 'dsh-win-pwsh7', version: '9.9.8' }))
+  // The host process gets no DSH_PROFILE_DIR (only shell calls do), so the install
+  // path is what has to answer there. A sweep would also find the developer's own
+  // profiles, which is why the test pins sweep off.
+  const from = path.join(dir, 'node_modules', 'dsh-ops', 'lib', 'index.js')
+  assert.equal(companionVersion({ env: {}, from, sweep: false, now: () => Date.now() + 3e9 }), '9.9.8')
+  assert.equal(companionVersion({ env: {}, from: path.join(dir, 'node_modules', 'dsh-ops', 'lib', 'index.js'), sweep: false, now: () => Date.now() + 4e9 }), '9.9.8')
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-bare-'))
+  assert.equal(companionVersion({ env: {}, from: path.join(bare, 'node_modules', 'dsh-ops', 'lib', 'index.js'), sweep: false, now: () => Date.now() + 5e9 }), undefined)
+})
+
+await test('an unsaved companion link is never written by saving another switch', () => {
+  const raw = {}
+  const seen = { pwsh7Installed: true }
+  const draft = draftFor(raw, seen)
+  assert.equal(draft['other.pwsh7Link'], true, 'the page shows detection')
+  assert.deepEqual(changedFields(draft, raw, seen), [], 'an untouched page writes nothing')
+  // The operator only changes data capture; the detected link must stay absent.
+  assert.deepEqual(changedFields({ ...draft, 'panel.enabled': true }, raw, seen), [{ op: 'set', path: ['panel', 'enabled'], value: true }])
+})
+
+await test('a link the operator flips is always written', () => {
+  // Installed and detected on, turned off: the explicit off must be saved.
+  const installed = draftFor({}, { pwsh7Installed: true })
+  assert.deepEqual(changedFields({ ...installed, 'other.pwsh7Link': false }, {}, { pwsh7Installed: true }), [{ op: 'set', path: ['other', 'pwsh7Link'], value: false }])
+  // Not installed, turned on: the explicit on must be saved.
+  const absent = draftFor({}, { pwsh7Installed: false })
+  assert.deepEqual(changedFields({ ...absent, 'other.pwsh7Link': true }, {}, { pwsh7Installed: false }), [{ op: 'set', path: ['other', 'pwsh7Link'], value: true }])
+  // A saved value wins over detection and is not rewritten on every save.
+  const savedOff = { other: { pwsh7Link: false } }
+  const reloaded = draftFor(savedOff, { pwsh7Installed: true })
+  assert.equal(reloaded['other.pwsh7Link'], false)
+  assert.deepEqual(changedFields(reloaded, savedOff, { pwsh7Installed: true }), [])
+})
+
+await test('a linked development install still finds the profile that mounts it', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-home-'))
+  const pkg = path.join(home, 'checkout', 'dsh-ops')
+  fs.mkdirSync(path.join(pkg, 'lib'), { recursive: true })
+  fs.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({ name: 'dsh-ops', version: '0.0.0' }))
+  const profile = path.join(home, 'profiles', 'work')
+  const modules = path.join(profile, 'node_modules')
+  fs.mkdirSync(path.join(modules, 'dsh-win-pwsh7'), { recursive: true })
+  fs.writeFileSync(path.join(modules, 'dsh-win-pwsh7', 'package.json'), JSON.stringify({ name: 'dsh-win-pwsh7', version: '9.9.7' }))
+  // A `link:` install is a junction from the profile to the checkout, so the module
+  // URL sits outside every profile; matching the mounted package names it anyway.
+  // A junction is the Windows spelling of a directory link.
+  fs.symlinkSync(pkg, path.join(modules, 'dsh-ops'), process.platform === 'win32' ? 'junction' : 'dir')
+  const from = path.join(pkg, 'lib', 'index.js')
+  assert.equal(companionVersion({ env: { DSH_HOME: home }, from, sweep: false, now: () => Date.now() + 6e9 }), '9.9.7')
+  // A profile that mounts a different copy does not answer for this one.
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), 'companion-other-'))
+  fs.mkdirSync(path.join(other, 'profiles', 'work', 'node_modules', 'dsh-win-pwsh7'), { recursive: true })
+  fs.writeFileSync(path.join(other, 'profiles', 'work', 'node_modules', 'dsh-win-pwsh7', 'package.json'), JSON.stringify({ name: 'dsh-win-pwsh7', version: '9.9.6' }))
+  assert.equal(companionVersion({ env: { DSH_HOME: other }, from, sweep: false, now: () => Date.now() + 7e9 }), undefined)
+})
+
 report('settings-rows')

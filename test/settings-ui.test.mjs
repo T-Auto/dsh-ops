@@ -331,5 +331,29 @@ await test('an explicit off is named when the companion is already installed', a
   finally { await view.close() }
 })
 
+await test('saving another card never persists a detected link', async () => {
+  const writes = []
+  const form = { state: ready({}), mutate: async ops => { writes.push(ops); return true } }
+  const view = await mount(RowForm, { form, Switch: TestSwitch, pwsh7Installed: true })
+  try {
+    const other = group(view.container, en.groupOther)
+    assert.equal(switchIn(other, en.featurePwsh7Link).getAttribute('aria-checked'), 'true', 'detection shows the link on')
+    await click(switchIn(other, en.featurePanel))
+    await click(button(view.container, en.save))
+    assert.deepEqual(writes[0], [{ op: 'set', path: ['panel', 'enabled'], value: true }])
+  } finally { await view.close() }
+})
+
+await test('a link the operator turns off is always saved', async () => {
+  const writes = []
+  const form = { state: ready({}), mutate: async ops => { writes.push(ops); return true } }
+  const view = await mount(RowForm, { form, Switch: TestSwitch, pwsh7Installed: true })
+  try {
+    await click(switchIn(group(view.container, en.groupOther), en.featurePwsh7Link))
+    await click(button(view.container, en.save))
+    assert.deepEqual(writes[0], [{ op: 'set', path: ['other', 'pwsh7Link'], value: false }])
+  } finally { await view.close() }
+})
+
 dom.window.close()
 report('settings-ui')

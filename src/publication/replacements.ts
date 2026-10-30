@@ -195,7 +195,7 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
       const counterpart = targets.get(String(exec.name ?? ''))
       if (counterpart === undefined) return undefined
       if (!visibleNames(tools, agent).includes(counterpart)) return undefined
-      return `dsh-ops ${mode} mode replaced the official tool ${String(exec.name)} with ${counterpart}; call ${counterpart} or ask the operator to enable Compatibility mode.`
+      return `dsh-ops ${mode} mode replaced the official tool ${String(exec.name)} with ${counterpart}; call ${counterpart}, or turn off that replacement in the dsh-ops row settings.`
     }
     ctx.on('tools/pre-execute', async (exec, next) => {
       const reason = refusal(exec)
