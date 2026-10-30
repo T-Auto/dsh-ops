@@ -1,0 +1,27 @@
+{
+  "name": "ops-symbol-map",
+  "version": "20261029.4",
+  "type": "module",
+  "description": "Tree-sitter symbol map engine, delivered as a source drop into dsh-ops/src (paths mirror the host tree)",
+  "optionalDependencies": {
+    "tree-sitter": "^0.25.1",
+    "tree-sitter-javascript": "^0.23.1",
+    "tree-sitter-typescript": "^0.23.2"
+  },
+  "license": "MIT",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsc -p tsconfig.json --noEmit && node test/verify.mjs --no-typecheck",
+    "bench": "node bench/symbol-map/bench.mjs"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "docs",
+    "tsconfig.json"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3"
+  }
+}
