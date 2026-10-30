@@ -5,7 +5,7 @@ import type { ToolDefinition, ToolRunContext } from '../adapter/dsh/types.js'
 import type {} from '../adapter/dsh/types.js'
 import type { PromptAssembly } from '../adapter/dsh/types.js'
 import { loadScopes } from '../adapter/dsh/host.js'
-import { inspectPresentation, isPresentationProbe } from './presentation.js'
+import { claimPresentationRebuild, inspectPresentation, isPresentationProbe } from './presentation.js'
 import { InvocationLifetime, InvocationNotStarted } from '../lifecycle/invocations.js'
 import { WORKER_TIMEOUT_MS } from '../execution/protocol.js'
 import { FILE_TOOLS, PTC_TOOLS } from '../capabilities/registry.js'
@@ -311,7 +311,10 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       try { entry.ptc = false; entry.surface = undefined; entry.pending.clear(); abortOwner(context.scope as Agent, 'PTC presentation withdrawn'); clear(entry) }
       finally { mutating = false }
       void reconcile(true, new Set([context.scope as Agent]))
-      return prompt.assemble(context)
+      // One rebuild per request: the withdrawal above is what the next hook in
+      // this same waterfall will also decide to do, so a second assembly here
+      // would only take turns with it forever.
+      return claimPresentationRebuild(context) ? prompt.assemble(context) : result
     })
     ctx.on('session/event', (session, event) => {
       if ((event as { type: string }).type === 'agent-preset/selected') {

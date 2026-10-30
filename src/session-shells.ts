@@ -12,6 +12,7 @@ import { BashArgumentError } from './shells/argument-error.js'
 import { MODES } from './permissions.js'
 import { hostBashDefinition } from './shells/host-tool.js'
 import { withToolChange } from './publication/changes.js'
+import { isPresentationProbe } from './publication/presentation.js'
 import { startSessionBash } from './shells/session-execution.js'
 import { resolveSessionDirectory } from './adapter/dsh/working-directory.js'
 
@@ -291,8 +292,15 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
   ctx.inject(['systemPrompt'], promptCtx => {
     const prompt = promptCtx.get('systemPrompt')!
     promptCtx.on('system-prompt/assemble', async (_assembly, options, next) => {
-      if (!pending) return next()
-      while (pending) await pending
+      // An inspection asks what is public right now and publishes nothing.
+      // Waiting for a reconcile here would only add a link to the chain.
+      if (isPresentationProbe(options)) return next()
+      // One queued pass is what this assembly owes. A reconcile scheduled after
+      // it started belongs to the next request; waiting for those too is how a
+      // surface that keeps moving turns this hook into an endless wait.
+      const pass = pending
+      if (!pass) return next()
+      await pass
       // Schemas were collected before this hook. Rebuild after publication.
       return prompt.assemble(options)
     })
