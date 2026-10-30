@@ -1,4 +1,3 @@
-"use strict";
 /**
  * Reparse-point refusal for the in-process AST engine.
  *
@@ -15,16 +14,16 @@
  * Kept as CommonJS and inside `dist/ptc` so the package stays consumable from both the ESM host
  * and a plain `require`.
  */
-const fs = require("node:fs");
-const path = require("node:path");
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
-const REPARSE_DENIED = "Links, reparse points and special objects are not traversed; inspect the target path for the offending entry";
+export const REPARSE_DENIED = 'Links, reparse points and special objects are not traversed; inspect the target path for the offending entry';
 
 /** Walk to the volume root, naming the first reparse point. Absence is not a verdict. */
-function walk(target) {
+function walk(target: string): string | undefined {
     let current = path.resolve(target);
     for (;;) {
-        let stat;
+        let stat: fs.Stats;
         try {
             stat = fs.lstatSync(current);
         }
@@ -46,11 +45,11 @@ function walk(target) {
  * A missing path returns `undefined`: absence is the caller's problem to report, not a policy
  * verdict. Stops at the volume root.
  */
-function reparseEscape(target) {
-    if (typeof target !== "string" || target === "")
+export function reparseEscape(target: string): string | undefined {
+    if (typeof target !== 'string' || target === '')
         return undefined;
     const resolved = path.resolve(target);
-    let real;
+    let real: string;
     try {
         real = fs.realpathSync.native(resolved);
     }
@@ -63,5 +62,3 @@ function reparseEscape(target) {
         return undefined;
     return walk(resolved);
 }
-
-module.exports = { reparseEscape, REPARSE_DENIED };

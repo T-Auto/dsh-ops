@@ -1,15 +1,36 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.HOST_OUTCOME_SCHEMA = exports.toHostOutcome = exports.registerHostTools = exports.createHostTools = exports.OUT_SCHEMA = exports.opsPtcDiscoveryEntry = exports.opsPtcAddition = void 0;
-const promises_1 = require("node:fs/promises");
-const node_path_1 = __importDefault(require("node:path"));
-const proc_1 = require("./proc");
-const pipeline_1 = require("./pipeline");
-const stages_1 = require("./stages");
-const inproc_1 = require("./inproc");
+import { readFile, rm } from 'node:fs/promises';
+import * as path from 'node:path';
+import { PtcOutcomeError, defaultConfig } from './proc';
+import { runRefactorPipeline } from './pipeline';
+import type { RefactorRequest } from './pipeline';
+import { difftasticAudit, everythingFind, saneLocate } from './stages';
+import { inprocLocate, inprocRefactor } from './inproc';
+import type { InprocRequest, LocateRequest, LocateStrategy } from './inproc';
+
+export interface PtcToolDef {
+    name: string;
+    title: string;
+    /** 一句话，进动态工具列表，不进基础系统提示词 */
+    description: string;
+    inputSchema: Record<string, unknown>;
+}
+export interface PtcToolAddition {
+    id: string;
+    version: string;
+    kind: 'tools_addition';
+    /** 自定义匹配元数据；需宿主 adapter 显式接线，原 OPS discovery 不消费此结构。 */
+    discover: {
+        keywords: string[];
+        intents: string[];
+        minRepoFiles?: number;
+        cost: 'light' | 'heavy';
+        load: 'on-demand';
+    };
+    tools: PtcToolDef[];
+    handlers: Record<string, (args: any, ctx?: {
+        cwd?: string;
+    }) => Promise<unknown>>;
+}
 const OUT_SCHEMA = {
     type: 'object',
     properties: {
@@ -29,15 +50,19 @@ const OUT_SCHEMA = {
         message: { type: 'string' },
     },
 };
-exports.OUT_SCHEMA = OUT_SCHEMA;
-const cfgFor = (ctx) => (0, proc_1.defaultConfig)({ cwd: ctx?.cwd ?? process.cwd() });
-const asError = (e) => e instanceof proc_1.PtcOutcomeError
-    ? { ...e.toOutcome(), detail: e.detail }
-    : { status: 'error', code: 'E_INTERNAL', stage: 'pipeline', message: String(e?.message ?? e) };
-const asStrategy = (v) => v === 'walk' || v === 'everything' || v === 'auto' ? v : undefined;
-exports.opsPtcAddition = {
+const cfgFor = (ctx?: { cwd?: string }) => defaultConfig({ cwd: ctx?.cwd ?? process.cwd() });
+const asError = (e: unknown) => {
+    if (e instanceof PtcOutcomeError)
+        return { ...e.toOutcome(), detail: e.detail };
+    const message = typeof e === 'object' && e !== null && 'message' in e ? e.message : undefined;
+    return { status: 'error', code: 'E_INTERNAL', stage: 'pipeline', message: String(message ?? e) };
+};
+const asStrategy = (v: unknown): LocateStrategy | undefined => v === 'walk' || v === 'everything' || v === 'auto' ? v : undefined;
+/** body 是历史字段，不在公开的 LocateRequest 签名里；引擎从同一个请求对象上读它。 */
+type LocateRequestWithBody = LocateRequest & { body?: boolean | number };
+export const opsPtcAddition: PtcToolAddition = {
     id: 'ops-ptc',
-    version: '2.1.1',
+    version: '2.1.2',
     kind: 'tools_addition',
     discover: {
         keywords: [
@@ -169,9 +194,9 @@ exports.opsPtcAddition = {
     handlers: {
         async ops_ptc_inproc(args, ctx) {
             if (args.mode !== undefined && args.mode !== 'preview' && args.mode !== 'apply') {
-                return new proc_1.PtcOutcomeError('E_BAD_ARGS', 'inproc', 'mode 必须为 preview 或 apply').toOutcome();
+                return new PtcOutcomeError('E_BAD_ARGS', 'inproc', 'mode 必须为 preview 或 apply').toOutcome();
             }
-            const req = {
+            const req: InprocRequest = {
                 pattern: String(args.pattern ?? ''),
                 rewrite: String(args.rewrite ?? ''),
                 symbol: args.symbol ? String(args.symbol) : undefined,
@@ -185,12 +210,13 @@ exports.opsPtcAddition = {
                 strict: args.strict === true,
             };
             if (!req.pattern || !req.rewrite) {
-                return new proc_1.PtcOutcomeError('E_BAD_ARGS', 'inproc', '缺少必填参数: pattern, rewrite').toOutcome();
+                return new PtcOutcomeError('E_BAD_ARGS', 'inproc', '缺少必填参数: pattern, rewrite').toOutcome();
             }
-            const out = (0, inproc_1.inprocRefactor)(req, ctx?.cwd ?? process.cwd());
+            const out = inprocRefactor(req, ctx?.cwd ?? process.cwd());
             if (out.status === 'error' && out.fallback === 'spawn') {
-                const piped = await (0, pipeline_1.runRefactorPipeline)({
-                    query: req.roots ? `${req.roots.join(' ')}` : undefined,
+                const piped = await runRefactorPipeline({
+                    // 无 roots 时 query 缺省：pipeline 先按 file/query 二选一校验拒绝，与 undefined 等价。
+                    query: req.roots ? `${req.roots.join(' ')}` : '',
                     symbol: req.symbol ?? '',
                     astPattern: req.pattern,
                     astRewrite: req.rewrite,
@@ -205,9 +231,9 @@ exports.opsPtcAddition = {
         async ops_ptc_locate(args, ctx) {
             const symbol = String(args.symbol ?? '');
             if (!symbol) {
-                return new proc_1.PtcOutcomeError('E_BAD_ARGS', 'inproc', '缺少必填参数: symbol').toOutcome();
+                return new PtcOutcomeError('E_BAD_ARGS', 'inproc', '缺少必填参数: symbol').toOutcome();
             }
-            return (0, inproc_1.inprocLocate)({
+            const req: LocateRequestWithBody = {
                 symbol,
                 file: args.file ? String(args.file) : undefined,
                 roots: Array.isArray(args.roots) ? args.roots : undefined,
@@ -217,14 +243,15 @@ exports.opsPtcAddition = {
                 limit: typeof args.limit === 'number' ? args.limit : undefined,
                 // 正文额度传给引擎：适配层不参与体积判定，闸门只有一处。
                 body: typeof args.body === 'number' || typeof args.body === 'boolean' ? args.body : undefined,
-            }, ctx?.cwd ?? process.cwd());
+            };
+            return inprocLocate(req, ctx?.cwd ?? process.cwd());
         },
         async ops_ptc_refactor(args, ctx) {
             if (args.mode !== undefined && args.mode !== 'preview' && args.mode !== 'apply') {
-                return new proc_1.PtcOutcomeError('E_BAD_ARGS', 'pipeline', 'mode 必须为 preview 或 apply').toOutcome();
+                return new PtcOutcomeError('E_BAD_ARGS', 'pipeline', 'mode 必须为 preview 或 apply').toOutcome();
             }
-            const pick = (k, alt) => String((args[k] ?? args[alt] ?? ''));
-            const req = {
+            const pick = (k: string, alt: string) => String((args[k] ?? args[alt] ?? ''));
+            const req: RefactorRequest = {
                 query: pick('query', 'query'),
                 symbol: pick('symbol', 'symbol'),
                 astPattern: pick('pattern', 'astPattern'),
@@ -236,18 +263,18 @@ exports.opsPtcAddition = {
                 scope: args.scope === 'global' ? 'global' : undefined,
                 mode: args.mode === 'preview' ? 'preview' : 'apply',
             };
-            const missing = ['symbol', 'astPattern', 'astRewrite'].filter((k) => !req[k]);
+            const missing: string[] = (['symbol', 'astPattern', 'astRewrite'] as const).filter((k) => !req[k]);
             if (!req.file && !req.query)
                 missing.push('query');
             if (missing.length > 0) {
-                return new proc_1.PtcOutcomeError('E_BAD_ARGS', 'pipeline', `缺少必填参数: ${missing.join(', ')}`).toOutcome();
+                return new PtcOutcomeError('E_BAD_ARGS', 'pipeline', `缺少必填参数: ${missing.join(', ')}`).toOutcome();
             }
-            return (0, pipeline_1.runRefactorPipeline)(req, cfgFor(ctx));
+            return runRefactorPipeline(req, cfgFor(ctx));
         },
         async ops_ptc_find(args, ctx) {
             try {
                 const cfg = cfgFor(ctx);
-                const files = await (0, stages_1.everythingFind)(cfg, {
+                const files = await everythingFind(cfg, {
                     pattern: args.query,
                     limit: args.limit,
                     roots: args.roots,
@@ -262,10 +289,10 @@ exports.opsPtcAddition = {
                 }
                 // 只试 files[0] 时，符号在第二个候选就误报 E_SANE_SYMBOL_NOT_FOUND。
                 // 先子串缩候选（≤8 次读），再逐个 saneLocate（≤3 次），命中即停。
-                const shortlist = [];
+                const shortlist: string[] = [];
                 for (const candidate of files.slice(0, 8)) {
                     try {
-                        if ((await (0, promises_1.readFile)(candidate, 'utf8')).includes(symbol))
+                        if ((await readFile(candidate, 'utf8')).includes(symbol))
                             shortlist.push(candidate);
                     }
                     catch { }
@@ -274,14 +301,15 @@ exports.opsPtcAddition = {
                     // es 索引是异步的：刚写出的文件常常还没进索引。只有当 es 一个含符号的候选
                     // 都没给时才 walk 兜底，避免把「索引没跟上」报成「符号不存在」。
                     try {
-                        const swept = (0, inproc_1.inprocLocate)({
+                        const sweep: LocateRequestWithBody = {
                             symbol,
                             roots: args.roots,
                             ext: args.ext ? [args.ext] : undefined,
                             limit: 8,
                             strategy: 'walk',
                             body: false,
-                        }, cfg.cwd);
+                        };
+                        const swept = inprocLocate(sweep, cfg.cwd);
                         const hit = swept.hits?.[0];
                         if (hit) {
                             return {
@@ -298,10 +326,10 @@ exports.opsPtcAddition = {
                     catch { }
                 }
                 const trial = shortlist.length > 0 ? shortlist : files.slice(0, 1);
-                let lastError;
+                let lastError: unknown;
                 for (const candidate of trial.slice(0, 3)) {
                     try {
-                        const hit = await (0, stages_1.saneLocate)(cfg, candidate, symbol);
+                        const hit = await saneLocate(cfg, candidate, symbol);
                         return {
                             status: 'ok',
                             file: candidate,
@@ -319,7 +347,7 @@ exports.opsPtcAddition = {
                 }
                 if (lastError)
                     throw lastError;
-                throw new proc_1.PtcOutcomeError('E_EVERYTHING_NOT_FOUND', 'everything', `候选文件里没有符号 ${symbol}`, { query: args.query });
+                throw new PtcOutcomeError('E_EVERYTHING_NOT_FOUND', 'everything', `候选文件里没有符号 ${symbol}`, { query: args.query });
             }
             catch (e) {
                 return asError(e);
@@ -328,14 +356,14 @@ exports.opsPtcAddition = {
         async ops_ptc_audit(args, ctx) {
             try {
                 const cfg = cfgFor(ctx);
-                const before = await (0, promises_1.readFile)(node_path_1.default.resolve(cfg.cwd, args.beforeFile));
+                const before = await readFile(path.resolve(cfg.cwd, args.beforeFile));
                 // 纯审计没有编辑清单：传空数组，让 stages 从 difftastic 的对齐行推出真实
                 // +/- 行数。此前这里塞了一个占位编辑（startByte 0 长 0），导致每次回执都
                 // 声称「1 处改写、+0/-0 行」——同一文件也这么说，9000 行新增也这么说。
-                const { audit, dir } = await (0, stages_1.difftasticAudit)(cfg, before, node_path_1.default.resolve(cfg.cwd, args.file), []);
+                const { audit, dir } = await difftasticAudit(cfg, before, path.resolve(cfg.cwd, args.file), []);
                 if (dir)
-                    await (0, promises_1.rm)(dir, { recursive: true, force: true }).catch(() => { });
-                return { status: 'ok', file: node_path_1.default.resolve(cfg.cwd, args.file), ...audit };
+                    await rm(dir, { recursive: true, force: true }).catch(() => { });
+                return { status: 'ok', file: path.resolve(cfg.cwd, args.file), ...audit };
             }
             catch (e) {
                 return asError(e);
@@ -343,17 +371,17 @@ exports.opsPtcAddition = {
         },
     },
 };
-exports.opsPtcDiscoveryEntry = {
-    id: exports.opsPtcAddition.id,
+export const opsPtcDiscoveryEntry = {
+    id: opsPtcAddition.id,
     summary: 'AST 定位 / 改写 / 审计元数据；须通过可信宿主 adapter 显式注册',
-    keywords: exports.opsPtcAddition.discover.keywords,
-    intents: exports.opsPtcAddition.discover.intents,
-    gate: (ctx) => (ctx.repoFileCount ?? 0) > 800 || /重构|refactor|AST|批量替换|符号定位|代码库分析/i.test(ctx.userIntent ?? ''),
-    load: () => exports.opsPtcAddition,
+    keywords: opsPtcAddition.discover.keywords,
+    intents: opsPtcAddition.discover.intents,
+    /** 自定义宿主可使用的选择条件；原 OPS discovery 不自动调用。 */
+    gate: (ctx: { repoFileCount?: number; userIntent?: string }) => (ctx.repoFileCount ?? 0) > 800 || /重构|refactor|AST|批量替换|符号定位|代码库分析/i.test(ctx.userIntent ?? ''),
+    /** 仅返回 addition 元数据，不向原 OPS discovery 自动注册工具。 */
+    load: () => opsPtcAddition,
 };
-var adapter_1 = require("./adapter");
-Object.defineProperty(exports, "createHostTools", { enumerable: true, get: function () { return adapter_1.createHostTools; } });
-Object.defineProperty(exports, "registerHostTools", { enumerable: true, get: function () { return adapter_1.registerHostTools; } });
-Object.defineProperty(exports, "toHostOutcome", { enumerable: true, get: function () { return adapter_1.toHostOutcome; } });
-Object.defineProperty(exports, "HOST_OUTCOME_SCHEMA", { enumerable: true, get: function () { return adapter_1.HOST_OUTCOME_SCHEMA; } });
-exports.default = exports.opsPtcAddition;
+export { OUT_SCHEMA };
+export { createHostTools, registerHostTools, toHostOutcome, HOST_OUTCOME_SCHEMA } from './adapter';
+export type { HostBridge, HostExec, HostPolicy, HostOutcome, HostToolDefinition } from './adapter';
+export default opsPtcAddition;

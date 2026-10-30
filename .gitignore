@@ -47,3 +47,10 @@ bench/llm.patch.yml
 
 # Test scratch trees the ptc suites write into their own package root.
 packages/*/.sandbox/
+
+# Release artifacts: tarballs are produced by the release build, never committed.
+*.tgz
+*.tar.gz
+
+# Vendored binaries (Everything CLI `es.exe`) ship inside the release artifact, not the tree.
+packages/*/vendor/*.exe

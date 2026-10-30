@@ -14,9 +14,9 @@ require.extensions['.ts'] = (module, file) => module._compile(ts.transpileModule
 }).outputText, file);
 let stages, proc, runRefactorPipeline;
 try {
-  stages = require('../src/ptc/stages.js');
-  proc = require('../src/ptc/proc.js');
-  ({ runRefactorPipeline } = require('../src/ptc/pipeline.js'));
+  stages = require('../dist/ptc/stages.js');
+  proc = require('../dist/ptc/proc.js');
+  ({ runRefactorPipeline } = require('../dist/ptc/pipeline.js'));
 } finally {
   if (oldLoader) require.extensions['.ts'] = oldLoader;
   else delete require.extensions['.ts'];
@@ -139,7 +139,7 @@ try {
   });
   await test('Everything enforces cwd boundaries, explicit roots and global opt-in', async () => {
     // 仓库不提交二进制：没有 es.exe 时这条用例无意义，跳过并说明原因。
-    const esBin = require('../src/ptc/proc.js').pickExistingEs(process.env.PTC_ES, process.cwd());
+    const esBin = require('../dist/ptc/proc.js').pickExistingEs(process.env.PTC_ES, process.cwd());
     if (!esBin) { console.log('SKIP Everything 边界：本机没有 es.exe（包内 vendor 不入库）'); return; }
     const cwd = join(root, 'inside');
     const inside = join(cwd, 'target.ts'), sibling = join(root, 'inside-sibling', 'target.ts');

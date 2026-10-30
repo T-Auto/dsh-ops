@@ -1,16 +1,26 @@
 #!/usr/bin/env node
 /**
- * 构建 = 复制。
+ * 构建 = `tsc` + 两份非 TS 资源。
  *
- * `src/ptc/` 是本包唯一的实现源（CommonJS，`.d.ts` 手写贴着实现走）；`dist/` 只是发布产物名，
- * 内容与 `src/` 逐字节相同。这样仓库里没有需要编译的中间层，README 里的路径也不必在
- * 「源」和「产物」之间来回换算。
+ * `src/**\/*.ts` 是本包唯一的实现源，`dist/` 由 TypeScript 编译器生成，仓库里不保存。
+ * 只有两样东西不进 tsc：
+ *   - `agentbox.worker.cjs`：AgentBox 写入通道的 worker 入口，手写 CJS，`proc.ts` 按
+ *     `__dirname` 直接拉起；
+ *   - `schema.json`：五个工具的入参 schema，宿主侧当纯数据读，不参与类型检查。
  */
 import { cpSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-rmSync(resolve(root, 'dist'), { recursive: true, force: true });
-cpSync(resolve(root, 'src'), resolve(root, 'dist'), { recursive: true });
-console.log('[build] src -> dist');
+const dist = resolve(root, 'dist');
+
+rmSync(dist, { recursive: true, force: true });
+const tsc = resolve(root, 'node_modules/typescript/bin/tsc');
+execFileSync(process.execPath, [tsc, '-p', resolve(root, 'tsconfig.json')], { stdio: 'inherit' });
+
+for (const asset of ['ptc/agentbox.worker.cjs', 'ptc/schema.json']) {
+  cpSync(resolve(root, 'src', asset), resolve(dist, asset), { force: true });
+}
+console.log('[build] tsc -> dist (+ worker, schema)');

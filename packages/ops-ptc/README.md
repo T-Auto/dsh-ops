@@ -1,9 +1,15 @@
 # ops-ptc
 
-> **2.1.1**：修一个真事故 —— `proc.js` 的七个函数曾被改写成 `function safeStr($$$) { try {`
+> **2.1.2**：仓库里不再有任何编译产物。`src/ptc/*.ts` 是唯一实现源（手写 TypeScript，带类型与
+> 注释），`dist/` 由 `tsc` 生成且不入库 —— 之前提交的是 `tsc` 编译出来的 CommonJS，diff 里只能
+> 看到 `exports.x = x` 和 `(0, mod.fn)()`，等于没法 review。11 份 `.d.ts` 里 7 份与旧声明逐字节
+> 相同，其余差异只有 `import type` 化、引号风格，以及补回漏声明的 `walkBounded` / `pickExistingEs`。
+> 详见 [FIXES.md](FIXES.md)。
+>
+> **2.1.1**：修一个真事故 —— `proc` 的七个函数曾被改写成 `function safeStr($$$) { try {`
 > 并压成单行，`async` 一起丢掉，模块直接加载失败，`ops_ptc_find` / `ops_ptc_refactor` 枚举段
 > 整体不可用。`checkedWrite` 现在先过一道占位符闸门（`E_INPROC_UNRESOLVED_PLACEHOLDER`），
-> 未解析的 `$$$` 不落盘。另加 `engine-load.js` 双锚点，`pnpm install` 清空 `node_modules` 后
+> 未解析的 `$$$` 不落盘。另加 `engine-load` 双锚点，`pnpm install` 清空 `node_modules` 后
 > 从 `vendor/deps` 回退，不再报 `E_ENGINE_UNAVAILABLE`。详见 [FIXES.md](FIXES.md)。
 >
 > **2.1.0**：`ops_ptc_locate` 附赠命中正文（≤8 KiB 直给，超限给 `readHint` 抄参数），省掉一整轮
@@ -21,10 +27,13 @@
 
 2.0.5 的包精简与正则预编译、2.0.3~2.0.4 的重复解析/模板展开/pipeline 优化，以及 2.0.0 以来的四版累计改动与冷热对照，全部并入 [PERFORMANCE_CUMULATIVE.md](PERFORMANCE_CUMULATIVE.md)；2.0.1 的审计与修复见 [AUDIT_REPORT.md](AUDIT_REPORT.md)；这些约束继续保留。分组报告（PERFORMANCE_ROUND2/3/4.md）、SMALL_TREE.md 与 `audit/*.json` 原始样本只留在仓库，安装包不再携带。宿主接线见 [HOST_INTEGRATION.md](HOST_INTEGRATION.md)。性能数字来自保存版本的串行交替测量，不作为其它环境的性能保证。
 
-安装包只含 `dist/`、`package.json` 与上面四份文档：不含基准样本、脚本、旧构建或源码。
+安装包含 `dist/`（`tsc` 产物）、`src/`（TypeScript 源）、`vendor/`、`package.json` 与四份文档：不含基准样本与旧构建。
 
 ```bash
-npm i ./ops-ptc-2.0.5.tgz   # 本地验证包；未发布 registry
+npm install                                  # 装依赖（typescript / @ast-grep/napi / @types/node）
+npm run build                                # tsc -p tsconfig.json → dist/，再拷 worker 与 schema
+npm test                                     # 构建 + 全部回归（AST / worker / 协议 / pipeline / 审计）
+npm i ./ops-ptc-2.1.2.tgz                    # 本地验证包；未发布 registry
 npx ops-ptc locate   --symbol getValidRequestBody --roots src
 npx ops-ptc refactor --pattern 'return $A' --rewrite 'return ($A);' --symbol getValidRequestBody --mode preview
 ```
@@ -274,25 +283,35 @@ SMALL_TREE.md（`npm run bench:small`）测了 606 文件树上所有可能架�
 
 ## 目录
 
+仓库里只有 `.ts` 源；`dist/` 是 `npm run build` 的产物，`.gitignore` 里。
+
 ```
 src/ptc/proc.ts           spawn 唯一出口 + CRLF/BOM/EOL 收口 + es 候选链
 src/ptc/stages.ts         五段实现
-src/ptc/pipeline.ts       编排、熔断、回滚、CLI
-src/ptc/agentbox.worker.cjs  唯一落盘进程（stdin JSON → 原子 rename）
-src/ptc/inproc.ts         进程内 AST 引擎（@ast-grep/napi，零 fork）
+src/ptc/pipeline.ts       编排、熔断、回滚
+src/ptc/astdiff.ts        进程内 AST 审计（difftastic 的零 fork 替代）
+src/ptc/inproc.ts         进程内 AST 引擎：定位 / 改写 / CLI 分发
+src/ptc/enumerate.ts      分级寻址的枚举层（walk / es.exe / 30s 缓存）
+src/ptc/inproc-error.ts   进程内引擎错误类型（枚举层与引擎共用）
+src/ptc/safe-write.ts     原子替换 + 占位符闸门
+src/ptc/reparse.ts        重解析点拒绝（symlink / junction 不穿越）
+src/ptc/engine-load.ts    @ast-grep/napi 双锚点惰性解析
 src/ptc/tools.ts          tools_addition + discovery entry
+src/ptc/adapter.ts        宿主 Outcome 信封（completed/partial/rejected/error/unknown）
 src/ptc/mcp.ts            MCP stdio 适配（在途请求 drain 后才退出）
-scripts/smoke.mjs         端到端 7 例（在 .sandbox 副本上跑，不碰原文件）
-scripts/mcp-smoke.mjs     MCP 协议级 5 例
-scripts/inproc-smoke.mjs  进程内引擎 9 例（与五段逐字节对比 / 中文 CRLF / 熔断）
-bench/bench.mjs           四维基准（寻址 / 上下文 / 正确性 / 端到端）
-bench/vs-native.mjs       对照原生 glob/读全文/正则的实测
-bench/smalltree.mjs       小树全架构对照（进程基线 / 枚举 / 定位 / 改写 / sidecar / 批量 / inproc）
-BENCH.md                  基准结果（bench 生成）
-VS_NATIVE.md              原生对照结果（bench:vs 生成）
-SMALL_TREE.md             小树结论与决策表（bench:small 生成数据）
+src/ptc/cli.ts            命令行入口（locate / refactor / mcp）
+src/ptc/index.ts          公开面 barrel
+src/ptc/schema.json       五个工具的入参 schema（纯数据，宿主直读）
+src/ptc/agentbox.worker.cjs  唯一落盘进程（stdin JSON → 原子 rename，手写 CJS）
+tsconfig.json             strict + NodeNext + declaration，产出 dist/
+scripts/build.mjs         tsc → dist，再拷 worker 与 schema
+test/                     10 组回归：AST / worker / 协议 / pipeline / 审计 / 安全 / 清理
+bench/                    四维基准与小树全架构对照
 vendor/README.md          es.exe 放置说明（二进制不入库）
 ```
+
+单文件 1000 行上限：`inproc` 原本同时装寻址、改写、CLI，会越过这条线，所以寻址层拆到
+`enumerate.ts`、错误类型拆到 `inproc-error.ts`，两者由 `inproc.ts` re-export，公开面不变。
 
 ### 2.1.0（本地构建）
 

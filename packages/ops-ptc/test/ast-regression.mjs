@@ -11,8 +11,8 @@ const previousTsLoader = require.extensions['.ts'];
 require.extensions['.ts'] = (module, file) => module._compile(ts.transpileModule(readFileSync(file, 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
 }).outputText, file);
-const { inprocRefactor, inprocLocate } = require('../src/ptc/inproc.js');
-const { auditAst, spliceExpect } = require('../src/ptc/astdiff.js');
+const { inprocRefactor, inprocLocate } = require('../dist/ptc/inproc.js');
+const { auditAst, spliceExpect } = require('../dist/ptc/astdiff.js');
 const { Lang, parse } = require('@ast-grep/napi');
 if (previousTsLoader) require.extensions['.ts'] = previousTsLoader;
 else delete require.extensions['.ts'];

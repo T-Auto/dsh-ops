@@ -1,4 +1,3 @@
-"use strict";
 /**
  * `@ast-grep/napi` 的双锚点惰性解析。
  *
@@ -9,25 +8,28 @@
  * 所以解析走两条锚点：先 nested `node_modules`，再随包分发的 `vendor/deps`。第二条是 15 MB
  * 的 win32-x64 副本，运行期零成本，但让「依赖被清」从功能失效降级成「什么也没发生」。
  *
- * 导出的 `napi` 是个 Proxy：调用点写 `napi_1.parse(...)` 一个字都不用改，而解析推迟到第一次
+ * 导出的 `napi` 是个 Proxy：调用点写 `napi.parse(...)` 一个字都不用改，而解析推迟到第一次
  * 真正调用，启动期不再把原生 `.node` 拉进进程。
  */
-const path = require("node:path");
-const { createRequire } = require("node:module");
+import { createRequire } from 'node:module';
+import * as path from 'node:path';
+
+/** `@ast-grep/napi` 的模块形状；只在类型层引用，运行期解不出这个包也不影响加载 */
+export type NapiModule = typeof import('@ast-grep/napi');
 
 const ANCHORS = [
-    path.join(__dirname, "..", "..", "package.json"),
-    path.join(__dirname, "..", "..", "vendor", "deps", "package.json"),
+    path.join(__dirname, '..', '..', 'package.json'),
+    path.join(__dirname, '..', '..', 'vendor', 'deps', 'package.json'),
 ];
 
-let loaded;
-function load() {
+let loaded: NapiModule | undefined;
+export function load(): NapiModule {
     if (loaded !== undefined)
         return loaded;
-    let last;
+    let last: unknown;
     for (const anchor of ANCHORS) {
         try {
-            loaded = createRequire(anchor)("@ast-grep/napi");
+            loaded = createRequire(anchor)('@ast-grep/napi') as NapiModule;
             return loaded;
         }
         catch (error) {
@@ -37,15 +39,13 @@ function load() {
     throw last;
 }
 
-const napi = new Proxy({}, {
+export const napi = new Proxy({} as NapiModule, {
     get(_target, key) {
         const mod = load();
-        const value = mod[key];
-        return typeof value === "function" ? value.bind(mod) : value;
+        const value = (mod as unknown as Record<string | symbol, unknown>)[key];
+        return typeof value === 'function' ? value.bind(mod) : value;
     },
     has(_target, key) {
         return key in load();
     },
 });
-
-module.exports = { load, napi, ANCHORS };

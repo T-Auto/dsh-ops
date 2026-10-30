@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-const inproc_1 = require("./inproc");
+import { runInprocCli } from './inproc';
+
 const HELP = `ops-ptc — 进程内 AST 重构引擎（零外部二进制）
 
 用法:
@@ -17,14 +16,16 @@ const HELP = `ops-ptc — 进程内 AST 重构引擎（零外部二进制）
 
 退出码: 0=成功, 1=业务熔断（见输出里的 code）, 2=参数错误
 `;
+
 const argv = process.argv.slice(2);
 if (argv.length === 0 || argv[0] === '-h' || argv[0] === '--help' || argv[0] === 'help') {
     process.stdout.write(HELP);
     process.exit(argv.length === 0 ? 2 : 0);
 }
 if (argv[0] === 'mcp') {
-    require('./mcp');
+    // 惰性加载：--help 那条路径必须能在 MCP server 挂上 stdio 之前就退出
+    void import('./mcp.js');
 }
 else {
-    process.exit((0, inproc_1.runInprocCli)(argv));
+    process.exit(runInprocCli(argv));
 }
