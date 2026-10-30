@@ -18,11 +18,20 @@
 
 import { createRequire } from 'node:module'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-import { PACKAGE_ROOT } from '../paths.js'
 import { fail } from './errors.js'
 import { querySource } from './query.js'
 import type { ParserConstructor, SourceLanguage, SyntaxLanguage, SyntaxParser, SyntaxQuery } from './types.js'
+
+/**
+ * 包根，与宿主 `src/paths.ts` 的 `PACKAGE_ROOT` 语义一致（同为实现文件的上一级目录）。
+ *
+ * 宿主那份在 `src/` 顶层，只上溯一级；本文件在 `src/symbol-map/`，所以要上溯两级。
+ * 编译到 `dist/symbol-map/`、或整棵 `src/` 投放进宿主 `src/` 之后，这个表达式仍然落在包根：
+ * `dist/symbol-map/../../package.json` 与 `<pkg>/src/symbol-map/../../package.json` 是同一个文件。
+ */
+const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 /** Extension → grammar. Keys are lowercase with the dot, matching `path.extname` output. */
 export const LANG_BY_EXT: ReadonlyMap<string, SourceLanguage> = new Map<string, SourceLanguage>([

@@ -5,22 +5,37 @@
 ```
 packages/ops-symbol-map/
 ├── src/                     源代码（Tree-sitter 符号表引擎 + dsh-ops 适配层）
-├── test/verify.mjs          落位校验：把 src/ 覆盖到宿主 src/ 上跑 tsc
+├── test/verify.mjs          两段校验：tsc --noEmit 全包零诊断 + 真实跑一次 symbol map
 ├── bench/symbol-map/        基准脚本
+├── tsconfig.json            独立编译配置（NodeNext / ES2023 / strict / dist 输出）
 ├── docs/                    审计、技术说明、历史对比
 ├── package.json
 └── README.md
 ```
 
 `src/` 下的相对路径镜像 `dsh-ops/src/`：`src/file/symbol-map.ts` 就是宿主同路径文件的替换件，
-`src/symbol-map/` 是引擎本体。`src/symbol-map/grammar.ts` 会 `import '../paths.js'`、
-`src/file/symbol-map.ts` 会 `import '../worker-boundary.js'` —— 这些由宿主提供，包内不复制，
-所以**编译只能在落位之后做**：
+`src/symbol-map/` 是引擎本体。
+
+宿主侧只有五个模块被用到，包内以**契约副本**补齐，所以离开宿主也能编译、能测：
+
+| 宿主模块 | 包内落点 | 取用的符号 |
+| --- | --- | --- |
+| `src/worker-boundary.ts` | `src/host/worker-boundary.ts` | `record()`、`WorkerInvokeConfig` |
+| `src/permissions.ts` | `src/host/permissions.ts` | `MODES`、`credentialDenied()` |
+| `src/file/contract.ts` | `src/host/contract.ts` | `normalizeArguments()`（去掉 registry 依赖的等价实现） |
+| `src/adapter/dsh/types.ts` | `src/adapter/dsh/types.ts`（路径不能挪） | `Context`、`SandboxExecutionPolicy`、`SandboxPolicyService`、`ToolRunContext` |
+| `src/paths.ts` | `src/symbol-map/grammar.ts` 内联 `PACKAGE_ROOT` | `PACKAGE_ROOT` |
+
+五个文件的头注释都写着同一句：**合并回宿主时优先用宿主原实现并删除本文件**。符号同名同义、
+字段是宿主类型的结构子集，换回宿主版本不会产生类型错误。
 
 ```bash
 cd packages/ops-symbol-map
-SYMBOL_MAP_DEPS=<含 typescript 的 node_modules> npm test
+npm test                                    # tsc --noEmit + 运行时校验
+SYMBOL_MAP_ENGINE_ROOT=<含 node_modules 的目录> npm test   # 装了语法包时把运行时那段也跑起来
 ```
+
+语法包是 `optionalDependencies`：没装时 `verify.mjs` 打印 SKIP 并退出 0，不会把「没装」误报成失败。
 
 发布产物（`.tar.gz`）由 release 构建生成，不进仓库。
 
@@ -28,6 +43,10 @@ SYMBOL_MAP_DEPS=<含 typescript 的 node_modules> npm test
 
 # ops_symbol_map — 只给行号的符号地图
 
+> **20261030**：补齐五个宿主契约副本（`src/host/*`、`src/adapter/dsh/types.ts`、`grammar.ts` 内联
+> `PACKAGE_ROOT`），加 `tsconfig.json` 与两段式 `test/verify.mjs`：`tsc --noEmit` 与运行时校验
+> 都能在包内独立跑，不再需要先把宿主 `src/` 复制进来。
+>
 > **20261029.4**：语法包改为双锚点解析 —— 先包根 `node_modules`，缺失才回退 `vendor/deps`
 > （win32-x64 prebuild，`dsh-ops` 自带）。`dsh-ops/package.json` 的 `dependencies` 是 `null`，
 > 一次 `pnpm install` 就会清空 nested 依赖并让工具报 `E_ENGINE_UNAVAILABLE`；回退后重装不再
@@ -171,15 +190,26 @@ src/symbol-map/          引擎，10 个模块，2,005 行
 src/file/symbol-map.ts   工具适配层：门禁顺序、参数规范化、回执投影（215 行）
 src/authority-paths.ts   锚定；锚的 realpath 按根记忆化，收益属于每个文件工具（71 行）
 src/credential-policy.ts 共享的凭据围栏（根列表缓存，见 TECHNICAL §6.4）
-test/                    47 + 3 条断言；夹具在 test/lib/symbol-map-fixtures.mjs
+src/host/worker-boundary.ts  宿主契约副本：record() + WorkerInvokeConfig
+src/host/permissions.ts      宿主契约副本：MODES + credentialDenied()
+src/host/contract.ts         宿主契约副本：normalizeArguments()（无 registry 的等价实现）
+src/adapter/dsh/types.ts     宿主契约副本：Context / SandboxExecutionPolicy / SandboxPolicyService / ToolRunContext
+test/verify.mjs          两段校验（tsc --noEmit + 真实跑一次 map）；不依赖宿主 src/
 bench/symbol-map/        bench.mjs（引擎分阶段）· e2e.mjs（走真实 dispatch）
 ```
 
 ## 跑测试与基准
 
-本包是 dsh-ops 源码树的一个切片：`test/` 与 `bench/` 里的相对导入（`../lib/...`、`../../lib/...`）
-指向编译产物，所以下面的命令要在 dsh-ops 检出目录里跑，把本包的 `src/` `test/` `bench/` 覆盖进去，
-先 `node scripts/build.mjs`。
+独立运行（不需要 dsh-ops 检出，也不需要宿主 `src/`）：
+
+```console
+npm test                                                  # tsc --noEmit + 运行时校验
+SYMBOL_MAP_ENGINE_ROOT=<含 node_modules 的目录> npm test   # 语法包装在别处时，指向那个目录
+npm run typecheck                                         # 只做类型检查
+```
+
+`test/` 与 `bench/` 里的相对导入（`../lib/...`、`../../lib/...`）指向编译产物；那批脚本要在 dsh-ops
+检出目录里跑，把本包的 `src/` `test/` `bench/` 覆盖进去，先 `node scripts/build.mjs`。
 
 ```console
 node test/run.mjs symbol-map          # 47 checks
@@ -216,8 +246,11 @@ node bench/symbol-map/e2e.mjs         # 13 s，invoke() → 回执，外加契�
 集合上（200 符号里 `name:"f15"` 实测 `total: 11, omitted: 10`，改前是 `total: 200, omitted: 50`）。
 `offset` 的含义随之变成"过滤后的第 N 个符号"，与 `nextOffset` 自洽，往返续页不会再错位。
 
-本包是 **dsh-ops 0.5.0 的一组分片**，不是独立 npm 包：它依赖 `src/file/worker.ts` 的分派点、
-`src/authority-paths.ts` 的锚定、`src/permissions.ts` 的模式白名单。要打补丁进仓库：
+本包是 **dsh-ops 0.5.0 的一组分片**，不是独立 npm 包：运行时它要 `src/file/worker.ts` 的分派点、
+`src/authority-paths.ts` 的锚定与宿主策略服务。编译期不再需要宿主 `src/` —— 宿主契约在
+`src/host/` 与 `src/adapter/dsh/types.ts` 有最小副本。合并回宿主时按上面的表逐条换回宿主实现
+（`src/host/` 三个文件与 `src/adapter/dsh/types.ts` 删掉，`grammar.ts` 的 `PACKAGE_ROOT` 换回
+`import { PACKAGE_ROOT } from '../paths.js'`）。要打补丁进仓库：
 
 ```console
 git diff HEAD -- src/symbol-map src/file/symbol-map.ts src/authority-paths.ts \
