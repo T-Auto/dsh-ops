@@ -1,5 +1,9 @@
 # ops-parallel-read
 
+> **4.1.8**：跨调用读取缓存。同一文件在一次会话里读第二遍不再重付解码 + 切行 + 行窗口结算，
+> `dev:ino:size:mtime` 命中即返回：`worker.js` 第二遍 1.07 ms → 0.67 ms，mtime 变即失效。
+> 新增 `readCacheStats()` / `clearReadCache()`。详见 [FIXES.md](FIXES.md)。
+>
 > **4.1.7**：路径口径与正文保真解耦。新增 `normalizePaths`（未指定时跟随 `normalize`），compat 回执
 > 的 `path` 一律 POSIX 而正文仍逐字节；单文件回执 2186 B → 2060 B。详见 [FIXES.md](FIXES.md)。
 
@@ -115,7 +119,7 @@ const out = await readFilesCompat([
 
 ### 其它导出
 
-`runPool(items, limit, worker)`（并发池，可单独复用）、`truncate(text, maxChars)`、`OpsError`、`DEFAULTS`、`TRUNCATED_MARK`。
+`runPool(items, limit, worker)`（并发池，可单独复用）、`truncate(text, maxChars)`、`OpsError`、`DEFAULTS`、`TRUNCATED_MARK`、`readCacheStats()`、`clearReadCache()`。
 
 ---
 
@@ -190,6 +194,30 @@ const out = await readFilesCompat([
 
 
 ---
+
+## 变更（4.1.8，跨调用读取缓存）
+
+**为什么**：同一文件在一次会话里被读两遍是常态（读 → 改 → 再读确认）。此前每次都重付
+`open` + `fstat` + `read` + 解码 + `SHA-256` + 切行 + 行窗口结算。
+
+**边界先说清**：`open` 与 `fstat` 必须每次都付 —— 它们是「这个文件现在是什么」的唯一凭据，
+跳过它们就等于用上一次的结论回答这一次的问题。能省的只是它们之后那段纯计算。
+
+| 项 | 实现 |
+| --- | --- |
+| 键 | `dev:ino:size:mtime` + 全部影响正文的开关（`full` / `hash` / `normalize` / `stripBom` / `strictUtf8`、行窗口、字符额度） |
+| 命中条件 | 键完全相等 —— 同一批字节、同一个窗口、同一套开关 |
+| 不缓存 | `inode` 拿不到（部分网络盘报 0）时不缓存，没有身份就没有命中判断 |
+| 容量 | 64 项 / 8 Mi 字符，LRU 淘汰 |
+| 失效 | `mtime` 或 `size` 变化即换键；文件被改后立刻不可命中 |
+
+**实测**：`worker.js`（17.5 KB）第二遍 **1.07 ms → 0.67 ms**；改文件后立即失效并重新读盘。
+
+**新增导出**：`readCacheStats()` 返回 `{ entries, chars, hits, misses }`，`clearReadCache()` 清空 ——
+给测试断言和长会话观测用，不影响读取路径。
+
+**没有改**：四道闸门（并发池 / 2 MiB / 3 s / 二进制）位置不变；预算仍按输入顺序结算；
+`readFilesCompat` 的正文逐字节语义不变。
 
 ## 变更（4.1.7，路径口径与内容保真解耦）
 
