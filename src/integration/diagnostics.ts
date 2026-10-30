@@ -1,32 +1,27 @@
 /** Read-only operator diagnostics for the current scope; no execution or selection side effects. */
 import type { Context, Agent } from '../adapter/dsh/types.js'
-import { inspectPresentation } from '../presentation.js'
-import { visibleNames } from '../surface.js'
-import { resolveWorker } from '../file/worker.js'
+import { inspectPresentation } from '../publication/presentation.js'
+import { visibleNames } from '../publication/surface.js'
+import { resolveWorker } from '../execution/files.js'
 import { resolveShells } from '../shells.js'
+import { pendingSelection } from '../discovery/observations.js'
 import { providers } from '../discovery/providers.js'
-import { integrationFor } from './registry.js'
-import { nativeProviders } from '../file/result-provider.js'
+import { integrationFor } from '../consumer/registry.js'
+import { nativeProviders } from '../publication/providers.js'
 import { publicToolName } from '../policy.js'
-import { ownScopes } from '../scoped-ownership.js'
+import { ownScopes } from '../publication/ownership.js'
 import type { PublicationGate } from '../publication/types.js'
-import { presetOf, modeOf } from '../modes/detect.js'
-import { enabledModes } from '../modes/registry.js'
+import { presetOf } from '../consumer/identity.js'
+import { modeOf } from '../presets/detect.js'
+import { enabledModes } from '../presets/registry.js'
 export interface Diagnostic {
   preset?: string
-  state: 'not-selected' | 'ready' | 'degraded'
+  state: 'not-selected' | 'disabled' | 'ready' | 'degraded'
   tools: string[]
   issues: { code: string; message: string }[]
   external: { name: string; state: 'disabled' | 'unavailable' | 'active' | 'pending' | 'available' }[]
 }
-const observers = new WeakMap<object, Map<Agent, { pending: ReadonlySet<string> }>>()
-export function observeSelection(ctx: Context, agent: Agent, pending: ReadonlySet<string>): () => void {
-  const key = ctx.root ?? ctx
-  let state = observers.get(key)
-  if (!state) { state = new Map(); observers.set(key, state) }
-  const row = { pending }; state.set(agent, row)
-  return () => { if (state.get(agent) === row) state.delete(agent) }
-}
+export { observeSelection } from '../discovery/observations.js'
 export async function diagnose(ctx: Context, agent: Agent): Promise<Diagnostic> {
   const config = integrationFor(ctx, agent), mode = modeOf(ctx, agent)
   const selected = Boolean(config || mode && enabledModes(ctx).has(mode))
@@ -34,7 +29,7 @@ export async function diagnose(ctx: Context, agent: Agent): Promise<Diagnostic> 
   let names: string[] = []
   try { names = visibleNames(ctx.get('tools')!, agent) } catch { /* reported below */ }
   const issue = (code: string, message: string) => { if (!issues.some(row => row.code === code)) issues.push({ code, message }) }
-  if (selected) {
+  if (selected && config?.enabled !== false) {
     for (const service of ['tools', 'systemPrompt']) if (!ctx.get(service as 'tools')) issue('HOST_SERVICE_UNAVAILABLE', `Required host service ${service} is unavailable; enable it and reload the component.`)
     const builtins = Boolean(config ? config.files || config.presentation === 'native' && (config.native.allowedTools.length || config.native.alwaysLoaded.length)
       : mode && enabledModes(ctx).has(mode) && mode !== 'minimal')
@@ -56,7 +51,8 @@ export async function diagnose(ctx: Context, agent: Agent): Promise<Diagnostic> 
     } catch { issue('PRESENTATION_UNAVAILABLE', 'The host could not assemble this scope. Check the host presentation/runtime configuration.') }
     if (config) {
       const expected = [
-        ...(config.files ? [config.presentation === 'ptc' ? 'inspect_local_file' : 'read_files'] : []),
+        ...(config.files && config.residentTools ? (config.presentation === 'ptc' ? ['inspect_local_file', 'result', ...config.ptc.alwaysLoaded] : config.residentNames) : []),
+        ...(config.presentation === 'ptc' && config.discovery ? ['load_sdk'] : []),
         ...(config.shell ? ['bash'] : []),
         ...(config.presentation === 'native' && config.native.enabled ? ['discover_tools'] : []),
         ...(config.presentation === 'native' ? config.native.alwaysLoaded : []),
@@ -66,7 +62,7 @@ export async function diagnose(ctx: Context, agent: Agent): Promise<Diagnostic> 
     }
   }
   // Readiness is evaluated from the current visible surface, never binary presence alone.
-  const observation = observers.get(ctx.root ?? ctx)?.get(agent)
+  const pending = pendingSelection(ctx, agent)
   const pool = providers(ctx, agent)
   const published = nativeProviders(ctx, agent)
   const external: Diagnostic['external'] = (config?.externalTools ?? []).map(name => {
@@ -74,9 +70,9 @@ export async function diagnose(ctx: Context, agent: Agent): Promise<Diagnostic> 
     let available = false
     try { available = Boolean(provider?.active && provider.capability.available?.(agent) !== false) } catch { /* unavailable */ }
     return { name, state: config!.externalDisabled.includes(name) ? 'disabled' : !provider || !available ? 'unavailable'
-      : published.some(source => source.scope === agent && source.definition.name === name && source.definition.output === provider.capability.definition.output) ? 'active' : observation?.pending.has(provider.token) ? 'pending' : 'available' }
+      : published.some(source => source.scope === agent && source.definition.name === name && source.definition.output === provider.capability.definition.output) ? 'active' : pending?.has(provider.token) ? 'pending' : 'available' }
   })
-  return { preset: presetOf(ctx, agent), state: !selected ? 'not-selected' : issues.length ? 'degraded' : 'ready',
+  return { preset: presetOf(ctx, agent), state: !selected ? 'not-selected' : config?.enabled === false ? 'disabled' : issues.length ? 'degraded' : 'ready',
     tools: [...names].sort(), issues, external }
 }
 

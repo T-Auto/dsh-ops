@@ -17,9 +17,9 @@ function fixture(root, targets = PLATFORMS) {
   const pkg = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT,'package.json'),'utf8'))
   const manifest = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT,'dsh-plugin.json'),'utf8'))
   fs.mkdirSync(path.join(root,'bin'),{recursive:true})
-  fs.mkdirSync(path.join(root,'lib/ptc'),{recursive:true})
+  fs.mkdirSync(path.join(root,'lib/execution'),{recursive:true})
   for (const name of ['native-runtime.mjs','check-release.mjs']) fs.copyFileSync(path.join(PACKAGE_ROOT,'bin',name),path.join(root,'bin',name))
-  fs.copyFileSync(path.join(PACKAGE_ROOT,'lib/ptc/runtime.js'),path.join(root,'lib/ptc/runtime.js'))
+  fs.copyFileSync(path.join(PACKAGE_ROOT,'lib/execution/runtime.js'),path.join(root,'lib/execution/runtime.js'))
   fs.writeFileSync(path.join(root,'package.json'),JSON.stringify(pkg))
   fs.writeFileSync(path.join(root,'dsh-plugin.json'),JSON.stringify(manifest))
   for (const target of targets) {

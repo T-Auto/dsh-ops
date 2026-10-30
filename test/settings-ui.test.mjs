@@ -112,6 +112,51 @@ await test('only non-minimal presets expose adjacent independent resident and dy
   } finally { await view.close() }
 })
 
+await test('custom preset cards save exact nested paths through the real host without losing advanced options', async () => {
+  let observed
+  const fixture = await profileFixture('custom-preset-page', {
+    Config: (await import('../lib/settings/merged.js')).Config, apply(_ctx, config) { observed = config },
+  }, { presets: { 'acme.chat': { discovery: true, shell: false, residentNames: ['stat'], allowedTools: ['diff'], extraGuidance: 'Retain this guidance.' } } })
+  let pending
+  const form = { state: ready(fixture.snapshot().value, fixture.snapshot().revision), mutate(ops, revision) {
+    return pending = fixture.mutate(ops, revision).then(() => true)
+  } }
+  const view = await mount(RowForm, { form, Switch: TestSwitch })
+  try {
+    await expand(view.container, 'acme.chat')
+    const card = group(view.container, 'acme.chat')
+    await click(switchIn(card, en.dynamicTools))
+    await click(button(view.container, en.save)); await act(async () => { await pending })
+    assert.equal(observed.presets['acme.chat'].discovery, false)
+    assert.deepEqual(observed.presets['acme.chat'].residentNames, ['stat'])
+    assert.deepEqual(observed.presets['acme.chat'].allowedTools, ['diff'])
+    assert.equal(observed.presets['acme.chat'].extraGuidance, 'Retain this guidance.')
+  } finally { await view.close(); await shutdown(fixture.ctx) }
+})
+
+await test('custom PTC files stay required and Shell off saves coherent dependent settings', async () => {
+  let observed
+  const fixture = await profileFixture('custom-dependent-page', {
+    Config: (await import('../lib/settings/merged.js')).Config, apply(_ctx, config) { observed = config },
+  }, { presets: { code: { profile: 'ptc' }, shell: { profile: 'shell', hidePwsh: true, bashPath: 'C:/selected/bash.exe', allowSystemShellFallback: true } } })
+  let pending
+  const form = { state: ready(fixture.snapshot().value, fixture.snapshot().revision), mutate(ops, revision) { return pending = fixture.mutate(ops, revision).then(() => true) } }
+  const view = await mount(RowForm, { form, Switch: TestSwitch })
+  try {
+    await expand(view.container, 'code')
+    assert.equal(switchIn(group(view.container, 'code'), en.swFiles).disabled, true)
+    assert.match(group(view.container, 'code').textContent, /Typed PTC requires/)
+    await expand(view.container, 'shell')
+    await click(switchIn(group(view.container, 'shell'), en.swBash))
+    await click(button(view.container, en.save)); await act(async () => { await pending })
+    assert.equal(observed.presets.shell.shell, false)
+    assert.equal(observed.presets.shell.hidePwsh, true, 'saved hiding intent is retained while Shell is disabled')
+    assert.equal(observed.presets.shell.bashPath, 'C:/selected/bash.exe')
+    assert.equal(observed.presets.shell.allowSystemShellFallback, true)
+    assert.equal(observed.presets.code.profile, 'ptc')
+  } finally { await view.close(); await shutdown(fixture.ctx) }
+})
+
 await test('a preset starts collapsed and reveals its switches on demand', async () => {
   const form = { state: ready({}), mutate: async () => true }
   const view = await mount(RowForm, { form, Switch: TestSwitch })

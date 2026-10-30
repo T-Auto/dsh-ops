@@ -12,10 +12,13 @@
  * the operator's intent and simply stops applying.
  */
 import { ConfigError } from '../config.js'
-import { resolveModeConfig, type ModeConfig } from '../modes/config.js'
+import { resolveModeConfig, type ModeConfig } from '../presets/config.js'
+import { MODE_IDS } from '../presets/types.js'
 import { resolveDiscoveryConfig } from '../discovery/config.js'
 import { resolvePanelConfig } from '../panel/collect.js'
 import { resolveActivityConfig } from '../tui/activity.js'
+import { PRESET_SETTINGS } from './preset-schema.js'
+import { customPresets, type CustomPreset } from './presets.js'
 import { editable, settingsConfig, type Field } from './schema.js'
 
 type DiscoveryConfig = ReturnType<typeof resolveDiscoveryConfig>
@@ -23,7 +26,7 @@ type PanelConfig = ReturnType<typeof resolvePanelConfig>
 type ActivityConfig = ReturnType<typeof resolveActivityConfig>
 
 /** Preset sections, in page order. */
-export const MODES = ['minimal', 'standard', 'ptc', 'cordis'] as const
+export const MODES = MODE_IDS
 export type ModeKey = typeof MODES[number]
 /** Every section the row accepts. */
 export const FEATURES = [...MODES, 'discovery', 'panel', 'tui', 'other'] as const
@@ -47,6 +50,7 @@ export interface FeatureState<T = Record<string, unknown>> {
 
 /** The resolved configuration of the single row. */
 export interface MergedConfig {
+  readonly presets: Readonly<Record<string, CustomPreset>>
   readonly global: GlobalSwitches
   readonly minimal: FeatureState<ModeConfig>
   readonly standard: FeatureState<ModeConfig>
@@ -76,7 +80,10 @@ function split(name: Feature, value: unknown): { enabled: boolean; rest: Record<
   // A validated section can re-enter as its resolved slice; accepting that shape
   // keeps one validator for both calls instead of a second, drifting one.
   const keys = Object.keys(raw)
-  if (keys.includes('config') && keys.every(key => key === 'enabled' || key === 'config')) return { enabled, rest: {}, resolved: raw.config }
+  if (keys.includes('config') && keys.every(key => key === 'enabled' || key === 'config' || key === 'raw')) {
+    if (raw.raw !== undefined) return { enabled, rest: object(`${name}.raw`, raw.raw) }
+    return { enabled, rest: {}, resolved: raw.config }
+  }
   const { enabled: _ignored, ...rest } = raw
   return { enabled, rest }
 }
@@ -100,7 +107,7 @@ export function resolveMergedConfig(raw?: unknown): MergedConfig {
   }
   const input = (raw ?? {}) as Record<string, unknown>
   for (const key of Object.keys(input)) {
-    if (key !== 'global' && !(FEATURES as readonly string[]).includes(key)) {
+    if (key !== 'global' && key !== 'presets' && !(FEATURES as readonly string[]).includes(key)) {
       throw new ConfigError(`unknown section ${JSON.stringify(key)}; accepted sections are global, ${FEATURES.join(', ')}`)
     }
   }
@@ -108,7 +115,15 @@ export function resolveMergedConfig(raw?: unknown): MergedConfig {
   for (const key of Object.keys(globalRaw)) {
     if (!['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools'].includes(key)) throw new ConfigError(`unknown global key ${JSON.stringify(key)}`)
   }
+  const normalized = Object.hasOwn(input, 'presets') && Object.values(object('presets', input.presets)).every(value =>
+    value && typeof value === 'object' && Object.keys(value).length === 1 && Object.hasOwn(value, 'options'))
+    ? Object.fromEntries(Object.entries(object('presets', input.presets)).map(([id, value]) => {
+      const options = (value as CustomPreset).options
+      const { preset: _id, ...rest } = options
+      return [id, rest]
+    })) : input.presets
   return {
+    presets: customPresets(normalized),
     global: {
       bash: flag(globalRaw, 'bash', true),
       hidePwsh: flag(globalRaw, 'hidePwsh', true),
@@ -130,7 +145,7 @@ function modeState(name: ModeKey, value: unknown): FeatureState<ModeConfig> {
   const { enabled, rest, resolved } = split(name, value)
   return resolved === undefined
     ? { enabled, config: resolveModeConfig(rest, name), raw: rest }
-    : { enabled, config: { ...resolved as ModeConfig, ...(name === 'minimal' ? { residentTools: false } : {}) } }
+    : { enabled, config: { ...resolved as ModeConfig, ...(name === 'minimal' ? { residentTools: false } : {}) }, raw: resolved as Record<string, unknown> }
 }
 
 function discoveryState(value: unknown): FeatureState<DiscoveryConfig> {
@@ -149,6 +164,7 @@ function panelState(value: unknown): FeatureState<PanelConfig> {
 
 function otherState(value: unknown): FeatureState<{ pwsh7Link: boolean }> {
   const raw = object('other', value)
+  if (Object.hasOwn(raw, 'config') && Object.keys(raw).every(key => ['config', 'raw', 'enabled'].includes(key))) return otherState(raw.raw ?? raw.config)
   // `enabled` may arrive from the validated shape; this section has no enable switch.
   for (const key of Object.keys(raw)) if (key !== 'pwsh7Link' && key !== 'enabled') throw new ConfigError(`unknown other key ${JSON.stringify(key)}`)
   // Absent keeps detection in charge; only a saved boolean counts as an explicit choice.
@@ -211,6 +227,10 @@ function modeSection(mode: ModeKey): Field {
 export function hostConfig(value: unknown): Record<string, unknown> {
   const merged = resolveMergedConfig(value)
   const out: Record<string, unknown> = { global: { ...merged.global } }
+  if (Object.keys(merged.presets).length) out.presets = Object.fromEntries(Object.entries(merged.presets).map(([id, row]) => {
+    const { preset: _identity, ...options } = row.options
+    return [id, options]
+  }))
   for (const feature of FEATURES) {
     const state = merged[feature]
     out[feature] = state.raw === undefined ? { enabled: state.enabled } : { enabled: state.enabled, ...state.raw }
@@ -220,6 +240,7 @@ export function hostConfig(value: unknown): Record<string, unknown> {
 
 /** The host settings descriptor of the single row. */
 export const Config = settingsConfig(hostConfig, {
+  presets: PRESET_SETTINGS,
   global: { type: 'object', dict: {
     bash: boolean('Bundle switch: allow presets to publish Bash.'),
     hidePwsh: boolean('Bundle switch: allow presets to hide the official Windows shell.'),

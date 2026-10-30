@@ -11,7 +11,7 @@ import { bashToolDefinition, DEFAULT_BASH_TIMEOUT_MS } from './shells.js'
 import { BashArgumentError } from './shells/argument-error.js'
 import { MODES } from './permissions.js'
 import { hostBashDefinition } from './shells/host-tool.js'
-import { withToolChange } from './tool-changes.js'
+import { withToolChange } from './publication/changes.js'
 import { startSessionBash } from './shells/session-execution.js'
 import { resolveSessionDirectory } from './adapter/dsh/working-directory.js'
 

@@ -1,5 +1,8 @@
 import type { TranslateNS } from '../adapter/dsh/types.js'
 export const en = {
+  ptcFilesRequired: 'Typed PTC requires file capabilities; use resident tools to control startup APIs.',
+  shellOffClears: 'Turning Bash off preserves its executor settings and suspends host-shell hiding until re-enabled.',
+  customPreset: 'Custom preset', swFiles: 'Enable built-in file capabilities', swPromptPolicy: 'Publish routing guidance',
   rowSummary: 'Configure resident tools, dynamic loading and shells per preset; Minimal has no resident-tool option.',
   groupGlobal: 'Bundle switches',
   groupGlobalHint: 'These four gate the same-named switch in every preset below.',
@@ -57,6 +60,9 @@ export const en = {
   refreshedAt: 'Refreshed at', redetect: 'Check again', redetecting: 'Checking…',
 }
 export const zh: Record<keyof typeof en, string> = {
+  ptcFilesRequired: '类型化 PTC 必须启用文件能力；用常驻开关控制启动 API。',
+  shellOffClears: '关闭 Bash 保留执行器设置，并暂停宿主 Shell 隐藏；重新启用后恢复。',
+  customPreset: '自定义预设', swFiles: '启用内置文件能力', swPromptPolicy: '注入工具路由指导',
   rowSummary: '按预设独立配置常驻工具、动态加载与 Shell；极简模式不提供常驻工具选项。',
   groupGlobal: '总开关',
   groupGlobalHint: '这四个开关控制下方每个预设里的同名选项是否生效。',

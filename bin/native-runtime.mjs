@@ -20,7 +20,7 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
-import { PLATFORMS, PACKAGE_ROOT, workerName } from '../lib/ptc/runtime.js'
+import { PLATFORMS, PACKAGE_ROOT, workerName } from '../lib/execution/runtime.js'
 const { values, positionals } = parseArgs({ options: { input: {type:'string'}, root: {type:'string'}, platform: {type:'string'}, staged: {type:'boolean'} }, allowPositionals:true })
 const command = positionals[0] ?? 'check'
 if (command !== 'stage' && command !== 'check') throw Error('Expected stage or check')

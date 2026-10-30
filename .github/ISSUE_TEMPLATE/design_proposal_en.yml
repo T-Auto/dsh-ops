@@ -1,0 +1,33 @@
+name: Design proposal
+description: Submit a brief design for maintainer review before implementation
+title: "[Design] "
+labels: [design]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the feature design in detail. What problem does it solve? How will users use the feature or be affected by it? How will it be implemented?
+
+  - type: textarea
+    id: design
+    attributes:
+      label: Design
+      description: Freely describe the complete proposal, including background, user flow, settings, mockups, prompts, or component boundaries as appropriate.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Trade-offs and impact (optional)
+      description: If there are alternatives, explain the choice and any compatibility, performance, prompt-cost, or behavior impact.
+    validations:
+      required: false
+
+  - type: textarea
+    id: questions
+    attributes:
+      label: Questions for maintainers (optional)
+      description: List anything you would like maintainers to confirm or decide first.
+    validations:
+      required: false

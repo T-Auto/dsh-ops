@@ -6,22 +6,28 @@ allows all sessions to discover it. PTC provider SDK registration is not yet sup
 
 中文：[工具发现](工具发现.md).
 
-`dsh-ops/discovery` publishes `ops_discover_tools` in each eligible Native scope. Describe a capability (`metadata revision hash`) or select an exact public name (`select:ops_stat`). Discovery only chooses tools; it performs no file action. A successful selection remains pending through the current tool round. Its owning session's committed `step/end` publishes it for the next provider request. The pinned host assembles before `agent/pre-step`; queued publication is therefore drained and the public prompt service reassembles a stale snapshot. Diagnostic assemblies before that committed boundary cannot activate pending names. Newly published tools remain scoped to their owner; parents, children and siblings must discover independently.
+The merged `dsh-ops` row publishes `ops_discover_tools` for eligible Native consumers. The PTC SDK loader is a separate choice controlled by the PTC and global dynamic switches. Custom presets must explicitly opt in through the integration API or the row's `presets` map.
 
-The eight-row bundle enables this component by default and preserves existing named row overrides. Its configuration is:
+Describe a capability (`metadata revision hash`) or select an exact public name (`select:ops_stat`).
+Discovery only chooses tools; it performs no action. Selection stays pending through the current
+round and activates at the owning session's committed `step/end`, for the next provider request.
+Diagnostic assemblies cannot activate it early. The pinned host assembles before `agent/pre-step`;
+queued publication drains and the public prompt service rebuilds stale snapshots. Newly published
+tools remain owner-scoped. Parents, children and siblings select independently.
+
+The merged row owns the following Native discovery settings (inside `discovery`):
 
 ```yaml
-- name: dsh-ops/discovery
-  config:
-    enabled: true
-    maxResults: 3
-    allowedTools: [inspect_local_file, result, glob, grep, replace, write_file, edit_file, diff, stat, copy, move, remove, read_table, read_docx, read_pdf]
-    alwaysLoaded: []
+discovery:
+  enabled: true
+  maxResults: 3
+  allowedTools: [inspect_local_file, result, glob, grep, replace, write_file, edit_file, diff, stat, copy, move, remove, read_table, read_docx, read_pdf]
+  alwaysLoaded: []
 ```
 
 | Setting | Default | Contract |
 | --- | --- | --- |
-| `enabled` | `true` | Publish the discovery entry. `false` preserves `alwaysLoaded` tools. Disabling the entire loader row unloads all its owned tools. |
+| `enabled` | `true` | Publish the Native discovery entry. `false` still preserves explicit `alwaysLoaded` tools; the PTC loader is controlled separately. |
 | `maxResults` | `3` | Maximum selections per call, integer 1-5. A call's optional `max_results` is also validated as 1-5 and capped by this setting. |
 | `allowedTools` | All implemented advanced names above | Allowed pool of raw capability names. Unknown/unimplemented formats are rejected, rather than advertised as usable. |
 | `alwaysLoaded` | `[]` | Choices from the allowed pool that bypass discovery and are available at the first eligible step. |
@@ -54,13 +60,13 @@ Bash publication coalesces lifecycle notifications until the next event-loop tur
 
 ## Measurement boundaries
 
-The deterministic entry measurement uses `js-tiktoken@1.0.21` with `cl100k_base`, encoding compact JSON of the pinned host `ToolSchema` fields (`name`, `description`, `parameters`). The discovery entry is **95 tokens / 416 UTF-8 bytes**. This is a reproducible schema measurement, not provider billing, and excludes tool-message framing, prompt guidance and other OPS components. The tokenizer is a test-only dependency published on 2025-08-09; its locked `base64-js` dependency is also test-only.
+The deterministic entry measurement uses `js-tiktoken@1.0.21` with `cl100k_base`, encoding compact JSON of the pinned host `ToolSchema` fields (`name`, `description`, `parameters`). The discovery entry is **114 tokens / 511 UTF-8 bytes**. This is a reproducible schema measurement, not provider billing, and excludes tool-message framing, prompt guidance and other OPS components. The tokenizer is a test-only dependency published on 2025-08-09; its locked `base64-js` dependency is also test-only.
 
-The default file/discovery surface is now `ops_read_files` plus `ops_discover_tools`: **242 tokens / 1101 bytes** in actual host assembly order. The reader accepts multiple file ranges in one startup call; `ops_inspect_local_file` (including hex), search, mutations and Native result paging are discoverable. Routing names only published tools. The final Windows provider order with the full Bash/jobs contract measures **678 tokens / 3313 bytes** (the pre-rename snapshot was 660/3219; the older catalogue-order figure was 661 tokens). These full totals remain visible under the explicitly approved BM-03 scope: the ≤400-token gate applies to file/discovery schemas, while Bash remains at startup. Numeric bounds, defaults, path bases and permission contracts remain intact. Operator always-loaded choices expand the initial surface. See [benchmark evidence](benchmark-gates.md).
+The default file/discovery surface is now `ops_read_files` plus `ops_discover_tools`: **261 tokens / 1196 bytes** in actual host assembly order. The reader accepts multiple file ranges in one startup call; `ops_inspect_local_file` (including hex), search, mutations and Native result paging are discoverable. Routing names only published tools. The final Windows provider order with the full Bash/jobs contract measures **697 tokens / 3408 bytes** (the pre-rename snapshot was 660/3219; the older catalogue-order figure was 661 tokens). These full totals remain visible under the explicitly approved BM-03 scope: the ≤400-token gate applies to file/discovery schemas, while Bash remains at startup. Numeric bounds, defaults, path bases and permission contracts remain intact. Operator always-loaded choices expand the initial surface. See [benchmark evidence](benchmark-gates.md).
 
 BM-04 now runs the implemented PDF reader through the real AgentLoop: its schema is absent initially, remains pending in the current round, appears in the owning next provider request, stays absent for a sibling, and then returns the fixture text. This verifies the supported PDF subset, not general PDF/OCR coverage.
 
-Built-in settings persist validated arrays. The browser page's multi-selects use the pinned host client APIs described in [configuration](configuration-reference.md); they belong to the single row's settings page, not to a legacy file row.
+Built-in settings persist validated arrays. The native-switch page edits publication choices; detailed arrays remain YAML configuration, as described in [configuration](configuration-reference.md).
 
 Overlapping discovery rows use the nearest owning scope; the last row mounted in the same scope wins until it is unloaded. File rows may mount before or after discovery. Only exact OPS-owned Native registrations are yielded or masked; unrelated external registrations remain visible. PTC Native shadows retain their exact origin, and discovered activations cannot be inherited by another agent. Native `result` is page/release only and may be discovered in read-only mode; the worker still rejects forbidden release actions. Resident `read_files` and discoverable `edit_file` retain their existing per-file completeness and CAS contracts.
 

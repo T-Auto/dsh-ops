@@ -52,7 +52,7 @@ async function scoped(parent, key, parentKey) {
   } })
   return result
 }
-async function setup(cwd, mode, switches, global = {}) {
+async function setup(cwd, mode, switches, global = {}, override = {}) {
   const { ctx } = await bootHost()
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem); await ctx.plugin(NodePtc)
   ctx.provide('sandboxPolicy', { resolve: ({ session } = {}) => ({ mode: session?.mode ?? 'danger-full-access', workspaceRoot: cwd, sessionId: session?.id }) })
@@ -62,7 +62,7 @@ async function setup(cwd, mode, switches, global = {}) {
   const config = { global, discovery: { binaryPath: WORKER, required: true } }
   for (const id of ['minimal', 'standard', 'ptc', 'cordis']) config[id] = { enabled: id === mode,
     binaryPath: WORKER, required: true, ...(id === mode ? switches : {}) }
-  await ctx.plugin({ name: 'resident-switch-fixture', apply: inner => apply(inner, config) })
+  await ctx.plugin({ name: 'resident-switch-fixture', apply: inner => apply(inner, { ...config, ...override }) })
   const id = 'resident-' + ++sequence, preset = await scoped(ctx, { preset: id })
   presets.set(scopeOf(preset), mode)
   for (const name of ['read', 'glob', 'grep']) preset.tools.register({ name, description: name,
@@ -137,6 +137,13 @@ await test('bundle dynamic off suppresses the PTC loader, not baseline APIs', ()
   try {
     await waitFor(() => names(ctx, agent).includes(publicToolName(PTC_RESIDENT_TOOLS[0])))
     assert.equal(names(ctx, agent).includes(publicToolName('load_sdk')), false)
+  } finally { await shutdown(ctx) }
+}))
+await test('Native discovery disabled does not disable the independent typed PTC loader', () => withTempDir('ptc-native-discovery-off', async cwd => {
+  const { ctx, agent } = await setup(cwd, 'ptc', { residentTools: true, dynamicTools: true }, {}, { discovery: { enabled: false, binaryPath: WORKER, required: true } })
+  try {
+    await waitFor(() => names(ctx, agent).includes(publicToolName('load_sdk')))
+    assert.equal(names(ctx, agent).includes(publicToolName('discover_tools')), false)
   } finally { await shutdown(ctx) }
 }))
 report('resident-switch')

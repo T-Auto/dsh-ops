@@ -10,7 +10,7 @@ import { useMemo, useState } from 'react'
 import type { ReactElement } from 'react'
 import { FormActions, Unavailable, useEditor } from './forms.js'
 import type { SettingsProps } from './forms.js'
-import { GROUPS, bundleGates, changedFields, flatKey, readRowValues, type FieldSpec } from './row-schema.js'
+import { groupsFor, bundleGates, changedFields, flatKey, readRowValues, type FieldSpec } from './row-schema.js'
 import type { Translator } from './locales.js'
 
 /** The subset of the native Switch this page binds. */
@@ -33,13 +33,13 @@ export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Ins
   const explicitOff = pwsh7Installed === true && draft['other.pwsh7Link'] === false
   const set = (flat: string, value: boolean) => editor.edit({ ...draft, [flat]: value })
   return <form className="ops-settings" onSubmit={event => { event.preventDefault(); void editor.save(changedFields(draft, editor.baseline)) }}>
-    {GROUPS.map(group => {
+    {groupsFor(editor.baseline).map(group => {
       const enabled = group.toggle ? draft[`${group.id}.enabled`] !== false : true
       // Disabling a preset greys its switches; it does not close the card.
       const expanded = opened[group.id] ?? !group.toggle
       const showBody = group.fields.length > 0 && expanded
       const head = <>
-        <h4 className="ops-group-title">{t(group.label)}</h4>
+        <h4 className="ops-group-title">{group.labelText ?? t(group.label)}</h4>
         {/* Wrapped, not clamped: the descriptions name the exact behaviour a preset
             changes, and a truncated line hides the part that explains Windows. */}
         {group.hint !== undefined && <p className="ops-field-hint">{t(group.hint)}</p>}
@@ -47,21 +47,22 @@ export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Ins
       return <section className="ops-group ops-card" key={group.id}>
         <div className="ops-group-head">
           {group.toggle ? <button type="button" className="ops-disclosure"
-            aria-expanded={expanded} aria-label={`${t(expanded ? 'collapseGroup' : 'expandGroup')} ${t(group.label)}`}
+            aria-expanded={expanded} aria-label={`${t(expanded ? 'collapseGroup' : 'expandGroup')} ${group.labelText ?? t(group.label)}`}
             onClick={() => setOpened({ ...opened, [group.id]: !expanded })}>
             <Chevron open={expanded} />
             <span className="ops-field-text">{head}</span>
           </button> : <div className="ops-field-text">{head}</div>}
-          {group.toggle && <Switch checked={enabled} label={t(group.label)} disabled={editor.busy}
-            onChange={(checked: boolean) => set(`${group.id}.enabled`, checked)} />}
+          {group.toggle && <Switch checked={enabled} label={group.labelText ?? t(group.label)} disabled={editor.busy}
+            onChange={(checked: boolean) => set(flatKey(group.togglePath ?? [group.id, 'enabled']), checked)} />}
         </div>
         {group.id === 'other' && explicitOff && <p className="ops-field-hint">{t('pwsh7ExplicitOffHint')}</p>}
         {showBody && <div className="ops-card-body">
           {group.fields.map(spec => {
-            const locked = pwsh7Link && spec.path[1] === 'hidePwsh'
+            const shellOff = spec.path[0] === 'presets' && spec.path.at(-1) === 'hidePwsh' && draft[flatKey(['presets', spec.path[1]!, 'shell'])] === false
+            const locked = shellOff || pwsh7Link && spec.path.at(-1) === 'hidePwsh'
             return <SwitchRow key={flatKey(spec.path)} spec={spec}
               checked={locked ? false : draft[flatKey(spec.path)] !== false}
-              gate={!locked && (spec.gatedBy === undefined || gates[spec.gatedBy]) && enabled}
+              gate={!spec.disabled && !locked && (spec.gatedBy === undefined || gates[spec.gatedBy]) && enabled}
               busy={editor.busy} t={t} Switch={Switch} onChange={checked => set(flatKey(spec.path), checked)} />
           })}
         </div>}

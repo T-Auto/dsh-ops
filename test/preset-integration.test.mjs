@@ -39,7 +39,8 @@ await test('simple and detailed configuration are explicit and reject inert or i
   for (const raw of [{ preset: '' }, { preset: 'x', typo: true }, { preset: 'x', shell: 'yes' }, { preset: 'x', alwaysLoaded: ['bash'] },
     { preset: 'x', allowedTools: [], alwaysLoaded: ['stat'] }, { preset: 'x', profile: 'ptc', files: false },
     { preset: 'x', profile: 'ptc', extraGuidance: 'not implemented' },
-    { preset: 'x', profile: 'ptc', denyCredentialReads: false }, { preset: 'x', shell: false, bashPath: 'C:/bash.exe' }]) assert.throws(() => resolveIntegrationConfig(raw))
+    { preset: 'x', profile: 'ptc', denyCredentialReads: false }]) assert.throws(() => resolveIntegrationConfig(raw))
+  assert.equal(resolveIntegrationConfig({ preset: 'x', shell: false, bashPath: 'C:/bash.exe', hidePwsh: true }).hidePwsh, false)
 })
 await test('unknown presets stay unchanged, opted-in files retain official tools and unload revokes callbacks', () => withTempDir('preset-integration', async cwd => {
   const { ctx, mint, names } = await boot()

@@ -22,11 +22,11 @@ export const DISCOVERY_TERMS = Object.freeze({
 export const DISCOVERY_PARAMETERS: ParameterSchema = {
   type: 'object', additionalProperties: false, required: ['query'],
   properties: {
-    query: { type: 'string', description: 'Capability or select:ops_name; 1-512 characters.' },
+    query: { type: 'string', description: 'Capability or select:exact_tool_name (for example select:ops_stat or select:acme_lookup); 1-512 characters.' },
     max_results: { type: 'integer', default: 3, description: '1-5; default 3, capped by config.' },
   },
 }
-export const DISCOVERY_DESCRIPTION = 'Select allowed OPS capabilities for the next model step in this scope; no file action.'
+export const DISCOVERY_DESCRIPTION = 'Select allowed built-in or external capabilities for the next model step in this scope; selection executes no tool action.'
 export const DISCOVERY_OUTPUT: JsonSchemaNode = {
   type: 'object', properties: {
     status: { type: 'string' }, activated: { type: 'array', items: { type: 'string' } },

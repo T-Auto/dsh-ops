@@ -57,7 +57,7 @@ await test('gate the approved file/discovery budget and separately retain full s
     assert.ok(shell.parameters.properties.run_in_background)
     const withShell = measure([...assembly.tools, shell])
     console.log('  cl100k_base/js-tiktoken1.0.21 compact host-schema JSON:', JSON.stringify({ core, fullFileCatalogue: full, hostBash: measure([shell]), corePlusBash: withShell }))
-    assert.equal(core.tokens, 242, JSON.stringify(core))
+    assert.equal(core.tokens, 261, JSON.stringify(core))
     assert.ok(full.tokens > 400 && full.tokens > core.tokens, 'retain honest full-surface measurement')
     assert.ok(withShell.tokens > 400, 'the complete startup surface remains separately reported')
     const assessed = startupAssessment([...assembly.tools, shell], 'win32')

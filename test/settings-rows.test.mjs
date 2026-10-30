@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { companionVersion } from '../lib/settings/companion.js'
-import { GROUPS, ROW_ID, bundleGates, changedFields, flatKey, readRowValues } from '../lib/client/row-schema.js'
+import { GROUPS, ROW_ID, groupsFor, bundleGates, changedFields, flatKey, readRowValues } from '../lib/client/row-schema.js'
 import { hasStatus, statusView } from '../lib/client/detail.js'
 import { en } from '../lib/client/locales.js'
 import { Config, effectiveMode, resolveMergedConfig } from '../lib/settings/merged.js'
@@ -13,7 +13,7 @@ const t = key => en[key]
 const SWITCHES = ['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools']
 
 await test('the page matches the host descriptor, and the opt-in switches share one card', () => {
-  assert.deepEqual(Object.keys(Config.dict), ['global', 'minimal', 'standard', 'ptc', 'cordis', 'panel', 'tui', 'other'])
+  assert.deepEqual(Object.keys(Config.dict), ['presets', 'global', 'minimal', 'standard', 'ptc', 'cordis', 'panel', 'tui', 'other'])
   const global = GROUPS.find(group => group.id === 'global')
   // The bundle section mirrors the presets' four switches, in the same order.
   assert.deepEqual(global.fields.map(spec => spec.path[1]), SWITCHES)
@@ -106,6 +106,17 @@ await test('the companion linkage locks the host-shell hide switch off', () => {
   assert.equal(draftFor({ other: { pwsh7Link: false } }, { pwsh7Installed: true })['other.pwsh7Link'], false, 'an explicit off wins')
   const free = resolveMergedConfig({ standard: { hidePwsh: true } })
   assert.equal(effectiveMode(free.standard, free.global).hidePwsh, true)
+})
+
+await test('custom preset switch paths preserve dotted identities and profile defaults', () => {
+  const raw = { presets: { 'acme.chat': { profile: 'discovery', externalTools: ['acme_lookup'] } } }
+  const draft = readRowValues(raw)
+  assert.equal(draft['presets.acme.chat.files'], false)
+  assert.equal(draft['presets.acme.chat.shell'], false)
+  assert.equal(draft['presets.acme.chat.discovery'], true)
+  draft['presets.acme.chat.discovery'] = false
+  assert.deepEqual(changedFields(draft, raw), [{ op: 'set', path: ['presets', 'acme.chat', 'discovery'], value: false }])
+  assert.equal(groupsFor(raw).find(group => group.labelText === 'acme.chat').togglePath[1], 'acme.chat')
 })
 
 report('settings-rows')

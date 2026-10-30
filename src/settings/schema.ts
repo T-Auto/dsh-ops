@@ -3,7 +3,7 @@
  * the loader must remount these components instead of assuming Schemastery refs.
  */
 export type Field = {
-  type: 'string' | 'boolean' | 'number' | 'array' | 'object'
+  type: 'string' | 'boolean' | 'number' | 'array' | 'object' | 'dict'
   meta?: { volatile?: boolean; description?: string }
   inner?: Field
   dict?: Record<string, Field>
