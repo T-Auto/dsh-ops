@@ -246,7 +246,10 @@ xref table, an exact final startxref/EOF footer, unique dictionary keys and obje
 identities, and directly declared stream lengths. Every active xref offset must point
 exactly at its object header. Objects cannot overlap; gaps must contain only whitespace
 or comments. This deliberately rejects incremental updates, encryption, object/xref
-streams, recovery scans and ambiguous duplicate data, including decoded forbidden names.
+streams, recovery scans and ambiguous duplicate data. `/Encrypt`, `/ObjStm` and `/XRef`
+are refused wherever they appear, decoded escapes included, while `/Prev` and `/XRefStm` are
+refused only as trailer keys — the one place they denote an earlier xref section — so a
+dictionary that merely names them, such as an outline item's previous sibling, stays readable.
 
 Bounds are checked before indexed allocation: 16 MiB per input, 10,000 xref entries,
 100,000 metadata values, depth 64, 4,096 keys per dictionary, 256 bytes per name/token,

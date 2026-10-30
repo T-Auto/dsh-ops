@@ -9,6 +9,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import { fixUnixWorkerModes } from './tar-modes.js'
 import {
   gitRevision, log, mainManifest, npm, parseNpmJson, readJsonIfExists, sha256File, size, writeJson,
 } from './util.js'
@@ -23,6 +24,9 @@ export async function packDirectory(directory, dist) {
   const result = npm(['pack', '--ignore-scripts', '--pack-destination', dist, '--json'], { cwd: directory })
   const [reported] = parseNpmJson(result.stdout, `npm pack in ${directory}`)
   const tarball = path.join(dist, reported.filename)
+  if (readJsonIfExists(path.join(directory, 'package.json'))?.name === 'dsh-ops') {
+    await fixUnixWorkerModes(tarball)
+  }
   return {
     tarball: reported.filename,
     path: tarball,

@@ -2,7 +2,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import ts from 'typescript'
-const external = new Set(['react', 'react/jsx-runtime'])
+const external = new Set(['react', 'react/jsx-runtime', '@deepseek-ai/dsh-client-ui-primitives'])
 export function bundleClient(root) {
   const output = path.join(root, 'lib'), entry = 'client/index.js'
   if (!fs.existsSync(path.join(output, entry))) return

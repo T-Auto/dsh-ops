@@ -1,6 +1,7 @@
 import { discoveryMountChecks } from './lib/discovery.mjs'
 /** Real Cordis/tool/prompt composition with the released independent components. */
 import fs from 'node:fs'
+import { legacyComponent } from './lib/legacy-component.mjs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { BASH_TOOL, FILE_TOOLS, TOOLING_SECTION, publicToolName } from '../lib/policy.js'
@@ -57,7 +58,7 @@ async function agentForCall(ctx, cwd, mode = 'danger-full-access') {
   return result
 }
 async function advancedMount(ctx, names) {
-  return ctx.plugin(discovery, { required: true, enabled: false, allowedTools: names, alwaysLoaded: names })
+  return ctx.plugin(legacyComponent(discovery), { required: true, enabled: false, allowedTools: names, alwaysLoaded: names })
 }
 async function component(ctx, name, config = {}) {
   return ctx.plugin({ name: `fixture-${name}`, apply(inner) { return applyComponent(inner, { ...config }, name) } })
@@ -124,7 +125,7 @@ await test('PTC batch/result mount only in pure PTC scopes and withdraw on prese
   try {
     await executor(ctx)
     await ctx.plugin(inner => inner.provide('ptcRuntime', { language: 'typescript' }))
-    const component = await ctx.plugin(ptc, { binaryPath: resolveWorker(), required: true, alwaysLoaded: ['batch'] })
+    const component = await ctx.plugin(legacyComponent(ptc), { binaryPath: resolveWorker(), required: true, alwaysLoaded: ['batch'] })
     const native = await agent(ctx, 'ptc-native')
     const pure = await agent(ctx, 'ptc-only')
     let lift
@@ -333,9 +334,9 @@ await test('an old background row loads as a no-op: no tools, no section, one wa
       assert.equal(scopedToolNames(ctx, shown).includes(name), false, `${name} is not published`)
     }
     assert.equal((await sections(ctx, shown)).has(BG_SECTION), false)
-    const removed = warnings.filter(message => message.includes('dsh-ops/background component (FastCtx background jobs) was removed'))
+    const removed = warnings.filter(message => message.includes('saved "background" row is retired'))
     assert.equal(removed.length, 1, `exactly one removal warning: ${JSON.stringify(warnings)}`)
-    assert.match(removed[0], /Delete this row/)
+    assert.match(removed[0], /Remove that patch entry/)
     await fiber.dispose()
   } finally { await shutdown(ctx) }
 })
@@ -348,7 +349,7 @@ await test('selected replacements fail closed when the file row publishes only i
     await fileMount(ctx)
     for (const name of ['read', 'glob', 'grep']) ctx.tools.register(foreignTool(name))
     const { apply: hideOfficial } = await import('../lib/official-tool-hiding.js')
-    const hiding = await ctx.plugin({ name: 'selected-file-takeover', apply: hideOfficial }, { replaceTools: ['read', 'glob', 'grep'] })
+    const hiding = await ctx.plugin(legacyComponent({ name: 'selected-file-takeover', apply: hideOfficial }), { replaceTools: ['read', 'glob', 'grep'] })
     const current = await agent(ctx, 'selected-file-takeover')
     await assert.rejects(() => ctx.get('systemPrompt').assemble({ scope: current }), /READINESS_BLOCKED/)
     for (const name of ['read', 'glob', 'grep']) assert.ok(ctx.tools.schemas(current).some(tool => tool.name === name))

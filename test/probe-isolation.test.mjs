@@ -1,10 +1,13 @@
 /** A real host hook that never answers must not serialize unrelated roots. */
 import { createScope, scopeChainOf } from '@deepseek-ai/dsh-scope'
-import * as ptc from '../lib/ptc/index.js'
-import * as discovery from '../lib/discovery/index.js'
+import * as ptcModule from '../lib/ptc/index.js'
+import * as discoveryModule from '../lib/discovery/index.js'
 import { isPresentationProbe } from '../lib/presentation.js'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { assert, test, report, TEST_HOME } from './lib/harness.mjs'
+import { legacyComponent } from './lib/legacy-component.mjs'
+const ptc = legacyComponent(ptcModule)
+const discovery = legacyComponent(discoveryModule)
 
 const flush = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)) }
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }

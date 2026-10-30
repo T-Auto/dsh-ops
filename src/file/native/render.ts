@@ -179,6 +179,7 @@ export function renderNative(tool: string, args: unknown, result: unknown): stri
   if (record(result.reference)) lines.unshift('[Stored reference: ' + facts(result.reference, ['refId', 'producerTool', 'totalItems', 'totalBytes'])
     + '; referenceRoot=' + field(result.referenceRoot) + '. Page with ops_result; inspect source capture/coverage facts before claiming completeness.]')
   if (record(result.storageError)) lines.unshift('[Storage: ' + facts(result.storageError, ['code', 'message', 'effectState']) + '. Cache effects are separate from business effects.]')
+  if (typeof result.resolvedFrom === 'string') lines.unshift('[cwd: ' + facts(result, ['resolvedFrom', 'cwdSource']) + '.]')
   return capNativeText(lines.join('\n'), NATIVE_OUTPUT_BYTES, mutations.has(tool)
     ? 'Inspect current state before another mutation; do not repeat the write to recover undisplayed receipts.'
     : isDocumentTool(tool) ? 'Use the stored reference when available; otherwise repeat this range with a smaller limit or use a dedicated reader for a large record. Do not advance past undisplayed content.' : undefined)

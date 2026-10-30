@@ -1,14 +1,12 @@
 import { parse } from 'yaml'
 
-// Component rows of the fallback bundle. The four mode rows publish an enhanced
-// built-in preset and start enabled; "compat" is the inverse switch — on keeps the
-// official tools visible, off lets enabled mode rows hide what they replace.
+// Feature switches live under named sections of the sole dsh-ops bundle row.
 export const SWITCH_ROWS = Object.freeze(Object.fromEntries([
-  'mode-minimal', 'mode-standard', 'mode-ptc', 'mode-cordis', 'discovery', 'compat', 'panel', 'tui',
-].map(name => [name, `dsh-ops-${name}`])))
-// Legacy activation keys still found in saved profile overrides. Mode rows use the
-// row switch (disabled), and Compatibility mode has no configuration key.
+  'minimal', 'standard', 'ptc', 'cordis', 'discovery', 'panel', 'tui',
+].map(name => [name, 'dsh-ops'])))
+// Feature-specific activation flags must also permit an explicitly enabled section.
 export const ACTIVATION_KEYS = Object.freeze({ discovery: 'enabled', panel: 'capture' })
+export const SWITCH_SECTIONS = Object.freeze({ minimal: 'minimal', standard: 'standard', ptc: 'ptc', cordis: 'cordis', discovery: 'discovery', panel: 'panel', tui: 'tui' })
 export const parseRows = text => parse(text, { customTags: [{ tag: 'tag:yaml.org,2002:js', resolve: value => ({ expression: value }) }] })
 
 /** Configuration facts only; readiness is established separately by setup's host probe. */
@@ -23,9 +21,16 @@ export function switchesFromDump(text) {
     const row = matches[0]
     const knownConfig = row.config === undefined || (row.config !== null && typeof row.config === 'object'
       && !Array.isArray(row.config) && !Object.hasOwn(row.config, 'expression'))
-    const activation = row.config?.[ACTIVATION_KEYS[name]]
-    const enabled = row.disabled === true || activation === false ? false
-      : knownConfig && (row.disabled === undefined || row.disabled === false) && (activation === undefined || activation === true) ? true : null
+    const section = row.config?.[SWITCH_SECTIONS[name]]
+    const knownSection = section === undefined || (section !== null && typeof section === 'object' && !Array.isArray(section) && !Object.hasOwn(section, 'expression'))
+    const activation = section?.enabled
+    const legacyActivation = section?.[ACTIVATION_KEYS[name]]
+    const fallback = !['panel', 'tui'].includes(name)
+    const enabled = row.disabled === true ? false
+      : knownConfig && knownSection && (row.disabled === undefined || row.disabled === false)
+        && (activation === undefined || typeof activation === 'boolean')
+        && (legacyActivation === undefined || typeof legacyActivation === 'boolean')
+        ? (activation ?? fallback) && legacyActivation !== false : null
     switches[name] = { enabled }
   }
   return switches

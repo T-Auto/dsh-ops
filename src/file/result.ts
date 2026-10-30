@@ -7,6 +7,7 @@ import { OUTPUT } from '../capabilities/ptc.js'
 import { invoke, failure } from '../ptc/worker.js'
 import { renderNative } from './native/render.js'
 import { presentationMeta } from '../kernel/presentation-outcome.js'
+import { resolveSessionDirectory } from '../adapter/dsh/working-directory.js'
 export function resultDefinition(execute: ToolDefinition['execute']): ToolDefinition {
   const entry = capability('result')
   if (!entry || !('nativeProjection' in entry) || !entry.nativeProjection) throw new Error('Native result projection is missing')
@@ -29,7 +30,11 @@ export async function invokeResult(ctx: Parameters<typeof invoke>[0], file: stri
   if (!['page', 'release'].includes(String(input.action)) || typeof input.id !== 'string' || !input.id.startsWith('ref://')) {
     return failure('INVALID_ARGUMENT', 'Native result accepts page/release with an owned ref:// ID only.')
   }
-  const root = input.root ?? exec.agent?.session?.header.cwd
+  let root = input.root
+  if (root === undefined) {
+    try { root = (await resolveSessionDirectory(ctx, exec.agent, signal)).cwd }
+    catch { return failure('EXECUTOR_UNAVAILABLE', 'The authoritative session cwd is unavailable; no reference action was executed.') }
+  }
   if (typeof root !== 'string' || !path.isAbsolute(root)) return failure('INVALID_ARGUMENT', 'An absolute reference root or authoritative session cwd is required.')
   return invoke(ctx, file, 'result', { ...input, root }, exec, signal, config)
 }

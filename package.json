@@ -1,6 +1,6 @@
 {
   "name": "dsh-ops",
-  "version": "0.5.0",
+  "version": "0.5.0-alpha2",
   "publishConfig": {
     "access": "public"
   },
@@ -145,9 +145,11 @@
         "@deepseek-ai/dsh-api-gateway",
         "@deepseek-ai/dsh-client-ui-renderer",
         "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-ui-plugin-manager"
+        "@deepseek-ai/dsh-client-ui-plugin-manager",
+        "@deepseek-ai/dsh-client-ui-primitives"
       ],
-      "platform": "web"
+      "platform": "web",
+      "immediately": true
     }
   },
   "files": [

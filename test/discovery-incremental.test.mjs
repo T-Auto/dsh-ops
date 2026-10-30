@@ -3,11 +3,13 @@ import path from 'node:path'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
-import * as discovery from '../lib/discovery/index.js'
+import * as discoveryModule from '../lib/discovery/index.js'
 import { isPresentationProbe } from '../lib/presentation.js'
 import { assert, test, report, waitFor, withTempDir } from './lib/harness.mjs'
 import { bootHost, scopedToolNames, shutdown } from './lib/host.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
+import { legacyComponent } from './lib/legacy-component.mjs'
+const discovery = legacyComponent(discoveryModule)
 
 requireWorker('discovery-incremental')
 const DISCOVER = 'ops_discover_tools'

@@ -28,7 +28,7 @@ const foreignHome = process.env.DSH_HOME !== undefined
   && !path.resolve(process.env.DSH_HOME).startsWith(path.resolve(tempRoot))
 const ownedHome = process.env.DSH_HOME === undefined || foreignHome
 if (ownedHome) process.env.DSH_HOME = mkdtempSync(path.join(tempRoot, 'dsh-ops-trial-home-'))
-const { bootHost, callTool, mountPlugin, scopedToolNames, shutdown } = await import('../test/lib/host.mjs')
+const { bootHost, callTool, scopedToolNames, shutdown } = await import('../test/lib/host.mjs')
 
 const REPORT = 'tools-trial-report.md'
 const results = []
@@ -48,6 +48,8 @@ const { ctx } = await bootHost()
 let exited = 0
 /** Hoisted: the report below is written after the `try`, where a block-scoped binding is gone. */
 let published = []
+let agent
+let agentScope
 try {
   // The file component needs the host services a real profile provides; without them the mount is
   // the thing that failed, not the tool, so the trial says so instead of reporting tool failures.
@@ -61,25 +63,32 @@ try {
     }))
   }
 
-  await mountPlugin({ ctx, expectTools: 1 })
-  // The shell component is a separate row; try it so `ops_bash` is part of the trial when the host
-  // can provision a shell, and record the reason when it cannot.
-  try {
-    const shell = await import('../lib/components/shell/index.js')
-    await ctx.plugin(shell.default ?? shell, { publishBashTool: true, enableShellTools: false, required: false, toolCallTimeoutMs: 120_000,
-      ...(process.env.DSH_OPS_TEST_BASH ? { bashPath: process.env.DSH_OPS_TEST_BASH } : {}) })
-  } catch (error) {
-    record('ops_bash', 'skipped', `shell component did not mount: ${error.message.split('\n')[0]}`)
-  }
+  // Exercise the shipped merged entry, not its retained legacy component rows.
+  const plugin = await import('../lib/index.js')
+  await ctx.plugin(plugin, {
+    minimal: { enabled: false }, ptc: { enabled: false }, cordis: { enabled: false },
+    standard: { residentTools: true, required: false,
+      ...(process.env.DSH_OPS_TEST_BASH ? { bashPath: process.env.DSH_OPS_TEST_BASH } : {}) },
+    discovery: { required: true, allowedTools: ['replace'], alwaysLoaded: ['replace'] },
+  })
 
-  const agent = { id: 'trial', session: { id: 'trial', mode: 'danger-full-access', header: { cwd: workspace } } }
+  agent = { id: 'trial', session: { id: 'trial', mode: 'danger-full-access', header: { cwd: workspace, agentPreset: 'standard' } } }
   const { createScope } = await import('@deepseek-ai/dsh-scope')
-  agent.ctx = createScope(ctx, agent).ctx
-  const discovery = await import('../lib/components/discovery/index.js')
-  const advanced = ['inspect_local_file', 'grep', 'glob', 'replace']
-  await ctx.plugin(discovery, { required: true, enabled: false, allowedTools: advanced, alwaysLoaded: advanced })
+  await ctx.plugin({ inject: ['tools'], apply(inner) { agentScope = createScope(inner, agent) } })
+  agent.ctx = agentScope.ctx
   await ctx.serial('agent/created', { agent, source: 'startup' })
-  published = scopedToolNames(ctx, agent)
+  // Scoped publication is asynchronous. Wait for every file scenario, not a global count;
+  // optional Bash may legitimately be absent (for example, on a POSIX bare host).
+  const expected = ['read_files', 'inspect_local_file', 'grep', 'glob', 'replace'].map(publicToolName)
+  const deadline = Date.now() + 10_000
+  for (;;) {
+    published = scopedToolNames(ctx, agent)
+    if (expected.every(name => published.includes(name))) break
+    if (Date.now() >= deadline) throw new Error(
+      `scoped publication timed out: missing `
+      + expected.filter(name => !published.includes(name)).join(', '))
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
   process.stdout.write('  published: ' + (published.join(', ') || '(none)') + '\n')
 
   /** Call one tool, then judge the whole structured answer — field names differ per tool. */
@@ -116,14 +125,14 @@ try {
   await attempt('grep', { pattern: 'gamma', path: '.' }, 'gamma', 'found a match in a nested file')
   await attempt('glob', { pattern: ['*.txt'], path: '.' }, 'alpha.txt', 'listed the top-level glob')
   // The receipt reports counts, not the new text; the disk assertion below is the behaviour check.
-  await attempt('replace', { path: 'alpha.txt', pattern: 'alpha', replacement: 'ALPHA' }, '"changed":1', 'replaced one literal match')
+  const replacement = await attempt('replace', { path: 'alpha.txt', pattern: 'alpha', replacement: 'ALPHA' }, '"changed":1', 'replaced one literal match')
   const replaced = readFileSync(path.join(workspace, 'alpha.txt'), 'utf8')
-  if (!replaced.includes('ALPHA')) {
-    record('ops_replace', 'failed', 'the file on disk did not change')
+  if (replacement !== undefined && !replaced.includes('ALPHA')) {
+    record(publicToolName('replace'), 'failed', 'the file on disk did not change')
     exited = 1
   }
   await attempt('bash', { description: 'Print the trial success marker', command: 'node -e "console.log(\'trial-ok\')"' }, 'trial-ok', 'ran a real command',
-    'the shell row publishes nothing on a bare host; test/shells-bash-tool.test.mjs covers that contract')
+    'merged Standard mode did not publish Bash on this host (platform policy or optional shell unavailable)')
 
   // Anything published but not yet in the table above is reported honestly rather than ignored.
   const attempted = new Set(results.map(result => result.tool))
@@ -132,6 +141,14 @@ try {
   record('mount', 'failed', error.message.split('\n')[0])
   exited = 1
 } finally {
+  if (agent?.ctx) await ctx.serial('agent/disposed', { agent }).catch(error => {
+    record('lifecycle', 'failed', error.message.split('\n')[0])
+    exited = 1
+  })
+  await agentScope?.dispose().catch(error => {
+    record('scope', 'failed', error.message.split('\n')[0])
+    exited = 1
+  })
   await shutdown(ctx).catch(() => {})
   rmSync(workspace, { recursive: true, force: true })
   if (ownedHome) rmSync(process.env.DSH_HOME, { recursive: true, force: true })

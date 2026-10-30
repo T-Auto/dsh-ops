@@ -11,6 +11,7 @@ import { publicToolName } from '../../lib/policy.js'
 import { DISCOVERY_TOOL_NAME } from '../../lib/capabilities/registry.js'
 import { assert, test, waitFor, withTempDir } from './harness.mjs'
 import { bootHost, registryHasOwnRegister, scopedToolNames, shutdown } from './host.mjs'
+import { legacyComponent } from './legacy-component.mjs'
 
 const DISCOVER = publicToolName(DISCOVERY_TOOL_NAME)
 async function boot(config = {}) {
@@ -20,7 +21,7 @@ async function boot(config = {}) {
   await ctx.plugin(inner => inner.provide('sandboxPolicy', {
     resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: session.header.cwd, sessionId: session.id }),
   }))
-  const fiber = await ctx.plugin(discovery, { required: true, ...config })
+  const fiber = await ctx.plugin(legacyComponent(discovery), { required: true, ...config })
   await new Promise(resolve => setImmediate(resolve))
   return { ctx, fiber }
 }
@@ -147,7 +148,7 @@ export async function discoveryMountChecks() {
     const { ctx } = await boot()
     try {
       ctx.provide('ptcRuntime', { language: 'typescript' })
-      await ctx.plugin(ptc, { required: true })
+      await ctx.plugin(legacyComponent(ptc), { required: true })
       const native = await mint(ctx, 'discovery-coexist-native', dir)
       const code = await mint(ctx, 'discovery-coexist-ptc', dir)
       const lift = code.ctx.tools.presentAs('ptc')

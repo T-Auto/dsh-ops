@@ -1,6 +1,0 @@
-{
-  "name": "dsh-ops-compat",
-  "description": "Keep the official tools exposed instead of the OPS overrides; a safety fallback that costs token efficiency and model capability.",
-  "icon": "./icon.png",
-  "type": "module"
-}

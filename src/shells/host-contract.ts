@@ -6,16 +6,17 @@ import { bashFailure } from './failure.js'
 import { BASH_OUTPUT_SCHEMA, renderBashResult, withBashStatus } from './tool.js'
 
 const nullable = (type: JsonSchemaType): JsonSchemaNode => ({ oneOf: [{ type }, { type: 'null' }] })
+const directoryProperties = { resolvedFrom: { type: 'string' }, cwdSource: { type: 'string' } } as const
 export const HOST_BASH_OUTPUT_SCHEMA: JsonSchemaNode = {
   oneOf: [
     { type: 'object', additionalProperties: false, required: ['kind', 'jobId', 'label'], properties: {
-      kind: { type: 'string', const: 'background' }, jobId: { type: 'string' }, label: { type: 'string' },
+      ...directoryProperties, kind: { type: 'string', const: 'background' }, jobId: { type: 'string' }, label: { type: 'string' },
     } },
     { type: 'object', additionalProperties: false, required: ['kind', 'jobId', 'label', 'timeoutMs', 'output'], properties: {
-      kind: { type: 'string', const: 'promoted' }, jobId: { type: 'string' }, label: { type: 'string' }, timeoutMs: { type: 'number' }, output: { type: 'string' },
+      ...directoryProperties, kind: { type: 'string', const: 'promoted' }, jobId: { type: 'string' }, label: { type: 'string' }, timeoutMs: { type: 'number' }, output: { type: 'string' },
     } },
     { ...BASH_OUTPUT_SCHEMA, required: [...(BASH_OUTPUT_SCHEMA.required ?? []), 'kind', 'exitCode', 'signal', 'aborted'], properties: {
-      ...BASH_OUTPUT_SCHEMA.properties,
+      ...BASH_OUTPUT_SCHEMA.properties, ...directoryProperties,
       failure: { type: 'object', additionalProperties: false, required: ['code', 'message', 'effectState', 'retry'], properties: {
         code: { type: 'string' }, message: { type: 'string' }, effectState: { type: 'string', enum: ['none', 'unknown'] },
         retry: { type: 'string', enum: ['never', 'after-input-change'] }, nextAction: { type: 'string' },
@@ -38,8 +39,9 @@ export function hostFailure(message: string, timeoutMs = 120_000, effects: 'none
 }
 
 export function renderHostBash(value: HostBashResult): string {
-  if (value.kind === 'background') return `started background job ${value.jobId} (${JSON.stringify(value.label)})`
-  if (value.kind === 'promoted') return `${value.output || '(no output)'}\n[still running after ${value.timeoutMs}ms; moved to background job ${value.jobId} (${JSON.stringify(value.label)})]\nUse job_output to collect output and job_kill to stop the command.`
+  const directory = value.resolvedFrom === undefined ? '' : `[cwd: resolvedFrom=${JSON.stringify(value.resolvedFrom)}; cwdSource=${JSON.stringify(value.cwdSource)}]\n`
+  if (value.kind === 'background') return directory + `started background job ${value.jobId} (${JSON.stringify(value.label)})`
+  if (value.kind === 'promoted') return directory + `${value.output || '(no output)'}\n[still running after ${value.timeoutMs}ms; moved to background job ${value.jobId} (${JSON.stringify(value.label)})]\nUse job_output to collect output and job_kill to stop the command.`
   const { exitCode, signal, ...rest } = value
   const body = renderBashResult(rest)
   const markers = []
@@ -48,5 +50,5 @@ export function renderHostBash(value: HostBashResult): string {
   if (value.stopped) markers.push(`[stopped: ${value.stopped}]`)
   if (signal !== null) markers.push(`[killed by signal: ${signal}]`)
   if (exitCode !== null) markers.push(`[exit code: ${exitCode}]`)
-  return [body, ...markers].join('\n')
+  return directory + [body, ...markers].join('\n')
 }

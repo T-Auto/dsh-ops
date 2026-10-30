@@ -12,16 +12,14 @@ const root = path.resolve(values.root ?? path.resolve(path.dirname(fileURLToPath
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dsh-plugin.json'), 'utf8'))
 const components = manifest.contributes?.['x-components'] ?? []
-const declared = components.find(component => component.id === 'dsh-ops-mode-ptc')?.targets ?? []
+if (components.length !== 1 || components[0].id !== 'dsh-ops') throw Error('Release must declare exactly the merged dsh-ops component')
+const declared = components[0].targets ?? []
 const sameSet = (a, b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort())
 if (!sameSet(declared, PLATFORMS)) throw Error(`Declared scope ${JSON.stringify(declared)} and resolver PLATFORMS ${JSON.stringify(PLATFORMS)} disagree`)
 // npm os/cpu filters cannot express paired targets. The component's exact targets
-// and runtime resolver are authoritative; Intel Mac and Windows/Linux arm64 stay rejected.
+// and runtime resolver are authoritative; Windows/Linux arm64 stay rejected.
 if (!sameSet(pkg.os ?? [], PLATFORMS.map(target => target.split('-')[0]).filter((value, index, all) => all.indexOf(value) === index)) ||
     !sameSet(pkg.cpu ?? [], [...new Set(PLATFORMS.map(target => target.split('-')[1]))])) throw Error('Package os/cpu and exact target declarations disagree')
-for (const id of ['dsh-ops-mode-standard', 'dsh-ops-mode-ptc', 'dsh-ops-mode-cordis', 'dsh-ops-mode-minimal']) {
-  if (!sameSet(components.find(component => component.id === id)?.targets ?? [], PLATFORMS)) throw Error(`${id} target declarations disagree`)
-}
 // Restored to the 0.3.2 contract: the Windows bash payload is a declared optional
 // dependency at a committed pin, while PowerShell stays with the host.
 const BASH_PAYLOAD = '@dsh-ops/bash-win32-x64'

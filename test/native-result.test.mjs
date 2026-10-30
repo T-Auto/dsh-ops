@@ -9,8 +9,11 @@ import { assert, test, report, withTempDir, waitFor } from './lib/harness.mjs'
 import { bootHost, mountPlugin, shutdown } from './lib/host.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
 import { invoke } from '../lib/ptc/worker.js'
-import * as ptc from '../lib/ptc/index.js'
-import * as discovery from '../lib/discovery/index.js'
+import * as ptcModule from '../lib/ptc/index.js'
+import { legacyComponent } from './lib/legacy-component.mjs'
+const ptc = legacyComponent(ptcModule)
+import * as discoveryModule from '../lib/discovery/index.js'
+const discovery = legacyComponent(discoveryModule)
 const hostAgents = new WeakMap()
 import { mountNativeCatalogue } from './lib/native-catalogue.mjs'
 import { resultStorage } from '../lib/kernel/result-storage.js'

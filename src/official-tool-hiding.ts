@@ -11,6 +11,7 @@ import { resolveHidingConfig } from './config.js'
 export { resolveHidingConfig } from './config.js'
 import { OFFICIAL_REPLACEMENTS } from './official-tool-catalog.js'
 import { safeDispose } from './teardown.js'
+import { retired as retiredLegacyRow } from './settings/legacy.js'
 
 interface Entry { context: Context; lifts: (() => void)[]; cleanupError?: string; error?: string; reported?: string
   /** Set from the assembled surface: this scope presents one program entry, so its
@@ -25,6 +26,7 @@ const RUN_CODE = 'run_code'
 const blocked = (detail: string): string => `READINESS_BLOCKED (EXECUTOR_UNAVAILABLE): dsh-ops hide-official cannot verify selected replacements: ${detail}. Restore the selected OPS tools, remove the selection from replaceTools, or disable the dsh-ops-hide-official row.`
 
 export function apply(root: Context, raw?: unknown): void {
+  if (retiredLegacyRow(root, 'hide-official')) return
   const { replaceTools }: { replaceTools: OfficialReplacement[] } = resolveHidingConfig(raw)
   // Empty and legacy-only rows install no hooks and cannot block a session.
   if (!replaceTools.length) return

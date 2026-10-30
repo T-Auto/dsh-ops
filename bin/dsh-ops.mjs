@@ -24,7 +24,6 @@ import { commandProvisionShells } from '../lib/cli/provision-shells.js'
 import { commandUpgradeHostPwsh } from '../lib/cli/pwsh-upgrade.js'
 import { commandBashRuntime } from '../lib/cli/bash-runtime.js'
 import { commandUninstall } from '../lib/cli/uninstall.js'
-import { commandSettingsProfile } from '../lib/cli/settings-profile.js'
 import { commandPanel } from '../lib/cli/panel.js'
 
 /**
@@ -41,8 +40,6 @@ Usage:
                                   Remove the profile plugin and its binary dependency references
   dsh-ops status --profile <desktop|web|tui>
                                   Report target-profile installation (tui maps to dsh-tui)
-  dsh-ops settings-profile --profile-dir <dir> --host-anchor <host package.json> [--dsh-home <dir>] [--offline --yes]
-                                  Preview or explicitly enable the optional browser settings carrier
   dsh-ops build-ptc              Build the independent native Rust worker (all platforms)
   dsh-ops review snapshot --repo <owner/name> --prs <1,2> [--base main] [--checkout <path>]
                                   Collect bounded PR/CI evidence; optionally probe local commit objects
@@ -59,9 +56,11 @@ Usage:
   dsh-ops provision-shells [--bash] [--pwsh] [--force] [--dry-run] [--pin <file>]
                                   Download the pinned upstream bash and/or PowerShell 7, verify
                                   their digests, and install them under <DSH_HOME>/dsh-ops/shells
-  dsh-ops bash-runtime [status|install|remove|git|managed] [--yes] [--dry-run]
+  dsh-ops bash-runtime [status|install|remove|git|managed|clean-cache] [--yes] [--dry-run]
                                   Manage optional Bash; git/managed prints a bashPath selection
                                   for the host config editor. remove previews unless --yes.
+                                  clean-cache previews old private runtime generations; apply only
+                                  after stopping all OPS hosts with --yes --all-hosts-stopped.
   dsh-ops upgrade-host-pwsh [--yes] [--dry-run]
                                   Preview/run standard Windows PowerShell 7 installation through
                                   WinGet. Restart DSH; custom host pwshPath remains authoritative.
@@ -112,6 +111,7 @@ async function main() {
       force: { type: 'boolean', default: false },
       yes: { type: 'boolean', default: false },
       'purge-fastctx': { type: 'boolean', default: false },
+      'all-hosts-stopped': { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
       config: { type: 'string' },
@@ -134,12 +134,10 @@ async function main() {
     return 2
   }
   switch (command) {
-    case 'settings-profile':
-      return commandSettingsProfile({ profileDir: values['profile-dir'], hostAnchor: values['host-anchor'], home: values['dsh-home'], yes: values.yes, offline: values.offline, dryRun: values['dry-run'] })
     case 'upgrade-host-pwsh':
       return commandUpgradeHostPwsh({ yes: values.yes, dryRun: values['dry-run'] })
     case 'bash-runtime':
-      return commandBashRuntime(positionals[1], { yes: values.yes, dryRun: values['dry-run'], force: values.force, configFile: values.config })
+      return commandBashRuntime(positionals[1], { yes: values.yes, dryRun: values['dry-run'], force: values.force, configFile: values.config, allHostsStopped: values['all-hosts-stopped'] })
     case 'ladder':
       return commandLadder({ json: values.json === true, configFile: values.config })
     case 'panel': {

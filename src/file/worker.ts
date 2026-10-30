@@ -21,6 +21,7 @@ import { resolveReadFiles } from './read-files.js'
 import { withCallBudget, CallBudgetError } from '../kernel/call-budget.js'
 import { withResultSession } from '../kernel/result-lifecycle.js'
 import { resultStorage } from '../kernel/result-storage.js'
+import { resolveSessionDirectory } from '../adapter/dsh/working-directory.js'
 
 export { resolveWorker }
 
@@ -81,7 +82,13 @@ export async function invoke(ctx: Context, file: string, tool: string, args: unk
     if (!session?.id) return failure('EXECUTOR_UNAVAILABLE', 'An authoritative session identity is required.')
     return await withResultSession(ctx, session, signal, currentSignal =>
       withCallBudget(ctx.root ?? ctx, String(session.id), currentSignal,
-        () => invokeTrusted(ctx, file, tool, args, exec, currentSignal, config)))
+        async () => {
+          const basis = await resolveSessionDirectory(ctx, exec.agent, currentSignal)
+          const value = await invokeTrusted(ctx, file, tool, args, exec, currentSignal, basis.cwd, config)
+          // Credential refusals deliberately disclose no absolute path, including ancestors.
+          if (record(value) && record(value.error) && value.error.code === 'CREDENTIAL_DENIED') return value
+          return { ...value as Record<string, unknown>, resolvedFrom: basis.cwd, cwdSource: basis.source }
+        }))
   }
   catch (error) {
     if (error instanceof CallBudgetError) {
@@ -92,9 +99,8 @@ export async function invoke(ctx: Context, file: string, tool: string, args: unk
     return failure('EXECUTOR_UNAVAILABLE', 'DSH file authority or preparation is unavailable; no unrestricted fallback was attempted.')
   }
 }
-async function invokeTrusted(ctx: Context, file: string, tool: string, args: unknown, exec: ToolRunContext, signal: AbortSignal, config?: WorkerInvokeConfig): Promise<unknown> {
+async function invokeTrusted(ctx: Context, file: string, tool: string, args: unknown, exec: ToolRunContext, signal: AbortSignal, cwd: string, config?: WorkerInvokeConfig): Promise<unknown> {
   const session = exec?.agent?.session
-  const cwd = session?.header?.cwd
   if (!session?.id || typeof cwd !== 'string' || !path.isAbsolute(cwd)) return failure('EXECUTOR_UNAVAILABLE', 'An authoritative session identity and cwd are required.')
   const policyService: SandboxPolicyService | undefined = ctx.get('sandboxPolicy')
   const subprocess: SubprocessRuntime | undefined = ctx.get('subprocess')

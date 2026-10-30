@@ -17,6 +17,7 @@ import * as discovery from '../../lib/components/discovery/index.js'
 import * as ptc from '../../lib/components/ptc/index.js'
 import { assert } from './harness.mjs'
 import { WORKER } from './boundary.mjs'
+import { legacyComponent } from './legacy-component.mjs'
 let identity = 0
 export async function bootLoop(root, { ptcMode = false, discoveryConfig = {} } = {}) {
   const ctx = new Context(); ctx.logger.level = 0
@@ -40,9 +41,9 @@ export async function bootLoop(root, { ptcMode = false, discoveryConfig = {} } =
     inner.on('tools/execute', async (exec, next) => { const result = await next(); results.push({ exec, result }); return result })
     inner.on('agent/error', ({ error }) => errors.push(String(error?.stack ?? error)))
   })
-  await ctx.plugin(file, { binaryPath: WORKER, required: true })
-  await ctx.plugin(discovery, { binaryPath: WORKER, required: true, ...discoveryConfig })
-  const ptcFiber = ptcMode ? await ctx.plugin(ptc, { binaryPath: WORKER, required: true }) : undefined
+  await ctx.plugin(legacyComponent(file), { binaryPath: WORKER, required: true })
+  await ctx.plugin(legacyComponent(discovery), { binaryPath: WORKER, required: true, ...discoveryConfig })
+  const ptcFiber = ptcMode ? await ctx.plugin(legacyComponent(ptc), { binaryPath: WORKER, required: true }) : undefined
   await ctx.plugin(Loop, { agents: [], maxParallelToolCalls: 3 })
   async function agent(parentAgent) {
     const { agent } = await ctx.get('agents').create({ sessionId: 'real-loop-' + ++identity, meta: { cwd: root }, parentAgent,

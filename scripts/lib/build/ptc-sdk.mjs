@@ -2,7 +2,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { jsonSchemaToTs } from '@deepseek-ai/dsh-tools'
+import { jsonSchemaToTs } from './json-schema-to-ts.mjs'
 
 export async function writePtcDeclarations(root) {
   const load = relative => import(pathToFileURL(path.join(root, 'lib', relative)).href)

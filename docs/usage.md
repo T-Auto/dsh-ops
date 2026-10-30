@@ -7,6 +7,16 @@ for stopping the host, registry-policy failures and the 0.4.x-to-0.5.x migration
 
 ## 0.5.0 candidate and component defaults
 
+Native file paths (including copy/move destinations), omitted search paths and Bash's default or
+relative `workdir` follow the live `working_directory` service. Each call resolves its base once;
+`resolvedFrom` and `cwdSource` identify that base in structured and rendered file/Bash results
+(credential refusals remain path-free).
+Hosts without this service fall back to `session.header.cwd` and label that source. Service errors
+or cancellation stop the call rather than silently using an old directory. Changing cwd never
+widens `sandboxPolicy.workspaceRoot` write authority. Native `ops_result` defaults to the live cwd;
+after changing directories, pass the original returned `referenceRoot` as `root` to page or release
+an older reference. PTC's explicit/default workspace-root contract is unchanged.
+
 This checkout is an unreleased candidate. The bundle declares eight component rows: four enhanced
 built-in preset modes (`dsh-ops/mode-minimal`, `dsh-ops/mode-standard`, `dsh-ops/mode-ptc`,
 `dsh-ops/mode-cordis`), dynamic loading (`dsh-ops/discovery`), Compatibility mode
@@ -96,6 +106,8 @@ dsh-ops bash-runtime remove --yes      # remove receipt-marked managed versions
 ```
 
 `git` and `managed` print an absolute `bashPath` configuration for the host config editor; they do not edit a profile or PATH. Reload the mode row after applying the selection or installing/removing its runtime. Stop running Bash jobs before removal. Removal refuses links in the managed path and preserves unmarked versions, system Git and PowerShell. `install` reuses the pinned download and checksum checks from `provision-shells --bash`; `--dry-run` makes no download or change. Windows restricted modes still require the pinned MSYS IPC compatibility match. A different Git Bash remains a full-access choice; approval never repairs an incompatible restricted runtime. Linux/macOS continue using host Bash.
+
+Windows confined calls stage a private MSYS tree under `<DSH_HOME>/dsh-ops/bash-ipc`. Identical verified payloads share a content-addressed generation across profiles using the same DSH home; separate homes remain isolated. Lifecycle locking and durable process leases protect selected runtimes, including the interval before a child starts. Automatic reclamation retains the current generation and one predecessor, plus leased, legacy or uncertain entries. `bash-runtime status` and `ladder` expose observed cache usage. To reclaim historical copies, first run `dsh-ops bash-runtime clean-cache` to preview. Stop **all** OPS hosts and Bash jobs, then run `dsh-ops bash-runtime clean-cache --yes --all-hosts-stopped` against the intended `DSH_HOME`; `--dry-run` never removes anything. Only recognized marker-owned generations are eligible; unrelated directories and linked paths are not removed. The selected generation and one predecessor remain. Removed caches are rebuilt on demand. Do not manually delete caches while any OPS host or shell may still use them.
 
 ### One-command npm installation
 

@@ -187,6 +187,13 @@ impl<'a> Lexer<'a> {
         }
         Err(bad("Unclosed PDF literal string"))
     }
+    /// A name is a token, not a policy decision.
+    ///
+    /// `/Prev` and `/XRefStm` only describe an incremental update while they are
+    /// trailer keys, and an outline item legitimately carries `/Prev` as its
+    /// previous sibling. Those two are therefore refused where a trailer is read
+    /// (`pdf_container::parse`), not here; `/Encrypt`, `/ObjStm` and `/XRef`
+    /// stay refused at the token because no supported structure can hold them.
     fn name(&mut self) -> Result<Vec<u8>> {
         self.at += 1;
         let mut name = Vec::new();
@@ -213,10 +220,7 @@ impl<'a> Lexer<'a> {
                 return Err(limit("PDF name exceeds 256 bytes"));
             }
         }
-        if matches!(
-            name.as_slice(),
-            b"Encrypt" | b"Prev" | b"XRefStm" | b"ObjStm" | b"XRef"
-        ) {
+        if matches!(name.as_slice(), b"Encrypt" | b"ObjStm" | b"XRef") {
             return Err(unsupported(
                 "Encrypted, incremental, object-stream and xref-stream PDFs are unsupported",
             ));

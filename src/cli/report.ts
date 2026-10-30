@@ -26,13 +26,14 @@ import {
   renderToolingPolicy,
 } from '../policy.js'
 import { resolveWorker } from '../ptc/runtime.js'
-import { restrictedCompatibility } from '../bash-ipc.js'
+import { bashIpcReport, restrictedCompatibility } from '../bash-ipc.js'
+import type { BashIpcInventory } from '../bash-ipc.js'
 import { resolveShells } from '../shells.js'
 
 type WorkerReport = { resolved: true; executable: string; source: string; error: null }
   | { resolved: false; executable: null; source: null; error: string }
 interface ShellReport { available: boolean; executable: string | null; source: string; detail: string; restricted?: { compatible: boolean; reason: string } | null }
-interface LadderReport { worker: WorkerReport; shells: Record<'bash' | 'pwsh', ShellReport>; policy: string }
+interface LadderReport { worker: WorkerReport; shells: Record<'bash' | 'pwsh', ShellReport>; bashIpc: BashIpcInventory; policy: string }
 
 /**
  * The unit `uninstall` removes: `<DSH_HOME>/dsh-ops`, holding what older
@@ -205,6 +206,17 @@ export function printLadder(report: LadderReport) {
     }
   }
 
+  const megabytes = (bytes: number) => (bytes / 1048576).toFixed(0)
+  console.log('\nBash IPC runtime cache (Windows confined calls only)')
+  console.log(`  root:        ${report.bashIpc.root}`)
+  console.log(`  current:     ${report.bashIpc.current ?? 'not resolved on this host'}`)
+  console.log(`  generations: ${report.bashIpc.generations} (${megabytes(report.bashIpc.totalBytes)} MB in this cache)`)
+  if (report.bashIpc.entries.length > 0) {
+    const quarantined = report.bashIpc.entries.filter((entry) => entry.kind === 'quarantine').length
+    const suffix = quarantined > 0 ? ` + ${quarantined} quarantined generation(s)` : ''
+    console.log(`  reclaimable: ${megabytes(report.bashIpc.reclaimableBytes)} MB${suffix} — the next confined Windows Bash call reclaims it`)
+  }
+
   console.log('\nRouting: repository tools → bash → host PowerShell')
   console.log(report.policy || '(no file tools resolved)')
   console.log('\nResolution only: command visibility requires a live host session and sandboxPolicy.')
@@ -240,6 +252,7 @@ export function commandLadder({ json, configFile }: { json: boolean; configFile?
   const report = {
     worker,
     shells: { bash: { ...shellReport(shells.bash), restricted: restrictedReport(shells.bash) }, pwsh: shellReport(shells.pwsh) },
+    bashIpc: bashIpcReport(shells.bash.available ? shells.bash.file : undefined),
     levels,
     rungs: [],
     policy: renderToolingPolicy({

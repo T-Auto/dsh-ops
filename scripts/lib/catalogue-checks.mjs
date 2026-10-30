@@ -1,7 +1,7 @@
 /** Importable declaration checks, shared by the release gate and drift regressions. */
 import { isDeepStrictEqual } from 'node:util'
 import { COMPONENTS, componentEntry, componentEnabled } from '../../lib/components/defaults.js'
-import { DISCOVERY_CAPABILITIES } from '../../lib/capabilities/registry.js'
+import { CAPABILITIES } from '../../lib/capabilities/registry.js'
 import { publicToolName } from '../../lib/policy.js'
 import { platformSurface } from '../../lib/official-tool-catalog.js'
 import { residentTools } from '../../lib/modes/plan.js'
@@ -19,7 +19,7 @@ const RUNTIME_COMPONENTS = new Set(['mode-minimal', 'mode-standard', 'mode-ptc',
 /** The tool names one component declaration advertises for its shipped surface. */
 function declaredTools(component) {
   if (component === 'discovery') return DISCOVERY_CAPABILITIES.map(entry => publicToolName(entry.rawName))
-  if (component === 'compat' || component === 'panel' || component === 'tui') return []
+  if (component === 'panel' || component === 'tui') return []
   if (component === 'mode-minimal') return ['ops_bash']
   if (component === 'mode-standard' || component === 'mode-cordis') {
     return [...residentTools(component === 'mode-standard' ? 'standard' : 'cordis'), 'ops_bash'].sort()
@@ -29,17 +29,16 @@ function declaredTools(component) {
 
 export function componentChecks(components, platform = process.platform) {
   const checks = [], check = (...value) => checks.push(value)
-  const targets = components.find(row => row.id === 'dsh-ops-mode-ptc')?.targets
-  check(components.length === COMPONENTS.length && new Set(components.map(row => row.id)).size === COMPONENTS.length, 'component declarations are complete and unique')
-  for (const component of COMPONENTS) {
-    const row = components.find(value => value.id === `dsh-ops-${component}`)
-    check(row?.entry === componentEntry(component), `${component} declaration uses its exported entry`)
-    check(row?.defaultEnabled === componentEnabled(component, platform), `${component} declaration matches its enablement default`)
-    check(isDeepStrictEqual(row?.targets, RUNTIME_COMPONENTS.has(component) ? targets : undefined), `${component} target declaration matches its runtime requirements`)
-    const tools = declaredTools(component)
-    if (tools !== undefined) check(isDeepStrictEqual([...(row?.tools ?? [])].sort(), tools), `${component} tool declaration matches its catalogue projection`)
-  }
-  const retained = Object.fromEntries(['win32', 'linux', 'darwin'].map(entry => [entry, platformSurface(entry).retainedCommand]))
-  check(isDeepStrictEqual(components.find(row => row.id === 'dsh-ops-compat')?.retainedOfficialCommand, retained), 'retained official commands match platform policy')
+  // One declaration now covers every feature; its tool list is the union of the
+  // per-feature surfaces this package still ships.
+  check(components.length === 1, 'the manifest declares exactly one row')
+  const row = components[0]
+  check(row?.id === 'dsh-ops' && row?.entry === 'dsh-ops', 'the declaration uses the package entry')
+  check(row?.defaultEnabled === true, 'the declaration ships enabled')
+  const expected = [...new Set([...CAPABILITIES.map(entry => publicToolName(entry.rawName)), 'ops_load_sdk', 'ops_bash'])].sort()
+  check(isDeepStrictEqual([...(row?.tools ?? [])].sort(), expected), 'tool declaration matches the catalogue projection')
+  check(Array.isArray(row?.targets) && row.targets.length > 0, 'target declaration covers a runtime matrix')
+  void platform
   return checks
 }
+

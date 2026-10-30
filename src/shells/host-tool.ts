@@ -11,11 +11,12 @@ import { BashJobAdmissionError, startBashJob, waitOnBashJob } from './jobs.js'
 import { createJsonDigestProjection } from './json-digest.js'
 
 import { bashPresentationMeta, presentBashCall, presentBashResult } from './presentation.js'
+import type { DirectoryBasis } from '../adapter/dsh/working-directory.js'
 
 export const HOST_MAX_BASH_TIMEOUT_MS = 600_000
 
 export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExecution: CreateShellExecution,
-  resolveWorkdir: (args: Record<string, unknown>, session: NonNullable<ShellCall['agent']>['session'] | undefined) => unknown,
+  resolveWorkdir: (args: Record<string, unknown>, session: NonNullable<ShellCall['agent']>['session'] | undefined, exec: ShellCall) => unknown,
   jobs?: ShellJobs): HostShellDefinition {
   // The registry arrives already bound by the component (`ctx.inject(['jobs'], …)`), exactly as the
   // host's own bash tool does it. Re-reading a tracked service at call time returns a fresh traceable
@@ -40,7 +41,9 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
     presentCall: presentBashCall,
     presentResult: presentBashResult,
     async execute(input: unknown, exec: ShellCall = {}): Promise<HostBashResult> {
-      const complete = async (value: HostBashResult) => { await projection.prepare(value, exec); return value }
+      let basis: DirectoryBasis | undefined
+      const stamp = (value: HostBashResult): HostBashResult => basis ? { ...value, resolvedFrom: basis.cwd, cwdSource: basis.source } : value
+      const complete = async (value: HostBashResult) => { value = stamp(value); await projection.prepare(value, exec); return value }
       let timeoutMs = 120_000
       let policy: ShellPolicy | undefined
       let attempted = false
@@ -55,7 +58,11 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
         if (local.timeoutMs !== undefined && (typeof local.timeoutMs !== 'number' || !Number.isFinite(local.timeoutMs) || local.timeoutMs <= 0)) throw new BashArgumentError('invalid timeoutMs: expected a positive finite number', 'timeoutMs')
         timeoutMs = Math.min(local.timeoutMs ?? 120_000, HOST_MAX_BASH_TIMEOUT_MS)
         local.timeoutMs = timeoutMs
-        local.workdir = resolveWorkdir(local, exec.agent?.session)
+        const resolved = await resolveWorkdir(local, exec.agent?.session, exec)
+        if (resolved !== null && typeof resolved === 'object' && 'basis' in resolved && 'workdir' in resolved) {
+          basis = resolved.basis as DirectoryBasis
+          local.workdir = resolved.workdir
+        } else local.workdir = resolved
         // Pure validation occurs before approval, job admission or physical preparation.
         base.resolve(local)
         if (typeof args.description !== 'string' || !args.description.trim()) throw new BashArgumentError('invalid description: expected a non-empty string', 'description')
@@ -78,14 +85,14 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
             if (run_in_background || attempted || error instanceof BashJobAdmissionError && error.runInvoked) throw error
             ctx.logger?.warn?.(`Bash job admission refused; using the foreground deadline: ${errorMessage(error)}`)
           }
-          if (attached) return run_in_background ? { kind: 'background', jobId: attached.id, label: attached.label } : await complete(await waitOnBashJob(jobs, attached, exec, timeoutMs))
+          if (attached) return run_in_background ? stamp({ kind: 'background', jobId: attached.id, label: attached.label }) : await complete(await waitOnBashJob(jobs, attached, exec, timeoutMs))
         } else if (run_in_background) return hostFailure('EXECUTOR_UNAVAILABLE: the host job registry is unavailable.', timeoutMs)
         const execution = await start(exec, {})
         const result = await execution.result()
         return await complete(hostForeground(result, execution.started ? 'unknown' : 'none'))
       } catch (error) {
         const message = isBashArgumentError(error) ? `INVALID_BASH_ARGUMENT: ${errorMessage(error)}` : errorMessage(error)
-        return { ...hostFailure(message, timeoutMs, process ? (process.started ? 'unknown' : 'none') : attempted ? 'unknown' : 'none', exec.signal?.aborted === true), ...(policy ? { sandbox: { mode: policy.mode, denied: false } } : {}) }
+        return stamp({ ...hostFailure(message, timeoutMs, process ? (process.started ? 'unknown' : 'none') : attempted ? 'unknown' : 'none', exec.signal?.aborted === true), ...(policy ? { sandbox: { mode: policy.mode, denied: false } } : {}) })
       }
     },
   } satisfies ToolDefinition

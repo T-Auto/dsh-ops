@@ -313,7 +313,7 @@ await test('ladder --json has a stable shape and lists exactly the rungs the ren
     assert.equal(run.status, 0, `expected a report, got ${run.status}: ${run.stderr}`)
     const parsed = JSON.parse(run.stdout)
 
-    assert.deepEqual(Object.keys(parsed), ['worker', 'shells', 'levels', 'rungs', 'policy'])
+    assert.deepEqual(Object.keys(parsed), ['worker', 'shells', 'bashIpc', 'levels', 'rungs', 'policy'])
     assert.deepEqual(Object.keys(parsed.worker), ['resolved', 'executable', 'source', 'error'])
     assert.deepEqual(Object.keys(parsed.shells), ['bash', 'pwsh'])
     for (const kind of ['bash', 'pwsh']) {
@@ -327,6 +327,10 @@ await test('ladder --json has a stable shape and lists exactly the rungs the ren
       assert.equal(typeof parsed.shells[kind].detail, 'string')
     }
     assert.deepEqual(Object.keys(parsed.levels), ['files', 'bash', 'pwsh'])
+    assert.deepEqual(Object.keys(parsed.bashIpc),
+      ['root', 'current', 'generations', 'entries', 'totalBytes', 'reclaimableBytes'])
+    assert.equal(parsed.bashIpc.generations, 0, 'a fresh home has no private Bash runtime')
+    assert.equal(parsed.bashIpc.totalBytes, 0)
 
     assert.equal(parsed.worker.resolved, true)
     assert.equal(parsed.worker.executable, runtime, 'the configured path is reported verbatim')
@@ -350,6 +354,7 @@ await test('ladder --json has a stable shape and lists exactly the rungs the ren
     assert.deepEqual(printedRungs(human.stdout), parsed.rungs)
     assert.ok(human.stdout.includes(runtime), 'the report names the executable')
     assert.match(human.stdout, /^Native worker \(file tools\)$/mu)
+    assert.match(human.stdout, /^Bash IPC runtime cache/mu)
     assert.equal(human.stdout.includes('FastCtx'), false, 'the ladder no longer reports a FastCtx runtime')
 
     // A worker the configuration names but that does not exist is a missing file rung, with the resolver's reason.

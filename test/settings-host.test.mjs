@@ -3,6 +3,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { parse } from 'yaml'
 import { profileFixture } from './lib/settings-profile.mjs'
+// These suites exercise the pre-merge component modules directly.
+process.env.DSH_OPS_LEGACY_ROWS = '1'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import * as Hiding from '../lib/components/hide-official/index.js'
 import { Config as DiscoveryConfig } from '../lib/components/discovery/index.js'

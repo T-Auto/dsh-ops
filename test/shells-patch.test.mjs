@@ -30,28 +30,25 @@ await test('the manifest declares the plugin\'s own shell tools as their own nam
   assert.equal(BASH_TOOL_NAME, `${namespaces[1].publicPrefix}${namespaces[1].tools[0]}`)
 })
 
-await test('the bundle patch declares the eight components, with no persistent pwsh override', () => {
+await test('the bundle patch declares the single row, with no persistent pwsh override', () => {
   const entries = patchEntries()
   assert.equal(entries.length, 1)
-  assert.deepEqual(entries[0].insert.map(row => row.id), COMPONENTS.map(component => `dsh-ops-${component}`))
-  assert.deepEqual(entries[0].insert.map(row => row.name), COMPONENTS.map(componentEntry))
-  for (const component of COMPONENTS) {
-    const row = entries[0].insert.find(item => item.id === `dsh-ops-${component}`)
-    assert.equal(row.disabled ?? false, !componentEnabled(component, process.platform), `${component} enablement default`)
-  }
-  const row = id => entries[0].insert.find(item => item.id === `dsh-ops-${id}`)
-  for (const name of ['mode-minimal', 'mode-standard', 'mode-ptc', 'mode-cordis', 'discovery']) assert.equal(row(name).disabled, undefined, `${name} starts enabled`)
-  for (const name of ['compat', 'panel', 'tui']) assert.equal(row(name).disabled, true, `${name} stays opt-in`)
-  assert.equal(row('panel').config.capture, true, 'a fresh enabled row starts capture')
+  assert.deepEqual(entries[0].insert.map(row => row.id), ['dsh-ops'])
+  assert.deepEqual(entries[0].insert.map(row => row.name), ['dsh-ops'])
+  const config = entries[0].insert[0].config
+  for (const key of ['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools']) assert.equal(config.global[key], true, key)
+  for (const section of ['minimal', 'standard', 'ptc', 'cordis', 'discovery']) assert.equal(config[section].enabled, true, section)
+  for (const section of ['panel', 'tui']) assert.equal(config[section].enabled, false, section)
 })
 
-await test('every shipped mode row states the documented shell defaults through its own validator', () => {
-  for (const mode of ['mode-minimal', 'mode-standard', 'mode-ptc', 'mode-cordis']) {
-    const row = patchEntries()[0].insert.find((candidate) => candidate.id === `dsh-ops-${mode}`)
-    // The row's own config is the input; unknown keys must fail loud, so every
-    // written key has to come from the mode converter's accepted list.
-    for (const key of Object.keys(row.config ?? {})) assert.ok(MODE_CONFIG_KEYS.includes(key), `${mode}.config.${key} is accepted`)
-    const resolved = resolveModeConfig(row.config)
+await test('every shipped preset section states the documented shell defaults through its validator', () => {
+  const config = patchEntries()[0].insert[0].config
+  for (const mode of ['minimal', 'standard', 'ptc', 'cordis']) {
+    const section = config[mode]
+    for (const key of Object.keys(section)) assert.ok(['enabled', ...MODE_CONFIG_KEYS].includes(key), `${mode}.${key} is accepted or the enable switch`)
+    const { enabled, ...rest } = section
+    const resolved = resolveModeConfig(rest)
+    assert.equal(enabled, true, mode)
     assert.equal(resolved.bashPath, undefined, mode)
     assert.equal(resolved.publishBashTool, true, mode)
     assert.equal(resolved.allowSystemShellFallback, false, mode)

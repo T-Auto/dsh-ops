@@ -60,7 +60,7 @@ The default file/discovery surface is now `ops_read_files` plus `ops_discover_to
 
 BM-04 now runs the implemented PDF reader through the real AgentLoop: its schema is absent initially, remains pending in the current round, appears in the owning next provider request, stays absent for a sibling, and then returns the fixture text. This verifies the supported PDF subset, not general PDF/OCR coverage.
 
-Built-in settings persist validated arrays. Optional browser multi-selects use the pinned host client APIs and need the explicit offline carrier described in [configuration](configuration-reference.md); they are not activated by the default legacy file row.
+Built-in settings persist validated arrays. The browser page's multi-selects use the pinned host client APIs described in [configuration](configuration-reference.md); they belong to the single row's settings page, not to a legacy file row.
 
 Overlapping discovery rows use the nearest owning scope; the last row mounted in the same scope wins until it is unloaded. File rows may mount before or after discovery. Only exact OPS-owned Native registrations are yielded or masked; unrelated external registrations remain visible. PTC Native shadows retain their exact origin, and discovered activations cannot be inherited by another agent. Native `result` is page/release only and may be discovered in read-only mode; the worker still rejects forbidden release actions. Resident `read_files` and discoverable `edit_file` retain their existing per-file completeness and CAS contracts.
 

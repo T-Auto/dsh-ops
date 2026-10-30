@@ -7,9 +7,11 @@ import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import { integration, resolveIntegrationConfig } from 'dsh-ops/integration'
 import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
 import * as Standard from '../lib/components/mode-standard/index.js'
-import * as Discovery from '../lib/components/discovery/index.js'
+import * as DiscoveryModule from '../lib/components/discovery/index.js'
 import { bootHost, shutdown, scopedToolNames } from './lib/host.mjs'
 import { assert, test, report, waitFor, withTempDir } from './lib/harness.mjs'
+import { legacyComponent } from './lib/legacy-component.mjs'
+const Discovery = legacyComponent(DiscoveryModule)
 const tool = name => ({ name, description: name, parameters: { type: 'object', properties: {} }, output: { schema: { type: 'object' }, render: () => [] }, execute: async () => ({}) })
 async function boot(subprocess) {
   const { ctx } = await bootHost()

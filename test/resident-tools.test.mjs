@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { getEncoding } from 'js-tiktoken'
 import { startupAssessment } from '../bench/gates/integrity.mjs'
-import * as file from '../lib/components/file/index.js'
+import * as fileModule from '../lib/components/file/index.js'
 import { FILE_TOOLS, publicToolName } from '../lib/policy.js'
 import { NativeFileTools } from '../lib/file/runtime.js'
 import { NATIVE_FILE_TOOLS } from '../lib/capabilities/registry.js'
@@ -12,6 +12,8 @@ import { hostBashDefinition } from '../lib/shells/host-tool.js'
 import { assert, test, report, withTempDir, waitFor } from './lib/harness.mjs'
 import { bootDiscoveryHost, mintDiscoveryAgent, discoveryNextStep } from './lib/discovery.mjs'
 import { shutdown, scopedToolNames, registryNames, callTool } from './lib/host.mjs'
+import { legacyComponent } from './lib/legacy-component.mjs'
+const file = legacyComponent(fileModule)
 
 const READ = publicToolName('read_files'), DISCOVER = publicToolName('discover_tools')
 const measure = tools => {

@@ -26,15 +26,26 @@ import { mountReplacements } from '../publication/replacements.js'
 import type { ModeId } from './types.js'
 
 /** Built-in product replacement policy; generic publication does not know preset ids. */
-export function replacementTargets(mode: ModeId, platform: string = process.platform): ReadonlyMap<string, string> {
+export function replacementTargets(mode: ModeId, platform: string = process.platform, hidePwsh = true): ReadonlyMap<string, string> {
   const targets = new Map<string, string>()
   for (const official of MODE_PLANS[mode].replacements) targets.set(official, OFFICIAL_REPLACEMENTS[official])
-  if (MODE_PLANS[mode].shell && platform === 'win32') for (const official of SHELL_OFFICIAL_NAMES) targets.set(official, BASH_TOOL)
+  // With `hidePwsh: false` the official shell stays visible: the session gets both
+  // the host shell and ops_bash, and the model chooses.
+  if (MODE_PLANS[mode].shell && platform === 'win32' && hidePwsh) for (const official of SHELL_OFFICIAL_NAMES) targets.set(official, BASH_TOOL)
   return targets
 }
 
 export function applyMode(root: Context, rawConfig: unknown, mode: ModeId): void {
-  const config: ModeConfig = resolveModeConfig(rawConfig)
+  applyResolvedMode(root, resolveModeConfig(rawConfig, mode), mode)
+}
+
+/**
+ * Apply a mode from a config that was already resolved and validated.
+ * @param root - the fiber mounting the feature.
+ * @param config - the resolved mode configuration.
+ * @param mode - the preset this feature publishes for.
+ */
+export function applyResolvedMode(root: Context, config: ModeConfig, mode: ModeId): void {
   const plan = MODE_PLANS[mode]
   const leave = joinMode(root, mode, config)
   root.effect(() => () => leave(), `dsh-ops: ${mode} mode switch`)
@@ -42,19 +53,23 @@ export function applyMode(root: Context, rawConfig: unknown, mode: ModeId): void
   const watch = (notify: () => void): (() => void) => onModesChange(root, notify)
   // The Windows shell replacement is the only shell work a mode row performs:
   // POSIX sessions already run the host's bash, so OPS publishes nothing there.
-  if (plan.shell && process.platform === 'win32') {
+  if (plan.shell && process.platform === 'win32' && config.bash) {
     mountWorkspacePreparation(root)
     const gate: BashGate = { allows: matches, watch }
     const shells = resolveShells(config)
     root.inject(['tools'], ctx => { mountSessionBash(ctx, config, shells, gate) })
   }
-  mountReplacements(root, { id: mode, targets: replacementTargets(mode), gate: { allows: matches, watch }, keepOfficial: () => compatibilityOn(root) })
-  if (plan.nativeFiles) mountNative(root, config, { id: mode, tools: NATIVE_RESIDENT_RAW,
+  // `hideOfficialTools: false` keeps the official file tools published: the OPS
+  // resident tools coexist with them and nothing is hidden.
+  if (config.hideOfficialTools) {
+    mountReplacements(root, { id: mode, targets: replacementTargets(mode, process.platform, config.hidePwsh), gate: { allows: matches, watch }, keepOfficial: () => compatibilityOn(root) })
+  }
+  if (plan.nativeFiles && config.residentTools) mountNative(root, config, { id: mode, tools: NATIVE_RESIDENT_RAW,
     section: plan.section === null ? null : `mode-${plan.section}`, gate: { allows: matches, watch } })
   if (plan.ptc) {
     mountPtc(root, {
       binaryPath: config.binaryPath, required: config.required,
       allowedTools: config.allowedTools, alwaysLoaded: config.alwaysLoaded,
-    }, { allows: matches, watch })
+    }, { allows: matches, watch, resident: config.residentTools, dynamic: config.dynamicTools })
   }
 }

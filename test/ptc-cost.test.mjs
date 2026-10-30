@@ -5,8 +5,10 @@ import { createScope } from '@deepseek-ai/dsh-scope'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { assert, test, report, skipSuite } from './lib/harness.mjs'
 import { applyComponent } from '../lib/index.js'
-import * as ptc from '../lib/ptc/index.js'
+import * as ptcModule from '../lib/ptc/index.js'
 import { tryResolveWorker } from '../lib/ptc/runtime.js'
+import { legacyComponent } from './lib/legacy-component.mjs'
+const ptc = legacyComponent(ptcModule)
 
 const worker = tryResolveWorker()
 if (!worker.ok) skipSuite('ptc-cost', worker.reason)

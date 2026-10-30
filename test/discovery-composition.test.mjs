@@ -5,13 +5,16 @@ import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import FileSystem from '@deepseek-ai/dsh-fs-local'
 import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
-import * as discovery from '../lib/discovery/index.js'
-import * as ptc from '../lib/ptc/index.js'
+import * as discoveryModule from '../lib/discovery/index.js'
+import * as ptcModule from '../lib/ptc/index.js'
 import { applyComponent } from '../lib/index.js'
 import { definition } from '../lib/file/contract.js'
 import { assert, test, report, waitFor, withTempDir } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
+import { legacyComponent } from './lib/legacy-component.mjs'
+const discovery = legacyComponent(discoveryModule)
+const ptc = legacyComponent(ptcModule)
 requireWorker('discovery-composition')
 let sequence = 0
 const names = (ctx, agent) => ctx.get('tools').schemas(agent).map(tool => tool.name).filter(name => name.startsWith('ops_')).sort()

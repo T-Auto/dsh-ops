@@ -26,6 +26,7 @@ import { residentTools } from '../modes/plan.js'
 import { observeSelection } from '../integration/diagnostics.js'
 import { integrationFor } from '../integration/registry.js'
 import { enabledModes, onModesChange } from '../modes/registry.js'
+import { retired as retiredLegacyRow } from '../settings/legacy.js'
 
 export interface DiscoveryGate {
   allows(agent: Agent): boolean; watch?(notify: () => void): () => void; guidance?: boolean; extraGuidance?: string
@@ -51,7 +52,14 @@ const DISCOVER = publicToolName(DISCOVERY_TOOL_NAME)
 const advanced = DISCOVERABLE_TOOLS.map(publicToolName)
 export const name = 'dsh-ops-discovery'
 
+/** Legacy Loader entry; retained rows stay inert in the merged bundle. */
 export function apply(root: Context, raw: unknown, gate: DiscoveryGate = { allows: agent => !integrationFor(root, agent) && modeOf(root, agent) !== undefined }): void {
+  if (retiredLegacyRow(root, 'discovery')) return
+  mountDiscovery(root, raw, gate)
+}
+
+/** Mount the owned service for an explicit preset integration. */
+export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate = { allows: agent => !integrationFor(root, agent) && modeOf(root, agent) !== undefined }): void {
   const config = resolveDiscoveryConfig(raw)
   let worker: string | undefined
   const externalEnabled = Boolean(gate.external?.allowed.length)
@@ -85,9 +93,9 @@ export function apply(root: Context, raw: unknown, gate: DiscoveryGate = { allow
       if (integration) return new Set(integration.files && integration.presentation === 'native'
         ? ['inspect_local_file', 'glob', 'grep', 'read_files', 'result'].map(publicToolName) : [])
       const mode = modeOf(ctx, agent)
-      // A mode row that is off publishes nothing resident, so its names stay in the
-      // discovery pool even though the preset matches.
-      if (mode === undefined || !enabledModes(ctx).has(mode)) return new Set()
+      // A disabled mode or resident switch publishes nothing resident, so those
+      // names stay in the discovery pool even though the preset matches.
+      if (mode === undefined || !enabledModes(ctx).get(mode)?.residentTools) return new Set()
       return new Set(residentTools(mode))
     }
     const permitted = (agent: Agent, rawName?: DiscoverableName): boolean => {
@@ -110,7 +118,7 @@ export function apply(root: Context, raw: unknown, gate: DiscoveryGate = { allow
     const invalidate = (entry: Entry) => { ++entry.revision; entry.presentation = undefined }
     const inputs = (agent: Agent): unknown[] => {
       const policy = policyService?.resolve({ session: agent.session })
-      return [agent.ctx, agent.session, agent.session.header.cwd, policy?.mode, policy?.workspaceRoot, policy?.sessionId]
+      return [agent.ctx, agent.session, currentSessionDirectory(ctx, agent), policy?.mode, policy?.workspaceRoot, policy?.sessionId]
     }
     const same = (left: unknown[], right: unknown[]) => left.length === right.length && left.every((value, index) => value === right[index])
     // Only background reconciliation reuses a probe. A step or execution can
@@ -408,3 +416,4 @@ export function apply(root: Context, raw: unknown, gate: DiscoveryGate = { allow
     for (const agent of new Set([...(ctx.get('agents')?.list() ?? []), ...ownership.agents()])) void attach(agent)
   })
 }
+import { currentSessionDirectory } from '../adapter/dsh/working-directory.js'

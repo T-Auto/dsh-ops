@@ -22,14 +22,20 @@ function capture(file) {
   vm.runInThisContext(fs.readFileSync(file, 'utf8'), { filename: file })
   assert.ok(definition); return definition
 }
-const external = name => name === '@deepseek-ai/cordis' ? Cordis : name === '@deepseek-ai/dsh-client-ui-slots' ? slots : require(name)
+// The Host answers this module name itself (it is not a package on disk); the stub
+// only has to exist so the shipped bundle resolves, because this suite never renders.
+const primitives = { Switch: () => null }
+const external = name => name === '@deepseek-ai/cordis' ? Cordis
+  : name === '@deepseek-ai/dsh-client-ui-slots' ? slots
+    : name === '@deepseek-ai/dsh-client-ui-primitives' ? primitives
+      : require(name)
 
-await test('shipped browser entry stays lazy and binds five settings pages to the real host registry', async () => {
+await test('shipped browser entry stays lazy and binds the one row page plus one detail section to the real host registry', async () => {
   const definition = capture(path.join(PACKAGE_ROOT, 'lib/client.js')), imports = []
   assert.equal(definition.id, 'dsh-ops'); assert.equal(typeof definition.factory, 'function')
   assert.deepEqual(imports, [])
   const plugin = definition.factory(name => { imports.push(name); return external(name) })
-  assert.deepEqual([...new Set(imports)].sort(), ['react', 'react/jsx-runtime'])
+  assert.deepEqual([...new Set(imports)].sort(), ['@deepseek-ai/dsh-client-ui-primitives', 'react', 'react/jsx-runtime'])
   const Renderer = capture(path.join(PACKAGE_ROOT, 'node_modules/@deepseek-ai/dsh-client-ui-renderer/lib/client.js')).factory(external)
   const ctx = new Cordis.Context(); ctx.logger.level = 0
   let dictionaries, disposed = false, calls = 0, markStarted
@@ -58,7 +64,10 @@ await test('shipped browser entry stays lazy and binds five settings pages to th
     await ctx.plugin(ClientGateway)
     await ctx.plugin({ inject: ['slots'], apply(inner) {
       inner.provide('locale', { register(namespace, values) { dictionaries = { namespace, values }; return () => { disposed = true } } })
-      inner.slots.register({ name: 'root', children: { 'plugins.row.config': { kind: 'keyed', scope: 'root' } } }, () => null)
+      inner.slots.register({ name: 'root', children: {
+        'plugins.row.config': { kind: 'keyed', scope: 'root' },
+        'plugins.detail.section': { kind: 'list', scope: 'root' },
+      } }, () => null)
     } })
     const fiber = await ctx.plugin(plugin)
     const plan = await ctx.get('remote').opsSettings.plan('install-bash')
@@ -71,13 +80,13 @@ await test('shipped browser entry stays lazy and binds five settings pages to th
     assert.equal(result.ok, false); assert.match(result.error.message, /abort/i)
     assert.equal(dictionaries.namespace, 'dshOps')
     assert.deepEqual(Object.keys(dictionaries.values.en).sort(), Object.keys(dictionaries.values.zh).sort())
-    assert.deepEqual(ctx.get('slots').entries('plugins.row.config').map(value => value.options.key).sort(), [
-      'dsh-ops#dsh-ops-discovery', 'dsh-ops#dsh-ops-mode-cordis', 'dsh-ops#dsh-ops-mode-minimal',
-      'dsh-ops#dsh-ops-mode-ptc', 'dsh-ops#dsh-ops-mode-standard',
-    ])
+    assert.deepEqual(ctx.get('slots').entries('plugins.row.config').map(value => value.options.key), ['dsh-ops#dsh-ops'])
+    assert.deepEqual(ctx.get('slots').entries('plugins.detail.section').map(value => value.options.id), ['dsh-ops.diagnostics'])
+    assert.equal(ctx.get('slots').entries('plugins.detail.section')[0].options.order, 50)
     assert.equal(document.querySelectorAll('style[data-dsh-ops-settings]').length, 1)
     await fiber.dispose()
     assert.equal(ctx.get('slots').entries('plugins.row.config').length, 0)
+    assert.equal(ctx.get('slots').entries('plugins.detail.section').length, 0)
     assert.equal(document.querySelectorAll('style[data-dsh-ops-settings]').length, 0)
     assert.equal(disposed, true)
   } finally { await shutdown(ctx) }
@@ -97,14 +106,20 @@ await test('browser bundler rejects Node externals and dynamic imports before wr
   assert.equal(loaded.value, 42)
 }))
 
-await test('browser package declares an optional client facet while the default bundle preserves the standard-mode carrier row', () => {
+await test('browser package declares its client facet and the bundle keeps the single row', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'package.json')))
   assert.equal(pkg.exports['./client'].default, './lib/client.js')
   assert.equal(pkg.dsh.client.platform, 'web')
+  // The bundle page reads this bundle's slot entries, so the browser half must be
+  // materialized at boot rather than on first use.
+  assert.equal(pkg.dsh.client.immediately, true)
   assert.ok(pkg.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-plugin-manager'))
-  // The carrier renames the standard-mode row; the bundle keeps its explicit specifier.
-  assert.match(fs.readFileSync(path.join(PACKAGE_ROOT, 'cordis.patch.yml'), 'utf8'), /id: dsh-ops-mode-standard\s+name: dsh-ops\/mode-standard\s/)
-  for (const component of ['mode-minimal', 'mode-standard', 'mode-ptc', 'mode-cordis', 'compat']) {
+  // The row pages bind the host's native Switch, so the module must be declared.
+  assert.ok(pkg.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-primitives'))
+  // The bundle inserts one row named like the package, so the browser half mounts
+  // there and no carrier bundle is needed.
+  assert.match(fs.readFileSync(path.join(PACKAGE_ROOT, 'cordis.patch.yml'), 'utf8'), /- id: dsh-ops\s+name: dsh-ops\s/)
+  for (const component of ['mode-minimal', 'mode-standard', 'mode-ptc', 'mode-cordis']) {
     assert.equal(pkg.exports[`./${component}`].default, `./lib/components/${component}/index.js`, component)
   }
   // A saved legacy row stays loadable even though the bundle no longer inserts it.

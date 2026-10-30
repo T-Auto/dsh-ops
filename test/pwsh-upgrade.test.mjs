@@ -2,6 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
+import { gzipSync } from 'node:zlib'
+import { tar, UNIX_WORKERS } from '../scripts/lib/build/tar-modes.js'
 import { hostPwshUpgradePlan, upgradeHostPwsh, runUpgradeProcess } from '../lib/shells/pwsh-upgrade.js'
 import { applyComponent } from '../lib/index.js'
 import { resolveShells } from '../lib/shells.js'
@@ -20,6 +22,16 @@ function fixture(root) {
 }
 const success = { started: true, exitCode: 0, signal: null }
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
+function mainArchive(file) {
+  const blocks = []
+  for (const name of [...UNIX_WORKERS, 'package/runtime/win32-x64/dsh-ops-worker.exe']) {
+    const body = Buffer.from('fixture worker')
+    const header = new tar.Header({ path: name, mode: 0o755, size: body.length, type: 'File' })
+    header.encode()
+    blocks.push(header.block, body, Buffer.alloc(512 - body.length))
+  }
+  fs.writeFileSync(file, gzipSync(Buffer.concat([...blocks, Buffer.alloc(1024)])))
+}
 
 await test('the upgrade plan uses the standard exact stable package and an absolute WinGet path', async () => {
   await withTempDir('upgrade-plan', root => {
@@ -159,7 +171,7 @@ await test('a payload release records the package at its declared pin, not the m
     const publishDir = path.join(dist, 'publish', `${manifest.name}-${manifest.version}`)
     fs.mkdirSync(publishDir, { recursive: true })
     fs.writeFileSync(path.join(publishDir, 'package.json'), JSON.stringify({ ...manifest, optionalDependencies: injectedOptionalDependencies(context) }))
-    fs.writeFileSync(path.join(dist, `${manifest.name}-${manifest.version}.tgz`), 'main tarball fixture')
+    mainArchive(path.join(dist, `${manifest.name}-${manifest.version}.tgz`))
     await writeReleaseRecords(context, [{ pkg, provenance }])
     assert.equal(await stepCheck(context), 0, 'a payload pinned at its own version must pass the release gate')
     fs.writeFileSync(path.join(stage, 'provenance.json'), JSON.stringify({ ...provenance, version: manifest.version }))
@@ -174,7 +186,7 @@ await test('main-only release records validate without shell payloads and reject
     delete manifest.private
     fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify(manifest))
     const tarball = manifest.name + '-' + manifest.version + '.tgz'
-    fs.writeFileSync(path.join(dist, tarball), 'fixture archive bytes checked by SHA-256')
+    mainArchive(path.join(dist, tarball))
     // A main-only record: the payload package itself is covered by the assemble/closure suites.
     const context = { dist, packages: [], tarballs: {} }
     await writeReleaseRecords(context, [])

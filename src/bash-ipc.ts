@@ -6,8 +6,10 @@ import path from 'node:path'
 import os from 'node:os'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+export { recoverBashLifecycleLock } from './bash-ipc-lifecycle.js'
 import { errorMessage } from './shells/types.js'
 import { patchMsys } from './bash-pe.js'
+import { GENERATION_NAME, RETIRED_NAME, QUARANTINE_NAME, noLinks, assertNoLinks, plainDirectory, plainTree, withLifecycleLock, idleGeneration, markManaged, leaseGeneration, hasLiveLease } from './bash-ipc-lifecycle.js'
 const packageRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')
 const hash=(bytes: Uint8Array)=>createHash('sha256').update(bytes).digest('hex')
 interface Runtime { file: string; env?: NodeJS.ProcessEnv; runtime?: string }
@@ -15,6 +17,19 @@ interface TreeEntry { size: number; mtimeMs: number; sha256?: string }
 interface Receipt { platform?: unknown; msysSha256?: unknown; files?: unknown }
 const record = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 const cache=new Map<string, Runtime>()
+/** One identity-named generation. Anything else in the cache directory is debris with its own lifetime. */
+
+/** Cleanup is rate-limited, but never disabled permanently after a retained/failed sweep. */
+const swept=new Map<string,number>()
+function maybeReclaim(root: string, identity: string): void {
+  const key=root+'|'+identity,now=Date.now()
+  if(now-(swept.get(key)??0)<60_000)return
+  swept.set(key,now)
+  try{reclaimBashGenerations(root,identity)}catch(error){console.error('dsh-ops: cache cleanup failed: '+errorMessage(error))}
+}
+
+/** The directory confined Windows Bash generations live in. */
+export const bashIpcRoot=(home: string): string=>path.join(home,'dsh-ops','bash-ipc')
 const proxies=path.join(packageRoot,'runtime/win32-x64/bash-ipc')
 const SOURCES: Record<string, string>={config:'configured bashPath',path:'system bash on PATH','well-known':'system Git for Windows install',bundled:'bundled bash',provisioned:'provisioned bash'}
 // Resolve both PortableGit's bin wrapper and its real usr/bin executable.
@@ -59,12 +74,15 @@ export function privateRuntimePath(target: string, inheritedPath = process.env.P
  *  Records size/mtime as well as the digest, so {@link treeMatches} can re-check the whole tree
  *  with one `stat` per file instead of re-reading ~174 MB on every command. */
 function treeDigest(base: string,withHash=true){
+  assertNoLinks(base)
   const out: Record<string, TreeEntry>={}
   const walk=(rel: string)=>{
     let entries
-    try{entries=fs.readdirSync(path.join(base,rel),{withFileTypes:true})}catch{return}
+    assertNoLinks(path.join(base,rel))
+    try{entries=fs.readdirSync(path.join(base,rel),{withFileTypes:true})}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return;throw error}
     for(const e of entries.sort((a,b)=>a.name<b.name?-1:1)){
       const next=rel===''?e.name:`${rel}/${e.name}`
+      assertNoLinks(path.join(base,next))
       if(e.isDirectory())walk(next)
       else if(e.isFile()){
         const abs=path.join(base,next)
@@ -85,7 +103,8 @@ function treeMatches(base: string,expected: unknown){
   if(!record(expected))return false
   const names=Object.keys(expected)
   if(names.length===0)return false
-  const actual=treeDigest(base,false)
+  let actual: Record<string, TreeEntry>
+  try{actual=treeDigest(base,false)}catch{return false}
   if(names.length!==Object.keys(actual).length)return false
   return names.every(name=>{
     const want=expected[name],got=actual[name]
@@ -105,16 +124,19 @@ function treeMatches(base: string,expected: unknown){
  *  ⚠️ Consequence, stated rather than implied: if a source file is rewritten with its size and mtime
  *  preserved, this memo will not re-check it. That path was never a boundary either — the source
  *  tree lives under the profile's `node_modules`, with the same owner as the cache. */
-interface SourceState { key: string; bytes: Buffer; receipt: Receipt & { files: Record<string, unknown> }; proxyBytes: Record<string, Buffer>; patched: Buffer; patchedSha: string; identity: string }
+interface SourceState { key: string; bytes: Buffer; receipt: Receipt & { files: Record<string, unknown> }; proxyBytes: Record<string, Buffer>; patched: Buffer; patchedSha: string; bashSha: string; identity: string; payload: Record<string, TreeEntry> }
 const sourceMemo=new Map<string, SourceState>()
 /** `size:mtimeMs` for a file, or `absent` — absence is part of the key, not an error. */
 const statKey = (file: string) => { try { const s=fs.statSync(file); return `${s.size}:${s.mtimeMs}` } catch { return 'absent' } }
 function sourceState(root: string, dll: string): SourceState{
+  assertNoLinks(root)
   let st
   try{st=fs.statSync(dll)}catch{
     throw Error('EXECUTOR_UNAVAILABLE: Windows confined Bash requires the supported MSYS payload layout; no unconfined fallback.')
   }
-  const key=[dll,path.join(proxies,'provenance.json'),path.join(proxies,'opsipc.dll'),path.join(proxies,'opsnt.dll')].map(statKey).join('|')
+  const bashFile=path.join(root,'usr/bin/bash.exe')
+  const inventory=treeDigest(root,false)
+  const key=JSON.stringify(inventory)+'|'+[dll,bashFile,path.join(proxies,'provenance.json'),path.join(proxies,'opsipc.dll'),path.join(proxies,'opsnt.dll')].map(statKey).join('|')
   const cached=sourceMemo.get(root)
   if(cached!==undefined&&cached.key===key)return cached
   const bytes=fs.readFileSync(dll)
@@ -126,9 +148,18 @@ function sourceState(root: string, dll: string): SourceState{
     if(hash(proxyBytes[name])!==receipt.files[name])throw Error(`Bash IPC provenance mismatch: ${name}`)
   }
   const patched=patchMsys(bytes).bytes
+  // The identity is what the generation *is*, never where it was staged from: two profiles (or two
+  // machines with the same payload) share one generation, and an upgraded payload gets a new one.
+  // Every verified byte is in the key — the patched MSYS, both IPC proxies and the bash executable —
+  // so reusing a sibling is only possible when the confined shell would run identical bytes.
+  const files=Object.fromEntries(Object.entries(receipt.files).sort(([a],[b])=>a<b?-1:a>b?1:0))
+  const bashSha=hash(fs.readFileSync(bashFile))
+  const patchedSha=hash(patched)
+  const payload=treeDigest(root)
+  const payloadIdentity=Object.fromEntries(Object.entries(payload).map(([name,value])=>[name,{size:value.size,sha256:value.sha256}]))
   const state: SourceState={key,bytes,receipt: { ...receipt, files: receipt.files },proxyBytes,patched,
-    patchedSha:hash(patched),
-    identity:hash(Buffer.from(JSON.stringify({root,msys:receipt.msysSha256,files:receipt.files}))).slice(0,24)}
+    patchedSha,bashSha,payload,
+    identity:hash(Buffer.from(JSON.stringify({msys:receipt.msysSha256,files,bash:bashSha,patched:patchedSha,payload:payloadIdentity}))).slice(0,24)}
   sourceMemo.set(root,state)
   return state
 }
@@ -169,18 +200,168 @@ export function renameWithRetry(from: string, to: string, {
  *  injectable so the retry can be asserted with a deterministic transient failure rather than by
  *  waiting on a real Windows sharing window (#352). */
 export function quarantineGeneration(target: string, {rename}: { rename?: (from: string,to: string)=>void }={}): string {
+  if(!plainTree(target)||!idleGeneration(target))throw Error('Bash IPC refuses to quarantine a linked, legacy or leased generation; stop all confined shells and remove it manually.')
   const quarantine=`${target}.bad-${Date.now().toString(36)}`
   renameWithRetry(target,quarantine,{rename})
-  // Keep the quarantine bounded: each generation is hundreds of MB, and a generation can go bad
-  // for wholly mundane reasons (a restored backup, a `touch`, a sync tool rewriting mtimes).
-  // Keep the two most recent and drop older ones.
-  try{
-    const parent=path.dirname(target), base=path.basename(target)
-    const stale=fs.readdirSync(parent).filter(name=>name.startsWith(`${base}.bad-`)).sort().slice(0,-2)
-    for(const name of stale){ fs.rmSync(path.join(parent,name),{recursive:true,force:true}); console.error(`dsh-ops: removed an older quarantined bash runtime: ${name}`) }
-  }catch{ /* best effort — cleanup must never block recovery */ }
+  // Quarantines are retained: rename success never proves an old runtime is unused.
   console.error(`dsh-ops: quarantined an unverifiable bash runtime generation at ${quarantine}; staging a fresh one. Delete it once no confined shell is running.`)
   return quarantine
+}
+
+/** A directory under `<DSH_HOME>/dsh-ops/bash-ipc` and what it costs on disk. */
+export interface BashIpcEntry {
+  name: string
+  kind: 'generation' | 'quarantine' | 'staging' | 'retired' | 'other'
+  bytes: number
+  files: number
+  mtimeMs: number
+  current: boolean
+}
+/** The cache as an operator report: every entry, the verified bytes, and what the next sweep may drop. */
+export interface BashIpcInventory {
+  root: string
+  current: string | null
+  generations: number
+  entries: BashIpcEntry[]
+  totalBytes: number
+  reclaimableBytes: number
+}
+/** Sizes of one tree without following links out of it; an unreadable entry is simply absent. */
+function directoryUsage(directory: string): { bytes: number; files: number } {
+  let bytes=0,files=0
+  const walk=(dir: string)=>{
+    let entries
+    try{ entries=fs.readdirSync(dir,{withFileTypes:true}) }catch{ return }
+    for(const entry of entries){
+      const target=path.join(dir,entry.name)
+      if(entry.isDirectory()&&plainDirectory(target)) walk(target)
+      else if(entry.isFile()||entry.isSymbolicLink()){
+        try{ const stat=fs.lstatSync(target); files+=1; bytes+=stat.size }catch{ /* raced with a sweep */ }
+      }
+    }
+  }
+  if(plainDirectory(directory))walk(directory)
+  return {bytes,files}
+}
+/**
+ * Read the Bash IPC cache without changing it. This is the discoverability the issue came from:
+ * an upgrade used to grow the directory silently and neither `bash-runtime status` nor
+ * `ladder` mentioned it.
+ *
+ * `current` is the identity this deployment would use, when it can be computed; all generations
+ * except the one retained for the previous deployment are reclaimable.
+ */
+export function bashIpcInventory({home=process.env.DSH_HOME ?? path.join(os.homedir(),'.dsh'), current=null}: { home?: string; current?: string | null }={}): BashIpcInventory {
+  const root=bashIpcRoot(home)
+  let names: string[]=[]
+  try{ if(noLinks(root))names=fs.readdirSync(root) }catch{ /* a missing cache is an empty one */ }
+  const entries: BashIpcEntry[]=[]
+  for(const name of names){
+    const target=path.join(root,name)
+    let stat
+    try{ stat=fs.lstatSync(target) }catch{ continue }
+    if(!stat.isDirectory()) continue
+    const kind: BashIpcEntry['kind']=GENERATION_NAME.test(name) ? 'generation'
+      : QUARANTINE_NAME.test(name) ? 'quarantine'
+        : RETIRED_NAME.test(name) ? 'retired'
+          : name.startsWith('stage-') ? 'staging' : 'other'
+    const usage=directoryUsage(target)
+    entries.push({name,kind,bytes:usage.bytes,files:usage.files,mtimeMs:stat.mtimeMs,current:name===current})
+  }
+  entries.sort((a,b)=>b.mtimeMs-a.mtimeMs||(a.name<b.name?-1:1))
+  const stale=entries.filter(entry=>entry.kind==='generation'&&!entry.current)
+  // One previous generation is retained on purpose: a second profile or a process that is still
+  // running the old payload may need it, and a directory that cannot be moved aside is kept.
+  const reclaimable=[...stale.slice(1),...entries.filter(entry=>entry.kind==='retired')].filter(entry=>idleGeneration(path.join(root,entry.name)))
+  return {
+    root, current,
+    generations: entries.filter(entry=>entry.kind==='generation').length,
+    entries,
+    totalBytes: entries.reduce((sum,entry)=>sum+entry.bytes,0),
+    reclaimableBytes: reclaimable.reduce((sum,entry)=>sum+entry.bytes,0),
+  }
+}
+/** What a sweep removes: generation names (not paths), kept names, and the bytes freed. */
+export interface BashIpcReclaimResult { removed: string[]; kept: string[]; bytes: number }
+/**
+ * Retire every generation beyond the current one and one retained predecessor.
+ *
+ * Only managed, never-leased trees are automatically eligible. Leased/legacy trees are retained:
+ * neither a successful rename nor host PID exit proves a shell descendant has finished.
+ * Offline confirmedStopped cleanup is an explicit operator assertion covering ALL hosts and shells.
+ * Even then, unmarked/linked trees are not removed. Rename failures always preserve the source.
+ *
+ * `retain` and the filesystem calls are injectable so the bound can be asserted without a real
+ * 412 MB payload, and without waiting for Windows to release a directory.
+ */
+export function reclaimBashGenerations(root: string, current: string, {
+  retain=1, confirmedStopped=false, dryRun=false,
+  rename=(from: string,to: string): void=>{ fs.renameSync(from,to) },
+  remove=(target: string): void=>{ fs.rmSync(target,{recursive:true,force:true}) },
+  now=Date.now,
+  log=(message: string)=>console.error(message),
+}: { retain?: number; confirmedStopped?: boolean; dryRun?: boolean; rename?: (from: string,to: string)=>void; remove?: (target: string)=>void; now?: ()=>number; log?: (message: string)=>void }={}): BashIpcReclaimResult {
+  assertNoLinks(root)
+  if(!fs.existsSync(root))return {removed:[],kept:[],bytes:0}
+  const run=()=>{
+  const result: BashIpcReclaimResult={removed:[],kept:[],bytes:0}
+  let entries
+  try{ entries=fs.readdirSync(root,{withFileTypes:true}) }catch{ return result }
+  const generations=entries.filter(entry=>entry.isDirectory()&&GENERATION_NAME.test(entry.name)&&entry.name!==current)
+    .map(entry=>{
+      let mtimeMs=0
+      try{ mtimeMs=fs.lstatSync(path.join(root,entry.name)).mtimeMs }catch{ /* raced with a sweep */ }
+      return {name:entry.name,mtimeMs}
+    })
+    .sort((a,b)=>b.mtimeMs-a.mtimeMs||(a.name<b.name?-1:1))
+  const eligible=(directory: string)=>{
+    if(idleGeneration(directory))return true
+    if(!confirmedStopped||!plainTree(directory)||hasLiveLease(directory))return false
+    try{const m=JSON.parse(fs.readFileSync(path.join(directory,'.ops-ipc.json'),'utf8'));return record(m)&&typeof m.identity==='string'&&GENERATION_NAME.test(m.identity)&&record(m.files)&&record(m.tree)}catch{return false}
+  }
+  const budget=Math.max(0,retain)
+  result.kept.push(...generations.slice(0,budget).map(entry=>entry.name))
+  for(const entry of generations.slice(budget)){
+    const source=path.join(root,entry.name), retired=`${source}.stale-${now().toString(36)}`
+    if(!eligible(source)){result.kept.push(entry.name);continue}
+    const usage=directoryUsage(source)
+    if(dryRun){result.removed.push(entry.name);result.bytes+=usage.bytes;continue}
+    try{ rename(source,retired) }catch{ result.kept.push(entry.name); continue }
+    try{
+      remove(retired)
+      result.removed.push(entry.name)
+      result.bytes+=usage.bytes
+      log(`dsh-ops: reclaimed an older bash runtime generation: ${entry.name} (${(usage.bytes/1048576).toFixed(0)} MB)`)
+    }catch{
+      // Renamed but not deleted: the next sweep retries the `.stale-` directory.
+      result.kept.push(entry.name)
+    }
+  }
+  // Sweeps interrupted between rename and delete leave a full generation behind; finish those too.
+  for(const entry of entries){
+    if(!entry.isDirectory()||!RETIRED_NAME.test(entry.name)) continue
+    const retired=path.join(root,entry.name)
+    if(!eligible(retired))continue
+    const usage=directoryUsage(retired)
+    if(dryRun){result.removed.push(entry.name);result.bytes+=usage.bytes;continue}
+    try{ remove(retired);result.removed.push(entry.name);result.bytes+=usage.bytes }catch{ /* still held; a later sweep retries */ }
+  }
+  return result
+  }
+  return dryRun ? run() : withLifecycleLock(root,run)
+}
+/**
+ * The identity this deployment would stage, without staging it. Reading and patching the pinned
+ * payload is safe and writes nothing; any failure means "unknown", never a cache creation.
+ */
+export function currentBashIpcIdentity(file: string | undefined, {platform=process.platform}: { platform?: NodeJS.Platform }={}): string | null {
+  if(platform!=='win32'||typeof file!=='string')return null
+  const root=msysRoot(file)
+  try{ return sourceState(root,path.join(root,'usr/bin/msys-2.0.dll')).identity }catch{ return null }
+}
+/** The inventory plus the identity of the resolved bash, for the CLI reports. */
+export function bashIpcReport(file: string | undefined, {home, platform=process.platform}: { home?: string; platform?: NodeJS.Platform }={}): BashIpcInventory {
+  return bashIpcInventory({home,current:currentBashIpcIdentity(file,{platform})})
 }
 /** @param {string} file
  * @param {{home?: string, platform?: NodeJS.Platform, source?: string}} options */
@@ -189,8 +370,11 @@ export function confinedBash(file: string, {home=process.env.DSH_HOME ?? path.jo
   const root=msysRoot(file)
   const check=restrictedCompatibility(file,{platform})
   if(!check.compatible)throw Error(restrictedRemedy(file,source,check.reason))
-  const {receipt,proxyBytes,patched,patchedSha,identity}=sourceState(root,path.join(root,'usr/bin/msys-2.0.dll'))
-  const target=path.join(home,'dsh-ops/bash-ipc',identity)
+  const {receipt,proxyBytes,patched,patchedSha,bashSha,identity,payload}=sourceState(root,path.join(root,'usr/bin/msys-2.0.dll'))
+  const cacheDir=bashIpcRoot(home)
+  return withLifecycleLock(cacheDir,()=>{
+  const target=path.join(cacheDir,identity)
+  assertNoLinks(target)
   const selected=path.join(target,'usr/bin/bash.exe')
   const key=path.resolve(target)
   const marker=path.join(target,'.ops-ipc.json')
@@ -218,30 +402,74 @@ export function confinedBash(file: string, {home=process.env.DSH_HOME ?? path.jo
    * timestamp drift passed cold and failed hot, landing in the recovery branch with no attacker
    * involved. Both now run this same function.
    */
-  const generationIntact = (m: unknown) => {
+  const generationIntact = (directory: string, m: unknown, adopting=false) => {
+    if(!plainDirectory(directory))return false
+    if(!record(m)||(!adopting&&m.payloadIdentity!==identity))return false
+    if(adopting){
+      const actual=treeDigest(directory)
+      const expected={...payload,'usr/bin/msys-2.0.dll':{size:patched.length,mtimeMs:0,sha256:patchedSha},...Object.fromEntries(Object.entries(proxyBytes).map(([name,data])=>['usr/bin/'+name,{size:data.length,mtimeMs:0,sha256:hash(data)}]))}
+      if(Object.keys(actual).length!==Object.keys(expected).length||!Object.entries(expected).every(([name,want])=>actual[name]?.sha256===want.sha256))return false
+    }
     let msysOk
-    try { msysOk = hash(fs.readFileSync(path.join(target,'usr/bin/msys-2.0.dll'))) === patchedSha } catch { return false }
+    try { msysOk = hash(fs.readFileSync(path.join(directory,'usr/bin/msys-2.0.dll'))) === patchedSha } catch { return false }
     if(!msysOk) return false
     try {
-      if(hash(fs.readFileSync(selected))!==hash(fs.readFileSync(path.join(root,'usr/bin/bash.exe')))) return false
+      if(hash(fs.readFileSync(path.join(directory,'usr/bin/bash.exe')))!==bashSha) return false
       for(const name of ['opsipc.dll','opsnt.dll']){
-        if(hash(fs.readFileSync(path.join(target,'usr/bin',name)))!==receipt.files[name]) return false
+        if(hash(fs.readFileSync(path.join(directory,'usr/bin',name)))!==receipt.files[name]) return false
       }
     } catch { return false }
-    return treeMatches(target, record(m) ? m.tree : undefined)
+    return treeMatches(directory, record(m) ? m.tree : undefined)
   }
   let knownBad=false
   if(cache.has(key)) {
-    if(generationIntact(readMarker())) return cache.get(key)!
+    if(generationIntact(target,readMarker())) { leaseGeneration(target);maybeReclaim(cacheDir,identity);return cache.get(key)! }
     // Not a throw. A cached-but-mismatched generation takes the same quarantine + staging path as a
     // cold miss; throwing here bricked bash for the lifetime of a long-lived host process.
     knownBad=true
     cache.delete(key)
   }
+  /**
+   * Adopt a generation staged by an older identity scheme (or by another profile path) instead of
+   * copying the payload again. The identity used to include the source root, so the first run after
+   * this change — and every profile that shares a payload — found no matching directory and staged
+   * another full copy; the issue was exactly that accumulation. A candidate is only adopted when
+   * every verified byte matches, and it is renamed into place, never rewritten.
+   */
+  const adopt = (): boolean => {
+    let names: string[]
+    try{ names=fs.readdirSync(cacheDir) }catch{ return false }
+    for(const name of names){
+      if(name===identity||!GENERATION_NAME.test(name)) continue
+      const candidate=path.join(cacheDir,name)
+      if(!idleGeneration(candidate))continue
+      let m
+      try{ m=JSON.parse(fs.readFileSync(path.join(candidate,'.ops-ipc.json'),'utf8')) }catch{ continue }
+      if(!record(m)||typeof m.identity!=='string') continue
+      const files=m.files
+      if(m.msys!==receipt.msysSha256||m.patchedSha256!==patchedSha||!record(files)) continue
+      if(!['opsipc.dll','opsnt.dll'].every(proxy=>files[proxy]===receipt.files[proxy])) continue
+      if(!generationIntact(candidate,m,true)) continue
+      // Rewrite the manifest before the rename: a crash then leaves a fully verifiable generation
+      // under a stale name for the next sweep, never a renamed directory whose identity disagrees.
+      try{ fs.writeFileSync(path.join(candidate,'.ops-ipc.json'),JSON.stringify({...m,identity,payloadIdentity:identity,source:root})+'\n') }catch{ continue }
+      try{ renameWithRetry(candidate,target) }catch{ continue }
+      console.error(`dsh-ops: adopted the existing bash runtime generation ${name} as ${identity}`)
+      return true
+    }
+    return false
+  }
   // One marker read and one judgement per call: a failed cache check already proved the generation
   // bad, so re-running the (expensive) judgement on the way to quarantine just doubles the work.
   const marker0=readMarker()
-  const valid = !knownBad && fs.existsSync(selected) && record(marker0) && marker0.identity===identity && generationIntact(marker0)
+  let valid = !knownBad && fs.existsSync(selected) && record(marker0) && marker0.identity===identity && generationIntact(target,marker0)
+  if(!valid && !fs.existsSync(target)){
+    adopt()
+    // Re-read after adoption (or another process publishing the same generation): the marker on
+    // disk, not the one read before the rename, decides whether this call can use it.
+    const fresh=readMarker()
+    valid = fs.existsSync(selected) && record(fresh) && fresh.identity===identity && generationIntact(target,fresh)
+  }
   if(!valid){
     // A generation that exists but does not verify is **quarantined, not overwritten**: it may
     // belong to a process that is still running. Renaming keeps that guarantee while giving the next
@@ -257,19 +485,26 @@ export function confinedBash(file: string, {home=process.env.DSH_HOME ?? path.jo
       }
     }
     // Failed incomplete builds get a new staging directory and only complete copies are published.
-    fs.mkdirSync(path.dirname(target),{recursive:true})
-    const stage=fs.mkdtempSync(path.join(path.dirname(target),'stage-'))
+    fs.mkdirSync(cacheDir,{recursive:true})
+    const stage=fs.mkdtempSync(path.join(cacheDir,'stage-'))
     try {
+      if(!plainTree(root))throw Error('Bash IPC refuses symlink/junction payload trees')
       fs.cpSync(root,stage,{recursive:true,filter:name=>!['.git','node_modules'].includes(path.basename(name))})
+      const copied=treeDigest(stage)
+      if(Object.keys(copied).length!==Object.keys(payload).length||!Object.entries(payload).every(([name,value])=>copied[name]?.sha256===value.sha256))throw Error('Bash IPC source payload changed during staging; retry')
       fs.writeFileSync(path.join(stage,'usr/bin/msys-2.0.dll'),patched)
       for(const [name,data] of Object.entries(proxyBytes))fs.writeFileSync(path.join(stage,'usr/bin',name),data)
       // Stat-only manifest: `generationIntact` re-checks this tree with `stat`, so recording a
       // sha256 per file here bought nothing and cost a full 174 MB read on every staging.
-      fs.writeFileSync(path.join(stage,'.ops-ipc.json'),JSON.stringify({identity,source:root,msys:receipt.msysSha256,patchedSha256:patchedSha,files:receipt.files,tree:treeDigest(stage,false)})+'\n')
+      fs.writeFileSync(path.join(stage,'.ops-ipc.json'),JSON.stringify({identity,payloadIdentity:identity,source:root,msys:receipt.msysSha256,patchedSha256:patchedSha,files:receipt.files,tree:treeDigest(stage,false)})+'\n')
+      markManaged(stage)
       try {renameWithRetry(stage,target)} catch(error){if(!fs.existsSync(marker))throw error}
     } finally {fs.rmSync(stage,{recursive:true,force:true})}
   }
+  leaseGeneration(target)
+  maybeReclaim(cacheDir,identity)
   const result={file:selected,env:{PATH:privateRuntimePath(target)},runtime:identity}
   cache.set(key,result)
   return result
+  })
 }

@@ -276,7 +276,7 @@ The resident `ops_read_files` is not the counterpart for `read`; Standard and Co
 `ops_inspect_local_file`, `ops_glob` and `ops_grep` as the reviewed counterparts.
 
 Mode rows export StandardSchemaV1 validation together with public JSON schema descriptors for the
-built-in host row forms. Optional browser settings pages require the explicit client carrier
+built-in host row forms. The browser settings page is mounted on the single row,
 migration; see [configuration](configuration-reference.md).
 
 

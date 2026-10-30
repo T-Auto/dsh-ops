@@ -1,12 +1,16 @@
 /** Discovery uses attributed OPS changes locally and conservatively probes unknown host notifications. */
 import { createScope } from '@deepseek-ai/dsh-scope'
+import fs from 'node:fs'
+import path from 'node:path'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
-import * as discovery from '../lib/components/discovery/index.js'
+import * as discoveryModule from '../lib/components/discovery/index.js'
 import { withToolChange } from '../lib/tool-changes.js'
 import { isPresentationProbe } from '../lib/presentation.js'
 import { assert, test, report, wait, withTempDir } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { legacyComponent } from './lib/legacy-component.mjs'
+const discovery = legacyComponent(discoveryModule)
 
 const foreignTool = name => ({
   name,
@@ -47,6 +51,34 @@ await test('an attributed unrelated scope change skips probes but unknown host n
       await wait(300)
       assert.ok(probes > settled, 'unknown registry notifications conservatively invalidate the verdict')
       registered()
+    } finally { prompt.assemble = assemble }
+  } finally { await shutdown(ctx) }
+}))
+
+await test('a live cwd change invalidates the presentation memo while the session header stays fixed', () => withTempDir('discovery-live-cwd', async root => {
+  const { ctx } = await bootHost()
+  try {
+    const live = path.join(root, 'tools'); fs.mkdirSync(live)
+    let cwd = root
+    await ctx.plugin(Subprocess); await ctx.plugin(Sandbox, {})
+    await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: ({ session }) => ({ mode: 'danger-full-access', workspaceRoot: root, sessionId: session.id }) }))
+    await ctx.plugin(inner => inner.provide('workingDirectory', { get: () => cwd, ensure: async () => cwd }))
+    const agents = [0, 1, 2].map(i => ({ id: 'memo-cwd-' + i, session: { id: 'memo-cwd-' + i, header: { cwd: root } } }))
+    for (const agent of agents) agent.ctx = createScope(ctx, agent).ctx
+    await ctx.plugin(discovery, { required: true })
+    const prompt = ctx.get('systemPrompt'), assemble = prompt.assemble.bind(prompt)
+    let probes = 0
+    prompt.assemble = context => { if (isPresentationProbe(context) && context.scope === agents[0]) probes++; return assemble(context) }
+    try {
+      await ctx.serial('agent/created', { agent: agents[0], source: 'startup' })
+      const first = probes
+      assert.ok(first > 0)
+      await ctx.serial('agent/created', { agent: agents[1], source: 'startup' })
+      assert.equal(probes, first, 'unchanged roots retain their presentation verdict')
+      cwd = live
+      await ctx.serial('agent/created', { agent: agents[2], source: 'startup' })
+      assert.ok(probes > first, 'an observed live cwd change must invalidate the old verdict')
+      assert.equal(agents[0].session.header.cwd, root)
     } finally { prompt.assemble = assemble }
   } finally { await shutdown(ctx) }
 }))

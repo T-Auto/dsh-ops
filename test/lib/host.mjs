@@ -15,6 +15,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { TOOL_PREFIX } from '../../lib/policy.js'
 import { PACKAGE_ROOT } from './harness.mjs'
+import { legacyComponent } from './legacy-component.mjs'
 
 /**
  * Boot a context with the real prompt and tool services installed.
@@ -50,6 +51,7 @@ export async function bootHost({ withTools = true, withSystemPrompt = true, keep
  * (it is the optional client-carrier row), so these helpers mount the retained
  * legacy file module: its kernel semantics — global publication, read dedup,
  * worker lifecycle — are what the shared fixtures below still verify.
+ * The test-only wrapper opts in only during the synchronous apply guard.
  * A fresh module graph per mount keeps module-level state from leaking between
  * scenarios, at the cost of one import per call.
  * @param {string} [tag] - a cache-busting tag.
@@ -57,7 +59,7 @@ export async function bootHost({ withTools = true, withSystemPrompt = true, keep
  */
 export async function loadPlugin(tag = `${Date.now()}-${Math.random()}`) {
   const file = pathToFileURL(path.join(PACKAGE_ROOT, 'lib', 'components', 'file', 'index.js')).href
-  return import(`${file}?tag=${tag}`)
+  return legacyComponent(await import(`${file}?tag=${tag}`))
 }
 
 /**

@@ -1,6 +1,0 @@
-{
-  "meta": {
-    "title": "Compatibility mode",
-    "description": "Turn off OPS overrides of the built-in tools. This affects token efficiency and model capability; use it only as a safety fallback when DSH cannot work properly with OPS enabled."
-  }
-}

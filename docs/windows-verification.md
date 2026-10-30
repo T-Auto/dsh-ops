@@ -1,5 +1,7 @@
 # Historical Windows investigation checklist
 
+Current PR #128 coverage map: [Windows security regressions](windows-security-regressions.md) / [Windows 安全回归](Windows安全回归.md).
+
 > Historical pre-0.4 investigation, retained for context. Statements below about missing Windows metadata preservation or old CI triggers are not current release claims. Current metadata regression suites and [0.4 manual acceptance](manual-validation.md) are the verification entry points. / 以下为历史调查；Windows 元数据保护与旧 CI 触发说明不代表当前版本，请以[手动验收](手动验收.md)及现有测试为准。
 
 This file was written while adding Linux x64 support and fixing the release-scope gate.

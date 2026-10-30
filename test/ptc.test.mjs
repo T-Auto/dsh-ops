@@ -12,7 +12,7 @@ import { Context } from '@deepseek-ai/cordis'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import { createScope } from '@deepseek-ai/dsh-scope'
-import * as ptc from '../lib/ptc/index.js'
+import * as ptcModule from '../lib/ptc/index.js'
 import { definition } from '../lib/ptc/contract.js'
 import { tryResolveWorker, resolveWorker } from '../lib/ptc/runtime.js'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
@@ -21,6 +21,8 @@ import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
 import FileSystem from '@deepseek-ai/dsh-fs-local'
 import { invoke } from '../lib/ptc/worker.js'
 import { invoke as invokeFile } from '../lib/file/worker.js'
+import { legacyComponent } from './lib/legacy-component.mjs'
+const ptc = legacyComponent(ptcModule)
 /**
  * `npm run build:ptc` builds a host binary into `native/target/release`, but a
  * `--target <triple>` build — what the release matrix and any cross-check run —

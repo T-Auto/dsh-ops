@@ -10,8 +10,31 @@ import { definition } from '../lib/file/contract.js'
 import { exposePosixCache, windowsCacheLocation, resultStorage } from '../lib/kernel/result-storage.js'
 import { mountResultLifecycle, expireResultSession } from '../lib/kernel/result-lifecycle.js'
 import { invoke } from '../lib/ptc/worker.js'
+import { invokeResult } from '../lib/file/result.js'
 
 requireWorker('result-storage-host')
+await test('Native result defaults to live cwd and explicit original roots retain reference authority after cd', () => withTempDir('reference-live-cwd', async root => {
+  const { ctx } = await bootHost(), session = { id: 'reference-live-cwd', header: { cwd: root } }, agent = { session }
+  const live = path.join(root, 'tools'); fs.mkdirSync(live)
+  let cwd = live, ensures = 0
+  const signal = new AbortController().signal, exec = { agent, signal }
+  try {
+    await ctx.plugin(Subprocess); await ctx.plugin(Sandbox)
+    await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: () => ({ mode: 'workspace-write', workspaceRoot: root, sessionId: session.id }) }))
+    await ctx.plugin(inner => mountResultLifecycle(inner))
+    await ctx.plugin(inner => inner.provide('workingDirectory', { async ensure() { ensures++; return cwd }, get: () => cwd }))
+    const put = await invoke(ctx, WORKER, 'result', { root: live, action: 'put', items: [{ value: 'live snapshot' }] }, exec, signal)
+    assert.equal(put.status, 'completed', JSON.stringify(put))
+    const call = args => invokeResult(ctx, WORKER, args, exec, signal, {})
+    const page = await call({ action: 'page', id: put.id })
+    assert.deepEqual(page.items, [{ value: 'live snapshot' }], JSON.stringify(page)); assert.equal(ensures, 1)
+    cwd = root
+    assert.equal((await call({ action: 'page', id: put.id })).error.code, 'POLICY_DENIED')
+    assert.deepEqual((await call({ root: live, action: 'page', id: put.id })).items, [{ value: 'live snapshot' }])
+    assert.equal(ensures, 2, 'explicit reference root does not depend on a live directory lookup')
+    assert.equal((await call({ root: live, action: 'release', id: put.id })).status, 'released')
+  } finally { await shutdown(ctx) }
+}))
 await test('cache flags accept only the trusted runner section and private-temp capability family', () => {
   const root = 'C:\\private\\cache', sid = 'S-1-4-123-456-1'
   assert.deepEqual(windowsCacheLocation(['runner', '--temp', root, '--temp-write-sid', sid, '--', 'worker']), { root, windowsWriteSid: sid })

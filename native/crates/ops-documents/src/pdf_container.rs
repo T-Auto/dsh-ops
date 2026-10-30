@@ -193,6 +193,16 @@ pub fn parse(data: &[u8]) -> Result<Document<'_>> {
     }
     let trailer = lexer.value(0)?;
     let trailer = trailer.dict()?;
+    // Only a trailer key means "this file has an earlier xref section"; the same
+    // names inside an object dictionary are ordinary keys (outline items carry
+    // `/Prev` for their previous sibling).
+    for key in [b"Prev".as_slice(), b"XRefStm"] {
+        if trailer.contains_key(key) {
+            return Err(unsupported(
+                "Encrypted, incremental, object-stream and xref-stream PDFs are unsupported",
+            ));
+        }
+    }
     let size = get(trailer, b"Size")?.integer()?;
     if size == 0
         || size > MAX_OBJECTS

@@ -1,7 +1,9 @@
 /** Real host mount checks, also run before the legacy mount suite's runtime gate. */
 import { registerNativeProvider } from '../../lib/file/result-provider.js'
 import { createScope } from '@deepseek-ai/dsh-scope'
-import { apply } from '../../lib/official-tool-hiding.js'
+import * as hiding from '../../lib/official-tool-hiding.js'
+import { legacyComponent } from './legacy-component.mjs'
+const { apply } = legacyComponent(hiding)
 import { platformSurface } from '../../lib/official-tool-catalog.js'
 import { FILE_TOOLS, publicToolName } from '../../lib/policy.js'
 import { assert, test, waitFor } from './harness.mjs'

@@ -3,6 +3,7 @@ import { applyComponent } from '../../index.js'
 import { mountRuntimeSettings } from '../../settings/runtime-host.js'
 import { resolveConfig } from '../../config.js'
 import { editable, settingsConfig, configObject } from '../../settings/schema.js'
+import { retired as retiredLegacyRow } from '../../settings/legacy.js'
 export const name = 'dsh-ops-bash & host PowerShell'
 // Shared core validator compatibility keys do not configure the shell row's settings form.
 export const NON_EDITABLE_CONFIG_KEYS = ['configUpdateVersion', 'binaryPath', 'required', 'denyCredentialReads', 'serverName', 'enableShellTools', 'toolCallTimeoutMs'] as const
@@ -20,6 +21,7 @@ export const Config = settingsConfig(value => {
   allowSystemShellFallback: editable('boolean', 'Allow ambient system Bash when no managed installation is available.'),
 })
 export function apply(ctx: Context, config: unknown): void {
+  if (retiredLegacyRow(ctx, 'shell')) return
   applyComponent(ctx, config, 'shell')
   mountRuntimeSettings(ctx)
 }

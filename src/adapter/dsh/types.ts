@@ -20,7 +20,12 @@ export type { JsonSchemaNode, JsonSchemaType, ObjectJsonSchema, ToolDefinition, 
   ToolExecutionResult, ToolExecutionToken, ToolGuard, ToolPresentationMode, ToolRunContext } from '@deepseek-ai/dsh-tools'
 export type { default as ToolRuntime } from '@deepseek-ai/dsh-tools'
 export type { ConfinedArgv, RunnerFailureRule, SandboxExecutionPolicy, SandboxMode, SandboxProvider } from '@deepseek-ai/dsh-sandbox'
-export type { ConfigPageForm, PluginConfigViewProps } from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
+// Compile-time types come from the pinned devDependency; the running Host stopped
+// shipping .d.ts with these names, so the contract itself is verified against the
+// running distribution's own Plugins-page documentation, not against this import.
+export type {
+  ConfigPageForm, PluginConfigViewProps, PluginDetailProps, PluginPackageRef, PluginRowRef, PluginsSubject,
+} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 export type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 export type { ProfileContext } from '@deepseek-ai/dsh-app-boot'
 export type * as Atomic from '@deepseek-ai/dsh-atomic-write'

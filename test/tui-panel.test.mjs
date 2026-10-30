@@ -1,5 +1,7 @@
 import { Context, Service } from '@deepseek-ai/cordis'
-import * as sidebar from '../lib/components/tui/index.js'
+import * as sidebarModule from '../lib/components/tui/index.js'
+import { legacyComponent } from './lib/legacy-component.mjs'
+const sidebar = legacyComponent(sidebarModule)
 import { createActivityStore } from '../lib/tui/activity.js'
 import { activityLines } from '../lib/tui/panel.js'
 import { call, result, dispatch } from './lib/activity-events.mjs'

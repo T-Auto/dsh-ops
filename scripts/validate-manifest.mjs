@@ -34,7 +34,7 @@ import { resolveTuiConfig } from '../lib/components/tui/index.js'
 import { resolvePanelConfig } from '../lib/components/panel/index.js'
 import { PTC_API_TOOLS, definition } from '../lib/ptc/contract.js'
 import { resolveConfig, resolveDiscoveryConfig } from '../lib/config.js'
-import { resolveModeConfig } from '../lib/modes/config.js'
+import { resolveMergedConfig } from '../lib/settings/merged.js'
 import { COMPONENTS, componentEntry, componentEnabled } from '../lib/components/defaults.js'
 import { resolveHidingConfig } from '../lib/official-tool-hiding.js'
 import { evaluatePluginCompatibility } from '@deepseek-ai/dsh-app-boot'
@@ -231,28 +231,25 @@ if (typeof patch === 'string' && fs.existsSync(path.join(PACKAGE_ROOT, patch))) 
     check(Array.isArray(document), 'the bundle patch is a list of loader patch entries')
     try {
       const composed = composeBundle([document])
-      check(composed.length === COMPONENTS.length, `the host composes ${COMPONENTS.length} rows without skipped patch targets`)
-    } catch (error) { check(false, `the host composes ${COMPONENTS.length} rows without skipped patch targets`, String(error?.message ?? error)) }
+      check(composed.length === 1, 'the host composes the single dsh-ops row')
+    } catch (error) { check(false, 'the host composes the single dsh-ops row', String(error?.message ?? error)) }
     const rows = Array.isArray(document)
       ? document.flatMap((entry) => (Array.isArray(entry?.insert) ? entry.insert : []))
       : []
-    check(rows.length === COMPONENTS.length, `the bundle declares exactly ${COMPONENTS.length} components`)
-    check(!rows.some(candidate => candidate?.name === `${pkg.name}/background`), 'the bundle no longer inserts the removed background component')
-    for (const component of COMPONENTS) {
-      const row = rows.find(candidate => candidate?.name === componentEntry(component))
-      check(row?.id === `${pkg.name}-${component}`, `the ${component} component has a stable row id`)
-      if (!row) continue
-      check((row.disabled === true) === !componentEnabled(component, process.platform), `${component} has its documented enablement default`)
-      const resolve = component === 'discovery' ? resolveDiscoveryConfig : component === 'tui' ? resolveTuiConfig
-        : component === 'compat' ? (() => ({}))
-          : component === 'panel' ? resolvePanelConfig
-            : resolveModeConfig
-      try {
-        resolve(row.config); check(true, `${component} config is valid`)
-        for (const fact of defaultChecks(component, row.config, resolve)) check(...fact)
+    check(rows.length === 1, 'the bundle declares exactly one row')
+    const row = rows[0]
+    check(row?.id === pkg.name && row?.name === pkg.name, 'the row id and specifier are the package name')
+    check(row?.disabled !== true, 'the row ships enabled')
+    try {
+      const resolved = resolveMergedConfig(row?.config)
+      check(true, 'the row config is valid')
+      const defaults = resolveMergedConfig({})
+      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+      check(same(resolved.global, defaults.global), 'the bundle switches written in the patch match their code defaults')
+      for (const section of ['minimal', 'standard', 'ptc', 'cordis', 'discovery', 'panel', 'tui']) {
+        check(resolved[section].enabled === defaults[section].enabled, `${section} enabled matches its code default`)
       }
-      catch (error) { check(false, `${component} config is valid`, String(error?.message ?? error)) }
-    }
+    } catch (error) { check(false, 'the row config is valid', String(error?.message ?? error)) }
   }
 }
 
@@ -496,26 +493,24 @@ if (display !== undefined) {
 }
 
 /** Payload the published package must carry, as `files` entries or paths they cover. */
-const ptc = manifestRaw.contributes?.['x-components']?.find(c => c.id === 'dsh-ops-mode-ptc')
 const components = manifestRaw.contributes?.['x-components'] ?? []
+const single = components[0]
 for (const fact of componentChecks(components)) check(...fact)
-check(ptc?.entry === 'dsh-ops/mode-ptc' && ptc?.defaultEnabled === true, 'native PTC enhancement is enabled by default; presentation stays scoped')
-check(JSON.stringify(ptc?.tools) === JSON.stringify([...PTC_API_TOOLS, 'load_sdk'].map(publicToolName)), 'PTC declaration matches the generated tool contract')
+check(single?.entry === 'dsh-ops' && single?.defaultEnabled === true, 'the single row is enabled by default and keeps its presentation')
+check([...PTC_API_TOOLS, 'load_sdk'].map(publicToolName).every(tool => (single?.tools ?? []).includes(tool)),
+  'the declaration covers the generated PTC tool contract')
 check(PTC_API_TOOLS.every(t => definition(t, () => {}).parameters.type === 'object'), 'PTC schemas remain structured')
 check(JSON.stringify(pkg.os) === '["win32","linux","darwin"]' && JSON.stringify(pkg.cpu) === '["x64","arm64"]' &&
-  JSON.stringify(ptc?.platforms) === '["win32","linux","darwin"]' && JSON.stringify(ptc?.architectures) === '["x64","arm64"]' &&
-  JSON.stringify(ptc?.targets) === '["win32-x64","linux-x64","darwin-arm64","darwin-x64"]',
+  JSON.stringify(single?.platforms) === '["win32","linux","darwin"]' &&
+  JSON.stringify(single?.targets) === '["win32-x64","linux-x64","darwin-arm64","darwin-x64"]',
   'Supported exact targets are Windows x64, Linux x64 and macOS arm64/x64; Intel Mac is supported')
-/** Every component states the platforms it really serves, so a Linux claim cannot ride along. */
-const platformClaims = id => manifestRaw.contributes?.['x-components']?.find(c => c.id === id)?.platforms
-check(JSON.stringify(platformClaims('dsh-ops-mode-standard')) === '["win32","linux","darwin"]',
-  'the standard mode supports the declared targets using host bash on POSIX')
-check(JSON.stringify(platformClaims('dsh-ops-mode-ptc')) === '["win32","linux","darwin"]',
-  'the PTC mode supports the exact worker target matrix')
-check(platformClaims('dsh-ops-background') === undefined,
+/** One declaration states every platform the package serves; the row carries no per-feature claims. */
+const claims = JSON.stringify(single?.platforms)
+check(claims === '["win32","linux","darwin"]', 'the row serves the declared platform matrix')
+check(!components.some(component => component.id === 'dsh-ops-background'),
   'the removed background component is no longer declared')
-check(JSON.stringify(platformClaims('dsh-ops-panel')) === '["win32","linux","darwin"]',
-  'the panel capture component supports the declared targets (static files, no platform payload)')
+check(claims === '["win32","linux","darwin"]' && fs.existsSync(path.join(PACKAGE_ROOT, 'lib/panel/panel.html')),
+  'the single row carries panel capture on the declared targets (static files, no platform payload)')
 /** The viewer is runtime output, so the template itself has to be in the package. */
 const panelTemplate = 'lib/panel/panel.html'
 check(

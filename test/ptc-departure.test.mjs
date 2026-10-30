@@ -5,11 +5,13 @@ import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import FileSystem from '@deepseek-ai/dsh-fs-local'
 import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
-import * as ptc from '../lib/ptc/index.js'
+import * as ptcModule from '../lib/ptc/index.js'
 import { isPresentationProbe } from '../lib/presentation.js'
 import { assert, test, report, wait, waitFor, withTempDir } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
+import { legacyComponent } from './lib/legacy-component.mjs'
+const ptc = legacyComponent(ptcModule)
 requireWorker('ptc-departure')
 let sequence = 0
 const names = (ctx, agent) => ctx.get('tools').schemas(agent).map(tool => tool.name).sort()

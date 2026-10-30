@@ -524,7 +524,7 @@ await test('main: a sweep is unsealed by default and --seal opts in', async () =
       resolveEntry: () => ENTRY,
       installSignals: false,
       now: NOW,
-      dumpProfileConfig: () => '- id: dsh-ops-mode-standard\n  disabled: false\n',
+      dumpProfileConfig: () => '- id: dsh-ops\n  disabled: false\n  config:\n    standard:\n      enabled: true\n',
       seal: () => { sealed += 1; return {} },
     })
     assert.equal(code, EXIT.ok)
@@ -535,9 +535,9 @@ await test('main: a sweep is unsealed by default and --seal opts in', async () =
     const armDir = fs.readdirSync(group).find((name) => name.endsWith('bench-base'))
     assert.ok(fs.existsSync(path.join(group, armDir, 'summary.json')), 'the per-arm summary is the artifact the report reads')
     const summary = JSON.parse(fs.readFileSync(path.join(group, armDir, 'summary.json'), 'utf8'))
-    assert.equal(summary.components['mode-standard'], 'enabled', 'unsealed summaries still preserve component configuration')
-    assert.equal(summary.switches['mode-standard'].enabled, true)
-    assert.equal(summary.candidateSwitches['mode-standard'].enabled, true, 'both sides share the candidate conditions for pairing')
+    assert.equal(summary.components.standard, 'enabled', 'unsealed summaries still preserve component configuration')
+    assert.equal(summary.switches.standard.enabled, true)
+    assert.equal(summary.candidateSwitches.standard.enabled, true, 'both sides share the candidate conditions for pairing')
     assert.equal(summary.meta.platform, `${process.platform}-${process.arch}`)
     assert.equal(fs.existsSync(path.join(group, 'run.json')), false, 'nothing sealed this sweep')
     const reports = fs.readdirSync(group).filter((name) => name.startsWith('DSH-OPS Benchmark Report') && name.endsWith('.md'))

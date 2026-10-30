@@ -128,13 +128,13 @@ await test('the manifest license matches the package and is MIT', () => {
   assert.ok(pkg.files.includes('licenses'), 'the license texts ship in the package')
 })
 
-await test('the bundle patch inserts exactly the eight new rows and no removed FastCtx key', async () => {
+await test('the bundle patch inserts exactly the one row and no removed FastCtx key', async () => {
   const { parse } = await import('yaml')
   const { LEGACY_FASTCTX_KEYS } = await import('../lib/config.js')
   const patch = parse(fs.readFileSync(path.join(PACKAGE_ROOT, pkg.dsh.bundle.patch), 'utf8'))
   const rows = patch.flatMap((entry) => entry.insert ?? [])
-  assert.deepEqual(rows.map((row) => row.id), COMPONENTS.map((component) => `dsh-ops-${component}`))
-  assert.deepEqual(rows.map((row) => row.name), COMPONENTS.map((component) => componentEntry(component)))
+  assert.deepEqual(rows.map((row) => row.id), ['dsh-ops'])
+  assert.deepEqual(rows.map((row) => row.name), ['dsh-ops'])
   // The legacy rows remain exported modules; they are not inserted into new profiles.
   for (const legacy of ['shell', 'file', 'ptc', 'hide-official', 'background']) {
     assert.equal(rows.some((row) => row.id === `dsh-ops-${legacy}`), false, `${legacy} must not be inserted`)
@@ -190,20 +190,22 @@ await test('the icon and all component entries are shipped in the package whitel
   }
 })
 
-await test('the four mode rows and discovery are opt-in false only for compatibility, capture and TUI', () => {
+await test('the display manifest declares the one row, enabled by default', async () => {
   const components = raw.contributes['x-components']
-  assert.deepEqual(components.map((component) => component.id), COMPONENTS.map((component) => `dsh-ops-${component}`))
+  assert.deepEqual(components.map((component) => component.id), ['dsh-ops'])
+  assert.equal(components[0].entry, 'dsh-ops')
+  assert.equal(components[0].defaultEnabled, true)
+  assert.ok(Array.isArray(components[0].tools) && components[0].tools.length > 0)
   for (const component of COMPONENTS) {
-    assert.equal(components.find((entry) => entry.id === `dsh-ops-${component}`).defaultEnabled, componentEnabled(component, 'win32'))
+    assert.equal(components.some((entry) => entry.id === `dsh-ops-${component}`), false, `${component} must not be advertised as a row`)
   }
-  // Stated directly as well, so a flipped default is reviewed rather than
-  // silently accepted by the shared predicate.
-  for (const component of ['mode-minimal', 'mode-standard', 'mode-ptc', 'mode-cordis', 'discovery']) {
-    assert.equal(components.find((entry) => entry.id === `dsh-ops-${component}`).defaultEnabled, true, component)
-  }
-  for (const component of ['compat', 'panel', 'tui']) {
-    assert.equal(components.find((entry) => entry.id === `dsh-ops-${component}`).defaultEnabled, false, component)
-  }
+  // The per-feature defaults moved into the bundle config, which the host reads as
+  // this row's settings; the display manifest only advertises the row itself.
+  const { parse } = await import('yaml')
+  const patch = parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'cordis.patch.yml'), 'utf8'))
+  const config = patch.flatMap((entry) => entry.insert ?? [])[0].config
+  for (const feature of ['minimal', 'standard', 'ptc', 'cordis', 'discovery']) assert.equal(config[feature].enabled, true, feature)
+  for (const feature of ['panel', 'tui']) assert.equal(config[feature].enabled, false, feature)
 })
 
 report('manifest')

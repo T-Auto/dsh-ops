@@ -9,11 +9,13 @@ import { assertSupportedJsonSchema, jsonSchemaToTs } from '@deepseek-ai/dsh-tool
 import { assert, test, report, withTempDir, waitFor } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
-import * as ptc from '../lib/ptc/index.js'
+import * as ptcModule from '../lib/ptc/index.js'
 import { withToolChange } from '../lib/tool-changes.js'
 import { mountNativeCatalogue } from './lib/native-catalogue.mjs'
 import { resolvePtcConfig } from '../lib/config.js'
 import { sdkDefinition, requestedApis } from '../lib/ptc/sdk.js'
+import { legacyComponent } from './lib/legacy-component.mjs'
+const ptc = legacyComponent(ptcModule)
 requireWorker('ptc-sdk')
 let serial = 0
 const visible = (ctx, agent) => ctx.get('tools').schemas(agent).map(tool => tool.name).filter(name => name.startsWith('ops_')).sort()

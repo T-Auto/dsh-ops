@@ -3,7 +3,7 @@
   "manifestVersion": "0.15",
   "id": "dsh-ops.native",
   "name": "dsh-ops",
-  "version": "0.5.0",
+  "version": "0.5.0-alpha2",
   "license": "MIT",
   "facets": {
     "host": {
@@ -104,82 +104,44 @@
     ],
     "x-components": [
       {
-        "id": "dsh-ops-mode-minimal",
-        "entry": "dsh-ops/mode-minimal",
+        "id": "dsh-ops",
+        "entry": "dsh-ops",
         "defaultEnabled": true,
-        "platforms": ["win32", "linux", "darwin"],
-        "targets": ["win32-x64", "linux-x64", "darwin-arm64", "darwin-x64"],
-        "presentation": "Minimal-preset sessions only; native scopes publish on the next admitted model step.",
-        "tools": ["ops_bash"],
-        "notes": "Windows shell replacement: on win32 the row replaces the official pwsh tools with ops_bash; POSIX keeps the host bash, so no shell tool is published there. Minimal publishes no routing section; advanced tools arrive through the discovery row."
-      },
-      {
-        "id": "dsh-ops-mode-standard",
-        "entry": "dsh-ops/mode-standard",
-        "defaultEnabled": true,
-        "platforms": ["win32", "linux", "darwin"],
-        "targets": ["win32-x64", "linux-x64", "darwin-arm64", "darwin-x64"],
-        "presentation": "Native scopes; the resident file tools replace read/glob/grep and the Windows shell replacement publishes ops_bash.",
-        "tools": ["ops_inspect_local_file", "ops_glob", "ops_grep", "ops_read_files", "ops_result", "ops_bash"],
-        "notes": "Windows shell replacement: on win32 the row replaces the official pwsh tools with ops_bash; POSIX keeps the host bash. Advanced capabilities are discovered through the discovery row."
-      },
-      {
-        "id": "dsh-ops-mode-ptc",
-        "entry": "dsh-ops/mode-ptc",
-        "defaultEnabled": true,
-        "platforms": ["win32", "linux", "darwin"],
-        "architectures": ["x64", "arm64"],
-        "targets": ["win32-x64", "linux-x64", "darwin-arm64", "darwin-x64"],
-        "presentation": "PTC-only; reader/result/SDK loader resident, other APIs become visible on the next agent step.",
-        "runtime": "independent native Rust file worker",
-        "tools": ["ops_inspect_local_file","ops_grep","ops_glob","ops_replace","ops_write_file","ops_edit_file","ops_diff","ops_stat","ops_copy","ops_move","ops_remove","ops_read_files","ops_read_table","ops_read_docx","ops_read_pdf","ops_batch","ops_result","ops_load_sdk"],
-        "permissions": "Per-call original DSH sandboxPolicy and sandbox.confine (host full/partial enforcement reported); full access bypasses confinement and permits explicit operation roots; subprocess owns cancellation and credential scrub",
-        "notes": "PTC-preset sessions only. On win32 the row also replaces the official pwsh tools with ops_bash; POSIX keeps the host bash."
-      },
-      {
-        "id": "dsh-ops-mode-cordis",
-        "entry": "dsh-ops/mode-cordis",
-        "defaultEnabled": true,
-        "platforms": ["win32", "linux", "darwin"],
-        "targets": ["win32-x64", "linux-x64", "darwin-arm64", "darwin-x64"],
-        "presentation": "Native scopes; the resident file tools replace read/glob/grep and the Windows shell replacement publishes ops_bash.",
-        "tools": ["ops_inspect_local_file", "ops_glob", "ops_grep", "ops_read_files", "ops_result", "ops_bash"],
-        "notes": "Windows shell replacement: on win32 the row replaces the official pwsh tools with ops_bash; POSIX keeps the host bash. Advanced capabilities are discovered through the discovery row."
-      },
-      {
-        "id": "dsh-ops-discovery",
-        "entry": "dsh-ops/discovery",
-        "defaultEnabled": true,
-        "platforms": ["win32", "linux", "darwin"],
-        "targets": ["win32-x64", "linux-x64", "darwin-arm64", "darwin-x64"],
-        "presentation": "Native scopes; activation on the next admitted model step",
-        "tools": ["ops_discover_tools"]
-      },
-      {
-        "id": "dsh-ops-compat",
-        "entry": "dsh-ops/compat",
-        "defaultEnabled": false,
-        "platforms": ["win32", "linux", "darwin"],
-        "replaceTools": [],
-        "retainedOfficialCommand": { "win32": "pwsh", "linux": "bash", "darwin": "bash" },
-        "readiness": "Compatibility fallback, off by default. When enabled, every official tool stays visible and no OPS replacement is applied; OPS tools remain published. This affects token efficiency and model capability, so enable it only as a safety measure when DSH cannot work properly with OPS active.",
-        "tools": []
-      },
-      {
-        "id": "dsh-ops-panel",
-        "entry": "dsh-ops/panel",
-        "defaultEnabled": false,
-        "presentation": "Disabled by default; enabling the row captures subsequent events. Explicit legacy capture:false stays off until changed.",
-        "platforms": ["win32", "linux", "darwin"],
-        "targets": ["win32-x64", "linux-x64", "darwin-arm64", "darwin-x64"],
-        "tools": []
-      },
-      {
-        "id": "dsh-ops-tui",
-        "entry": "dsh-ops/tui",
-        "defaultEnabled": false,
-        "presentation": "Optional read-only dsh-TUI panel API v1",
-        "tools": []
+        "platforms": [
+          "win32",
+          "linux",
+          "darwin"
+        ],
+        "targets": [
+          "win32-x64",
+          "linux-x64",
+          "darwin-arm64",
+          "darwin-x64"
+        ],
+        "presentation": "One row configures every feature: the four preset modes, discovery, capture and the TUI link each carry their own switch and settings on the row page.",
+        "tools": [
+          "ops_bash",
+          "ops_inspect_local_file",
+          "ops_glob",
+          "ops_grep",
+          "ops_read_files",
+          "ops_result",
+          "ops_replace",
+          "ops_write_file",
+          "ops_edit_file",
+          "ops_diff",
+          "ops_stat",
+          "ops_copy",
+          "ops_move",
+          "ops_remove",
+          "ops_read_table",
+          "ops_read_docx",
+          "ops_read_pdf",
+          "ops_batch",
+          "ops_load_sdk",
+          "ops_discover_tools"
+        ],
+        "notes": "A feature that is switched off in the row page is not mounted at all, exactly like the old per-row switch. Legacy component specifiers (mode-*, discovery, panel, tui, shell, file, ptc, hide-official, background) remain exported so a saved override still loads its module, but they are no longer inserted by the bundle."
       }
     ]
   },

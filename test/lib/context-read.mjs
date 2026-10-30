@@ -10,6 +10,7 @@ import * as Discovery from '../../lib/components/discovery/index.js'
 import { DISCOVERABLE_TOOLS } from '../../lib/discovery/config.js'
 import { assert, withTempDir } from './harness.mjs'
 import { bootHost, mountPlugin, shutdown } from './host.mjs'
+import { legacyComponent } from './legacy-component.mjs'
 
 export const READ = publicToolName('inspect_local_file')
 export const text = result => result.content.map(block => block.type === 'text' ? block.text : '').join('\n')
@@ -48,7 +49,7 @@ export async function fixture(run) {
         resolve: ({ session }) => { policyReads.count++; return { mode: modes.get(session) ?? 'danger-full-access', workspaceRoot: session.header.cwd, sessionId: session.id } },
       }))
       const { fiber: fileFiber } = await mountPlugin({ ctx, config: { required: true } })
-      const discoveryFiber = await ctx.plugin(Discovery, { enabled: false, required: true,
+      const discoveryFiber = await ctx.plugin(legacyComponent(Discovery), { enabled: false, required: true,
         alwaysLoaded: ['inspect_local_file', 'read_files'].filter(name => DISCOVERABLE_TOOLS.includes(name)) })
       const fiber = { dispose: async () => { await discoveryFiber.dispose(); await fileFiber.dispose() } }
       const admitted = new WeakSet()

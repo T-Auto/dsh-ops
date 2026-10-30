@@ -17,7 +17,9 @@ import {
   parseAppendLog, projectEvent, resolvePanelConfig, safeSessionId,
 } from '../lib/panel/collect.js'
 import { renderPanelHtml } from '../lib/panel/render.js'
-import { apply } from '../lib/components/panel/index.js'
+import * as panel from '../lib/components/panel/index.js'
+import { legacyComponent } from './lib/legacy-component.mjs'
+const { apply } = legacyComponent(panel)
 import { assert, PACKAGE_ROOT, report, test, waitFor, withTempDir } from './lib/harness.mjs'
 
 /** A DSH home outside every fixture, so a fixture workspace is never "inside the home". */
@@ -423,14 +425,14 @@ await test('a real Cordis host mounts the row and the events reach the sink', as
     const { ctx } = await bootHost({ withTools: false, withSystemPrompt: false })
     const module = await import('../lib/components/panel/index.js')
     assert.equal(module.name, 'dsh-ops-panel')
-    const silent = await ctx.plugin(module, { capture: false })
+    const silent = await ctx.plugin(legacyComponent(module), { capture: false })
     const session = sessionFixture(directory, 'host-silent')
     ctx.emit('session/event', session, event('turn/end', { turn: 1 }, 0))
     await new Promise((resolve) => setTimeout(resolve, 50))
     assert.equal(fs.existsSync(path.join(directory, '.dsh-ops')), false, 'default off stays inert on a real host')
     await silent.dispose()
 
-    const live = await ctx.plugin(module, { capture: true, textLimit: 200, maxSessionBytes: 65536 })
+    const live = await ctx.plugin(legacyComponent(module), { capture: true, textLimit: 200, maxSessionBytes: 65536 })
     const captured = sessionFixture(directory, 'host-live')
     ctx.emit('session/event', captured, event('user/message', { source: { kind: 'user' }, content: [{ type: 'text', text: 'from the host' }] }, 0))
     ctx.emit('session/event', captured, event('turn/end', { turn: 1, reason: { kind: 'completed' } }, 1))

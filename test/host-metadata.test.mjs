@@ -55,8 +55,8 @@ await test('legacy component modules stay exported for saved rows but are no lon
 
 await test('the host composes every shipped row and refuses a missing override target', () => {
   const rows = composeBundle([patch], boot.composeEntries)
-  assert.deepEqual(rows.map(row => row.id), components.map(name => `dsh-ops-${name}`))
-  assert.deepEqual(rows.map(row => row.name), components.map(componentEntry))
+  assert.deepEqual(rows.map(row => row.id), ['dsh-ops'])
+  assert.deepEqual(rows.map(row => row.name), ['dsh-ops'])
   const upstream = [{ insert: [{ id: 'upstream', name: 'cordis:fixture' }] }]
   const override = [{ id: 'upstream', config: { enabled: true } }]
   assert.equal(composeBundle([upstream, patch, override], boot.composeEntries).find(row => row.id === 'upstream').config.enabled, true)

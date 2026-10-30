@@ -20,16 +20,12 @@ resolveWorker({})
 // The shipped data-only bundle uses the public serialized Loader expression for platform defaults.
 const rows = parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'cordis.patch.yml'), 'utf8'))[0].insert
 const enabled = row => !(isJsExpr(row.disabled) ? evaluate({ process }, row.disabled.__jsExpr) : row.disabled)
-assert.equal(rows.find(row => row.id === 'dsh-ops-compat').disabled, true)
-assert.equal(rows.find(row => row.id === 'dsh-ops-tui').disabled, true)
+assert.deepEqual(rows.map(row => [row.id, row.name]), [['dsh-ops', 'dsh-ops']])
 
 /** Mount the shipped enabled rows, each under its own component name. */
 async function mountBundle(ctx) {
-  for (const row of rows.filter(enabled)) {
-    const component = row.name.split('/')[1]
-    const module = await import(`../lib/components/${component}/index.js`)
-    await ctx.plugin(module, row.config)
-  }
+  // One row, named like the package: the package root is the whole plugin.
+  for (const row of rows.filter(enabled)) await ctx.plugin(await import('../lib/index.js'), row.config)
 }
 
 /**
@@ -127,9 +123,9 @@ await test('a missing optional Bash leaves the native file surface available', a
       const presets = new Map()
       ctx.provide('agentPresets', { composedPreset: scoped => presets.get(scopeParentOf(scopeOf(scoped))) })
       for (const row of rows.filter(enabled)) {
-        const component = row.name.split('/')[1]
-        const module = await import('../lib/components/' + component + '/index.js')
-        await ctx.plugin(module, component === 'mode-standard' ? { ...row.config, bashPath: path.join(root, 'absent-bash.exe') } : row.config)
+        await ctx.plugin(await import('../lib/index.js'), {
+          ...row.config, standard: { ...row.config.standard, bashPath: path.join(root, 'absent-bash.exe') },
+        })
       }
       const presetScope = createScope(ctx, { preset: 'no-bash-preset' }).ctx
       presets.set(scopeOf(presetScope), 'standard')

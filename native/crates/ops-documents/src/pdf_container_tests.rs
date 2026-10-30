@@ -75,9 +75,35 @@ fn duplicate_keys_and_escaped_unsupported_names_are_rejected() {
     ] {
         rejected(&fixture(&[value]), "DOCUMENT_PARSE_ERROR");
     }
-    for name in ["Encrypt", "Pr#65v", "XRefStm", "ObjStm", "XRef"] {
+    for name in ["Encrypt", "Enc#72ypt", "ObjStm", "XRef"] {
         rejected(
             &fixture(&[format!("<< /{name} null >>").as_bytes()]),
+            "UNSUPPORTED_DOCUMENT",
+        );
+    }
+}
+#[test]
+fn outline_prev_is_an_ordinary_key_while_a_trailer_prev_stays_unsupported() {
+    // An outline item names its previous sibling with /Prev, which is not an
+    // incremental-update marker; refusing the token made the whole document
+    // unreadable (#427).
+    let pdf = fixture(&[
+        b"<< /Type /Catalog /Pages 2 0 R /Outlines 3 0 R >>",
+        b"<< /Type /Pages /Kids [] /Count 0 >>",
+        b"<< /Type /Outlines /First 4 0 R /Last 5 0 R /Count 2 >>",
+        b"<< /Title (First) /Parent 3 0 R /Next 5 0 R >>",
+        b"<< /Title (Second) /Parent 3 0 R /Prev 4 0 R /XRefStm 4 0 R >>",
+    ]);
+    let document = parse(&pdf).unwrap();
+    let second = document.object((5, 0)).unwrap().value.dict().unwrap();
+    assert!(matches!(get(second, b"Prev").unwrap(), Value::Ref(4, 0)));
+    // The same names still refuse a file that really has an earlier xref section.
+    for key in [b"/Prev".as_slice(), b"/Pr#65v", b"/XRefStm"] {
+        let mut trailer = b"/Root 1 0 R ".to_vec();
+        trailer.extend_from_slice(key);
+        trailer.extend_from_slice(b" 9 0 R >>");
+        rejected(
+            &replace(&pdf, b"/Root 1 0 R >>", &trailer),
             "UNSUPPORTED_DOCUMENT",
         );
     }

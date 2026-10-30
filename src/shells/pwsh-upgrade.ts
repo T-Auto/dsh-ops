@@ -1,7 +1,7 @@
 /** Operator action for the standard host PowerShell install; never an automatic plugin activation. */
 import fs from 'node:fs'
 import path from 'node:path'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { errorMessage } from './types.js'
 
 export const HOST_PWSH_UPGRADE_GUIDANCE = 'Installs or upgrades the standard PowerShell 7 installation on Windows through WinGet. Restart DSH afterwards. An explicit host pwshPath is preserved and must be reviewed in host settings if it points elsewhere. Existing Windows PowerShell 5.1 and OPS provisioned files are not removed.'
@@ -40,6 +40,36 @@ export function hostPwshUpgradePlan({ platform = process.platform, env = process
   const file = candidates.find(usable)
   return file ? { ...base, supported: true, file: path.resolve(file) }
     : { ...base, unavailable: 'WinGet is unavailable. Install or repair Microsoft App Installer, or use the official PowerShell installer; no installation was attempted.' }
+}
+
+/**
+ * Cached probe: the resolved pwsh's own version, or undefined when it does not answer.
+ *
+ * Known deviation: the host snapshot is synchronous, so this runs one bounded spawnSync
+ * (1.5s timeout, 5-minute cache) instead of an async probe. Making the runtime contract
+ * async would ripple through the client hook and its tests; the bound plus the cache keeps
+ * the blocking worst case to a single refresh.
+ */
+let cachedPwshVersion: { at: number; value: string | undefined } | undefined
+export function hostPwshVersion(options: { platform?: NodeJS.Platform; env?: NodeJS.ProcessEnv; now?: () => number } = {}): string | undefined {
+  const { platform = process.platform } = options
+  if (platform !== 'win32') return undefined
+  const now = options.now?.() ?? Date.now()
+  if (cachedPwshVersion !== undefined && now - cachedPwshVersion.at < 5 * 60_000) return cachedPwshVersion.value
+  let value: string | undefined
+  // The Store build is an execution alias; it is not always on the host's PATH.
+  const env = options.env ?? process.env
+  const candidates = ['pwsh', ...(env.LOCALAPPDATA ? [path.join(env.LOCALAPPDATA, 'Microsoft/WindowsApps/pwsh.exe')] : [])]
+  for (const file of candidates) {
+    try {
+      const out = spawnSync(file, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()'],
+        { timeout: 1500, windowsHide: true, encoding: 'utf8' })
+      const text = (out.stdout ?? '').trim()
+      if (out.status === 0 && /^\d+(\.\d+)+$/.test(text)) { value = text; break }
+    } catch { /* try the next candidate */ }
+  }
+  cachedPwshVersion = { at: now, value }
+  return value
 }
 
 /** CLI runner. A host UI may supply its subprocess runner and expose the installer interaction there. */

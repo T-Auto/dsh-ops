@@ -31,7 +31,7 @@ export function componentProfile(label, bundleText, patches = []) {
     assert.deepEqual(loaded.skippedBundles, [])
     await mountRootInclude(ctx, baseFile, readProfilePatches('dsh', profile))
     await ctx.loader.await()
-    return { ctx, entries: () => [...ctx.loader.entries()].filter(entry => entry.options.id.startsWith('dsh-ops-')),
+    return { ctx, entries: () => [...ctx.loader.entries()].filter(entry => entry.options.id === 'dsh-ops' || entry.options.id.startsWith('dsh-ops-')),
       async refresh() { await reconcileProfilePatches(ctx, readProfilePatches('dsh', profile), 'dsh'); await ctx.loader.await() } }
   } }
 }

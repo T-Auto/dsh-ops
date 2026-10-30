@@ -63,13 +63,13 @@ const KEEP_GOING = flag('keep-going')
  * Windows is the interesting one: `file-metadata` and `linux-attributes` are POSIX
  * concepts (mode bits, POSIX ACLs, `user.*` xattrs, inode identity, sparse allocation),
  * and `linux-shell` drives the POSIX bash rung — its own subject. On a POSIX host the
- * only suite that may skip is `mount`, and only when no native worker can be resolved
+ * Windows-only cache preparation and windows-security suites skip on POSIX; `mount` may skip when no native worker can be resolved
  * there (component composition needs it).
  * A platform that skips anything else is a finding, not a footnote.
  */
 const ALLOWED_SKIPS = TARGET === 'win32-x64'
   ? ['file-metadata', 'linux-attributes', 'linux-shell']
-  : ['mount']
+  : ['mount', 'result-storage-cache-prep', 'windows-security']
 
 /**
  * Suites that need an *optional external* checkout (`DSH_OPS_TUI_ROOT`, and for the native one also
@@ -217,7 +217,7 @@ async function main() {
   if (TARGET !== 'win32-x64') env.DSH_OPS_REQUIRE_RUNTIME = '1'
   // Keep the external-checkout suites as skips: `DSH_OPS_REQUIRE_RUNTIME=1` would otherwise
   // count them as failures and make this gate permanently red on a machine without that checkout.
-  env.DSH_OPS_ALLOW_SKIPS = EXTERNAL_SUITE_DEPS.join(',')
+  env.DSH_OPS_ALLOW_SKIPS = [...EXTERNAL_SUITE_DEPS, ...(TARGET === 'win32-x64' ? [] : ['result-storage-cache-prep', 'windows-security'])].join(',')
   const verify = await run('full suite verification', 'npm', ['run', 'verify'], { env })
   const summary = parseSummary(verify.output)
 

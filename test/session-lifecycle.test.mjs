@@ -1,12 +1,16 @@
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { SessionStore } from '@deepseek-ai/dsh-session'
 import { mountSessionBash } from '../lib/session-shells.js'
-import * as ptc from '../lib/ptc/index.js'
-import * as discovery from '../lib/discovery/index.js'
-import * as hiding from '../lib/official-tool-hiding.js'
+import * as ptcModule from '../lib/ptc/index.js'
+import * as discoveryModule from '../lib/discovery/index.js'
+import * as hidingModule from '../lib/official-tool-hiding.js'
 import { NativeFileTools } from '../lib/file/runtime.js'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { assert, test, report, TEST_HOME } from './lib/harness.mjs'
+import { legacyComponent } from './lib/legacy-component.mjs'
+const ptc = legacyComponent(ptcModule)
+const discovery = legacyComponent(discoveryModule)
+const hiding = legacyComponent(hidingModule)
 
 const flush = async () => { for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve)) }
 async function setup() {

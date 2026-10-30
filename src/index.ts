@@ -15,9 +15,23 @@ import { visibleNames } from './surface.js'
 import { mountWorkspacePreparation } from './workspace-preparation.js'
 import { safeDispose, safeDisposeAll } from './teardown.js'
 import { mountResultLifecycle } from './kernel/result-lifecycle.js'
-import { applyMode } from './modes/apply.js'
+import { applyResolvedMode } from './modes/apply.js'
+import { resolveMergedConfig, effectiveMode, dynamicForMode } from './settings/merged.js'
+import { modeOf } from './modes/detect.js'
+import { onModesChange } from './modes/registry.js'
+import type { DiscoveryGate } from './discovery/index.js'
+import { beginMergedRow, endMergedRow } from './settings/legacy.js'
+import { mountRuntimeSettings } from './settings/runtime-host.js'
+import { companionVersion } from './settings/companion.js'
+import * as minimalModule from './components/mode-minimal/index.js'
+import * as standardModule from './components/mode-standard/index.js'
+import * as ptcModule from './components/mode-ptc/index.js'
+import * as cordisModule from './components/mode-cordis/index.js'
+import * as discoveryModule from './components/discovery/index.js'
+import * as panelModule from './components/panel/index.js'
+import * as tuiModule from './components/tui/index.js'
 
-export { Config } from './settings/file-config.js'
+export { Config } from './settings/merged.js'
 export const name = 'dsh-ops'
 type ResolvedConfig = ReturnType<typeof resolveConfig>
 type Component = 'shell' | 'file'
@@ -137,7 +151,59 @@ export function applyComponent(root: Context, rawConfig: unknown, component: Com
   }
 }
 
-// Package-root entry. The optional `dsh-ops/lib/profiles/client` carrier row names
-// this module instead of `dsh-ops/mode-standard`, so it must publish exactly that
-// mode; the canonical bundle inserts the explicit component rows instead.
-export function apply(root: Context, rawConfig: unknown): void { return applyMode(root, rawConfig, 'standard') }
+/**
+ * Package-root entry: the single row the bundle inserts.
+ *
+ * Every feature the row enables is mounted from this one fiber with its own
+ * validated slice. Disabling a feature and saving the row remounts the fiber, so
+ * its effects are torn down exactly like the old per-row switches did. The TUI
+ * link keeps its optional host service: an absent `tuiPanels` leaves that
+ * desktop feature pending instead of blocking the tools.
+ */
+const modes = { minimal: minimalModule, standard: standardModule, ptc: ptcModule, cordis: cordisModule } as const
+
+export async function apply(root: Context, rawConfig: unknown): Promise<void> {
+  const config = resolveMergedConfig(rawConfig)
+  const host = root
+  const mount = async (module: { apply(...args: unknown[]): unknown }, state: { enabled: boolean; raw?: Record<string, unknown>; config: unknown }, slice?: Record<string, unknown>): Promise<void> => {
+    if (!state.enabled) return
+    const payload = slice ?? state.raw ?? state.config
+    if (state.raw === undefined && slice === undefined) {
+      await host.plugin({ name: `dsh-ops/${moduleName(module)}`, apply: (ctx: Context) => { (module.apply as (ctx: Context, config: unknown) => void)(ctx, state.config) } })
+      return
+    }
+    await host.plugin(module, payload)
+  }
+  // The discovery entry is one publication gated per preset: a mode receives it
+  // only while the bundle switch and that mode's own switch are both on.
+  const dynamic = Object.fromEntries((['minimal', 'standard', 'ptc', 'cordis'] as const)
+    .map(mode => [mode, dynamicForMode(config[mode], config.global)]))
+  const gate: DiscoveryGate = {
+    allows: agent => {
+      const mode = modeOf(root, agent)
+      return mode !== undefined && dynamic[mode] === true
+    },
+    watch: notify => onModesChange(root, notify),
+  }
+  beginMergedRow()
+  try {
+    // The browser half mounts its `opsSettings` remote; the legacy shell row used
+    // to provide that seam, so the merged row owns it now.
+    await host.plugin({ name: 'dsh-ops/runtime-settings', apply: (ctx: Context) => mountRuntimeSettings(ctx) })
+    for (const mode of ['minimal', 'standard', 'ptc', 'cordis'] as const) {
+      await mount(modes[mode], config[mode], effectiveMode(config[mode], config.global, typeof config.other.raw?.pwsh7Link === 'boolean' ? config.other.raw.pwsh7Link : companionVersion({ sweep: false }) !== undefined))
+    }
+    if (config.discovery.enabled) {
+      await host.plugin({ name: 'dsh-ops/discovery',
+        apply: (ctx: Context) => { (discoveryModule.apply as (ctx: Context, raw: unknown, gate: DiscoveryGate) => void)(ctx, config.discovery.raw ?? {}, gate) } })
+    }
+    await mount(panelModule, config.panel)
+    await mount(tuiModule, config.tui)
+  } finally { endMergedRow() }
+}
+
+/** The module's declared name, for the child plugin label. */
+function moduleName(module: unknown): string {
+  const value = (module as { name?: unknown }).name
+  return typeof value === 'string' ? value : 'feature'
+}

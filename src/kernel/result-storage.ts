@@ -20,7 +20,7 @@ interface Subprocess {
 }
 export interface StorageHost {
   root?: object
-  get(name: 'sandbox'): { confine(argv: string[], policy: SandboxExecutionPolicy & { mode: 'read-only' | 'workspace-write' }, signal?: AbortSignal): Promise<ConfinedArgv> } | undefined
+  get(name: 'sandbox'): { confine(argv: string[], policy: SandboxExecutionPolicy & { mode: 'read-only' | 'workspace-write' }, signal?: AbortSignal): Promise<ConfinedArgv>; prepareResultStorage?(argv: string[], policy: SandboxExecutionPolicy & { mode: 'workspace-write' }, signal?: AbortSignal): Promise<ConfinedArgv> } | undefined
   get(name: 'sandboxPolicy'): { resolve(input: { session: ResultSession }): SandboxExecutionPolicy } | undefined
   get(name: 'tools'): { schemas(scope: unknown): { name: string }[]; get(name: string, scope: unknown): unknown } | undefined
   get(name: 'subprocess'): Subprocess | undefined
@@ -79,19 +79,27 @@ async function purge(ctx: StorageHost, session: ResultSession, file: string, sto
   original: SandboxExecutionPolicy): Promise<void> {
   const policyService = ctx.get('sandboxPolicy'), subprocess = ctx.get('subprocess')
   const policy = policyService?.resolve({ session })
-  if (!policy || !subprocess || policy.mode === 'read-only' || policy.workspaceRoot !== original.workspaceRoot) throw new Error('Cleanup authority unavailable')
+  if (!policy || !subprocess || policy.mode === 'read-only' || policy.workspaceRoot !== original.workspaceRoot
+    || (process.platform === 'win32' && policy.sessionId !== session.id)) throw new Error('Cleanup authority unavailable')
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 5000)
   timer.unref?.()
   try {
     let argv = [file]
     if (policy.mode !== 'danger-full-access') {
-      const confined = await ctx.get('sandbox')?.confine(argv, { ...policy, mode: 'workspace-write' }, controller.signal)
+      const sandbox = ctx.get('sandbox')
+      const confined = process.platform === 'win32' && sandbox?.prepareResultStorage
+        ? await sandbox.prepareResultStorage(argv, { ...policy, mode: 'workspace-write' }, controller.signal)
+        : await sandbox?.confine(argv, { ...policy, mode: 'workspace-write' }, controller.signal)
       if (!confined || !['full', 'partial'].includes(confined.enforcement) || !confined.argv.length) throw new Error('Cleanup confinement unavailable')
-      if (process.platform === 'win32' && windowsCacheLocation(confined.argv)?.root !== storage.root) throw new Error('Cleanup cache grant changed')
+      if (process.platform === 'win32') {
+        const location = windowsCacheLocation(confined.argv)
+        if (location?.root !== storage.root || location?.windowsWriteSid !== storage.windowsWriteSid) throw new Error('Cleanup cache grant changed')
+      }
       argv = exposePosixCache(confined.argv, storage)
     }
     const latest = policyService?.resolve({ session })
-    if (latest?.mode !== policy.mode || latest?.workspaceRoot !== policy.workspaceRoot) throw new Error('Cleanup authority changed')
+    if (latest?.mode !== policy.mode || latest?.workspaceRoot !== policy.workspaceRoot
+      || (process.platform === 'win32' && latest?.sessionId !== session.id)) throw new Error('Cleanup authority changed')
     const envelope = workerEnvelope('ptc', { root: policy.workspaceRoot, scope: session.id, tool: 'result', args: { action: 'purge' }, read_only: false }, 5000, storage)
     const handle = subprocess.spawn({ argv, cwd: policy.workspaceRoot, stdio: { stdin: { data: JSON.stringify(envelope) }, stdout: { maxBytes: 4096 }, stderr: { maxBytes: 4096 } }, graceMs: 1000, signal: controller.signal })
     const outcome = await handle.done, output = handle.collected.stdout.readFrom(0)
@@ -116,14 +124,21 @@ export async function resultStorage(ctx: StorageHost, session: ResultSession, sc
       if (!confined) {
         const sandbox = ctx.get('sandbox')
         if (!sandbox) return undefined
-        await prepareWorkspace(cachePolicy)
-        confined = await sandbox.confine([file], cachePolicy, signal)
+        if (sandbox.prepareResultStorage) confined = await sandbox.prepareResultStorage([file], cachePolicy, signal)
+        else { // Legacy hosts do not expose cache-only preparation.
+          await prepareWorkspace(cachePolicy)
+          confined = await sandbox.confine([file], cachePolicy, signal)
+        }
       }
       if (!['full', 'partial'].includes(confined.enforcement)) return undefined
       location = windowsCacheLocation(confined.argv)
     }
   } else location ??= posixCacheLocation(key, policy.mode !== 'read-only')
   if (!location) return undefined
+  if (process.platform === 'win32' && confined && policy.mode !== 'read-only') {
+    const current = windowsCacheLocation(confined.argv)
+    if (current?.root !== location.root || current?.windowsWriteSid !== location.windowsWriteSid) throw new Error('Session cache grant changed')
+  }
   cache.set(key, location)
   const storage: WorkerStorage = { ...location, authorityId: digest([nonce, policy.mode, policy.workspaceRoot, denyRoots, denyNames]), allowedTools: currentTools(ctx, scope, tool) }
   registerResultCleanup(ctx, session, key, async () => {

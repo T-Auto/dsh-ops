@@ -5,6 +5,7 @@ import FileSystem from '@deepseek-ai/dsh-fs-local'
 import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { bootHost } from './host.mjs'
+import { legacyComponent } from './legacy-component.mjs'
 import { WORKER } from './boundary.mjs'
 import { assert } from './harness.mjs'
 import { publicToolName } from '../../lib/policy.js'
@@ -20,8 +21,8 @@ export async function documentHost(root, names, { real = false } = {}) {
     if (!real) inner.provide('ptcRuntime', { language: 'typescript' })
   })
   if (real) await ctx.plugin(NodePtc, {})
-  await ctx.plugin(discovery, { binaryPath: WORKER, required: true, allowedTools: names })
-  await ctx.plugin(ptc, { binaryPath: WORKER, required: true, allowedTools: names.filter(name => !['result', 'inspect_local_file'].includes(name)) })
+  await ctx.plugin(legacyComponent(discovery), { binaryPath: WORKER, required: true, allowedTools: names })
+  await ctx.plugin(legacyComponent(ptc), { binaryPath: WORKER, required: true, allowedTools: names.filter(name => !['result', 'inspect_local_file'].includes(name)) })
   async function agent(mode = 'native', { policy = 'workspace-write', cwd = root, parent } = {}) {
     const id = 'document-host-' + ++serial
     const value = { id, session: { id, mode: policy, header: { cwd }, append() {}, read() { return [] } } }

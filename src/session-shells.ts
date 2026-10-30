@@ -13,6 +13,7 @@ import { MODES } from './permissions.js'
 import { hostBashDefinition } from './shells/host-tool.js'
 import { withToolChange } from './tool-changes.js'
 import { startSessionBash } from './shells/session-execution.js'
+import { resolveSessionDirectory } from './adapter/dsh/working-directory.js'
 
 /**
  * Whether a session workspace is written in a Windows form.
@@ -36,7 +37,7 @@ function windowsFlavoured(cwd: unknown) {
  * back to the session directory like an omitted value instead of failing the
  * spawn (the executor rejects paths that do not exist).
  *
- * A relative workdir is anchored at `session.header.cwd`, never at the helper
+ * A relative workdir is anchored at the supplied session cwd, never at the helper
  * process's own cwd: that process belongs to the plugin host, and a caller's `.`
  * means the calling session's workspace (#180, #204 P3). Absolute paths are
  * returned unchanged, and a non-string still reaches the executor's own
@@ -212,7 +213,10 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
       const base = bashToolDefinition({ file: bash.file, source: bash.source, subprocess: ctx.get('subprocess') })
       const definition = hostBashDefinition(ctx, base,
         (args, exec, standing, policy, dshEnv, options) => startSessionBash({ ctx, bash, active: () => exec.agent !== undefined && entries.has(exec.agent) && allowed(exec.agent) },
-          args, exec, standing, policy, dshEnv, options), sessionWorkdir, jobs)
+          args, exec, standing, policy, dshEnv, options), async (args, session, exec) => {
+            const basis = await resolveSessionDirectory(ctx, exec.agent, exec.signal)
+            return { workdir: sessionWorkdir(args, { header: { cwd: basis.cwd } }), basis }
+          }, jobs)
       publish(entry, definition)
       if (entry.dispose) { entry.published = true; entry.generation = generation }
     }

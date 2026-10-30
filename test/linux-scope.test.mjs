@@ -18,7 +18,7 @@
  *   cross-platform substitute.
  * - The three declaration layers agree: `package.json` `os`, the resolver's
  *   `PLATFORMS`, and `dsh-plugin.json`'s `contributes['x-components']` row for
- *   the PTC component. This is the corrected form of probe D11, which searched
+ *   the merged component. This is the corrected form of probe D11, which searched
  *   the manifest for the literal string `linux-x64` and so always failed.
  * - The staged worker for this host hashes to exactly the digest in its receipt.
  *
@@ -148,13 +148,14 @@ await test('a foreign-only runtime directory is not a cross-platform substitute'
 await test('package.json, the resolver and the plugin manifest declare the same scope', async () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'package.json'), 'utf8'))
   const components = PLUGIN.contributes?.['x-components'] ?? []
-  const ptc = components.find(component => component.id === 'dsh-ops-mode-ptc')
-  assert.ok(ptc, 'the PTC mode row is missing from contributes.x-components')
+  assert.deepEqual(components.map(component => component.id), ['dsh-ops'])
+  const merged = components[0]
+  assert.equal(merged.entry, 'dsh-ops')
   assert.deepEqual([...PLATFORMS], ['win32-x64', 'linux-x64', 'darwin-arm64', 'darwin-x64'], 'only the approved target pairs are supported')
   assert.deepEqual(manifest.os, ['win32', 'linux', 'darwin'])
-  assert.deepEqual(ptc.platforms, ['win32', 'linux', 'darwin'])
-  assert.deepEqual(ptc.architectures, ['x64', 'arm64'])
-  assert.deepEqual(ptc.targets, [...PLATFORMS], 'exact targets, not the os/cpu Cartesian product, define support')
+  assert.deepEqual(merged.platforms, ['win32', 'linux', 'darwin'])
+  assert.deepEqual(manifest.cpu, ['x64', 'arm64'])
+  assert.deepEqual(merged.targets, [...PLATFORMS], 'exact targets, not the os/cpu Cartesian product, define support')
 })
 
 await test('the staged worker for this host hashes to exactly its provenance digest', async () => {

@@ -1,9 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { LLM_OVERLAY, planEntryPatch } from './profile.mjs'
-import { ACTIVATION_KEYS, SWITCH_ROWS, parseRows, switchesFromDump } from '../lib/switches.mjs'
+import { ACTIVATION_KEYS, SWITCH_ROWS, SWITCH_SECTIONS, parseRows, switchesFromDump } from '../lib/switches.mjs'
 
-export const SWITCH_USAGE = '  --switch <name>[=value] candidate only; repeat mode-minimal, mode-standard, mode-ptc, mode-cordis, discovery, compat, panel or tui (booleans true/false; compat=true keeps the official tools visible)'
+export const SWITCH_USAGE = '  --switch <name>[=value] candidate only; repeat minimal, standard, ptc, cordis, discovery, panel or tui (booleans true/false)'
 
 export function extractSwitches(argv) {
   const rest = [], switches = {}
@@ -43,21 +43,24 @@ export function planSwitchPatch(text, switches, { force = false, composed = [] }
   let next = text
   for (const [name, wanted] of Object.entries(switches)) {
     if (!Object.hasOwn(SWITCH_ROWS, name)) throw new Error(`Unknown switch ${name}`)
-    const id = SWITCH_ROWS[name], rows = parseRows(next)
+    const id = SWITCH_ROWS[name], section = SWITCH_SECTIONS[name], rows = parseRows(next)
     if (!Array.isArray(rows)) throw new Error('Candidate patch must be a plain top-level list')
     const own = rows.filter(row => row?.id === id)
     if (own.length > 1) throw new Error(`Duplicate row ${id}`)
     const inherited = composed.filter(row => row?.id === id)
     if (inherited.length > 1) throw new Error(`Ambiguous composed row ${id}`)
     const row = own[0]
-    if (row?.disabled !== undefined && row.disabled !== !wanted.enabled && !force) throw new Error(`${id}.disabled conflicts; use --force`)
+    if (row?.disabled === true && wanted.enabled) throw new Error(`${id}.disabled blocks feature activation; edit it manually`)
     if (row && row.disabled !== undefined && typeof row.disabled !== 'boolean') throw new Error(`${id}.disabled requires a manual patch`)
-    const config = { ...configMapping(inherited[0]?.config), ...configMapping(row?.config) }
-    const changes = ACTIVATION_KEYS[name] && wanted.enabled ? { [ACTIVATION_KEYS[name]]: true } : {}
+    const inheritedConfig = configMapping(inherited[0]?.config), ownConfig = configMapping(row?.config)
+    const config = { ...inheritedConfig, ...ownConfig }
+    const ownSection = configMapping(ownConfig[section])
+    const effectiveSection = { ...configMapping(inheritedConfig[section]), ...ownSection }
+    const changes = { enabled: wanted.enabled, ...(ACTIVATION_KEYS[name] && wanted.enabled ? { [ACTIVATION_KEYS[name]]: true } : {}) }
     for (const [key, value] of Object.entries(changes)) {
-      if (row?.config?.[key] !== undefined && JSON.stringify(row.config[key]) !== JSON.stringify(value) && !force) throw new Error(`${id}.${key} conflicts; use --force`)
-      config[key] = value
+      if (ownSection[key] !== undefined && ownSection[key] !== value && !force) throw new Error(`${id}.${section}.${key} conflicts; use --force`)
     }
+    config[section] = { ...effectiveSection, ...changes }
     // Setting config replaces that entry's config in the host. Preserve every inherited key.
     for (const [key, value] of Object.entries(config)) {
       if (JSON.stringify(row?.config?.[key]) === JSON.stringify(value)) continue
@@ -74,10 +77,6 @@ export function planSwitchPatch(text, switches, { force = false, composed = [] }
     if (!parseRows(next).some(item => item?.id === id)) next = `${next.replace(/^\s*\[\]\s*$/m, '').trimEnd()}\n- id: ${id}\n`
     const lines = next.split(/\r?\n/), start = lines.findIndex(line => line === `- id: ${id}`)
     if (start < 0) throw new Error(`${id} requires a plain block row; edit it manually`)
-    let end = lines.findIndex((line, i) => i > start && /^- /.test(line)); if (end < 0) end = lines.length
-    const disabled = lines.findIndex((line, i) => i > start && i < end && /^  disabled:/.test(line))
-    if (disabled < 0) lines.splice(start + 1, 0, `  disabled: ${!wanted.enabled}`)
-    else if (parseRows(next).find(item => item?.id === id).disabled !== !wanted.enabled) lines[disabled] = `  disabled: ${!wanted.enabled}`
     next = lines.join('\n')
   }
   parseRows(next)

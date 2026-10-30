@@ -12,62 +12,60 @@ Active rows expose validated settings through the host Settings/ConfigEditor. Ac
 
 The default bundle declares the eight rows listed below and no legacy `shell`, `file`, `ptc` or `hide-official` row. A saved profile override for a removed row matches no target, is reported by the host patch composer and must be deleted. The default bundle does not activate custom browser pages on the pinned host.
 
-## Optional browser settings pages
+## Browser settings page
 
-When the client carrier bundle is selected, the four mode rows and the discovery row have settings
-pages in the host plugin manager. The default bundle keeps its built-in row forms and does not
-activate these pages. Changes remain a draft until **Save changes** succeeds. A stale or refused save
-keeps the draft for review; **Reset to saved** loads the latest saved values. Accepted changes
-persist through the host profile writer and reload the affected row.
+Resident OPS tools and dynamic OPS tool loading are independent. Standard, PTC and Cordis expose `residentTools` (default true) immediately before `dynamicTools`; Minimal has no resident-tools option and publishes no resident file tools. Bash retains its independent switch. Turning resident tools off keeps their saved settings but loads file APIs only on demand when dynamic loading is enabled. Turning both off publishes neither baseline file APIs nor a loader.
 
-- **Mode rows:** enable Bash publication and enter an absolute executor override, or select detected
-  managed/Git Bash. The PTC mode row additionally exposes its own pool through the shared schema.
-  Selecting a runtime fills the draft path; save it explicitly. Clearing the override inherits the
-  configured default. Runtime installation does not silently change that selection.
-- **Discovery:** choose the allowed pool, its always-loaded subset and a result limit from 1 to 5.
-  Removing an allowed capability removes it from the always-loaded subset in the same save.
+The bundle inserts one row named exactly like the package, so this plugin's browser
+half mounts on it and the Plugins page configures it directly. By the maintainer's
+decision the page keeps **four bundle switches and mode-specific preset switches**;
+everything else (worker paths, PTC pools, extra routing text, capture limits, the
+credential fence) stays YAML-only so the page cannot grow into a second settings app.
 
-Bash installation/removal and PowerShell upgrade buttons first show a plan. Execute that reviewed
-plan explicitly; cancellation after launch can leave changes and reports an unknown effect. Managed
-Bash removal only deletes receipt-owned installations. Stop Bash jobs first. PowerShell actions use
-WinGet for the standard host PowerShell 7 installation, preserve Windows PowerShell 5.1, and require
-a DSH restart. Check a custom host `pwshPath` separately. No installer runs when opening a page.
+- **Bundle switches:** Bash, Hide the host PowerShell, Hide the official tools, Dynamic tool loading. They decide
+  whether the same-named switch in each preset below applies.
+- **Each preset (minimal / standard / ptc / cordis):** enabled, Enable the Bash tool,
+  Hide the host PowerShell, Hide the official tools, Dynamic tool discovery — all on
+  by default. The last two are gated: while the matching bundle switch is off the
+  control keeps its saved value but is disabled.
+- **Other:** activity capture and the TUI link (one switch each, off by default) plus
+  the `dsh-win-pwsh7 link`: while on, the host pwsh tool stays visible for that plugin to
+  point at pwsh 7, and every “Hide the host PowerShell” switch locks to off. Until a value is
+  saved it follows detection — installing the plugin turns it on by default, and a saved
+  value (off or on) is never overridden by detection.
 
-A client carrier is the nested `dsh-ops/lib/profiles/client` bundle selected instead of the default
-`dsh-ops` bundle. The nested bundle is generated from the canonical bundle and renames only the
-standard-mode row to the package root `dsh-ops` so the client half can load these browser pages;
-the other seven rows are unchanged and the row still applies Standard mode. Removing the carrier
-bundle selection unloads all custom settings pages, and the default bundle keeps the built-in forms.
-There is no automatic form fallback. A disabled target row must also be re-enabled before its
-settings can be edited.
+With "Hide the host PowerShell" off the host shell stays visible; when
+`dsh-win-pwsh7` is installed it replaces PowerShell 5.1 with PowerShell 7 instead,
+and with the switch on it adds PowerShell 7 alongside. Runtime installation stays in
+the status card and always shows a plan before it executes.
 
-### Enable the optional browser carrier
+Saves write only the switches that changed, as nested paths (for example
+`standard.hidePwsh`), with the revision the page read; a host reload while the page
+is dirty cannot turn an untouched switch into a write. A refused or stale save keeps
+the draft, **Reset to saved** loads the latest values, and leaving the page discards
+the draft.
 
-This is an opt-in offline profile migration, not a prerequisite for upgrading. With DSH stopped,
-preview the installed profile using absolute paths:
+The page also renders one **status section** after its content (`plugins.detail.section`,
+order 50), only on this package's own page or the `dsh-ops` row page. It keeps a
+heading row (title, refreshed-at, check-again) and opens its shaded block with one
+sentence: ops_bash runs on the managed Bash, on the detected Git Bash, or no usable Bash
+was found. The facts below come from the host snapshot: platform, managed Bash, Git Bash,
+PowerShell 7 (with the probed version when available) and `dsh-win-pwsh7` (可用 with the package
+version when installed, otherwise 未检测到 plus a separate 安装 action). The managed Bash row carries its
+own action — install when absent, remove when ops owns the installation — and the
+companion row installs from that action. Both open the same plan panel (details plus
+execute/close), which carries either the host's Bash plan or the version resolved by
+`pluginManager.inspect()`. A disabled row or package renders nothing, and an unavailable
+remote shows its reason instead of a green state.
 
-```console
-dsh-ops settings-profile --profile-dir <profile-directory> --host-anchor <DSH-installation-package.json> --dsh-home <DSH-home>
-```
+### Row ids from earlier versions
 
-`--host-anchor` identifies the host installation whose public profile APIs the command uses.
-After reviewing the preview, repeat it with `--offline --yes`. The command selects
-`dsh-ops/lib/profiles/client` **instead of** `dsh-ops` and preserves every component row, switch
-and effective configuration. It never rewrites a saved patch row; the only expected composition
-change is that the standard-mode row is named `dsh-ops`, so an external name-qualified
-`dsh-ops/mode-standard` override is refused for manual review along with skipped bundles, duplicate
-or shadowing OPS rows, incompatible higher-priority patches and stale previews. Home patches are
-included; launch-time command-line overlays are outside this preview.
-No other profile is changed. Do not enable both bundle choices together.
-
-Original files are backed up in the reported `.dsh-ops-settings-backup-*` directory. Each write uses
-the host's atomic writer and profile lock. The first write remains valid with the old bundle if the
-process stops before the second; reported write failures restore unchanged originals when possible.
-For manual recovery while stopped, restore `package.json` first, then `cordis.patch.yml` as described
-in `recovery.json`. Keep the backup until the restarted profile is verified. The installed `dsh-ops`
-package supplies both bundle choices; the nested layer is not a separate package to install.
-An already-disabled row remains disabled, so re-enable it through the builtin switch before
-expecting its custom page. The default bundle remains supported without this command.
+`dsh-ops-mode-*`, `dsh-ops-discovery`, `dsh-ops-compat`, `dsh-ops-panel` and `dsh-ops-tui`
+(and the older `shell`, `file`, `ptc`, `hide-official`, `background`) are no longer rows
+this bundle inserts. A saved patch entry for one of them never fails startup: it either
+stays unmatched or composes as its own row, and that module notices the package now ships
+the single-row layout, logs one warning and publishes nothing. Move the settings into this
+row and delete the stale entry; the patch file itself is never rewritten.
 
 ---
 
@@ -217,7 +215,7 @@ hiding each enabled mode row performs, without unloading any row.
   module and grant no authority here.
 
 The built-in Compatibility form is the host row switch; the row has no editable settings page.
-Cordis validates mode configuration through `StandardSchemaV1`, and the optional browser carrier
+Cordis validates mode configuration through `StandardSchemaV1`, and the browser page
 described above edits the mode and discovery rows.
 
 

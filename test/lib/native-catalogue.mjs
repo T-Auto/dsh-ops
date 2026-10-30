@@ -2,9 +2,10 @@
 import * as file from '../../lib/components/file/index.js'
 import * as discovery from '../../lib/discovery/index.js'
 import { DISCOVERABLE_TOOLS } from '../../lib/discovery/config.js'
+import { legacyComponent } from './legacy-component.mjs'
 export function mountNativeCatalogue(ctx, config = {}) {
   return ctx.plugin({ async apply(inner) {
-    await inner.plugin(file, config)
-    await inner.plugin(discovery, { ...config, enabled: false, allowedTools: [...DISCOVERABLE_TOOLS], alwaysLoaded: [...DISCOVERABLE_TOOLS] })
+    await inner.plugin(legacyComponent(file), config)
+    await inner.plugin(legacyComponent(discovery), { ...config, enabled: false, allowedTools: [...DISCOVERABLE_TOOLS], alwaysLoaded: [...DISCOVERABLE_TOOLS] })
   } })
 }

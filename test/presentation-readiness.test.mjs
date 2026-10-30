@@ -3,14 +3,18 @@ import path from 'node:path'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
-import * as Ptc from '../lib/ptc/index.js'
+import * as PtcModule from '../lib/ptc/index.js'
 import { registerNativeProvider, nativeProviders } from '../lib/file/result-provider.js'
-import * as Discovery from '../lib/components/discovery/index.js'
-import * as Hiding from '../lib/components/hide-official/index.js'
+import * as DiscoveryModule from '../lib/components/discovery/index.js'
+import * as HidingModule from '../lib/components/hide-official/index.js'
 import { isNativePresentation, isPresentationProbe } from '../lib/presentation.js'
 import { publicToolName } from '../lib/policy.js'
 import { bootHost, shutdown, scopedToolNames, registryHasOwnRegister } from './lib/host.mjs'
 import { assert, test, report, withTempDir, waitFor } from './lib/harness.mjs'
+import { legacyComponent } from './lib/legacy-component.mjs'
+const Ptc = legacyComponent(PtcModule)
+const Discovery = legacyComponent(DiscoveryModule)
+const Hiding = legacyComponent(HidingModule)
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 const tool = name => ({ name, description: name, parameters: { type: 'object' }, output: { schema: { type: 'object' }, render: () => [] }, execute: async () => ({}) })
 let sequence = 0

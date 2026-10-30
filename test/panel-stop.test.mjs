@@ -8,6 +8,8 @@ import * as Panel from '../lib/components/panel/index.js'
 import { profileFixture } from './lib/settings-profile.mjs'
 import { shutdown } from './lib/host.mjs'
 import { assert, test, report, waitFor } from './lib/harness.mjs'
+// Exercises the pre-merge panel module directly.
+process.env.DSH_OPS_LEGACY_ROWS = '1'
 
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 const event = (text, seq = 0) => ({ type: 'user/message', seq, time: 1700000000000 + seq,

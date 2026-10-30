@@ -1,12 +1,15 @@
 /** Real host counters for #333: unrelated sessions keep their publications and probes. */
 import { createScope } from '@deepseek-ai/dsh-scope'
-import * as discovery from '../lib/discovery/index.js'
-import * as ptc from '../lib/ptc/index.js'
+import * as discoveryModule from '../lib/discovery/index.js'
+import * as ptcModule from '../lib/ptc/index.js'
 import { mountSessionBash } from '../lib/session-shells.js'
 import { isPresentationProbe } from '../lib/presentation.js'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
+import { legacyComponent } from './lib/legacy-component.mjs'
+const discovery = legacyComponent(discoveryModule)
+const ptc = legacyComponent(ptcModule)
 requireWorker('session-incremental')
 const flush = async () => { for(let i=0;i<4;i++) await new Promise(resolve => setImmediate(resolve)) }
 

@@ -10,6 +10,8 @@ export type ShellCall = Partial<Pick<ToolRunContext, 'agent' | 'callId' | 'signa
 export type ShellPolicy = SandboxExecutionPolicy
 export interface ShellStream { text: string; truncated: boolean; spillPath?: string; bytes?: number; bytesTotal?: number; lines?: number }
 export interface ShellResult {
+  resolvedFrom?: string
+  cwdSource?: string
   exitCode?: number | null
   signal?: string | null
   error?: string
@@ -27,8 +29,8 @@ export interface ShellResult {
 }
 export type SettledShellResult = ShellResult & { status: 'completed' | 'failed' }
 export type HostForeground = SettledShellResult & { kind: 'foreground'; exitCode: number | null; signal: string | null; aborted: boolean }
-export type HostBashResult = HostForeground | { kind: 'background'; jobId: string; label: string }
-  | { kind: 'promoted'; jobId: string; label: string; timeoutMs: number; output: string }
+export type HostBashResult = (HostForeground | { kind: 'background'; jobId: string; label: string }
+  | { kind: 'promoted'; jobId: string; label: string; timeoutMs: number; output: string }) & Pick<ShellResult, 'resolvedFrom' | 'cwdSource'>
 export interface ShellExecution {
   status: 'running' | 'completed' | 'killed'
   readonly started: boolean

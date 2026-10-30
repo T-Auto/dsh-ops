@@ -8,7 +8,9 @@ export interface RuntimeSnapshot {
   platform: string
   managed: { version: string; directory: string; owned: boolean }[]
   git: string[]
-  powerShell: { supported: boolean; guidance: string; unavailable?: string }
+  powerShell: { supported: boolean; guidance: string; unavailable?: string; version?: string }
+  /** Installed version of dsh-win-pwsh7, when the profile has it. */
+  companion?: string
 }
 export interface RuntimeSelection { bashPath: string; restriction: string }
 export interface RuntimeResult {

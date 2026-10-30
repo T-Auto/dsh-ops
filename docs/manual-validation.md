@@ -23,7 +23,6 @@ Apply the explicitly approved criteria: BM-01 requires at least 40% fewer bytes 
 3. Save valid built-in row settings and restart. Reject an unknown key or wrong type without changing
    saved values. A stale revision must not overwrite a newer edit. Null legacy file/root/shell settings
    must keep their defaults. A disabled row must be enabled before editing.
-4. Optionally preview settings-profile with absolute profile/host/home paths. Preview writes nothing.
    Apply only to the stopped disposable profile with --offline --yes. Verify backup originals, seven
    retained IDs/switches/configs, restart and custom-page activation. Disable/re-enable the carrier and
    verify custom pages unload/recover. External ambiguous overrides must refuse without writes.

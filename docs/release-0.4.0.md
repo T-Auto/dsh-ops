@@ -1,5 +1,8 @@
 # 0.4.0 release candidate
 
+> 历史文档：描述 0.4.x 的七行/承载行布局。当前分支已改为单行 `dsh-ops`，新行为以[配置参考](配置参考.md)为准。
+
+
 中文：[0.4.0 发布候选](0.4.0发布候选.md).
 
 **Not released.** Version fields identify this candidate; they do not authorize a tag, npm publication

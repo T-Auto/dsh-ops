@@ -1,54 +1,35 @@
-# Eight stable component IDs. Saved profile row overrides take precedence.
-# The four enhanced-preset mode rows and discovery start enabled; the
-# Compatibility fallback, data capture and the TUI integration are opt-in.
-# Minimal publishes no routing section, so its row carries only the shell keys.
-# Legacy component modules (shell, file, ptc, hide-official, background) remain
-# exported but are no longer inserted here: a saved override for one of those
-# old specifiers still loads its legacy module, it just cannot match a new row.
+# One row, named exactly like the package: dsh-client-modules mounts a package's
+# browser half on the row whose specifier is the package name, so this row also
+# carries the Plugins-page configuration for every feature.
+#
+# Each section owns its enable switch and only the keys that feature reads. The
+# data capture and the TUI integration stay off by default. Legacy component modules (mode-*, discovery, panel, tui, shell,
+# file, ptc, hide-official, background) remain exported: a saved override for one
+# of those specifiers still loads its legacy module, it just cannot match this row.
 - insert:
-    - id: dsh-ops-mode-minimal
-      name: dsh-ops/mode-minimal
+    - id: dsh-ops
+      name: dsh-ops
       config:
-        promptPolicy: true
-        publishBashTool: true
-    - id: dsh-ops-mode-standard
-      name: dsh-ops/mode-standard
-      config:
-        promptPolicy: true
-        required: false
-    - id: dsh-ops-mode-ptc
-      name: dsh-ops/mode-ptc
-      config:
-        required: false
-        alwaysLoaded: []
-    - id: dsh-ops-mode-cordis
-      name: dsh-ops/mode-cordis
-      config:
-        promptPolicy: true
-        required: false
-    - id: dsh-ops-discovery
-      name: dsh-ops/discovery
-      config:
-        enabled: true
-        maxResults: 3
-        alwaysLoaded: []
-        required: false
-        denyCredentialReads: true
-    - id: dsh-ops-compat
-      name: dsh-ops/compat
-      disabled: true
-    - id: dsh-ops-panel
-      name: dsh-ops/panel
-      disabled: true
-      config:
-        # Row enablement starts capture; explicit legacy capture:false stays inert.
-        capture: true
-        textLimit: 2000
-        maxSessionBytes: 8388608
-    - id: dsh-ops-tui
-      name: dsh-ops/tui
-      disabled: true
-      config:
-        maxSessions: 32
-        maxActive: 128
-        recentLimit: 8
+        # Four bundle switches (one per preset switch), then each preset; all default on.
+        global:
+          bash: true
+          hidePwsh: true
+          hideOfficialTools: true
+          dynamicTools: true
+        minimal:
+          enabled: true
+        standard:
+          enabled: true
+          residentTools: true
+        ptc:
+          enabled: true
+          residentTools: true
+        cordis:
+          enabled: true
+          residentTools: true
+        discovery:
+          enabled: true
+        panel:
+          enabled: false
+        tui:
+          enabled: false

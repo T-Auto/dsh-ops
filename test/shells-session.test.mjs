@@ -31,6 +31,40 @@ if (!bash.available) {
 
 const signal = () => new AbortController().signal
 
+await test('Bash follows live cwd without changing the header and exposes its base through the registry', async () => {
+  const { ctx } = await bootHost()
+  try {
+    await withTempDir('bash-live-cwd', async root => {
+      const live = path.join(root, 'tools'); fs.mkdirSync(live)
+      fs.mkdirSync(path.join(live, 'child')); fs.writeFileSync(path.join(live, 'probe.txt'), 'TOOLS')
+      fs.writeFileSync(path.join(root, 'probe.txt'), 'ROOT')
+      let calls = 0
+      await ctx.plugin(inner => inner.provide('workingDirectory', {
+        async ensure(_agent, control) { await Promise.resolve(); control.throwIfAborted(); calls++; return live },
+        get: () => live,
+      }))
+      const { agent, scope } = await publishOpsBash(ctx, 'bash-live-cwd', root)
+      try {
+        const tools = ctx.get('tools'), tool = tools.get('ops_bash', agent)
+        const exec = { agent, signal: signal() }
+        const args = { command: 'cat probe.txt', description: 'Read the live directory marker' }
+        const value = await tool.execute(args, exec)
+        assert.equal(value.status, 'completed', JSON.stringify(value)); assert.equal(value.stdout.text.trim(), 'TOOLS')
+        assert.equal(value.resolvedFrom, live); assert.equal(value.cwdSource, 'workingDirectory')
+        assert.ok(tool.output.render(args, value)[0].text.includes('resolvedFrom='))
+        const child = await tool.execute({ command: 'echo CHILD', description: 'Resolve a relative child directory', workdir: 'child' }, exec)
+        assert.equal(child.status, 'completed', JSON.stringify(child))
+        assert.equal(calls, 2); assert.equal(agent.session.header.cwd, root)
+        const service = ctx.get('workingDirectory')
+        service.ensure = async () => { throw new Error('live directory unavailable') }
+        const failed = await tool.execute(args, exec)
+        assert.equal(failed.status, 'failed'); assert.equal(failed.failure.effectState, 'none')
+        assert.ok(!failed.stdout.text.includes('ROOT'))
+      } finally { await scope.dispose() }
+    })
+  } finally { await shutdown(ctx) }
+})
+
 /**
  * Publish `ops_bash` into one real agent scope, the way the component row does.
  * @param {object} ctx - the booted host context.
