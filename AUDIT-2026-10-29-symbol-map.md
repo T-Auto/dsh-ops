@@ -55,3 +55,48 @@ SM realpath recheck true | inside import true
 ```
 
 适配层实跑：`invokeSymbolMap` 三次调用分别 16 / 1 / 1 ms，8 个符号，`revision` 64 hex。
+
+---
+
+## 第十五轮（2026-10-30）：`name` 过滤后的分页统计 → 20261029.3
+
+### 1. 现象
+
+`ops_symbol_map {path, name: "f15", limit: 1}`，目标文件 200 个符号：
+
+```json
+{"total": 200, "symbols": ["16 f f15"], "omitted": 50, "complete": false, "nextOffset": 16}
+```
+
+命中的只有 1 条，回执却说还剩 50 条。调用方按 `nextOffset` 续页，翻到的全是被 `name` 排除掉的
+符号 —— 一次"过滤"变成一串无用的往返。
+
+### 2. 根因
+
+`paginate()` 边扫边 `continue` 跳过不匹配项，但：
+
+- `total` 取 `map.total`（未过滤的全量）；
+- `omitted = total - scanned`，而 `scanned` 是**过滤之后**才推进到的位置。
+
+两个口径混在一句减法里。`receipt()` 再把 `total` 覆盖回 `map.total`，即使 `paginate` 想报对也报
+不出去。
+
+### 3. 修法
+
+先 `filter` 再分页：
+
+| 字段 | 改前 | 改后 |
+| --- | --- | --- |
+| `total` | `map.total`（200） | **过滤后集合长度（11）** |
+| `omitted` | `200 - 过滤位置`（50） | **`11 - 过滤位置`（10）** |
+| `nextOffset` | 过滤位置 | 过滤位置（含义一致，但分母对了） |
+| `offset` | 未过滤的第 N 个符号 | 过滤后的第 N 个符号（与 `nextOffset` 自洽） |
+
+不带 `name` 时走原数组，零额外开销；带 `name` 时多一次 O(n) 引用过滤（200 符号 <0.01 ms）。
+
+### 4. 回归
+
+宿主 7 工具联合审计 75 项全过，symbol-map 相关 31 项覆盖：符号行格式、`fileHash` 小文件等于
+`revision`、大文件 `head+tail`/`102400` 字节、头改/尾改敏感、批量 16/17 边界、`extended` 收箭头、
+`.tsx`/`js`/`.mjs`/`.cjs`、`scope` 收窄与越界、`limit`+`nextOffset` 分页、junction 与凭据名拒绝、
+空文件、BOM、非 UTF-8。

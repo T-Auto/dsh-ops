@@ -1,5 +1,7 @@
 # ops_symbol_map — 只给行号的符号地图
 
+> **20261029.3**：`name` 过滤后的 `total` / `omitted` / `nextOffset` 改报**过滤后**的集合
+> （200 符号里 `name:"f15"` 由 `total:200, omitted:50` 变 `total:11, omitted:10`）。
 > **20261029**：`lstat` 与 `open` 之间的窗口用一次 `realpath` 收口；补 `package.json`
 > （语法包进 `optionalDependencies`）；`limit` 缺省页大小三处统一为 **512**（此前文档写 64）。
 > 详见 [FIXES.md](FIXES.md)。
@@ -80,12 +82,30 @@ packages next to dsh-ops: npm install --legacy-peer-deps tree-sitter@0.25.1 …
   ],
   "omitted": 0,
   "complete": true,
+  "fileHash": "1b7d…64 hex…",     // 快速变更指纹：头 50 KiB + 尾 50 KiB 的 SHA-256
   "sandbox": { "mode": "read-only", "enforcement": "policy", "boundary": "in-process-symbol-map" }
 }
 ```
 
 `"12-40 m render"` = 起-止 类型 名称。`f` 函数 / `c` 类 / `m` 方法，起止行相同就只写一个数字。
 名字是第二个空格之后的全部内容，所以 `[Symbol.iterator]`、`'quoted name'`、`#secret` 都能活着过去。
+
+#### `fileHash` 与 `revision` 的分工
+
+| 字段 | 覆盖范围 | 用途 | 代价 |
+| --- | --- | --- | --- |
+| `revision` | 整个文件的 SHA-256 | CAS 写入、快照校验 —— 必须权威 | 已随解析付过，无额外 IO |
+| `fileHash` | 头 50 KiB + 尾 50 KiB | 轮询"文件变了没"，每轮都问也不心疼 | 4 MB 文件实测 0.18 ms |
+
+`bytes <= 100 KiB` 时两段已经覆盖全文，`fileHash` 直接复用 `revision`，一个字节都不多读，也不出现 `fileHashScope`。
+超过阈值时只读 100 KiB，回执额外带两个字段说明口径：
+
+```jsonc
+{ "fileHash": "…", "fileHashBytes": 102400, "fileHashScope": "head+tail" }
+```
+
+**取舍说清楚**：只动中段、且头尾长度不变的修改，`fileHash` 不会变（实测 9000 行文件改第 4500 行：`revision` 变、`fileHash` 不变）。
+这正是两者的分工 —— 便宜的那个负责"看起来没动"，权威的那个负责"确实没动"。要判定就比 `revision`。
 
 ### 3. 校验快照还新不新
 
@@ -156,6 +176,12 @@ node bench/symbol-map/e2e.mjs         # 13 s，invoke() → 回执，外加契�
    confine 绝对路径，所以是 parity，不是缺口。
 
 ## 版本
+
+**20261029.3（本轮）**：`name` 过滤与分页的统计口径对齐。此前 `total` 报文件里的**全部**符号数、
+`omitted` 用未过滤集合做分母，于是 `name` 只命中 1 条时回执写着 `omitted: 50` —— 调用方继续翻页，
+翻到的全是它已经排除掉的符号。现在先过滤再分页：`total` / `omitted` / `nextOffset` 全部落在过滤后的
+集合上（200 符号里 `name:"f15"` 实测 `total: 11, omitted: 10`，改前是 `total: 200, omitted: 50`）。
+`offset` 的含义随之变成"过滤后的第 N 个符号"，与 `nextOffset` 自洽，往返续页不会再错位。
 
 本包是 **dsh-ops 0.5.0 的一组分片**，不是独立 npm 包：它依赖 `src/file/worker.ts` 的分派点、
 `src/authority-paths.ts` 的锚定、`src/permissions.ts` 的模式白名单。要打补丁进仓库：
