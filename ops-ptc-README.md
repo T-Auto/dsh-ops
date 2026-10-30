@@ -1,5 +1,9 @@
 # ops-ptc
 
+> **2.1.0**：`ops_ptc_locate` 附赠命中正文（≤8 KiB 直给，超限给 `readHint` 抄参数），省掉一整轮
+> 上下文重发；回执加 24 KiB 闸门，超了先退正文再削命中并给 `nextOffset`；命中删掉 5 个自报字段
+> （−82 B/命中）；引擎改为首调用懒加载，会话启动导入 **19.01 → 4.56 ms**。详见 [FIXES.md](FIXES.md)。
+>
 > **2.0.8**：`ops_ptc_audit` 的 `+/-` 行数不再恒为 0、"处改写"不再恒为 1（改用 difftastic 的
 > `aligned_lines`）；围栏拒绝回执报真实 `sandbox.mode`，`PATH_RESTRICTED` / `CREDENTIAL_DENIED`
 > 改为不可重试。详见 [FIXES.md](FIXES.md)。
@@ -137,10 +141,10 @@ node dist/ptc/mcp.js    # NDJSON JSON-RPC，stdout 只有协议帧，日志走 s
 | 工具 | 作用 | 必填 |
 | --- | --- | --- |
 | `ops_ptc_refactor` | 五段全跑（或 preview） | `symbol` `pattern` `rewrite`，无 `file` 时需 `query` |
-| `ops_ptc_find` | 寻址 + 符号切片，只读 | `query` `symbol` |
+| `ops_ptc_find` | 寻址 + 符号切片，只读 | `query`（`symbol` 可选，缺省只做文件发现） |
 | `ops_ptc_audit` | 两个文件的结构 diff，只读 | `file` `beforeFile` |
 | `ops_ptc_inproc` | 进程内 AST 改写与审计 | `pattern` `rewrite` |
-| `ops_ptc_locate` | 进程内符号定位 | `symbol` |
+| `ops_ptc_locate` | 进程内符号定位 | `symbol`（可选 `body`：`true`/数字/`false`） |
 
 返回值固定形状（成功）：
 
@@ -150,11 +154,40 @@ node dist/ptc/mcp.js    # NDJSON JSON-RPC，stdout 只有协议帧，日志走 s
   "hunks": 1, "addedLines": 1, "removedLines": 1,
   "summary": "test3.js：1 个语法 hunk，1 处改写，+1/-1 行（TypeScript）",
   "stages": ["everything", "sane", "astgrep", "difftastic", "agentbox"],
-  "savedTokensRatio": 0.87, "ms": 412
+  "ms": 412
 }
 ```
 
 失败固定形状：`{status:"error", code, stage, message, mode, stages, rollback}`。`code` 即熔断原因，不抛栈、不回显源码。
+
+## 变更（2.1.0，命中正文附赠 / 回执闸门 / 字段瘦身 / 引擎懒加载）
+
+**A. `ops_ptc_locate` 附赠命中正文。** `locate` 本来就把符号体读进了内存，算出行区间后又把它丢掉，
+于是模型必须再调一次 `ops_read_files` 把同一段字节买第二遍 —— 而那次调用要重发整个上下文。
+
+| `body` | 行为 |
+| --- | --- |
+| `true`（缺省） | 命中总字节 ≤ 8 KiB 时随 `hits[].body` 返回 |
+| 数字 | 自定义额度（上限 32 KiB） |
+| `false` | 只给行号 |
+
+不附时给 `bodyOmitted` 与 `readHint`（`{tool:"ops_read_files", files:[{path,offset,limit}]}`，约 70 B），
+把第二轮从「自己算 offset 试错」变成「照抄参数」。实测：40 行 / 1583 B 的符号 → 1911 B 一次到位；
+182 行 / 12.7 KB 的符号 → 不附，回执 473 B + `readHint`。
+
+**B. 回执体积闸门（适配层 24 KiB）。** 引擎的回执形状是它自己的事，但超出上下文预算时模型看到的是
+被上游切开的半截 JSON。降级顺序：先退正文并补 `readHint` → 再按稠密前缀削 `hits`/`files`/`edits` 并报
+`${key}Omitted` 与 `nextOffset` → 最后只留计数。实测 27 KB 输入 → 943 B。
+
+**C. 命中字段瘦身。** 删掉模型从不据此决策的自报口径：`chars`、`bodyBytes`、`fileBytes`、
+`savedRatio`，以及回执顶层的 `contextBytes`。每命中省 82 B ≈ 21 token；`ops_ptc_find` 的
+`savedTokensRatio` 同步删除。
+
+**D. 引擎懒加载。** `ptc-engine` 一被 `require` 就把 `@ast-grep/napi`（原生 `.node`）拉进进程；
+而宿主 `capabilities/file.js` 为了读 `inputSchema` 直接 require 引擎，该模块在每个会话启动时都被
+import —— 从没调过 PTC 工具的会话也在付这笔账。实测 **19.01 ms**。改为 `dist/ptc/schema.json`
+单独承载 `inputSchema`（纯数据），引擎引用挪到首调用：**19.01 → 4.56 ms**，启动期 require 缓存里
+不再有 `@ast-grep/napi`。
 
 ## 变更（2.0.8，审计数字与围栏回执）
 
