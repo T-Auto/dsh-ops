@@ -131,10 +131,23 @@
     },
     "./client": {
       "default": "./lib/client.js"
+    },
+    "./ast": {
+      "types": "./lib/ast/index.d.cts",
+      "default": "./lib/ast/index.cjs"
+    },
+    "./ast/inproc": {
+      "types": "./lib/ast/inproc.d.cts",
+      "default": "./lib/ast/inproc.cjs"
+    },
+    "./ast/tools": {
+      "types": "./lib/ast/tools.d.cts",
+      "default": "./lib/ast/tools.cjs"
     }
   },
   "bin": {
-    "dsh-ops": "bin/dsh-ops.mjs"
+    "dsh-ops": "bin/dsh-ops.mjs",
+    "ops-ast": "lib/ast/cli.cjs"
   },
   "dsh": {
     "bundle": {
@@ -198,7 +211,8 @@
     "bench:ab": "node -e \"const fs=require('node:fs');if(!fs.existsSync('bench/cli.mjs')){console.error('bench/ is repository-only and never shipped in the npm package (bench 只存在于仓库,不随包发布); run npm run bench:* from a dsh-ops checkout');process.exit(2)};process.exit(require('node:child_process').spawnSync(process.execPath,['bench/cli.mjs','ab',...process.argv.slice(1)],{stdio:'inherit'}).status??1)\" --",
     "bench:report": "node -e \"const fs=require('node:fs');if(!fs.existsSync('bench/cli.mjs')){console.error('bench/ is repository-only and never shipped in the npm package (bench 只存在于仓库,不随包发布); run npm run bench:* from a dsh-ops checkout');process.exit(2)};process.exit(require('node:child_process').spawnSync(process.execPath,['bench/cli.mjs','report',...process.argv.slice(1)],{stdio:'inherit'}).status??1)\" --",
     "bench:panel": "node -e \"const fs=require('node:fs');if(!fs.existsSync('bench/cli.mjs')){console.error('bench/ is repository-only and never shipped in the npm package (bench 只存在于仓库,不随包发布); run npm run bench:* from a dsh-ops checkout');process.exit(2)};process.exit(require('node:child_process').spawnSync(process.execPath,['bench/cli.mjs','panel',...process.argv.slice(1)],{stdio:'inherit'}).status??1)\" --",
-    "bench:tools": "node -e \"const fs=require('node:fs');if(!fs.existsSync('bench/cli.mjs')){console.error('bench/ is repository-only and never shipped in the npm package (bench 只存在于仓库,不随包发布); run npm run bench:* from a dsh-ops checkout');process.exit(2)};process.exit(require('node:child_process').spawnSync(process.execPath,['bench/cli.mjs','tools',...process.argv.slice(1)],{stdio:'inherit'}).status??1)\" --"
+    "bench:tools": "node -e \"const fs=require('node:fs');if(!fs.existsSync('bench/cli.mjs')){console.error('bench/ is repository-only and never shipped in the npm package (bench 只存在于仓库,不随包发布); run npm run bench:* from a dsh-ops checkout');process.exit(2)};process.exit(require('node:child_process').spawnSync(process.execPath,['bench/cli.mjs','tools',...process.argv.slice(1)],{stdio:'inherit'}).status??1)\" --",
+    "test:ast": "node scripts/build.mjs && node test/run.mjs ast-"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",
@@ -216,6 +230,7 @@
     "@dsh-ops/bash-win32-x64": "0.2.1"
   },
   "devDependencies": {
+    "@ast-grep/cli": "0.51.0",
     "@deepseek-ai/cordis": "4.0.4",
     "@deepseek-ai/cordis-plugin-group": "1.0.4",
     "@deepseek-ai/cordis-plugin-include": "1.0.9",
@@ -263,5 +278,8 @@
   "engines": {
     "node": "^22.19 || >=24",
     "dsh": ">=0.2.0-rc.2 <0.2.2-0"
+  },
+  "dependencies": {
+    "@ast-grep/napi": "0.51.0"
   }
 }

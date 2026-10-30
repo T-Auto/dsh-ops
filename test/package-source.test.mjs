@@ -14,6 +14,8 @@ await test('npm pack includes compiled host code and native sources, never host 
     stderr: result.stderr, stdoutTail: result.stdout?.slice(-2000) }, null, 2))
   const files = JSON.parse(result.stdout)[0].files.map(file => file.path)
   const required = ['lib/ptc/sdk.d.ts', 'lib/index.js', 'lib/policy.js', 'lib/components/panel/index.js',
+    'lib/ast/index.cjs', 'lib/ast/index.d.cts', 'lib/ast/cli.cjs',
+    'lib/ast/agentbox.worker.cjs', 'lib/ast/schema.json',
     'lib/components/panel/package.json', 'lib/components/panel/icon.png', 'lib/panel/panel.html',
     'lib/components/tui/dsh-plugin.json',
     'lib/components/mode-minimal/index.js', 'lib/components/mode-minimal/package.json', 'lib/components/mode-minimal/icon.png',
@@ -41,6 +43,7 @@ await test('npm pack includes compiled host code and native sources, never host 
   assert.ok(files.includes('lib/integration/diagnostics.js'), 'public diagnostics entry missing')
   assert.ok(files.includes('lib/discovery/providers.js'), 'external provider implementation missing')
   assert.equal(files.some(name => name.startsWith('src/')), false, 'host source must not ship beside compiled lib/')
+  assert.equal(files.some(name => name.startsWith('packages/ops-ptc/')), false, 'standalone prototype must not ship')
   assert.equal(files.some(name => /^native\/(?:target[^/]*|(?:windows|darwin)-metadata\/target)\//u.test(name)), false)
   const pending = ['native/Cargo.toml'], visited = new Set()
   while (pending.length) {
