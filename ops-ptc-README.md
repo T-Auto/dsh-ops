@@ -1,5 +1,11 @@
 # ops-ptc
 
+> **2.1.1**：修一个真事故 —— `proc.js` 的七个函数曾被改写成 `function safeStr($$$) { try {`
+> 并压成单行，`async` 一起丢掉，模块直接加载失败，`ops_ptc_find` / `ops_ptc_refactor` 的枚举段
+> 整体不可用。`checkedWrite` 现在先过一道占位符闸门（`E_INPROC_UNRESOLVED_PLACEHOLDER`），
+> 未解析的 `$$$` 不落盘。另加 `engine-load.js` 双锚点，`pnpm install` 清空 `node_modules` 后
+> 从 `vendor/deps` 回退，不再报 `E_ENGINE_UNAVAILABLE`。详见 [FIXES.md](FIXES.md)。
+>
 > **2.1.0**：`ops_ptc_locate` 附赠命中正文（≤8 KiB 直给，超限给 `readHint` 抄参数），省掉一整轮
 > 上下文重发；回执加 24 KiB 闸门，超了先退正文再削命中并给 `nextOffset`；命中删掉 5 个自报字段
 > （−82 B/命中）；引擎改为首调用懒加载，会话启动导入 **19.01 → 4.56 ms**。详见 [FIXES.md](FIXES.md)。
@@ -159,6 +165,37 @@ node dist/ptc/mcp.js    # NDJSON JSON-RPC，stdout 只有协议帧，日志走 s
 ```
 
 失败固定形状：`{status:"error", code, stage, message, mode, stages, rollback}`。`code` 即熔断原因，不抛栈、不回显源码。
+
+## 变更（2.1.1，写盘闸门 / 引擎自持 / 陈旧索引兜底）
+
+**A. `checkedWrite` 会把未解析的占位符写进源码（真事故）。** `proc.js` 的七个函数被改写成
+`function safeStr($$$) { try {` 这种形状：函数体压成单行、`async` 一起丢掉。`require('./proc')`
+直接抛 `await is only valid in async functions`，`pickBin` / `run` / `readRange` 全部不可用 ——
+`ops_ptc_find` 与 `ops_ptc_refactor` 的枚举段整体失效。`ptc_locate` 走 inproc 分支，所以这个
+破损在前几轮审计里一直没被撞上。
+
+成因是改写模板里的 `$$$`（ast-grep 的多节点占位符）没被解析就随 `after` 落盘。闸门加在
+`checkedWrite` 的最前面，在拿锁之前：
+
+```js
+const PLACEHOLDER_LEAK =
+  /function\s+\$\$\$|class\s+\$\$\$|=>\s*\$\$\$|\(\s*\$\$\$\s*[,)]|(?:const|let|var)\s+\$\$\$\s*=/;
+```
+
+命中即 `E_INPROC_UNRESOLVED_PLACEHOLDER`，不写盘、不留锁、不建临时文件。占位符只可能出现在
+字符串字面量里（`inproc.js` 的 pattern 数组就是），一旦落在声明名或参数位就必然是污染，与任何
+合法源码零重叠。
+
+**B. `engine-load.js` 双锚点。** `dsh-ops/package.json` 的 `dependencies` 是 `null`，一次
+`pnpm install` 就清掉 `dsh-ops/node_modules`，语法包随之消失、工具报 `E_ENGINE_UNAVAILABLE`，
+而包还好端端躺在 `vendor/deps` 里。`astdiff.js` / `inproc.js` / `pipeline.js` 的
+`require('@ast-grep/napi')` 全部改走 `require('./engine-load').napi`，按序试两个锚点：包根
+`node_modules` → `vendor/deps`。第一锚点命中时行为与 2.1.0 逐字节一致；回退只发生在首次加载。
+
+**C. Everything 索引「部分陈旧」时补一次 walk。** 索引命中了旧文件、漏了新建文件时枚举非空，
+原有的零命中兜底不会触发，工具报「符号不存在」而文件就在盘上。locate 主体改成
+`for (let pass = 0; ; pass++)`，`retryViaWalk()` 仅在 `pass === 0 && !file && via === 'everything'`
+为真，第二遍强制 `walk` 并 `refresh`；成功路径一分不付。
 
 ## 变更（2.1.0，命中正文附赠 / 回执闸门 / 字段瘦身 / 引擎懒加载）
 
