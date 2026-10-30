@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-ops-download-guard",
+    "description": "拦截会把文件写到磁盘的 shell 下载，并给出运维配置的更快下载器。未配置 downloadGuard.template 时完全不生效。"
+  }
+}

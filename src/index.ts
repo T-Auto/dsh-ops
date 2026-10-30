@@ -11,6 +11,7 @@ import { mountRuntimeSettings } from './settings/runtime-host.js'
 import { companionVersion } from './settings/companion.js'
 import * as panelModule from './components/panel/index.js'
 import * as tuiModule from './components/tui/index.js'
+import * as downloadGuardModule from './components/download-guard/index.js'
 export { Config } from './settings/merged.js'
 export { applyComponent } from './legacy/host.js'
 export const name = 'dsh-ops'
@@ -58,6 +59,7 @@ export async function apply(root: Context, rawConfig: unknown): Promise<void> {
       const effective = gateConsumer(resolved, config.global, linked)
       await host.plugin({ name: `dsh-ops/custom-${resolved.preset}`, apply(ctx: Context) { return mountIntegration(ctx, effective) } })
     }
+    await mount(downloadGuardModule, config['download-guard'])
     await mount(panelModule, config.panel)
     await mount(tuiModule, config.tui)
   } finally { endMergedRow() }
