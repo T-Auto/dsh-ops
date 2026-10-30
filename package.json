@@ -86,6 +86,12 @@
     "./discovery/package.json": "./lib/components/discovery/package.json",
     "./discovery/locale/*.json": "./lib/components/discovery/locale/*.json",
     "./discovery/icon": "./lib/components/discovery/icon.png",
+    "./download-guard": {
+      "default": "./lib/components/download-guard/index.js"
+    },
+    "./download-guard/package.json": "./lib/components/download-guard/package.json",
+    "./download-guard/locale/*.json": "./lib/components/download-guard/locale/*.json",
+    "./download-guard/icon": "./lib/components/download-guard/icon.png",
     "./hide-official": {
       "default": "./lib/components/hide-official/index.js"
     },
