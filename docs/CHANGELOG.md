@@ -9,6 +9,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - Add the in-process AST engine under `src/ast` (symbol location, structural rewrite, syntax audit) with its own package exports, CLI and test gate; benchmarks live in `bench/ast`. The engine is not registered with the running host. Its five tools are named `ops_ast_*` (not `ops_ptc_*`, which collides with the existing PTC row), the `ops-ast` bin replaces `ops-ptc`, the locate `body` parameter uses a host-compatible `oneOf` instead of a type array, and the prototype's MCP stdio exit is dropped: an independent endpoint serves handlers with no sandbox policy or host authority, the same bypass removed with FastCtx in 0.3.2. The host adapter remains the only model-facing wiring point.
 - 将进程内 AST 引擎纳入 `src/ast`（符号定位、结构化改写、语法审计），提供独立包导出、CLI 与测试门禁；基准位于 `bench/ast`。该引擎尚未注册进运行中的宿主。五个工具命名为 `ops_ast_*`（避免与既有 PTC 行的 `ops_ptc_*` 冲突），`ops-ast` 可执行文件取代 `ops-ptc`，locate 的 `body` 参数改用宿主兼容的 `oneOf` 而非 type 数组；原型中的 MCP stdio 出口被移除——独立端点调用 handler 时不经过沙箱策略与宿主授权，正是 0.3.2 随 FastCtx 一并移除的那类绕行路径。宿主适配器是唯一的模型侧接线点。
+- Confine the in-process engine's reparse-point refusal to the workspace boundary: a workspace reached through system-level parent links (macOS `/var → /private/var`) is no longer refused as an escape, while links inside the workspace still are.
+- 进程内引擎的重解析点拒绝收敛到工作区边界：经系统级父链链接（macOS `/var → /private/var`）进入的工作区不再被误判为逃逸，工作区内部的链接仍然拒绝。
 
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 

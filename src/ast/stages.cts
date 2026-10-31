@@ -2,7 +2,7 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
-import { reparseEscape } from './reparse.cjs';
+import { reparseBoundary, reparseEscape } from './reparse.cjs';
 import { walkBounded } from './inproc.cjs';
 import {
     PtcOutcomeError,
@@ -94,7 +94,7 @@ export async function everythingFind(cfg: PtcConfig, q: EverythingQuery): Promis
         .map((p) => path.resolve(cfg.cwd, p))
         .filter(insideRoot)
         .map(async (file) => {
-        if (reparseEscape(file))
+        if (reparseEscape(file, reparseBoundary(file, roots, path.dirname(file))))
             return null;
         try {
             return (await stat(file)).isFile() ? file : null;
@@ -122,7 +122,7 @@ export async function everythingFind(cfg: PtcConfig, q: EverythingQuery): Promis
                     break;
                 if (!test(path.basename(candidate)))
                     continue;
-                if (reparseEscape(candidate))
+                if (reparseEscape(candidate, root))
                     continue;
                 swept.push(candidate);
             }

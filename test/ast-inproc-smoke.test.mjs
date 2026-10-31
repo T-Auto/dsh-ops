@@ -1,7 +1,7 @@
 import './lib/ast-cli.mjs';
 import { inprocRefactor, inprocLocate, enumerate } from '../lib/ast/inproc.cjs';
 import { runRefactorPipeline, defaultConfig } from '../lib/ast/index.cjs';
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, mkdtempSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, mkdtempSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -114,6 +114,22 @@ chk('小树 auto 选择进程内 walk', E1.via==='walk' && E1.files.length>0, `$
 // ── 13. 枚举缓存：第二圈 0ms
 const E2 = enumerate([W], new Set(['.ts']), {strategy:'auto', cwd:W});
 chk('枚举结果命中进程内缓存', E2.cached===true && E2.files.length===E1.files.length, `cached=${E2.cached} ${E2.ms}ms`);
+
+// ── 14. reparse 定罪止步于工作区边界
+// macOS 的 tmpdir 经 /var → /private/var 进入：父链上的系统级链接不是工作区内容，
+// 不定罪（否则整个引擎对这类工作区一律 E_INPROC_NO_MATCH）；工作区内部的链接仍拒绝。
+const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+copyFileSync(SRC, join(W,'link.ts'));
+const LINKW = W + '-via-link';
+symlinkSync(W, LINKW, linkType);
+const LK = inprocRefactor({file:'link.ts',symbol:'getValidRequestBody',pattern:'return $A',rewrite:'return ($A);',mode:'apply'}, LINKW);
+chk('链接化工作区路径可改写', LK.status==='ok' && LK.edits===4, `${LK.status} ${LK.edits??LK.code}`);
+const ESC = mkdtempSync(join(tmpdir(), 'dsh-refactor-esc-'));
+mkdirSync(join(ESC,'sub'), {recursive:true});
+writeFileSync(join(ESC,'sub','escape.ts'), fixture, 'utf8');
+symlinkSync(join(ESC,'sub'), join(W,'sub'), linkType);
+const LE = inprocRefactor({file:join('sub','escape.ts'),symbol:'getValidRequestBody',pattern:'return $A',rewrite:'return ($A);',mode:'apply'}, W);
+chk('工作区内链接仍拒绝', LE.status==='error' && LE.code==='E_INPROC_NO_MATCH', LE.code);
 
 const fails=results.filter(r=>!r.ok).length;
 console.log(`\n${results.length-fails}/${results.length} PASS`);

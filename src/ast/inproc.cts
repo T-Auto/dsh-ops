@@ -8,13 +8,13 @@
  */
 import { napi } from './engine-load.cjs';
 import { readFileSync, statSync } from 'node:fs';
-import { basename, extname, resolve } from 'node:path';
+import { basename, dirname, extname, resolve } from 'node:path';
 import { enumerate } from './enumerate.cjs';
 import { InprocError } from './inproc-error.cjs';
 import { auditAst, parseAuditRoot, sgCrossCheck } from './astdiff.cjs';
 import type { AstAudit, SgCrossCheck } from './astdiff.cjs';
 import { checkedWrite, verifySnapshot } from './safe-write.cjs';
-import { reparseEscape } from './reparse.cjs';
+import { reparseBoundary, reparseEscape } from './reparse.cjs';
 import type { Lang, Rule, SgNode } from '@ast-grep/napi';
 export { clearEnumCache, enumerate, walkBounded } from './enumerate.cjs';
 export type { EnumerateResult } from './enumerate.cjs';
@@ -226,7 +226,7 @@ function rankOrdered(files: string[]): string[] {
     scored.sort((a, b) => a.score - b.score || a.i - b.i);
     return scored.map((x) => x.file);
 }
-function narrow(candidates: string[], needle: string | null | undefined, budget: number = SCAN_BUDGET): {
+function narrow(candidates: string[], needle: string | null | undefined, budget: number = SCAN_BUDGET, roots: readonly string[] = []): {
     pool: string[];
     pruned: boolean;
     prefiltered: number;
@@ -243,7 +243,7 @@ function narrow(candidates: string[], needle: string | null | undefined, budget:
         scanned += chunk.length;
         for (const f of chunk) {
             try {
-                if (reparseEscape(f))
+                if (reparseEscape(f, reparseBoundary(f, roots, dirname(f))))
                     continue;
                 if (statSync(f).size <= INPROC_MAX_BYTES && readFileSync(f, 'utf8').includes(needle))
                     hit.push(f);
@@ -452,12 +452,16 @@ export function inprocLocate(req: LocateRequest, cwd: string = process.cwd()): L
         for (let pass = 0;; pass++) {
             const retryViaWalk = () => pass === 0 && req.file === undefined && locate?.via === 'everything' && req.strategy !== 'walk';
             let candidates: string[];
+            // reparse 定罪的边界：枚举根就是工作区；调用方点名的文件以 cwd 为界，
+            // 界外组件（macOS 经 /var 进 tmpdir 这类系统级链接）是调用方的授权范围。
+            let enumRoots: readonly string[] = [resolve(cwd)];
             if (req.file) {
                 candidates = [resolve(cwd, req.file)];
             }
             else {
                 const exts = new Set((req.ext ?? ['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs']).map((e) => (e.startsWith('.') ? e : `.${e}`).toLowerCase()));
                 const roots = (req.roots ?? [cwd]).map((r) => resolve(cwd, r));
+                enumRoots = roots;
                 const e = enumerate(roots, exts, { strategy: pass === 0 ? req.strategy : 'walk', esPath: req.esPath, cwd, refresh: pass !== 0 });
                 candidates = e.files;
                 locate = { via: e.via, ms: e.ms, scanned: e.files.length, truncated: e.truncated };
@@ -469,7 +473,7 @@ export function inprocLocate(req: LocateRequest, cwd: string = process.cwd()): L
             }
             const { pool, pruned } = req.file
                 ? { pool: candidates, pruned: false }
-                : narrow(candidates, req.symbol, req.scanBudget);
+                : narrow(candidates, req.symbol, req.scanBudget, enumRoots);
             if (locate && pruned)
                 locate = { ...locate, pruned: true };
             const hits: LocateHitDraft[] = [];
@@ -483,7 +487,7 @@ export function inprocLocate(req: LocateRequest, cwd: string = process.cwd()): L
                     continue;
                 let src: string;
                 try {
-                    if (reparseEscape(file))
+                    if (reparseEscape(file, reparseBoundary(file, enumRoots, dirname(file))))
                         continue;
                     if (statSync(file).size > INPROC_MAX_BYTES)
                         continue;
@@ -602,12 +606,16 @@ export function inprocRefactor(req: InprocRequest, cwd: string = process.cwd()):
         const pending: Array<{ file: string; before: Buffer; after: string }> = [];
         let candidates: string[];
         let walked = 0;
+        // reparse 定罪的边界：枚举根就是工作区；调用方点名的文件以 cwd 为界，
+        // 界外组件（macOS 经 /var 进 tmpdir 这类系统级链接）是调用方的授权范围。
+        let enumRoots: readonly string[] = [resolve(cwd)];
         if (req.file) {
             candidates = [resolve(cwd, req.file)];
         }
         else {
             const exts = new Set((req.ext ?? ['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs']).map((e) => (e.startsWith('.') ? e : `.${e}`).toLowerCase()));
             const roots = (req.roots ?? [cwd]).map((r) => resolve(cwd, r));
+            enumRoots = roots;
             const e = enumerate(roots, exts, { strategy: req.strategy, esPath: req.esPath, cwd });
             walked = e.files.length;
             candidates = e.files;
@@ -618,7 +626,7 @@ export function inprocRefactor(req: InprocRequest, cwd: string = process.cwd()):
         }
         const { pool, pruned } = req.file
             ? { pool: candidates, pruned: false }
-            : narrow(candidates, req.symbol ?? null, req.scanBudget);
+            : narrow(candidates, req.symbol ?? null, req.scanBudget, enumRoots);
         if (pruned && locate)
             locate = { ...locate, pruned: true };
         candidates = pool;
@@ -628,7 +636,7 @@ export function inprocRefactor(req: InprocRequest, cwd: string = process.cwd()):
             if (touched.length >= limit)
                 break;
             let size: number;
-            if (reparseEscape(file))
+            if (reparseEscape(file, reparseBoundary(file, enumRoots, dirname(file))))
                 continue;
             try {
                 size = statSync(file).size;

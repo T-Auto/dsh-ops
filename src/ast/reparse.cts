@@ -19,10 +19,25 @@ import * as path from 'node:path';
 
 export const REPARSE_DENIED = 'Links, reparse points and special objects are not traversed; inspect the target path for the offending entry';
 
-/** Walk to the volume root, naming the first reparse point. Absence is not a verdict. */
-function walk(target: string): string | undefined {
+/**
+ * Walk to `boundary` (exclusive), naming the first reparse point. Absence is not a verdict.
+ *
+ * The boundary is the workspace root the caller chose: components at or above it — macOS reaches
+ * a tmpdir through `/var → /private/var`, for example — are system-level links, not workspace
+ * content, and the caller's choice of workspace is their authority decision. Only a link at or
+ * below the boundary can route a workspace read outside the workspace, so only those are named.
+ * Without a boundary the walk keeps the old strictness and goes to the volume root.
+ */
+function walk(target: string, boundary?: string): string | undefined {
+    const stop = boundary === undefined ? undefined : path.resolve(boundary);
     let current = path.resolve(target);
     for (;;) {
+        if (stop !== undefined) {
+            const low = current.toLowerCase();
+            const stopLow = stop.toLowerCase();
+            if (low === stopLow || !low.startsWith(stopLow + path.sep))
+                return undefined;
+        }
         let stat: fs.Stats;
         try {
             stat = fs.lstatSync(current);
@@ -43,9 +58,9 @@ function walk(target: string): string | undefined {
  * The first component at or below `target` that is a reparse point, or `undefined`.
  *
  * A missing path returns `undefined`: absence is the caller's problem to report, not a policy
- * verdict. Stops at the volume root.
+ * verdict. With a `boundary`, the walk stops there; without one it stops at the volume root.
  */
-export function reparseEscape(target: string): string | undefined {
+export function reparseEscape(target: string, boundary?: string): string | undefined {
     if (typeof target !== 'string' || target === '')
         return undefined;
     const resolved = path.resolve(target);
@@ -60,5 +75,24 @@ export function reparseEscape(target: string): string | undefined {
     // "要再看一眼"，真正定罪仍由 lstat 链给出。
     if (real.toLowerCase() === resolved.toLowerCase())
         return undefined;
-    return walk(resolved);
+    return walk(resolved, boundary);
+}
+
+/**
+ * The enumerated root that contains `file` (longest prefix wins), or `fallback`.
+ *
+ * Enumeration hands back paths under one of the roots, so the containing root is the workspace
+ * boundary for that candidate. Callers whose file came from outside the roots pass a fallback —
+ * the file's own directory, so only the named path itself is judged, never its ancestry.
+ */
+export function reparseBoundary(file: string, roots: readonly string[], fallback?: string): string | undefined {
+    const low = path.resolve(file).toLowerCase();
+    let best: string | undefined;
+    for (const root of roots) {
+        const resolved = path.resolve(root);
+        const rootLow = resolved.toLowerCase();
+        if ((low === rootLow || low.startsWith(rootLow + path.sep)) && (best === undefined || resolved.length > best.length))
+            best = resolved;
+    }
+    return best ?? fallback;
 }
