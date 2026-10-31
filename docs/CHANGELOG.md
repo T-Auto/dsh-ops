@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Bound an unattributed `tools/change` on the PTC side: a bare registration cannot move a presentation mode, because the collapsed section text and the wire projection depend on the mode alone, so only a `system-prompt/change` since the last re-derivation — the trace a `presentAs(mode)` flip leaves — spends the probe. The republish itself is never skipped, because a restriction or a scoped shadow moves what a Native session sees while the probed surface stays identical, and a probe a superseded publish still owes is spent rather than dropped. The assembly guard gains the symmetric upgrade: a prompt that already presents PTC-only publishes the APIs it promises before it is served, without retrying a refused upgrade. One unattributed change over 198 live sessions cost 198 assemblies before and 0 after.
+- PTC 侧同样收敛未点名的 `tools/change`：裸注册无法移动展示模式（折叠段落文本与 wire 投影只取决于模式），因此只有自上次重判以来发生过 `system-prompt/change`——也就是 `presentAs(mode)` 翻转留下的痕迹——才花这一次探测。重发布本身不被跳过，因为限制或作用域遮蔽会改变 Native 会话可见集合而探测所看的 surface 毫无变化；被发布抢占、尚未兑现的探测会补上而不是丢弃。装配守卫补上对称的升级分支：prompt 已经呈现 PTC-only 时先发布它承诺的 API 再交付，且不会对已拒绝的升级反复重试。198 个存活会话上的单次未点名变化，修复前 198 次装配，修复后 0 次。
+
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 
 - This unstable prerelease summarizes changes since v0.5.0-alpha2; use an isolated test environment.
