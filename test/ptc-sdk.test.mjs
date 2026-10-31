@@ -6,7 +6,7 @@ import FileSystem from '@deepseek-ai/dsh-fs-local'
 import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { assertSupportedJsonSchema, jsonSchemaToTs } from '@deepseek-ai/dsh-tools'
-import { assert, test, report, withTempDir, waitFor } from './lib/harness.mjs'
+import { assert, test, report, withTempDir, wait, waitFor } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
 import * as ptcModule from '../lib/ptc/index.js'
@@ -232,6 +232,46 @@ await test('nested foreign ancestor masks cannot borrow an unrelated OPS attribu
       mask();remove()
       await waitFor(()=>ctx.get('tools').get('ops_read_files',child)!==undefined)
     } finally {await shutdown(ctx)}
+  })
+})
+await test('an unattributed tools/change assembles no prompt for a live Native session', async () => {
+  await withTempDir('ptc-unattributed-lazy', async root => {
+    const { ctx, agent } = await setup(root)
+    try {
+      const ptcOwner = await agent(), natives = [await agent('native'), await agent('native'), await agent('native')]
+      await waitFor(() => visible(ctx, ptcOwner).length > 0, { timeoutMs: 5000, what: 'the PTC row publishes' })
+      for (const native of natives) assert.equal(visible(ctx, native).includes('ops_load_sdk'), false, 'a Native row stays Native')
+      const prompt = ctx.get('systemPrompt'), assemble = prompt.assemble.bind(prompt)
+      let assemblies = 0
+      prompt.assemble = context => { ++assemblies; return assemble(context) }
+      // The official host emits `tools/change` with no payload, so nothing is attributable
+      // to a scope. A registry change cannot move a presentation mode, so the change owes
+      // no probe: paying one full assembly per live session is the defect this guards.
+      await ctx.serial('tools/change', {})
+      await wait(300)
+      assert.equal(assemblies, 0, 'an unattributed tools/change must not assemble a prompt per live session')
+      // Losing no capability: the next step still probes and the published rows survive.
+      await step(ctx, ptcOwner)
+      assert.ok(visible(ctx, ptcOwner).length > 0, 'the PTC row stays published across the deferred change')
+      assert.equal(visible(ctx, natives[0]).includes('ops_load_sdk'), false, 'Native sessions stay Native')
+    } finally { await shutdown(ctx) }
+  })
+})
+await test('a prompt change re-derives the verdict of an unattributed registry change', async () => {
+  // `presentAs(mode)` flips a session without a tool-registry event of its own: it
+  // registers or drops the collapsed and SDK prompt sections, and the registry change
+  // it causes carries no scope. The prompt change is the only evidence, so it must
+  // spend the probe the bare change is allowed to skip.
+  await withTempDir('ptc-prompt-flip', async root => {
+    const { ctx, agent } = await setup(root)
+    try {
+      const value = await agent('native')
+      assert.equal(visible(ctx, value).includes('ops_load_sdk'), false, 'a Native row starts Native')
+      value.lift()
+      await value.ctx.plugin({ inject: ['tools'], apply(inner) { value.lift = inner.tools.presentAs('ptc') } })
+      await ctx.serial('tools/change', {})
+      await waitFor(() => visible(ctx, value).includes('ops_load_sdk'), { timeoutMs: 5000, what: 'the flipped session publishes the PTC row' })
+    } finally { await shutdown(ctx) }
   })
 })
 report('ptc-sdk')
