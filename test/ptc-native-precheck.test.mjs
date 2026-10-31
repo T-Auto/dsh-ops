@@ -77,14 +77,21 @@ await test('a scope that flips to PTC is still probed, so the precheck never swa
   } finally { host.restore(); await shutdown(host.ctx) }
 })
 
-await test('a both-mode deployment keeps probing, because only `ptc` renders the collapsed section', async () => {
-  const host = await setup('both')
+await test('only a mode the precheck can answer from the chain is skipped, so an unfamiliar one still probes', async () => {
+  const host = await setup('native')
+  const modeFor = host.tools.modeFor
   try {
+    // rc.5 deleted the `both` mode, so a live registry can no longer resolve to a
+    // representation whose collapsed section this plugin cannot render. The check
+    // that matters is the one the deleted mode exposed: a mode the precheck cannot
+    // answer from the scope chain must still pay the probe.
+    assert.equal(typeof modeFor, 'function', 'the seam this case pins is the registry mode resolver')
+    host.tools.modeFor = () => 'both'
     host.reset()
     await host.ctx.serial('tools/change', {})
     await flush()
-    assert.ok(host.counted() > 0, 'a non-ptc but non-native mode still owes the verdict it cannot answer from the scope chain')
-  } finally { host.restore(); await shutdown(host.ctx) }
+    assert.equal(host.counted(), 12, 'an unresolvable mode owes a probe per scope')
+  } finally { host.tools.modeFor = modeFor; host.restore(); await shutdown(host.ctx) }
 })
 
 report('ptc-native-precheck')
