@@ -90,9 +90,33 @@ export function trackNativeShadow(ctx: Host, scope: unknown, definition: ToolDef
   owner.shadows.add(shadow)
   return () => { owner.shadows.delete(shadow) }
 }
+/**
+ * A name lookup over one scope's visible definitions, read from a single view.
+ *
+ * `tools.get(name, scope)` IS `this.view(scope).visible.get(name)`, so asking it
+ * per provider rebuilds the whole scope view per provider and makes a scan of P
+ * candidates cost P view copies. A PTC publish scans every provider of every live
+ * scope, which made one unattributed change rebuild the view 82,365 times over
+ * 198 sessions. The view already holds every answer this scan needs, so read it
+ * once and look the names up in the map it returned. A host that serves no view
+ * still has `get()`; correctness outranks the cost, exactly as in `surfaceOf`.
+ * @param tools - the tool registry, or undefined before it is provided.
+ * @param scope - the scope to read, or undefined for the global layer.
+ * @returns a lookup returning the definition that scope resolves, if any.
+ */
+function visibleOf(tools: ReturnType<Host['get']>, scope: unknown): (name: string) => ToolDefinition | undefined {
+  if (tools === undefined) return () => undefined
+  const view = (tools as unknown as { view?(scope?: object): { visible?: Map<string, unknown> } | undefined }).view?.(scope as object)
+  if (view?.visible instanceof Map) {
+    const visible = view.visible
+    return name => visible.get(name) as ToolDefinition | undefined
+  }
+  return name => tools?.get(name, scope)
+}
+
 /** Capture before publishing PTC: external restrictions and sibling scopes remain authoritative. */
 export function nativeProviders(ctx: Host, scope: unknown, respectSelections = false): NativeProvider[] {
-  const tools = ctx.get('tools'), owner = state(ctx)
-  return [...owner.providers, ...owner.shadows].filter(provider => provider.active && tools?.get(provider.definition.name, scope) === provider.definition
+  const owner = state(ctx), visible = visibleOf(ctx.get('tools'), scope)
+  return [...owner.providers, ...owner.shadows].filter(provider => provider.active && visible(provider.definition.name) === provider.definition
     && (!respectSelections || selectionAllows(owner, scope, provider)))
 }
