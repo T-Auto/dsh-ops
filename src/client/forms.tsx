@@ -17,10 +17,10 @@ export function useEditor<T>(form: ConfigPageForm | undefined, read: (value: Rec
   const [baseline, setBaseline] = useState<Record<string, unknown>>(() => form?.state.value ?? {})
   const [revision, setRevision] = useState(form?.state.revision)
   const [dirty, setDirty] = useState(false), [busy, setBusy] = useState(false), [message, setMessage] = useState('')
-  // The host omits `mode` for a row page in this version; absence means "host",
-  // and only an explicit non-host mode (or a read-only form) blocks editing.
+  // A ready Host document that accepts writes is editable. The Host used to
+  // distinguish its own page from another editor's with a `mode` field; that
+  // field is gone, so writability is the only gate left.
   const ready = form?.state.status === 'ready' && form.state.writable !== false
-    && (form.state.mode === undefined || form.state.mode === 'host')
   useEffect(() => {
     if (!dirty) { setDraft(read(form?.state.value ?? {})); setBaseline(form?.state.value ?? {}); setRevision(form?.state.revision) }
   }, [form?.state.revision, form?.state.status, read, dirty])

@@ -183,11 +183,10 @@ export async function officialToolHidingMountChecks() {
       const warnings = warningsFrom(ctx)
       await mount(ctx)
       const agent = await mint(ctx, 'transport-not-exempt')
-      const lift = agent.ctx.tools.presentAs('both')
+      const lift = agent.ctx.tools.presentAs('ptc')
       const assembly = await assemble(ctx, agent)
       assert.ok(assembly.tools.some(schema => schema.name === 'run_code'))
       assert.deepEqual(warnings.filter(message => message.includes('dsh-ops hide-official')), [])
-      assert.equal((await execute(ctx, agent, publicToolName('glob'))).isError, false)
       lift()
       await assemble(ctx, agent)
     } finally { await shutdown(ctx) }
@@ -431,7 +430,7 @@ export async function officialToolHidingMountChecks() {
       }
     } finally { await shutdown(ctx) }
   })
-  await test('a mixed presentation is not mistaken for a collapsed one', async () => {
+  await test('a deferred tool array is judged by the ptc-only section', async () => {
     const { ctx } = await bootHost()
     try {
       ctx.provide('ptcRuntime', { language: 'typescript' })
@@ -443,10 +442,10 @@ export async function officialToolHidingMountChecks() {
         return { ...await next(), tools }
       })
       await mount(ctx)
-      const agent = await mint(ctx, 'both-after-assembly')
-      const lift = agent.ctx.tools.presentAs('both')
+      const agent = await mint(ctx, 'ptc-deferred-after-assembly')
+      const lift = agent.ctx.tools.presentAs('ptc')
       const assembly = await assemble(ctx, agent)
-      assert.ok(assembly.tools.some(entry => entry.name === 'run_code'), 'a mixed scope keeps the transport')
+      assert.ok(assembly.tools.some(entry => entry.name === 'run_code'), 'the transport survives the deferred array')
       assert.equal(scopedToolNames(ctx, agent).includes('read'), false, 'the replacement mask still applies')
       lift()
     } finally { await shutdown(ctx) }

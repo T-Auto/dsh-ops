@@ -53,7 +53,7 @@ async function mintAgent(ctx, presets, { id, mode, root, preset, presentation })
 for (const mode of ['read-only', 'workspace-write', 'danger-full-access']) {
   await test(`default bundle publishes the matching preset surface with standard fs/search under ${mode}`, async () => {
     await withTempDir('bundle-startup', async root => {
-      const { ctx } = await bootHost()
+      const { ctx } = await bootHost({ withWorkingDirectory: true })
       try {
         await ctx.plugin(Subprocess)
         await ctx.plugin(Sandbox, {})

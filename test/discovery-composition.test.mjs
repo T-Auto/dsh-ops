@@ -21,7 +21,7 @@ const names = (ctx, agent) => ctx.get('tools').schemas(agent).map(tool => tool.n
 const step = (ctx, agent) => ctx.waterfall('agent/pre-step', { agent, messages: [], turn: 1, step: ++sequence, signal: new AbortController().signal }, async () => ({ kind: 'continue' }))
 const call = (ctx, agent, name, args) => ctx.get('tools').execute({ agent, name, arguments: args, callId: 'combined-' + ++sequence, signal: new AbortController().signal })
 async function setup(dir, discoveryFirst = true) {
-  const { ctx } = await bootHost()
+  const { ctx } = await bootHost({ withWorkingDirectory: true })
   const agents = []; ctx.provide('agents', { list: () => agents })
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem); await ctx.plugin(NodePtc)
   await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: ({ session } = {}) => ({ mode: session?.mode ?? 'workspace-write', workspaceRoot: dir, sessionId: session?.id }) }))
@@ -46,7 +46,7 @@ for (const discoveryFirst of [true, false]) await test('combined Native/PTC/disc
   const { ctx, mint, mountFile, discoverRow } = await setup(dir, discoveryFirst)
   try {
     fs.writeFileSync(path.join(dir, 'sample.txt'), 'small\n')
-    const native = await mint(), code = await mint('ptc'), child = await mint('native', code), sibling = await mint('both')
+    const native = await mint(), code = await mint('ptc'), child = await mint('native', code), sibling = await mint('ptc')
     const fileRow = await mountFile(native.ctx)
     await waitFor(() => names(ctx, native).includes('ops_read_files'))
     for (const scope of [native, child, sibling]) assert.equal(names(ctx, scope).includes('ops_stat'), false)

@@ -20,7 +20,7 @@ requireWorker('ptc-sdk')
 let serial = 0
 const visible = (ctx, agent) => ctx.get('tools').schemas(agent).map(tool => tool.name).filter(name => name.startsWith('ops_')).sort()
 async function setup(root, { native = false, config = {}, real = false } = {}) {
-  const { ctx } = await bootHost()
+  const { ctx } = await bootHost({ withWorkingDirectory: true })
   const agents = []; ctx.provide('agents', { list: () => agents })
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem)
   await ctx.plugin(inner => {

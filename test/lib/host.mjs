@@ -18,15 +18,27 @@ import { PACKAGE_ROOT } from './harness.mjs'
 import { legacyComponent } from './legacy-component.mjs'
 
 /**
+ * The directory service rc.5's `run_code` asks for, over a session's committed cwd.
+ * @param {string} fallback - the directory a session without a committed cwd reports.
+ * @returns {object} the provided service shape.
+ */
+export const workingDirectoryOver = fallback => ({
+  get: (session) => session?.header?.cwd ?? fallback,
+  ensure: async (agent) => agent?.session?.header?.cwd ?? fallback,
+  set: async (_agent, target) => target ?? fallback,
+})
+
+/**
  * Boot a context with the real prompt and tool services installed.
  * @param {object} [options] - boot inputs.
  * @param {boolean} [options.withTools] - install the tool registry (default true).
  * @param {boolean} [options.withSystemPrompt] - install the prompt registry (default true).
  * @param {boolean} [options.keepLogger] - keep Cordis's console logging (default false).
  * @param {'native'|'ptc'} [options.toolsMode] - deployment presentation mode (default native).
+ * @param {boolean} [options.withWorkingDirectory] - provide the directory service rc.5's `run_code` asks for (default false).
  * @returns {Promise<{ctx: Context, tools: any, prompt: any}>} the host.
  */
-export async function bootHost({ withTools = true, withSystemPrompt = true, keepLogger = false, toolsMode = 'native' } = {}) {
+export async function bootHost({ withTools = true, withSystemPrompt = true, keepLogger = false, toolsMode = 'native', withWorkingDirectory = false } = {}) {
   const ctx = new Context()
   if (!keepLogger) {
     // Cordis logs service and plugin activity at info level; a gate that prints
@@ -41,6 +53,11 @@ export async function bootHost({ withTools = true, withSystemPrompt = true, keep
     const ToolRuntime = (await import('@deepseek-ai/dsh-tools')).default
     await ctx.plugin(ToolRuntime, { mode: toolsMode })
   }
+  // rc.5 routes `run_code` through the host's working-directory service: a call
+  // carrying an Agent asks it which directory the code runs in and throws when
+  // the service is absent. Only the suites that really run code opt in, so the
+  // rest keep exercising a host shaped like the ones that never install it.
+  if (withWorkingDirectory) ctx.provide('workingDirectory', workingDirectoryOver(process.cwd()))
   return { ctx, tools: ctx.get('tools'), prompt: ctx.get('systemPrompt') }
 }
 

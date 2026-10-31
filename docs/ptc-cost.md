@@ -3,7 +3,7 @@
 ## What was measured
 
 `test/ptc-cost.test.mjs` assembles the real pinned DSH 0.2.0-rc.2 host prompt and wire
-schemas under native, PTC-only and hybrid/both presentation. It records host-only,
+schemas under native and PTC-only presentation. It records host-only,
 file+shell, and file+shell+PTC enhancement stages. File/shell are held constant for
 the enhancement delta. No tool or model request is executed by this probe.
 
@@ -13,7 +13,6 @@ Windows x64 / Node 24 local observation after #160/#171 fixes:
 | --- | ---: | ---: |
 | native | 0 | 0 |
 | PTC-only | 4671 | 0 |
-| hybrid/both | 0 | 0 |
 
 These are **characters/bytes, not tokens**. The exact number is diagnostic rather
 than a frozen gate; the test asserts isolation and reports the current delta.

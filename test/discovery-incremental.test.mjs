@@ -145,7 +145,7 @@ await test('runtime invalidation waits for the real asynchronous Fiber restart t
   } finally { release?.(); await shutdown(ctx) }
 }))
 
-await test('Native, PTC and both mode changes retain scoped ownership and restore on unload', () => withTempDir('discovery-incremental', async dir => {
+await test('Native, PTC and re-declared mode changes retain scoped ownership and restore on unload', () => withTempDir('discovery-incremental', async dir => {
   const { ctx, mint, mount, flush } = await setup(dir)
   try {
     ctx.provide('ptcRuntime', { language: 'typescript' })
@@ -154,7 +154,7 @@ await test('Native, PTC and both mode changes retain scoped ownership and restor
     await flush(parent); await flush(child)
     assert.equal(visible(ctx, parent), false); assert.equal(visible(ctx, child), false)
     assert.equal(visible(ctx, sibling), true)
-    const both = child.ctx.tools.presentAs('both')
+    const native = child.ctx.tools.presentAs('native')
     await flush(child)
     assert.equal(visible(ctx, child), true)
     const second = await mount(child.ctx, { alwaysLoaded: ['stat'] })
@@ -164,7 +164,7 @@ await test('Native, PTC and both mode changes retain scoped ownership and restor
     await second.dispose(); await flush(child)
     assert.equal(visible(ctx, child, 'ops_stat'), false)
     assert.equal((await cached.execute({ path: '.' }, { agent: child })).status, 'rejected')
-    both(); lift(); await flush(parent); await flush(child)
+    native(); lift(); await flush(parent); await flush(child)
     assert.equal(visible(ctx, parent), true); assert.equal(visible(ctx, child), true)
   } finally { await shutdown(ctx) }
 }))
@@ -317,24 +317,10 @@ await test('overlapping agent creation preserves new work without reprobes of ol
   } finally { release?.(); await shutdown(ctx) }
 }))
 
-await test('optional PTC runtime mount and unmount refresh failed both-mode probes', () => withTempDir('discovery-incremental', async dir => {
-  const { ctx, mint, flush } = await setup(dir)
-  try {
-    const owner = await mint()
-    const lift = owner.ctx.tools.presentAs('both')
-    // Without a runtime the host rejects this presentation before its waterfall.
-    await waitFor(() => !visible(ctx, owner))
-    const mountRuntime = () => ctx.plugin(inner => inner.provide('ptcRuntime', { language: 'typescript' }))
-    const runtime = await mountRuntime()
-    await flush(owner)
-    assert.equal(visible(ctx, owner), true)
-    await runtime.dispose()
-    await waitFor(() => !visible(ctx, owner))
-    await mountRuntime(); await flush(owner)
-    assert.equal(visible(ctx, owner), true)
-    lift()
-  } finally { await shutdown(ctx) }
-}))
+// rc.5 dropped the `both` presentation: a scope is native or PTC, and a pure PTC
+// scope never publishes discovery. The mixed scope this case needed — a discovery
+// row published beside a PTC transport whose availability tracked `ptcRuntime` —
+// can no longer be constructed, so the case retires with the presentation it tested.
 
 await test('unloading during a probe cannot resurrect registrations or leave change listeners', () => withTempDir('discovery-incremental', async dir => {
   const { ctx, row, counts, mint } = await setup(dir)
