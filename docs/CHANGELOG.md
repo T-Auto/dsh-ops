@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Skip full prompt assembly for native-mode scopes via `modeFor` precheck, eliminating O(N) probe assemblies during unattributed `tools/change` events (#490).
+- 通过 `modeFor` 预检跳过 native 模式作用域的完整 prompt 装配，消除未归属 `tools/change` 事件中的 O(N) 探针装配（#490）。
+
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 
 - This unstable prerelease summarizes changes since v0.5.0-alpha2; use an isolated test environment.

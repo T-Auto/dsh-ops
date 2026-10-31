@@ -113,9 +113,12 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
     const same = (left: unknown[], right: unknown[]) => left.length === right.length && left.every((value, index) => value === right[index])
     // Only background reconciliation reuses a probe. A step or execution can
     // observe arbitrary dynamic prompt providers with no registry notification.
+    const modeOf = (agent: Agent): string | undefined => (tools as unknown as { modeFor?: (scope: object) => string }).modeFor?.(agent)
     const native = async (agent: Agent, fresh = false, signal?: AbortSignal): Promise<boolean> => {
       const entry = entries.get(agent)
       if (!entry || !gate.allows(agent)) return false
+      // A native-mode scope presents no PTC-only text — skip the full assembly.
+      if (modeOf(agent) === 'native') return true
       if (fresh) invalidate(entry)
       const current = inputs(agent), revision = entry.revision
       if (entry.presentation && same(entry.presentation.inputs, current)) return entry.presentation.native
