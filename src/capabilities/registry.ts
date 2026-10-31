@@ -14,7 +14,7 @@ const fileOrder = ['inspect_local_file', 'grep', 'glob', 'replace', 'write_file'
 const fileMutations = new Set<FileToolName>(['replace', 'write_file', 'edit_file', 'copy', 'move', 'remove'])
 const continuationReaders = new Set<FileToolName>(['inspect_local_file', 'read_files', 'glob', 'grep', 'diff', 'read_table', 'read_docx', 'read_pdf'])
 const observedReaders = new Set<FileToolName>(['inspect_local_file', 'read_files'])
-const allPresentations = Object.freeze(['native', 'ptc', 'both'] as const)
+const allPresentations = Object.freeze(['native', 'ptc'] as const)
 
 export const FILE_CAPABILITIES = Object.freeze(fileOrder.map(rawName => Object.freeze({
   rawName, component: 'file' as const, presentations: allPresentations,
@@ -38,7 +38,7 @@ export const SHELL_CAPABILITIES = Object.freeze([Object.freeze({
   availability: 'resident', mutates: true, concurrencySafe: false,
 } as const satisfies CapabilityMetadata)])
 export const DISCOVERY_CAPABILITIES = Object.freeze([Object.freeze({
-  rawName: 'discover_tools', component: 'discovery', presentations: Object.freeze(['native', 'both'] as const),
+  rawName: 'discover_tools', component: 'discovery', presentations: Object.freeze(['native'] as const),
   availability: 'resident', mutates: false, concurrencySafe: false,
   parameters: DISCOVERY_PARAMETERS, description: DISCOVERY_DESCRIPTION, output: DISCOVERY_OUTPUT,
 } as const satisfies SchemaCapability)])

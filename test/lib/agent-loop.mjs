@@ -18,9 +18,12 @@ import * as ptc from '../../lib/components/ptc/index.js'
 import { assert } from './harness.mjs'
 import { WORKER } from './boundary.mjs'
 import { legacyComponent } from './legacy-component.mjs'
+import { workingDirectoryOver } from './host.mjs'
 let identity = 0
 export async function bootLoop(root, { ptcMode = false, discoveryConfig = {} } = {}) {
   const ctx = new Context(); ctx.logger.level = 0
+  // rc.5 asks the host for the directory a run_code call executes in.
+  ctx.provide('workingDirectory', workingDirectoryOver(root))
   const queues = new Map(), requests = [], results = [], errors = []
   for (const plugin of [Agents, Sessions, Projections, Prompt]) await ctx.plugin(plugin, {})
   await ctx.plugin(Tools, { mode: ptcMode ? 'ptc' : 'native' })
@@ -55,7 +58,8 @@ export async function bootLoop(root, { ptcMode = false, discoveryConfig = {} } =
   async function run(agent, scripts) {
     const start = { requests: requests.length, results: results.length, errors: errors.length }
     queues.set(agent.session.id, [...scripts])
-    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Run the deterministic fixture.' }] }))
+    // rc.5 requires every message to carry its producer's source.
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Run the deterministic fixture.' }], source: { kind: 'user' } }))
     await agent.whenIdle()
     assert.deepEqual(errors.slice(start.errors), [])
     assert.equal(queues.get(agent.session.id).length, 0)

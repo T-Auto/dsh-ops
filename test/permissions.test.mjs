@@ -291,7 +291,7 @@ await test('owned Modify-only workspace starts real DSH sandbox; three modes and
     // Strip broad inherited grants only on this test-owned directory. Recreate
     // the actual reported prerequisite: owner + Modify, no WRITE_OWNER.
     if(process.platform==='win32') ps(`$p='${root.replaceAll("'","''")}'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $a=[Security.AccessControl.DirectorySecurity]::new(); $a.SetOwner($sid); $a.SetAccessRuleProtection($true,$false); $a.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,'Modify','ContainerInherit,ObjectInherit','None','Allow')); Set-Acl -LiteralPath $p -AclObject $a`)
-    const {ctx}=await bootHost()
+    const {ctx}=await bootHost({ withWorkingDirectory: true })
     const agent={id:'matrix',session:{id:'matrix',mode:'workspace-write',header:{cwd:root},append(){return Promise.resolve()},read(){return []}}}
     agent.ctx=createScope(ctx,agent).ctx
     try {

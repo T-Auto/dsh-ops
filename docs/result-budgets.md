@@ -33,7 +33,7 @@ cannot be requested through model tool arguments.
 
 The file row provides Native ops_result with page/release only, independently of the PTC row.
 The single result catalogue entry also supplies PTC put/page/release; PTC-only scopes retain the
-richer schema, and Native/both descendants receive the file row's page-only projection. Disabling
+richer schema, and Native descendants receive the file row's page-only projection. Disabling
 file withdraws that projection while the PTC row remains independent. Advanced discovery owns
 its later on-demand publication; enabling the pager does not change any official tool.
 
