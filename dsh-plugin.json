@@ -138,6 +138,11 @@
           "ops_read_docx",
           "ops_read_pdf",
           "ops_batch",
+          "ops_ast_locate",
+          "ops_ast_find",
+          "ops_ast_refactor",
+          "ops_ast_inproc",
+          "ops_ast_audit",
           "ops_load_sdk",
           "ops_discover_tools"
         ],

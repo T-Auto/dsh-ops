@@ -9,8 +9,9 @@ await test('both PTC arguments and outputs render real SDK shapes, never unknown
     assertSupportedJsonSchema(OUTPUT)
     const args = jsonSchemaToTs(PARAMETERS[tool])
     assert.notEqual(args, 'unknown')
-    assert.match(args, /action/)
-    assert.match(args, tool === 'batch' ? /operations/ : /maxBytes/)
+    // Every required argument has to survive into the generated TypeScript: a schema that renders
+    // without naming its own required fields is one the model cannot call correctly.
+    for (const field of PARAMETERS[tool].required) assert.match(args, new RegExp(`\\b${field}\\b`), `${tool} renders ${field}`)
     assert.notEqual(jsonSchemaToTs(OUTPUT), 'unknown')
   }
 })

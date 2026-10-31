@@ -10,11 +10,11 @@ import { BASH_TOOL_NAME } from '../lib/shells/constants.js'
 import { assert, test, report } from './lib/harness.mjs'
 
 await test('the catalogue covers every owned file, PTC and shell tool exactly once', () => {
-  assert.equal(CAPABILITIES.length, 20)
+  assert.equal(CAPABILITIES.length, 25)
   assert.equal(new Set(CAPABILITIES.map(item => item.rawName)).size, CAPABILITIES.length)
   assert.deepEqual(FILE_TOOLS, ['inspect_local_file', 'grep', 'glob', 'replace', 'write_file', 'edit_file', 'diff', 'stat', 'copy', 'move', 'remove', 'read_files', 'read_table', 'read_docx', 'read_pdf'])
   assert.deepEqual(FILE_MUTATIONS, ['replace', 'write_file', 'edit_file', 'copy', 'move', 'remove'])
-  assert.deepEqual(PTC_TOOLS, ['batch', 'result'])
+  assert.deepEqual(PTC_TOOLS, ['batch', 'result', 'ast_locate', 'ast_find', 'ast_refactor', 'ast_inproc', 'ast_audit'])
   assert.deepEqual(IN_PROCESS_TOOLS, ['bash'])
   assert.equal(BASH_TOOL_NAME, BASH_TOOL)
   for (const [entries, parameters, descriptions] of [[FILE_CAPABILITIES, fileParameters, fileDescriptions], [PTC_CAPABILITIES, ptcParameters, ptcDescriptions]]) {
@@ -35,10 +35,16 @@ await test('metadata separates the Native resident core from discoverable capabi
   for (const entry of PTC_CAPABILITIES) assert.deepEqual(entry.presentations, entry.rawName === 'result' ? ['native', 'ptc', 'both'] : ['ptc'])
   assert.deepEqual(NATIVE_RESIDENT_FILE_TOOLS, ['read_files'])
   assert.equal(capability('result').nativeProjection.availability, 'discoverable')
+  // PTC tools follow the same split as the file tools: the two that every AST turn starts from stay
+  // advertised, the rest are named in the catalogue but not mounted until something activates them.
+  const DISCOVERABLE_PTC = ['ast_audit', 'ast_find', 'ast_refactor']
+  assert.deepEqual(PTC_CAPABILITIES.filter(entry => entry.availability === 'discoverable').map(entry => entry.rawName).sort(), DISCOVERABLE_PTC)
   assert.deepEqual(FILE_CAPABILITIES.filter(entry => entry.availability === 'discoverable').map(entry => entry.rawName).sort(), DISCOVERABLE_TOOLS.filter(name => name !== 'result').sort())
+  const CONCURRENT_PTC = ['ast_audit', 'ast_find', 'ast_inproc', 'ast_locate']
   for (const entry of CAPABILITIES) {
-    assert.equal(entry.availability, entry.component === 'file' && entry.rawName !== 'read_files' ? 'discoverable' : 'resident')
-    assert.equal(entry.concurrencySafe, entry.component === 'file' && !entry.mutates)
+    const discoverable = (entry.component === 'file' && entry.rawName !== 'read_files') || DISCOVERABLE_PTC.includes(entry.rawName)
+    assert.equal(entry.availability, discoverable ? 'discoverable' : 'resident')
+    assert.equal(entry.concurrencySafe, entry.component === 'file' ? !entry.mutates : CONCURRENT_PTC.includes(entry.rawName))
   }
 })
 

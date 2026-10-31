@@ -59,8 +59,12 @@ node lib/ast/cli.cjs --help
 
 ## 边界
 
-这份源码尚未注册进运行中的宿主，因此不会给任何会话增加工具。适配器需要可信的宿主桥接来
-承接路径策略、凭据与取消；把这条边界写清楚，正是为了不让引擎绕过宿主的权限与子进程策略。
+五个 `ops_ast_*` 工具已经通过宿主路径在进程内应答：`src/execution/ast-inproc.ts` 由两条执行桥
+（`src/execution/files.ts`、`src/execution/jobs.ts`）在任何 worker 启动与策略解析之前分派，
+因此一次 AST 定位或改写不会拉起子进程。该适配层就是可信桥，按与原生 worker 相同的顺序施加
+四道围栏：会话身份与绝对 cwd、一次权威策略解析加模式白名单、锚定之前的凭据防护、写意图必须
+workspace-write。非 `danger-full-access` 下每个具名文件与枚举根都必须落在工作区或会话 cwd 之内
+——按真实路径判断，指向外部的 junction 会被拒绝。
 
 这里刻意不提供 MCP stdio 服务。原型阶段曾有，但独立 stdio 端点调用 handler 时不经过
 沙箱策略、凭据防护与宿主授权——正是 dsh-ops 在 0.3.2 移除 FastCtx 及其 MCP 客户端时

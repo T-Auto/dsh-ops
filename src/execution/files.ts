@@ -23,6 +23,7 @@ import { withCallBudget, CallBudgetError } from '../kernel/call-budget.js'
 import { withResultSession } from '../kernel/result-lifecycle.js'
 import { resultStorage } from '../kernel/result-storage.js'
 import { resolveSessionDirectory } from '../adapter/dsh/working-directory.js'
+import { invokeAst } from './ast-inproc.js'
 
 export { resolveWorker }
 
@@ -103,6 +104,8 @@ export async function invoke(ctx: Context, file: string, tool: string, args: unk
 async function invokeTrusted(ctx: Context, file: string, tool: string, args: unknown, exec: ToolRunContext, signal: AbortSignal, cwd: string, config?: WorkerInvokeConfig): Promise<unknown> {
   const session = exec?.agent?.session
   if (!session?.id || typeof cwd !== 'string' || !path.isAbsolute(cwd)) return failure('EXECUTOR_UNAVAILABLE', 'An authoritative session identity and cwd are required.')
+  // ops_ast_* are answered in-process by the AST engine; the native worker is never spawned for them.
+  if (tool.startsWith('ast_')) return invokeAst(tool, ctx, args, exec, signal)
   const policyService: SandboxPolicyService | undefined = ctx.get('sandboxPolicy')
   const subprocess: SubprocessRuntime | undefined = ctx.get('subprocess')
   if (!policyService?.resolve || !subprocess?.spawn) return failure('EXECUTOR_UNAVAILABLE', 'DSH policy and subprocess services are required.')

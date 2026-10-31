@@ -15,7 +15,7 @@ PTC 行配置由统一配置入口验证：
 | binaryPath | 打包的 worker | 可选的绝对 worker 可执行文件路径。 |
 | required | false | worker 不可用时令组件启动失败。 |
 
-高级名称为 grep、glob、replace、write_file、edit_file、diff、stat、copy、move、remove、read_files、read_table、read_docx、read_pdf、batch。每次原子验证 1–5 个名称；未知键、带公开前缀的名称、常驻 API 与未实现功能均拒绝。内置 PTC 行表单可编辑这些经过验证的数组及 required、binaryPath，并通过宿主持久化。可选自定义浏览器页面目前覆盖发现、替换和 shell，不含 PTC。新 profile 默认派生全部已实现高级 API；已保存的显式 allowedTools 数组继续优先。包括三个常驻入口在内，完整 SDK 有 18 个 API。详见[配置参考](配置参考.md)与[文档边界](原生内核.md)。
+高级名称为 grep、glob、replace、write_file、edit_file、diff、stat、copy、move、remove、read_files、read_table、read_docx、read_pdf、batch。每次原子验证 1–5 个名称；未知键、带公开前缀的名称、常驻 API 与未实现功能均拒绝。内置 PTC 行表单可编辑这些经过验证的数组及 required、binaryPath，并通过宿主持久化。可选自定义浏览器页面目前覆盖发现、替换和 shell，不含 PTC。新 profile 默认派生全部已实现高级 API；已保存的显式 allowedTools 数组继续优先。包括三个常驻入口在内，完整 SDK 有 23 个 API。详见[配置参考](配置参考.md)与[文档边界](原生内核.md)。
 
 选择绑定准确的活动代理；同级与子代理不继承其他代理加载的 SDK。同一代理内，已加载选择可保留至组件或代理卸载。沙箱模式变化会清空排队请求并取消活动调用；每次 worker 调用仍重新检查当前权限。卸载会撤回自身注册并拒绝保留的回调。切换至 Native/both 会移除 PTC API，并仅恢复文件组件此前可见的 Native 定义；重叠 PTC 配置行由最近作用域的行负责，同一作用域内后挂载行优先，卸载后恢复此前的行；不修改共享注册表。
 

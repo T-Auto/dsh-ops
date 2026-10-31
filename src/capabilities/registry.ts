@@ -24,11 +24,21 @@ export const FILE_CAPABILITIES = Object.freeze(fileOrder.map(rawName => Object.f
   supportsContinuation: continuationReaders.has(rawName), observesRead: observedReaders.has(rawName),
   parameters: fileParameters[rawName], description: fileDescriptions[rawName], output: fileOutput(rawName),
 } satisfies SchemaCapability)))
+/** Tools answered in-process by the built-in AST engine (`src/ast`), not by the native worker. */
+export const AST_TOOL_NAMES = Object.freeze(['ast_locate', 'ast_find', 'ast_refactor', 'ast_inproc', 'ast_audit'] as const satisfies readonly PtcToolName[])
+export type AstToolName = typeof AST_TOOL_NAMES[number]
+const astEngineTools = new Set<PtcToolName>(AST_TOOL_NAMES)
+/** Search and locate stay published; the writing and audit surfaces arrive through discovery. */
+const astEngineResident = new Set<PtcToolName>(['ast_locate', 'ast_inproc'])
+/** Only the refactor pipeline writes; locate/find/audit are observation. */
+const astEngineMutations = new Set<PtcToolName>(['ast_refactor'])
 export const PTC_CAPABILITIES = Object.freeze((Object.keys(ptcParameters) as PtcToolName[]).map(rawName => Object.freeze({
   rawName, component: 'ptc' as const, presentations: rawName === 'result' ? allPresentations : Object.freeze(['ptc'] as const),
   ...(rawName === 'result' ? { nativeProjection: { component: 'file' as const, availability: 'discoverable' as const, parameters: NATIVE_RESULT_PARAMETERS, description: NATIVE_RESULT_DESCRIPTION } } : {}),
-  availability: 'resident' as const, mutates: true, concurrencySafe: false,
-  ptcAvailability: rawName === 'result' ? 'resident' as const : 'discoverable' as const,
+  availability: astEngineTools.has(rawName) && !astEngineResident.has(rawName) ? 'discoverable' as const : 'resident' as const,
+  mutates: astEngineTools.has(rawName) ? astEngineMutations.has(rawName) : true,
+  concurrencySafe: astEngineTools.has(rawName) && !astEngineMutations.has(rawName),
+  ptcAvailability: rawName === 'result' || astEngineResident.has(rawName) ? 'resident' as const : 'discoverable' as const,
   supportsContinuation: rawName === 'result',
   parameters: ptcParameters[rawName], description: ptcDescriptions[rawName], output: ptcOutput,
 } satisfies SchemaCapability)))

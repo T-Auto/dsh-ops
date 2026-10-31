@@ -66,10 +66,14 @@ never silently counted as a pass.
 
 ## Boundary
 
-This source is not registered with the running host, so it adds no tools to any session. The
-adapter needs a trusted host bridge for path policy, credentials and cancellation; keeping that
-boundary explicit is what stops the engine from bypassing the host's permission and subprocess
-policies.
+The five `ops_ast_*` tools are answered in-process through the host path: `src/execution/ast-inproc.ts`
+is dispatched from both execution bridges (`src/execution/files.ts`, `src/execution/jobs.ts`) before any
+worker spawn or policy resolve, so an AST locate/rewrite never starts a subprocess. That adapter is the
+trusted bridge, and it applies the same four fences in the same order as the native worker: session
+identity plus absolute cwd, one authoritative policy resolve with a mode whitelist, the credential fence
+before anchoring, and write intent requiring workspace-write. Outside `danger-full-access` every named
+file and enumeration root must stay inside the workspace or session cwd — including real paths, so a
+junction that points outside is refused.
 
 There is deliberately no MCP stdio server. The prototype exposed one, but an independent
 stdio endpoint serves handlers with no sandbox policy, no credential fence and no host
