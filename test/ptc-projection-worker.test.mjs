@@ -6,6 +6,7 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { validateJsonSchemaValue, assertSupportedJsonSchema } from '@deepseek-ai/dsh-tools'
 import { definition, PTC_API_TOOLS } from '../lib/ptc/contract.js'
+import { AST_TOOL_NAMES } from '../lib/capabilities/registry.js'
 import { decodeContinuation } from '../lib/ptc/projection/continuation.js'
 import { workerEnvelope } from '../lib/worker-protocol.js'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
@@ -102,7 +103,9 @@ await test('real reference pages follow a bounded cursor to completion and relea
   })
 })
 await test('every worker API was validated and unexpected callback rejection becomes an unknown value', async () => {
-  assert.deepEqual([...seen].sort(), [...PTC_API_TOOLS].sort())
+  // PTC_API_TOOLS includes the in-process AST rows for manifest validation; this suite drives
+  // real worker receipts, so coverage here only spans the worker-served tools.
+  assert.deepEqual([...seen].sort(), [...PTC_API_TOOLS].filter(tool => !AST_TOOL_NAMES.includes(tool)).sort())
   for (const tool of ['result','write_file']) {
     const entry = definition(tool, async () => { throw new Error('private transport detail') })
     const out = await entry.execute({}, {})

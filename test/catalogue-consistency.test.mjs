@@ -1,6 +1,6 @@
 /** Shared catalogue facts must reach publication, configuration and native dispatch. */
 import fs from 'node:fs'
-import { CAPABILITIES, FILE_CAPABILITIES, PTC_CAPABILITIES, CONTINUATION_TOOLS, OBSERVED_READ_TOOLS, PTC_RESIDENT_TOOLS, DISCOVERY_TOOL_NAME } from '../lib/capabilities/registry.js'
+import { CAPABILITIES, FILE_CAPABILITIES, PTC_CAPABILITIES, AST_TOOL_NAMES, CONTINUATION_TOOLS, OBSERVED_READ_TOOLS, PTC_RESIDENT_TOOLS, DISCOVERY_TOOL_NAME } from '../lib/capabilities/registry.js'
 import { PTC_RESIDENT_TOOLS as actualResidents, PTC_LOADABLE_TOOLS } from '../lib/ptc/config.js'
 import { RAW_OFFICIAL_REPLACEMENTS, OFFICIAL_REPLACEMENT_NAMES } from '../lib/capabilities/replacements.js'
 import { OFFICIAL_REPLACEMENTS } from '../lib/official-tool-catalog.js'
@@ -19,9 +19,11 @@ requireWorker('catalogue-consistency')
 
 await test('adapter publication and retrieval classes agree with the catalogue', () => {
   assert.equal(actualResidents, PTC_RESIDENT_TOOLS)
-  assert.deepEqual(actualResidents, ['inspect_local_file', 'result'])
+  // The AST rows are answered in-process by the host adapter (AST_TOOL_NAMES), so locate/inproc
+  // publish resident alongside the file rows while find/refactor/audit stay discoverable.
+  assert.deepEqual(actualResidents, ['inspect_local_file', 'result', 'ast_locate', 'ast_inproc'])
   assert.deepEqual(PTC_LOADABLE_TOOLS, [...FILE_CAPABILITIES, ...PTC_CAPABILITIES].filter(entry => entry.ptcAvailability === 'discoverable').map(entry => entry.rawName))
-  assert.deepEqual(CAPABILITIES.filter(entry => entry.ptcAvailability === 'resident').map(entry => entry.rawName), ['inspect_local_file', 'result', 'load_sdk'])
+  assert.deepEqual(CAPABILITIES.filter(entry => entry.ptcAvailability === 'resident').map(entry => entry.rawName), ['inspect_local_file', 'result', 'ast_locate', 'ast_inproc', 'load_sdk'])
   assert.deepEqual(OBSERVED_READ_TOOLS, ['inspect_local_file', 'read_files'])
   for (const entry of CAPABILITIES) {
     const token = 'ops-next-v1:' + JSON.stringify({ version: 1, tool: entry.rawName, args: entry.rawName === 'result' ? { action: 'page' } : {} })
@@ -78,7 +80,9 @@ await test('every catalogue worker name reaches an implemented Rust dispatch bra
     return
   }
   assert.match(unknown.error.message, /Unknown capability/)
-  for (const entry of [...FILE_CAPABILITIES, ...PTC_CAPABILITIES]) {
+  // The AST engine rows never reach a worker: the host adapter answers them in-process before
+  // any spawn. They claim no Rust dispatch branch, so coverage only judges worker-served names.
+  for (const entry of [...FILE_CAPABILITIES, ...PTC_CAPABILITIES].filter(entry => !AST_TOOL_NAMES.includes(entry.rawName))) {
     const value = envelopeOf(await callTool(entry.rawName, {}, { root }), assert)
     assert.doesNotMatch(value.error?.message ?? '', /Unknown capability/, entry.rawName)
     assert.notEqual(value.error?.code, 'POLICY_DENIED', `${entry.rawName}: pre-dispatch denial hides coverage`)
