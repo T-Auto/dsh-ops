@@ -55,7 +55,7 @@ jobs:
       matrix:
         include:
           - { runner: windows-latest, target: win32-x64, triple: x86_64-pc-windows-msvc }
-          - { runner: ubuntu-24.04, target: linux-x64, triple: x86_64-unknown-linux-gnu }
+          - { runner: ubuntu-24.04, target: linux-x64, triple: x86_64-unknown-linux-musl }
           - { runner: macos-latest, target: darwin-arm64, triple: aarch64-apple-darwin }
           - { runner: macos-15-intel, target: darwin-x64, triple: x86_64-apple-darwin }
     runs-on: ${{ matrix.runner }}
@@ -99,6 +99,15 @@ jobs:
         # runtime/<target>/provenance.json carrying the executable's sha256.
         shell: bash
         run: node bin/native-runtime.mjs stage --platform ${{ matrix.target }} --input native/target/${{ matrix.triple }}/release
+
+      - name: Verify the Linux worker is statically linked
+        # The Linux x64 worker ships as a musl static-pie binary and must not
+        # inherit a GLIBC_* dependency from the build runner (ubuntu-24.04 is
+        # glibc 2.39, which older hosts cannot satisfy). A regression to the gnu
+        # triple fails here instead of on a user's glibc 2.28 host.
+        if: matrix.target == 'linux-x64'
+        shell: bash
+        run: file runtime/linux-x64/dsh-ops-worker | grep -Eq 'statically linked|static-pie linked'
 
       - name: Acquire optional pinned Bash fixture
         if: matrix.target == 'win32-x64'

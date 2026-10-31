@@ -35,7 +35,7 @@ Sync master with main | active
 
 1. **`native`（矩阵：`windows-latest`/`win32-x64`、`ubuntu-24.04`/`linux-x64`、`macos-latest`/`darwin-arm64`、`macos-15-intel`/`darwin-x64`）**
    - 只构建 [lib/ptc/runtime.js](../lib/ptc/runtime.js) 里声明的那四个目标；Windows ARM64 与 Linux ARM64 不在矩阵内。
-   - 固定 Rust 1.97.1 与已锁定的 `Cargo.lock`；npm 平台名和 Rust triple 分列（例如 `win32-x64` 对应 `x86_64-pc-windows-msvc`），`cargo build --release --locked --target <triple>` 失败即整次发布失败。
+   - 固定 Rust 1.97.1 与已锁定的 `Cargo.lock`；npm 平台名和 Rust triple 分列（例如 `win32-x64` 对应 `x86_64-pc-windows-msvc`，`linux-x64` 对应 `x86_64-unknown-linux-musl`），`cargo build --release --locked --target <triple>` 失败即整次发布失败。Linux x64 使用 musl 静态链接，发布产物不继承构建机（ubuntu-24.04，glibc 2.39）的 `GLIBC_*` 下限；`native` job 在 stage 之后用 `file` 断言该产物为静态链接，回退到 gnu triple 会在这里失败。
    - `bin/native-runtime.mjs stage` 为目标写入 `runtime/<target>/provenance.json`（version／target／executable／sha256）——这就是本仓库的 provenance 约定；缺二进制或不是常规文件都会报错。
    - Windows 目标额外跑 `npm run build:bash-ipc`，其 receipt 由门禁按仓库内的 `native/bash-ipc/*` 源码哈希复核。
    - 产物以 `native-<target>` 上传，路径就是 CI 使用的 `runtime/<target>/`，`if-no-files-found: error`。

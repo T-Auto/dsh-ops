@@ -40,7 +40,10 @@ Usage:
                                   Remove the profile plugin and its binary dependency references
   dsh-ops status --profile <desktop|web|tui>
                                   Report target-profile installation (tui maps to dsh-tui)
-  dsh-ops build-ptc              Build the independent native Rust worker (all platforms)
+  dsh-ops build-ptc [--target <rust-triple>]
+                                  Build the independent native Rust worker (all platforms).
+                                  --target stages a cross build from native/target/<rust-triple>/release,
+                                  e.g. x86_64-unknown-linux-musl for a static Linux x64 worker.
   dsh-ops review snapshot --repo <owner/name> --prs <1,2> [--base main] [--checkout <path>]
                                   Collect bounded PR/CI evidence; optionally probe local commit objects
   dsh-ops uninstall [--yes] [--purge-fastctx]
@@ -120,6 +123,7 @@ async function main() {
       pin: { type: 'string' },
       serve: { type: 'boolean', default: false },
       port: { type: 'string' },
+      target: { type: 'string' },
     },
   })
   const command = positionals[0] ?? 'help'
@@ -148,9 +152,19 @@ async function main() {
     case 'build-ptc': {
       const cargo = findCargo()
       console.log(`toolchain: ${cargo.version}`)
-      const result = await cargoBuild({ cargo, sourceDir: path.join(PACKAGE_ROOT, 'native'), onLine: line => console.log(line) })
+      const target = values.target
+      // Reject path syntax early: the triple becomes a native/target/ child directory.
+      if (target !== undefined && (target.trim() === '' || /[\\/]/.test(target))) {
+        throw new Error(`--target must be a Rust target triple such as x86_64-unknown-linux-musl, got ${JSON.stringify(target)}`)
+      }
+      const extraArgs = target === undefined ? [] : ['--target', target]
+      const result = await cargoBuild({ cargo, sourceDir: path.join(PACKAGE_ROOT, 'native'), extraArgs, onLine: line => console.log(line) })
       if (result.code !== 0) return result.code
-      const staged = spawnSync(process.execPath, [path.join(PACKAGE_ROOT, 'bin/native-runtime.mjs'), 'stage', '--platform', `${process.platform}-${process.arch}`], { stdio: 'inherit', windowsHide: true })
+      // A --target build lands in native/target/<triple>/release; the plain host build stays in native/target/release.
+      // Both stage under this host's platform: --target selects a different ABI/libc for the same host, not another platform.
+      const input = target === undefined ? undefined : path.join(PACKAGE_ROOT, 'native', 'target', target, 'release')
+      const stageArgs = [path.join(PACKAGE_ROOT, 'bin/native-runtime.mjs'), 'stage', '--platform', `${process.platform}-${process.arch}`, ...(input === undefined ? [] : ['--input', input])]
+      const staged = spawnSync(process.execPath, stageArgs, { stdio: 'inherit', windowsHide: true })
       if (staged.error) throw staged.error
       return staged.status ?? 1
     }
