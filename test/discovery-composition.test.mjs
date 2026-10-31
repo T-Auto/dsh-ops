@@ -46,7 +46,7 @@ for (const discoveryFirst of [true, false]) await test('combined Native/PTC/disc
   const { ctx, mint, mountFile, discoverRow } = await setup(dir, discoveryFirst)
   try {
     fs.writeFileSync(path.join(dir, 'sample.txt'), 'small\n')
-    const native = await mint(), code = await mint('ptc'), child = await mint('native', code), sibling = await mint('both')
+    const native = await mint(), code = await mint('ptc'), child = await mint('native', code), sibling = await mint('ptc')
     const fileRow = await mountFile(native.ctx)
     await waitFor(() => names(ctx, native).includes('ops_read_files'))
     for (const scope of [native, child, sibling]) assert.equal(names(ctx, scope).includes('ops_stat'), false)

@@ -2,6 +2,7 @@
  * simulated workspace and confinement provider, no business code in tests.
  */
 import { ownWindowsFixture, skipSuite } from './lib/harness.mjs'
+import { workingDirectoryOver } from './lib/host.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -201,7 +202,7 @@ try {
   // provider; subprocess still starts the real worker. Never claim this is an OS sandbox test.
   const ctx = new Context(); ctx.logger.level = 0
   // rc.5 asks the host for the directory a run_code call executes in.
-  ctx.provide('workingDirectory', { get: session => session?.header?.cwd ?? dir, ensure: async agent => agent?.session?.header?.cwd ?? dir, set: async (_agent, target) => target ?? dir })
+  ctx.provide('workingDirectory', workingDirectoryOver(dir))
   const calls = []; const handles = new Set()
   const subprocess = { spawn(spec) {
     calls.push(spec)
@@ -396,7 +397,7 @@ try {
   console.log('ok: installed runtime resolves without binaryPath or source build tree')
   const real = new Context(); real.logger.level = 0
   // rc.5 asks the host for the directory a run_code call executes in.
-  real.provide('workingDirectory', { get: session => session?.header?.cwd ?? dir, ensure: async agent => agent?.session?.header?.cwd ?? dir, set: async (_agent, target) => target ?? dir })
+  real.provide('workingDirectory', workingDirectoryOver(dir))
   // The local sandbox grants the platform temporary area on Linux, so the
   // outside-workspace fixture must sit outside that area as well as the root.
   const outside = process.platform === 'win32'

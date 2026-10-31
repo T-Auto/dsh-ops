@@ -9,6 +9,7 @@ import { RuntimeActions } from '../lib/settings/runtime-actions.js'
 import { RUNTIME_DESCRIPTORS } from '../lib/settings/runtime-contract.js'
 import { runtimeProcessRunner, mountRuntimeSettings } from '../lib/settings/runtime-host.js'
 import { assert, test, report, TEST_HOME } from './lib/harness.mjs'
+import { ownerPeer } from './lib/peer.mjs'
 const active = () => new AbortController().signal
 const fixture = label => { const home = path.join(TEST_HOME, label); fs.mkdirSync(home, { recursive: true }); return { DSH_HOME: home } }
 const success = async () => ({ started: true, exitCode: 0, signal: null })
@@ -127,7 +128,7 @@ await test('real gateway validates exact named inputs before action and withdraw
     } })
     // rc.5 requires every `invoke` to name the Peer it speaks for; this fixture
     // is the Host itself, so the Peer is an owner with no live client stream.
-    const peer = { id: 'suite-peer', ctx, principal: { kind: 'owner' }, signal: active(), interactions: 'none', dispose: async () => {} }
+    const peer = ownerPeer(ctx, active())
     const invoke = (method, args) => ctx.typertGateway.invoke({ namespace: 'opsSettings', method, args, peer })
     await assert.rejects(invoke('plan', { action: 'command' }), /failed boundary validation/)
     await assert.rejects(invoke('plan', { action: 'install-bash', command: 'arbitrary' }), /unexpected/)

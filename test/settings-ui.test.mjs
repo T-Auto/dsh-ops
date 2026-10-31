@@ -18,7 +18,7 @@ const TestSwitch = ({ checked, label, disabled, onChange }) => h('button', {
   type: 'button', role: 'switch', 'aria-checked': String(checked), 'aria-label': label, disabled: disabled === true,
   onClick: () => onChange(!checked),
 })
-const ready = (value, revision = 'v1') => ({ status: 'ready', mode: 'host', writable: true, value, base: {}, user: {}, revision })
+const ready = (value, revision = 'v1') => ({ status: 'ready', writable: true, value, base: {}, user: {}, revision })
 const snapshot = { platform: 'win32', managed: [], git: ['C:/Git/bin/bash.exe'], powerShell: { supported: true, guidance: 'Restart DSH.' } }
 const ok = value => ({ ok: true, value })
 const defaultApi = () => ({
@@ -199,6 +199,19 @@ await test('a bundle switch disables its gated mode switches without losing thei
     assert.equal(switchIn(standard(), en.hideOfficialTools).disabled, true, 'gated switch is disabled')
     assert.equal(switchIn(standard(), en.hideOfficialTools).getAttribute('aria-checked'), 'true', 'the saved intent is kept')
     assert.equal(switchIn(standard(), en.swBash).disabled, false, 'ungated switches stay editable')
+  } finally { await view.close() }
+})
+
+await test('a ready document that does not accept writes is not editable', async () => {
+  // The Host used to mark a foreign page with `mode`; rc.5 dropped that field, so
+  // `writable: false` is the only signal left and has to gate the form on its own.
+  const writes = []
+  const form = { state: { status: 'ready', writable: false, value: { global: { hideOfficialTools: true } }, base: {}, user: {}, revision: 'v1' }, mutate: async ops => { writes.push(ops); return true } }
+  const view = await mount(RowForm, { form, Switch: TestSwitch })
+  try {
+    assert.equal(view.container.querySelector('button[role=switch]'), null, 'a read-only document renders no switches')
+    assert.equal(view.container.textContent.includes(en.unavailable), true, 'the read-only notice replaces the form')
+    assert.deepEqual(writes, [])
   } finally { await view.close() }
 })
 
