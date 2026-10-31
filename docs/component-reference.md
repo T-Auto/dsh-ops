@@ -24,7 +24,7 @@ The former `dsh-ops/background` component (FastCtx background jobs: `ops_run`, `
 
 ## Tool summary
 
-The shared catalogue has 20 entries. The generated PTC SDK contains 18 APIs: 15 file/document tools plus batch, result and load_sdk; bash and discover_tools belong to other entry points. Catalogue membership does not mean residency or permission. Fresh PTC pools follow the implemented catalogue; saved explicit pools remain authoritative. Document tools load on demand.
+The shared catalogue has 25 entries. The generated PTC SDK contains 23 APIs: 15 file/document tools plus batch, result, load_sdk and the five `ops_ast_*` tools; bash and discover_tools belong to other entry points. Catalogue membership does not mean residency or permission. Fresh PTC pools follow the implemented catalogue; saved explicit pools remain authoritative. Document tools load on demand.
 
 | Tool | Purpose | Full-access requirement |
 | --- | --- | --- |

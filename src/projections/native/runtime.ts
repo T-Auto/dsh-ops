@@ -1,10 +1,11 @@
 import type { Context } from '../../adapter/dsh/types.js'
 import type { ToolDefinition } from '../../adapter/dsh/types.js'
-import type { FileToolName } from '../../capabilities/registry.js'
+import type { AstToolName, FileToolName } from '../../capabilities/registry.js'
 import { WORKER_TIMEOUT_MS } from '../../execution/protocol.js'
 import { publicToolName } from '../../policy.js'
 import { definition } from './contract.js'
-import { NATIVE_FILE_TOOLS } from '../../capabilities/registry.js'
+import { NATIVE_FILE_TOOLS, capability } from '../../capabilities/registry.js'
+import { definition as ptcDefinition } from '../ptc/contract.js'
 import { resultDefinition, invokeResult } from './result.js'
 import { registerNativeProvider } from '../../publication/providers.js'
 import { safeDisposeAll } from '../../teardown.js'
@@ -13,7 +14,7 @@ import { InvocationLifetime, InvocationNotStarted } from '../../lifecycle/invoca
 import { createNativeReadDedup } from './read-dedup.js'
 
 type Execution = Parameters<ToolDefinition['execute']>[1]
-type NativeToolName = FileToolName | 'result'
+type NativeToolName = FileToolName | 'result' | AstToolName
 export interface NativeRuntimeConfig { workerPath?: string; required?: boolean; denyCredentialReads?: boolean; toolCallTimeoutMs?: number }
 type Reporter = (message: string, level?: string) => void
 export class NativeFileTools {
@@ -52,7 +53,12 @@ export class NativeFileTools {
 
   definition(rawName: NativeToolName): ToolDefinition {
     const execute: ToolDefinition['execute'] = (args, exec) => this.call(rawName, args, exec)
-    return this.readDedup.wrap(rawName === 'result' ? resultDefinition(execute) : definition(rawName, execute))
+    // A discovered PTC-component tool keeps the PTC contract: its parameters and description live
+    // in capabilities/ptc.ts, not in the native file catalogue, so the native factory cannot build it.
+    const tool = rawName === 'result' ? resultDefinition(execute)
+      : capability(rawName)?.component === 'ptc' ? ptcDefinition(rawName as AstToolName, execute)
+        : definition(rawName as FileToolName, execute)
+    return this.readDedup.wrap(tool)
   }
 
   async call(tool: NativeToolName, args: unknown, exec: Execution): Promise<unknown> {

@@ -141,7 +141,7 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
       mutating = true
       try { apply(agent, entry) } finally { mutating = false }
     }
-    ctx.on('agent/created', ({ agent }) => { reconcileAgent(agent) })
+    ctx.on('agent/created', ({ agent }) => { reconcileAgent(agent); return undefined })
     /**
      * Reconcile only the Agents a registry change can have reached.
      *

@@ -127,7 +127,7 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
       }
       return result
     })
-    ctx.on('agent/created', ({ agent }) => { if (cover(agent)) attach(agent) })
+    ctx.on('agent/created', ({ agent }) => { if (cover(agent)) attach(agent); return undefined })
     ctx.on('agent/disposed', ({ agent }) => detach(agent))
     ctx.on('session/event', (_session, event) => {
       // A blank session may select another preset before its first turn; the mode

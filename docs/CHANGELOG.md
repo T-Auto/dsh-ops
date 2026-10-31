@@ -7,6 +7,13 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Answer the five `ops_ast_*` tools in-process through the host path: `src/execution/ast-inproc.ts` is dispatched from both execution bridges before any worker spawn or policy resolve, the five rows are declared in the manifest, and `ast_locate`/`ast_inproc` stay resident while `ast_find`/`ast_refactor`/`ast_audit` arrive through discovery. The adapter carries the same four fences as the native worker — session identity, one authoritative policy resolve, the credential fence before anchoring, and write intent requiring workspace-write — so the engine still cannot bypass host policy; a junction pointing outside the workspace is refused by real path, and the reparse walk starts at the workspace root so system-level parent links are not mistaken for escapes. `test/ast-inproc.test.mjs` covers the dispatch, the fences and the receipt shape (18 checks).
+- 五个 `ops_ast_*` 工具改为经宿主路径在进程内应答：`src/execution/ast-inproc.ts` 由两条执行桥在 worker 启动与策略解析之前分派，五行工具写入清单，`ast_locate`/`ast_inproc` 常驻、`ast_find`/`ast_refactor`/`ast_audit` 走发现。适配层施加与原生 worker 相同的四道围栏——会话身份、一次权威策略解析、锚定前的凭据防护、写意图需 workspace-write——引擎因此仍无法绕开宿主策略；指向工作区外的 junction 按真实路径拒绝，重解析点遍历以工作区根为界，系统级父链链接不再被误判为逃逸。`test/ast-inproc.test.mjs` 覆盖分派、围栏与回执形状（18 项）。
+- Confine the in-process engine's reparse-point refusal to the workspace boundary: a workspace reached through system-level parent links (macOS `/var -> /private/var`) is no longer refused as an escape, while links inside the workspace still are.
+- 进程内引擎的重解析点拒绝收敛到工作区边界：经系统级父链链接（macOS `/var -> /private/var`）进入的工作区不再被误判为逃逸，工作区内部的链接仍然拒绝。
+- Add the in-process AST engine under `src/ast` (symbol location, structural rewrite, syntax audit) with its own package exports, CLI and test gate; benchmarks live in `bench/ast`. Its five tools are named `ops_ast_*` (not `ops_ptc_*`, which collides with the existing PTC row), the `ops-ast` bin replaces `ops-ptc`, the locate `body` parameter uses a host-compatible `oneOf` instead of a type array, and the prototype's MCP stdio exit is dropped: an independent endpoint serves handlers with no sandbox policy or host authority, the same bypass removed with FastCtx in 0.3.2. The host adapter remains the only model-facing wiring point.
+- 将进程内 AST 引擎纳入 `src/ast`（符号定位、结构化改写、语法审计），提供独立包导出、CLI 与测试门禁；基准位于 `bench/ast`。五个工具命名为 `ops_ast_*`（避免与既有 PTC 行的 `ops_ptc_*` 冲突），`ops-ast` 可执行文件取代 `ops-ptc`，locate 的 `body` 参数改用宿主兼容的 `oneOf` 而非 type 数组；原型中的 MCP stdio 出口被移除——独立端点调用 handler 时不经过沙箱策略与宿主授权，正是 0.3.2 随 FastCtx 一并移除的那类绕行路径。宿主适配器是唯一的模型侧接线点。
+
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 
 - This unstable prerelease summarizes changes since v0.5.0-alpha2; use an isolated test environment.

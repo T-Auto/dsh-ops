@@ -44,3 +44,7 @@ bench/runs/
 bench/llm.patch.yml
 # Update-lock sidecars the CLI leaves next to whatever it rewrites (also seen under test/).
 *.dsh-ops-update-*.lock
+
+# Release artifacts: tarballs are produced by the release build, never committed.
+*.tgz
+*.tar.gz
