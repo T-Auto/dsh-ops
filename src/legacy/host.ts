@@ -55,7 +55,7 @@ function installHostShellDenial(ctx: Context, config: ResolvedConfig): void {
       }
     }
   }
-  ctx.on('agent/created', ({ agent }) => { hide(agent) })
+  ctx.on('agent/created', ({ agent }) => { hide(agent); return undefined })
   // Same isolation as the bulk teardown below: a throwing lift must not stop `lifts.delete`, nor
   // leave this agent's shell visibility permanently restricted.
   ctx.on('agent/disposed', ({ agent }) => {
