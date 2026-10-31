@@ -7,6 +7,15 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- Classify a confined Windows Bash preparation failure by the stage that failed (`bash-staging-failed`, `bash-generation-quarantine-failed`, `bash-lifecycle-lock-busy`, `bash-runtime-missing`, `bash-ipc-mismatch`), keep the actionable reason, and stop answering a recoverable staging interruption with the blanket "Do not retry" paragraph (#512).
+- 按失败阶段对 Windows 受限 Bash 准备失败分类（`bash-staging-failed`、`bash-generation-quarantine-failed`、`bash-lifecycle-lock-busy`、`bash-runtime-missing`、`bash-ipc-mismatch`），保留可操作原因，不再用"不要重试"的笼统文案回答本可恢复的 staging 中断（#512）。
+- Reclaim interrupted `stage-*` copies in the private Bash runtime cache after one hour, count them in the reported reclaimable bytes, and remove them together with a confirmed `bash-runtime clean-cache` (#512).
+- 一小时后回收私有 Bash 运行时缓存中被中断的 `stage-*` 副本，计入可回收字节，并在确认后的 `bash-runtime clean-cache` 中一并清除（#512）。
+- Document how to diagnose and recover an interrupted restricted-Bash staging or lifecycle lock.
+- 文档补充受限 Bash staging 中断与生命周期锁的诊断与恢复方法。
+
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 
 - This unstable prerelease summarizes changes since v0.5.0-alpha2; use an isolated test environment.

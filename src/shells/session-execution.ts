@@ -4,6 +4,7 @@ import type { ConfinedArgv } from '../adapter/dsh/types.js'
 import type { ShellContext, ShellCall, ShellPolicy, ExecutionOptions, ShellExecution, ShellResult } from './types.js'
 import { bashToolDefinition, withBashStatus } from './tool.js'
 import { confinedBash } from '../bash-ipc.js'
+import { executorUnavailableMessage } from '../bash-runtime-failure.js'
 import { prepareWorkspace } from '../workspace-preparation.js'
 import { executionRestriction } from '../permissions.js'
 
@@ -21,7 +22,12 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
   if (!path.isAbsolute(bash.file)) throw new Error('EXECUTOR_UNAVAILABLE: Bash requires a resolved absolute executable path; configure an absolute bashPath. No command executed.')
   let runtime: { file: string; env?: NodeJS.ProcessEnv }
   try { runtime = policy.mode === 'danger-full-access' ? { file: bash.file } : confinedBash(bash.file, { source: bash.source }) }
-  catch { throw new Error('EXECUTOR_UNAVAILABLE: the restricted Bash runtime is unavailable or incompatible; this is not a user authorization denial. Restore the verified pinned Bash payload and IPC runtime; changing the DSH selector is not a repair. Do not retry or bypass confinement.') }
+  catch (error) {
+    // Keep the failing stage and its remedy. The parameterless catch this replaced flattened a
+    // missing payload, an IPC mismatch and a recoverable staging interruption into one paragraph
+    // that said "Do not retry" — wrong for exactly the failures a retry repairs (#512).
+    throw new Error(executorUnavailableMessage(error))
+  }
   let confinement: ConfinedArgv | undefined
   const definition = bashToolDefinition({ file: runtime.file, source: bash.source,
     env: { ...runtime.env, ...dshEnv }, subprocess: ctx.get('subprocess'),
