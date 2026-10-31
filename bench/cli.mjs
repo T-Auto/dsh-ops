@@ -32,6 +32,7 @@ export const COMMANDS = [
   { name: 'report', slice: 'P11', target: 'bench/compare.mjs', summary: 'render the timestamped report from a sealed run.json' },
   { name: 'panel', slice: 'P12', target: 'bench/report/panel.mjs', summary: 'write/open panel.html that reads run.json' },
   { name: 'tools', slice: 'P13', target: 'bench/tools/index.mjs', summary: 'model-free deterministic tool-level comparison' },
+  { name: 'calls', slice: 'P14', target: 'bench/calls/index.mjs', summary: 'host-level timing over a real corpus: official versus OPS, or two OPS builds' },
 ]
 
 const AB_FLAGS_WITH_VALUE = ['--task', '--repeat', '--folder', '--base', '--cand']

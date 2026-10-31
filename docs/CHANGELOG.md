@@ -22,6 +22,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Preserve Unix worker executable modes in Windows-built release tarballs and reject invalid runtime TAR members before publishing checksum records.
 - 修复 Windows 构建发布包丢失 Unix worker 执行位，并在生成校验记录前拒绝异常运行时 TAR 成员。
 
+- Add the real-corpus `calls` comparison: host-dispatched official `grep`/`glob` versus OPS, or two OPS builds in one process, with a declared corpus shape, a content identity and coverage recorded per arm. Timings stay manual evidence and never gate CI.
+- 新增真实语料 `calls` 对比：真实 host 派发的官方 `grep`/`glob` 对 OPS，或同进程内两套 OPS 构建；语料 shape、内容身份与覆盖率按臂记录。耗时仍为人工证据，不进入 CI 门禁。
+
 ## [0.5.0-alpha2] — 2026-10-30 — Unstable development prerelease
 
 - This unstable development prerelease summarizes changes since v0.5.0-alpha1. Use an isolated development or test environment rather than replacing a stable installation.

@@ -1,0 +1,53 @@
+{
+  "id": "harness-client",
+  "title": "A pinned checkout's client packages: 3k text files, no build output",
+  "class": "source",
+  "roots": [
+    "${env:DSH_HARNESS_SRC}/packages/client"
+  ],
+  "shape": {
+    "files": [
+      2800,
+      3800
+    ],
+    "mebibytes": [
+      15,
+      30
+    ],
+    "maxDepth": [
+      4,
+      6
+    ],
+    "binaryBytesRatio": [
+      0.05,
+      0.2
+    ]
+  },
+  "identity": {
+    "sample": 32
+  },
+  "cases": [
+    { "id": "grep-hit-5-exact", "tool": "grep", "args": { "pattern": "^export ", "path": ".", "include": "**/*.ts" }, "candidate": { "outputMode": "content", "limit": 5, "exactTotal": true } },
+    { "id": "grep-hit-5-bounded", "tool": "grep", "args": { "pattern": "^export ", "path": ".", "include": "**/*.ts" }, "candidate": { "outputMode": "content", "limit": 5, "exactTotal": false } },
+    { "id": "grep-hit-50-exact", "tool": "grep", "args": { "pattern": "^export ", "path": ".", "include": "**/*.ts" }, "candidate": { "outputMode": "content", "limit": 50, "exactTotal": true } },
+    { "id": "grep-hit-50-bounded", "tool": "grep", "args": { "pattern": "^export ", "path": ".", "include": "**/*.ts" }, "candidate": { "outputMode": "content", "limit": 50, "exactTotal": false } },
+    { "id": "glob-name", "tool": "glob", "args": { "pattern": "**/package.json", "path": "." } },
+    { "id": "glob-miss", "tool": "glob", "args": { "pattern": "**/BENCH_NEVER_PRESENT_87", "path": "." } },
+    {
+      "id": "grep-miss",
+      "tool": "grep",
+      "args": {
+        "pattern": "BENCH_NEVER_PRESENT_87",
+        "path": "."
+      }
+    },
+    {
+      "id": "glob-ts",
+      "tool": "glob",
+      "args": {
+        "pattern": "**/*.ts",
+        "path": "."
+      }
+    }
+  ]
+}

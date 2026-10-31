@@ -1,0 +1,61 @@
+{
+  "id": "python-stdlib",
+  "title": "An installed CPython standard library: 4k files, most bytes in compiled modules",
+  "class": "runtime",
+  "roots": [
+    "${home}/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/python/Lib"
+  ],
+  "shape": {
+    "files": [
+      3500,
+      5200
+    ],
+    "mebibytes": [
+      90,
+      150
+    ],
+    "maxDepth": [
+      5,
+      9
+    ],
+    "binaryBytesRatio": [
+      0.4,
+      0.8
+    ]
+  },
+  "identity": {
+    "files": [
+      "${root}/../python3.dll",
+      "${root}/../python.exe"
+    ],
+    "sample": 32,
+    "expect": {
+      "${root}/../python3.dll": "58be66304d85a21c96a5d51545cb6fed2bc0c85434049e951b7a75dfe0c4240a",
+      "${root}/../python.exe": "f200a9932953c794bbe8a4f235c34e61c3742ec9dd7a2dafc8aacd64c30d3995"
+    }
+  },
+  "cases": [
+    { "id": "grep-hit-5-exact", "tool": "grep", "args": { "pattern": "^def ", "path": ".", "include": "**/*.py" }, "candidate": { "outputMode": "content", "limit": 5, "exactTotal": true } },
+    { "id": "grep-hit-5-bounded", "tool": "grep", "args": { "pattern": "^def ", "path": ".", "include": "**/*.py" }, "candidate": { "outputMode": "content", "limit": 5, "exactTotal": false } },
+    { "id": "grep-hit-50-exact", "tool": "grep", "args": { "pattern": "^def ", "path": ".", "include": "**/*.py" }, "candidate": { "outputMode": "content", "limit": 50, "exactTotal": true } },
+    { "id": "grep-hit-50-bounded", "tool": "grep", "args": { "pattern": "^def ", "path": ".", "include": "**/*.py" }, "candidate": { "outputMode": "content", "limit": 50, "exactTotal": false } },
+    { "id": "glob-name", "tool": "glob", "args": { "pattern": "**/os.py", "path": "." } },
+    { "id": "glob-miss", "tool": "glob", "args": { "pattern": "**/BENCH_NEVER_PRESENT_87", "path": "." } },
+    {
+      "id": "grep-miss",
+      "tool": "grep",
+      "args": {
+        "pattern": "BENCH_NEVER_PRESENT_87",
+        "path": "."
+      }
+    },
+    {
+      "id": "glob-py",
+      "tool": "glob",
+      "args": {
+        "pattern": "**/*.py",
+        "path": "."
+      }
+    }
+  ]
+}

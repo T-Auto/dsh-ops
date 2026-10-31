@@ -1,0 +1,57 @@
+{
+  "id": "npm-runtime",
+  "title": "The installed DSH packages: 6k files, mostly binary, just under the scan budget",
+  "class": "runtime",
+  "roots": [
+    "${repo}/node_modules/@deepseek-ai"
+  ],
+  "shape": {
+    "files": [
+      5000,
+      7000
+    ],
+    "mebibytes": [
+      200,
+      280
+    ],
+    "maxDepth": [
+      8,
+      12
+    ],
+    "binaryBytesRatio": [
+      0.5,
+      0.9
+    ]
+  },
+  "cases": [
+    {
+      "id": "grep-miss",
+      "tool": "grep",
+      "args": {
+        "pattern": "BENCH_NEVER_PRESENT_87",
+        "path": "."
+      }
+    },
+    { "id": "grep-hit-5-exact", "tool": "grep", "args": { "pattern": "^export const", "path": ".", "include": "**/*.js" }, "candidate": { "outputMode": "content", "limit": 5, "exactTotal": true } },
+    { "id": "grep-hit-5-bounded", "tool": "grep", "args": { "pattern": "^export const", "path": ".", "include": "**/*.js" }, "candidate": { "outputMode": "content", "limit": 5, "exactTotal": false } },
+    { "id": "grep-hit-50-exact", "tool": "grep", "args": { "pattern": "^export const", "path": ".", "include": "**/*.js" }, "candidate": { "outputMode": "content", "limit": 50, "exactTotal": true } },
+    { "id": "grep-hit-50-bounded", "tool": "grep", "args": { "pattern": "^export const", "path": ".", "include": "**/*.js" }, "candidate": { "outputMode": "content", "limit": 50, "exactTotal": false } },
+    { "id": "glob-name", "tool": "glob", "args": { "pattern": "**/package.json", "path": "." } },
+    { "id": "glob-miss", "tool": "glob", "args": { "pattern": "**/BENCH_NEVER_PRESENT_87", "path": "." } },
+    {
+      "id": "glob-js",
+      "tool": "glob",
+      "args": {
+        "pattern": "**/*.js",
+        "path": "."
+      }
+    }
+  ],
+  "identity": {
+    "files": [
+      "${repo}/package-lock.json",
+      "${repo}/node_modules/.package-lock.json"
+    ],
+    "sample": 32
+  }
+}

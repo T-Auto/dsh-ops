@@ -1,0 +1,57 @@
+{
+  "id": "rust-runtime",
+  "title": "A pinned Rust toolchain with docs: many tiny text files plus large binaries",
+  "class": "runtime",
+  "roots": [
+    "${home}/.rustup/toolchains/stable-x86_64-pc-windows-msvc",
+    "${home}/.rustup/toolchains/stable-x86_64-apple-darwin",
+    "${home}/.rustup/toolchains/stable-x86_64-unknown-linux-gnu"
+  ],
+  "shape": {
+    "files": [
+      50000,
+      90000
+    ],
+    "mebibytes": [
+      1000,
+      1600
+    ],
+    "maxDepth": [
+      10,
+      14
+    ],
+    "binaryBytesRatio": [
+      0.2,
+      0.6
+    ]
+  },
+  "identity": {
+    "files": [
+      "${root}/lib/rustlib/multirust-channel-manifest.toml"
+    ],
+    "sample": 32,
+    "expect": {
+      "${root}/lib/rustlib/multirust-channel-manifest.toml": "48419307eb32e389a25ac360b6bccd4d196f3c4f35ce9d67a223319eff017c6c"
+    }
+  },
+  "cases": [
+    {
+      "id": "grep-miss",
+      "tool": "grep",
+      "args": {
+        "pattern": "BENCH_NEVER_PRESENT_87",
+        "path": "."
+      }
+    },
+    { "id": "glob-name", "tool": "glob", "args": { "pattern": "**/index.html", "path": "." } },
+    { "id": "glob-miss", "tool": "glob", "args": { "pattern": "**/BENCH_NEVER_PRESENT_87", "path": "." } },
+    {
+      "id": "glob-html",
+      "tool": "glob",
+      "args": {
+        "pattern": "**/*.html",
+        "path": "."
+      }
+    }
+  ]
+}

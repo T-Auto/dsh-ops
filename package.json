@@ -237,6 +237,7 @@
     "@deepseek-ai/dsh-subprocess": "0.2.0-rc.2",
     "@deepseek-ai/dsh-subprocess-local": "0.2.0-rc.2",
     "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tool-call-timeout-policy": "0.2.0-rc.2",
     "@deepseek-ai/dsh-tool-fs": "0.2.0-rc.2",
     "@deepseek-ai/dsh-tool-fs-search": "0.2.0-rc.2",
     "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
