@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 export { recoverBashLifecycleLock } from './bash-ipc-lifecycle.js'
 import { errorMessage } from './shells/types.js'
+import { bashRuntimeFailure } from './bash-runtime-failure.js'
 import { patchMsys } from './bash-pe.js'
 import { GENERATION_NAME, RETIRED_NAME, QUARANTINE_NAME, noLinks, assertNoLinks, plainDirectory, plainTree, withLifecycleLock, idleGeneration, markManaged, leaseGeneration, hasLiveLease } from './bash-ipc-lifecycle.js'
 const packageRoot=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')
@@ -30,6 +31,10 @@ function maybeReclaim(root: string, identity: string): void {
 
 /** The directory confined Windows Bash generations live in. */
 export const bashIpcRoot=(home: string): string=>path.join(home,'dsh-ops','bash-ipc')
+/** How long an interrupted `stage-*` tree is left alone before a sweep may remove it.
+ *  A cooperating staging process holds the lifecycle lock, so nothing can be staging while a sweep
+ *  runs; the age bound keeps even a crashed sibling's tree untouched for a while (#512). */
+export const STAGING_TTL_MS=60*60*1000
 const proxies=path.join(packageRoot,'runtime/win32-x64/bash-ipc')
 const SOURCES: Record<string, string>={config:'configured bashPath',path:'system bash on PATH','well-known':'system Git for Windows install',bundled:'bundled bash',provisioned:'provisioned bash'}
 // Resolve both PortableGit's bin wrapper and its real usr/bin executable.
@@ -132,7 +137,8 @@ function sourceState(root: string, dll: string): SourceState{
   assertNoLinks(root)
   let st
   try{st=fs.statSync(dll)}catch{
-    throw Error('EXECUTOR_UNAVAILABLE: Windows confined Bash requires the supported MSYS payload layout; no unconfined fallback.')
+    // A missing payload layout cannot be repaired by another call, so the stage is named and retrying is not advised (#512).
+    throw bashRuntimeFailure('bash-runtime-missing','Windows confined Bash requires the supported MSYS payload layout and its usr/bin/msys-2.0.dll; no unconfined fallback')
   }
   const bashFile=path.join(root,'usr/bin/bash.exe')
   const inventory=treeDigest(root,false)
@@ -141,11 +147,11 @@ function sourceState(root: string, dll: string): SourceState{
   if(cached!==undefined&&cached.key===key)return cached
   const bytes=fs.readFileSync(dll)
   const receipt=JSON.parse(fs.readFileSync(path.join(proxies,'provenance.json'),'utf8')) as Receipt as Receipt
-  if(receipt.platform!=='win32-x64'||receipt.msysSha256!==hash(bytes)||!record(receipt.files))throw Error('EXECUTOR_UNAVAILABLE: This MSYS version has no verified DSH IPC compatibility build. Rebuild the matching proxies; do not bypass confinement.')
+  if(receipt.platform!=='win32-x64'||receipt.msysSha256!==hash(bytes)||!record(receipt.files))throw bashRuntimeFailure('bash-ipc-mismatch','This MSYS version has no verified DSH IPC compatibility build; rebuild the matching proxies and do not bypass confinement')
   const proxyBytes: Record<string, Buffer>={}
   for(const name of ['opsipc.dll','opsnt.dll']){
     proxyBytes[name]=fs.readFileSync(path.join(proxies,name))
-    if(hash(proxyBytes[name])!==receipt.files[name])throw Error(`Bash IPC provenance mismatch: ${name}`)
+    if(hash(proxyBytes[name])!==receipt.files[name])throw bashRuntimeFailure('bash-ipc-mismatch',`Bash IPC provenance mismatch: ${name}`)
   }
   const patched=patchMsys(bytes).bytes
   // The identity is what the generation *is*, never where it was staged from: two profiles (or two
@@ -251,7 +257,8 @@ function directoryUsage(directory: string): { bytes: number; files: number } {
  * `current` is the identity this deployment would use, when it can be computed; all generations
  * except the one retained for the previous deployment are reclaimable.
  */
-export function bashIpcInventory({home=process.env.DSH_HOME ?? path.join(os.homedir(),'.dsh'), current=null}: { home?: string; current?: string | null }={}): BashIpcInventory {
+export function bashIpcInventory({home=process.env.DSH_HOME ?? path.join(os.homedir(),'.dsh'), current=null,
+  stagingTtlMs=STAGING_TTL_MS, now=Date.now}: { home?: string; current?: string | null; stagingTtlMs?: number; now?: ()=>number }={}): BashIpcInventory {
   const root=bashIpcRoot(home)
   let names: string[]=[]
   try{ if(noLinks(root))names=fs.readdirSync(root) }catch{ /* a missing cache is an empty one */ }
@@ -270,9 +277,16 @@ export function bashIpcInventory({home=process.env.DSH_HOME ?? path.join(os.home
   }
   entries.sort((a,b)=>b.mtimeMs-a.mtimeMs||(a.name<b.name?-1:1))
   const stale=entries.filter(entry=>entry.kind==='generation'&&!entry.current)
+  // An interrupted staging tree is reclaimable by age alone: it carries no published manifest and
+  // no lease, and the sweep that removes it runs under the lifecycle lock (#512).
+  const staleStaging=entries.filter(entry=>entry.kind==='staging'
+    && now()-entry.mtimeMs>=Math.max(0,stagingTtlMs) && plainTree(path.join(root,entry.name)))
   // One previous generation is retained on purpose: a second profile or a process that is still
   // running the old payload may need it, and a directory that cannot be moved aside is kept.
-  const reclaimable=[...stale.slice(1),...entries.filter(entry=>entry.kind==='retired')].filter(entry=>idleGeneration(path.join(root,entry.name)))
+  const reclaimable=[
+    ...[...stale.slice(1),...entries.filter(entry=>entry.kind==='retired')].filter(entry=>idleGeneration(path.join(root,entry.name))),
+    ...staleStaging,
+  ]
   return {
     root, current,
     generations: entries.filter(entry=>entry.kind==='generation').length,
@@ -295,12 +309,12 @@ export interface BashIpcReclaimResult { removed: string[]; kept: string[]; bytes
  * 412 MB payload, and without waiting for Windows to release a directory.
  */
 export function reclaimBashGenerations(root: string, current: string, {
-  retain=1, confirmedStopped=false, dryRun=false,
+  retain=1, confirmedStopped=false, dryRun=false, stagingTtlMs=STAGING_TTL_MS,
   rename=(from: string,to: string): void=>{ fs.renameSync(from,to) },
   remove=(target: string): void=>{ fs.rmSync(target,{recursive:true,force:true}) },
   now=Date.now,
   log=(message: string)=>console.error(message),
-}: { retain?: number; confirmedStopped?: boolean; dryRun?: boolean; rename?: (from: string,to: string)=>void; remove?: (target: string)=>void; now?: ()=>number; log?: (message: string)=>void }={}): BashIpcReclaimResult {
+}: { retain?: number; confirmedStopped?: boolean; dryRun?: boolean; stagingTtlMs?: number; rename?: (from: string,to: string)=>void; remove?: (target: string)=>void; now?: ()=>number; log?: (message: string)=>void }={}): BashIpcReclaimResult {
   assertNoLinks(root)
   if(!fs.existsSync(root))return {removed:[],kept:[],bytes:0}
   const run=()=>{
@@ -346,6 +360,24 @@ export function reclaimBashGenerations(root: string, current: string, {
     if(dryRun){result.removed.push(entry.name);result.bytes+=usage.bytes;continue}
     try{ remove(retired);result.removed.push(entry.name);result.bytes+=usage.bytes }catch{ /* still held; a later sweep retries */ }
   }
+  // Interrupted staging copies: a host killed mid-copy leaves a partial `stage-*` tree with no
+  // owner. Cooperating processes hold the lifecycle lock while they stage, so nothing this sweep
+  // can see is staging; the TTL still protects a crashed sibling's tree for a bounded time (#512).
+  const stageCutoff=now()-Math.max(0,stagingTtlMs)
+  for(const entry of entries){
+    if(!entry.isDirectory()||!entry.name.startsWith('stage-')) continue
+    const staging=path.join(root,entry.name)
+    let mtimeMs=0
+    try{ mtimeMs=fs.lstatSync(staging).mtimeMs }catch{ continue }
+    if(mtimeMs>stageCutoff)continue
+    if(!plainTree(staging))continue
+    const usage=directoryUsage(staging)
+    if(dryRun){result.removed.push(entry.name);result.bytes+=usage.bytes;continue}
+    try{
+      remove(staging);result.removed.push(entry.name);result.bytes+=usage.bytes
+      log(`dsh-ops: removed an interrupted bash runtime staging copy: ${entry.name} (${(usage.bytes/1048576).toFixed(0)} MB)`)
+    }catch{ /* held by a scanner; a later sweep retries */ }
+  }
   return result
   }
   return dryRun ? run() : withLifecycleLock(root,run)
@@ -360,8 +392,9 @@ export function currentBashIpcIdentity(file: string | undefined, {platform=proce
   try{ return sourceState(root,path.join(root,'usr/bin/msys-2.0.dll')).identity }catch{ return null }
 }
 /** The inventory plus the identity of the resolved bash, for the CLI reports. */
-export function bashIpcReport(file: string | undefined, {home, platform=process.platform}: { home?: string; platform?: NodeJS.Platform }={}): BashIpcInventory {
-  return bashIpcInventory({home,current:currentBashIpcIdentity(file,{platform})})
+export function bashIpcReport(file: string | undefined, {home, platform=process.platform, stagingTtlMs, now}: { home?: string; platform?: NodeJS.Platform; stagingTtlMs?: number; now?: ()=>number }={}): BashIpcInventory {
+  return bashIpcInventory({home,current:currentBashIpcIdentity(file,{platform}),
+    ...(stagingTtlMs!==undefined?{stagingTtlMs}:{}),...(now!==undefined?{now}:{})})
 }
 /** @param {string} file
  * @param {{home?: string, platform?: NodeJS.Platform, source?: string}} options */
@@ -369,7 +402,7 @@ export function confinedBash(file: string, {home=process.env.DSH_HOME ?? path.jo
   if(platform!=='win32')return {file}
   const root=msysRoot(file)
   const check=restrictedCompatibility(file,{platform})
-  if(!check.compatible)throw Error(restrictedRemedy(file,source,check.reason))
+  if(!check.compatible)throw bashRuntimeFailure('bash-runtime-incompatible',restrictedRemedy(file,source,check.reason))
   const {receipt,proxyBytes,patched,patchedSha,bashSha,identity,payload}=sourceState(root,path.join(root,'usr/bin/msys-2.0.dll'))
   const cacheDir=bashIpcRoot(home)
   return withLifecycleLock(cacheDir,()=>{
@@ -480,8 +513,10 @@ export function confinedBash(file: string, {home=process.env.DSH_HOME ?? path.jo
       try{
         quarantineGeneration(target)
       }catch(error){
-        throw Error(`Bash IPC runtime at ${target} failed verification and could not be quarantined after retrying (${errorMessage(error)}). `
-          +'A confined shell or another process may still be using it: stop any confined shell, then delete that directory and retry.')
+        // Recoverable only after the process still using the generation is gone, so the advice is not "retry now" (#512).
+        throw bashRuntimeFailure('bash-generation-quarantine-failed',
+          `the bash runtime at ${target} failed verification and could not be quarantined after retrying (${errorMessage(error)}); `
+          +'a confined shell or another process may still be using it', { cause: error })
       }
     }
     // Failed incomplete builds get a new staging directory and only complete copies are published.
@@ -499,7 +534,18 @@ export function confinedBash(file: string, {home=process.env.DSH_HOME ?? path.jo
       fs.writeFileSync(path.join(stage,'.ops-ipc.json'),JSON.stringify({identity,payloadIdentity:identity,source:root,msys:receipt.msysSha256,patchedSha256:patchedSha,files:receipt.files,tree:treeDigest(stage,false)})+'\n')
       markManaged(stage)
       try {renameWithRetry(stage,target)} catch(error){if(!fs.existsSync(marker))throw error}
-    } finally {fs.rmSync(stage,{recursive:true,force:true})}
+    } catch(error){
+      // Copy, verification and publication are one recoverable unit: a later call stages a fresh
+      // copy by itself, so an interrupted staging must say so instead of claiming the runtime is
+      // broken and telling the caller not to retry (#512).
+      throw bashRuntimeFailure('bash-staging-failed',
+        `the private restricted-Bash runtime was not published with a complete copy (${errorMessage(error)})`, { cause: error })
+    } finally {
+      // Cleanup must never replace the classified failure above with a Windows sharing error (#512).
+      try {fs.rmSync(stage,{recursive:true,force:true})} catch(cleanupError){
+        console.error(`dsh-ops: could not remove an interrupted staging copy ${stage}: ${errorMessage(cleanupError)}; a later sweep retries it`)
+      }
+    }
   }
   leaseGeneration(target)
   maybeReclaim(cacheDir,identity)

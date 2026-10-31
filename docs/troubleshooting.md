@@ -102,6 +102,19 @@ What to do:
 - Or switch the session to `danger-full-access`, where `bashPath` runs directly.
 - Check with the profile's own copy: `node "<profile>\node_modules\dsh-ops\bin\dsh-ops.mjs" ladder --config <file>` reports `restricted: yes/no` for the resolved bash.
 
+### Restricted Bash is still preparing, or its last preparation was interrupted
+
+Symptom, in a read-only or workspace-write session: an `EXECUTOR_UNAVAILABLE` whose second segment names a stage, for example `EXECUTOR_UNAVAILABLE: bash-staging-failed: …`, `bash-generation-quarantine-failed: …` or `bash-lifecycle-lock-busy: …`.
+
+Restricted calls run the pinned Bash from a private, verified copy under `<DSH_HOME>/dsh-ops/bash-ipc/<identity>`. The first confined call stages it (about 10 seconds for the 412 MB payload); later calls reuse it. The stage name says whether another call can help:
+
+- `bash-staging-failed` — the copy did not finish (an interrupted host, antivirus holding the freshly written tree, a full disk). The next call stages a fresh copy, so retry once; if it repeats, stop every confined shell and run `dsh-ops bash-runtime clean-cache --yes --all-hosts-stopped`, then retry.
+- `bash-generation-quarantine-failed` — an unverifiable generation is still in use. Stop the confined shells that may own it, then retry; the retry quarantines it and stages a fresh copy.
+- `bash-lifecycle-lock-busy (<pid>)` — a host died while holding `<DSH_HOME>/dsh-ops/bash-ipc/.ops-lifecycle-lock`. The lock is never stolen from an owner that may still be alive. Stop every OPS host and confined shell, run `dsh-ops bash-runtime clean-cache --yes --all-hosts-stopped`, then retry.
+- `bash-runtime-missing` / `bash-ipc-mismatch` — the pinned payload or the IPC compatibility receipt is absent or changed. Restore the profile dependencies or run `dsh-ops provision-shells --bash`; a retry cannot repair these.
+
+An interrupted staging leaves a `stage-*` directory in the cache. Confined calls reclaim copies older than one hour automatically (the reported reclaimable bytes include them), `clean-cache --yes --all-hosts-stopped` removes all of them, and deleting them by hand while no confined shell is running is equally safe.
+
 ### A second restricted Bash fails while another Bash is still running
 
 The `CreateFileMapping S-<user SID>.<version>, Win32 error 5` failure in #363 came

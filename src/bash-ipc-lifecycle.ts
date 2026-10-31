@@ -5,6 +5,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { bashRuntimeFailure } from './bash-runtime-failure.js'
 
 export const GENERATION_NAME=/^[a-f0-9]{24}$/
 export const RETIRED_NAME=/^[a-f0-9]{24}\.stale-[a-z0-9]+$/
@@ -43,22 +44,42 @@ export function plainTree(target: string): boolean {
     return true
   }catch{return false}
 }
-export function withLifecycleLock<T>(root: string, run: ()=>T): T {
+/** A blocking sleep, so the bounded wait does not turn the per-command path asynchronous. */
+const sleepSync=(ms: number): void=>{ Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,ms) }
+/** The recorded lock owner, when an interrupted process wrote one before dying. */
+function lockOwner(lock: string): string {
+  try{
+    const parsed: unknown=JSON.parse(fs.readFileSync(path.join(lock,'owner.json'),'utf8'))
+    if(typeof parsed==='object'&&parsed!==null&&Number.isSafeInteger((parsed as {pid?: unknown}).pid)){
+      return ` (recorded owner pid ${(parsed as {pid: number}).pid})`
+    }
+  }catch{ /* a process that died before writing owner.json leaves no nameable owner */ }
+  return ''
+}
+export function withLifecycleLock<T>(root: string, run: ()=>T, {
+  attempts=101, delayMs=50, wait=sleepSync,
+}: { attempts?: number; delayMs?: number; wait?: (ms: number)=>void }={}): T {
   assertNoLinks(root)
   fs.mkdirSync(root,{recursive:true})
   const lock=path.join(root,'.ops-lifecycle-lock')
   if(held.has(path.resolve(root)))return run()
   // Bounded wait, no lease expiry: a suspended process must never lose its lock.
+  const rounds=Math.max(1,attempts)
   let acquired=false
-  for(let attempt=0;attempt<101;attempt++){
+  for(let attempt=0;attempt<rounds;attempt++){
     try{fs.mkdirSync(lock); acquired=true; break}
     catch(error){
       if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error
       assertNoLinks(lock)
-      if(attempt<100)Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,50)
+      if(attempt+1<rounds)wait(delayMs)
     }
   }
-  if(!acquired)throw Error('Bash IPC lifecycle lock is busy or left by an interrupted process: '+lock+'. Stop all confined shells before manually removing an abandoned lock; no unsafe lock stealing.')
+  if(!acquired){
+    // The lock is never stolen from an owner that may still be alive, so this stage is not
+    // retryable; naming the owner and the recovery command is what makes it actionable (#512).
+    throw bashRuntimeFailure('bash-lifecycle-lock-busy',
+      `the bash runtime cache lifecycle lock at ${lock} is held or was left by an interrupted process${lockOwner(lock)}; no command was executed`)
+  }
   fs.writeFileSync(path.join(lock,'owner.json'),JSON.stringify({pid:process.pid,token})+'\n',{flag:'wx'})
   held.add(path.resolve(root))
   try{return run()}finally{held.delete(path.resolve(root)); fs.unlinkSync(path.join(lock,'owner.json'));fs.rmdirSync(lock)}
