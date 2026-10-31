@@ -101,6 +101,13 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         try { withToolChange([entry.agent], dispose) } catch (error) { ctx.logger.warn('dsh-ops: PTC teardown failed; continuing:', error) }
       }
     }
+    /**
+     * Duck-typed access to the registry's private `modeFor` — same pattern as
+     * `surfaceOf`'s `view()`. It walks the scope chain and returns the resolved
+     * presentation without assembling a prompt: microseconds against the full
+     * assembly a probe pays.
+     */
+    const modeOf = (agent: Agent): string | undefined => (tools as unknown as { modeFor?: (scope: object) => string }).modeFor?.(agent)
     const ptcOnly = async (agent: Agent, signal?: AbortSignal): Promise<boolean> => Boolean(ctx.get('ptcRuntime')) && isPtc(await inspectPresentation(prompt, agent, signal))
     const abortOwner = (agent: Agent, reason: string) => {
       entries.get(agent)?.calls.cancel(reason)
@@ -173,6 +180,11 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
           // verdict it holds instead of paying an assembly to re-derive a mode that a
           // `tools/change` cannot have moved. The next probe confirms it at pre-step.
           if (!verify) { if (entry.ptc) ready.add(agent); continue }
+          // A scope whose registry mode is not `ptc` cannot present PTC-only: the
+          // collapsed section renders empty for every other mode, and `modeFor` is
+          // the same source that section reads. Answering from the scope chain
+          // skips an assembly that can only ever return the verdict already held.
+          if (modeOf(agent) === 'native' && !entry.ptc) { continue }
           probedBefore.add(agent)
           const next = gate.allows(agent) && await task.wait(ptcOnly(agent, task.signal)).catch(() => false)
           if (next !== entry.ptc) { dirty = true; changed.add(agent) }
