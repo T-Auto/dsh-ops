@@ -42,8 +42,15 @@ await test('shipped browser entry stays lazy and binds the one row page plus one
   const started = new Promise(resolve => { markStarted = resolve })
   try {
     await ctx.plugin(Renderer.SlotRegistry)
+    // rc.5 loads the gateway only once `remoteAccess` is present: the Host's own
+    // policy hook is what admits or refuses every non-owner Remote call. This
+    // fixture drives owner-level calls, so the hook always allows.
+    ctx.provide('remoteAccess', { decide: () => ({ kind: 'allow' }) })
     await ctx.plugin(Registry); await ctx.plugin(Gateway, {})
-    const ClientGateway = capture(path.join(PACKAGE_ROOT, 'node_modules/@deepseek-ai/dsh-api-gateway/lib/client.js')).factory(external)
+    // rc.5 splits the gateway client into node and browser conditionals; the
+    // browser build is the one a Client row loads, whichever file name carries it.
+    const gatewayExports = require('@deepseek-ai/dsh-api-gateway/package.json').exports['./client']
+    const ClientGateway = capture(path.join(PACKAGE_ROOT, 'node_modules/@deepseek-ai/dsh-api-gateway', gatewayExports.browser ?? gatewayExports.default)).factory(external)
     await ctx.plugin({ inject: ['typert'], apply(inner) {
       const service = new RuntimeActions({ env: { DSH_HOME: path.join(TEST_HOME, 'client-runtime') }, platform: 'win32', arch: 'x64', run: async (_argv, signal) => {
         calls++; markStarted(); await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }))
@@ -57,7 +64,10 @@ await test('shipped browser entry stays lazy and binds the one row page plus one
         async call(prefix, endpoint, payload, signal) {
           assert.equal(prefix, '/api')
           const [namespace, method] = endpoint.split('/')
-          return { ok: true, value: await ctx.typertGateway.invoke({ namespace, method, args: payload.args, signal }) }
+          // rc.5 requires the Peer each call speaks for; a Client row call is an
+          // owner-level call from the in-process bus, not a live remote stream.
+          const peer = { id: 'suite-peer', ctx, principal: { kind: 'owner' }, signal: new AbortController().signal, interactions: 'none', dispose: async () => {} }
+          return { ok: true, value: await ctx.typertGateway.invoke({ namespace, method, args: payload.args, signal, peer }) }
         },
       } })
     } })

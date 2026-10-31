@@ -114,6 +114,10 @@ await test('real gateway validates exact named inputs before action and withdraw
   const ctx = new Context(); ctx.logger.level = 0
   let calls = 0
   try {
+    // rc.5 loads the gateway only once `remoteAccess` is present: the Host's own
+    // policy hook is what admits or refuses every non-owner Remote call. These
+    // fixture calls are owner-level, so the hook always allows.
+    ctx.provide('remoteAccess', { decide: () => ({ kind: 'allow' }) })
     await ctx.plugin(Registry); await ctx.plugin(Gateway, {})
     const service = new RuntimeActions(options('gateway', { run: async () => { calls++; return success() } }))
     const fiber = await ctx.plugin({ inject: ['typert'], apply(inner) {
@@ -121,7 +125,10 @@ await test('real gateway validates exact named inputs before action and withdraw
       inner.typert.register({ package: 'dsh-ops', face: 'host', schemas: [], model: { services: [], events: [], objects: [] }, invocations: RUNTIME_DESCRIPTORS })
       inner.effect(() => () => service.dispose())
     } })
-    const invoke = (method, args) => ctx.typertGateway.invoke({ namespace: 'opsSettings', method, args })
+    // rc.5 requires every `invoke` to name the Peer it speaks for; this fixture
+    // is the Host itself, so the Peer is an owner with no live client stream.
+    const peer = { id: 'suite-peer', ctx, principal: { kind: 'owner' }, signal: active(), interactions: 'none', dispose: async () => {} }
+    const invoke = (method, args) => ctx.typertGateway.invoke({ namespace: 'opsSettings', method, args, peer })
     await assert.rejects(invoke('plan', { action: 'command' }), /failed boundary validation/)
     await assert.rejects(invoke('plan', { action: 'install-bash', command: 'arbitrary' }), /unexpected/)
     await assert.rejects(invoke('execute', { id: 'not-a-plan' }), /failed boundary validation/)

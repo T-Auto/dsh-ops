@@ -26,7 +26,7 @@ import { legacyComponent } from './legacy-component.mjs'
  * @param {'native'|'ptc'} [options.toolsMode] - deployment presentation mode (default native).
  * @returns {Promise<{ctx: Context, tools: any, prompt: any}>} the host.
  */
-export async function bootHost({ withTools = true, withSystemPrompt = true, keepLogger = false, toolsMode = 'native' } = {}) {
+export async function bootHost({ withTools = true, withSystemPrompt = true, keepLogger = false, toolsMode = 'native', withWorkingDirectory = false } = {}) {
   const ctx = new Context()
   if (!keepLogger) {
     // Cordis logs service and plugin activity at info level; a gate that prints
@@ -40,6 +40,19 @@ export async function bootHost({ withTools = true, withSystemPrompt = true, keep
   if (withTools) {
     const ToolRuntime = (await import('@deepseek-ai/dsh-tools')).default
     await ctx.plugin(ToolRuntime, { mode: toolsMode })
+  }
+  // rc.5 routes `run_code` through the host's working-directory service: a call
+  // carrying an Agent asks it which directory the code runs in and throws when
+  // the service is absent. The shipped service is a plugin of its own, so this
+  // host offers the same contract over the session's committed directory, and
+  // only when a suite asks for it — a host without that service is a state worth
+  // asserting on its own.
+  if (withWorkingDirectory) {
+    ctx.provide('workingDirectory', {
+      get: (session) => session?.header?.cwd ?? process.cwd(),
+      ensure: async (agent) => agent?.session?.header?.cwd ?? process.cwd(),
+      set: async (_agent, target) => target ?? process.cwd(),
+    })
   }
   return { ctx, tools: ctx.get('tools'), prompt: ctx.get('systemPrompt') }
 }

@@ -53,7 +53,7 @@ async function scoped(parent, key, parentKey) {
   return result
 }
 async function setup(cwd, mode, switches, global = {}, override = {}) {
-  const { ctx } = await bootHost()
+  const { ctx } = await bootHost({ withWorkingDirectory: true })
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem); await ctx.plugin(NodePtc)
   ctx.provide('sandboxPolicy', { resolve: ({ session } = {}) => ({ mode: session?.mode ?? 'danger-full-access', workspaceRoot: cwd, sessionId: session?.id }) })
   const presets = new Map(), agents = []

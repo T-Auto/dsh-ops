@@ -50,7 +50,7 @@ const put = (ctx, owner, root, items) => invoke(ctx, WORKER, 'result', { action:
 
 await test('one catalogue entry exposes distinct SDK-valid Native and PTC result contracts', () => {
   const entry = CAPABILITIES.filter(value => value.rawName === 'result')
-  assert.equal(entry.length, 1); assert.deepEqual(entry[0].presentations, ['native', 'ptc', 'both'])
+  assert.equal(entry.length, 1); assert.deepEqual(entry[0].presentations, ['native', 'ptc'])
   assert.equal(entry[0].nativeProjection.component, 'file')
   assertSupportedJsonSchema(NATIVE_RESULT_PARAMETERS); assertSupportedJsonSchema(STORAGE_REFERENCE)
   assert.deepEqual(NATIVE_RESULT_PARAMETERS.properties.action.enum, ['page', 'release'])

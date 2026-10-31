@@ -1,6 +1,6 @@
 # Progressive PTC SDK loading
 
-The PTC row owns its file APIs independently of the Native file row. A PTC-only agent starts with `ops_inspect_local_file`, `ops_result` and `ops_load_sdk`. The host generates the typed SDK from the registered argument and Outcome output schemas. Native and both presentations receive no SDK loader.
+The PTC row owns its file APIs independently of the Native file row. A PTC-only agent starts with `ops_inspect_local_file`, `ops_result` and `ops_load_sdk`. The host generates the typed SDK from the registered argument and Outcome output schemas. Native presentations receive no SDK loader.
 
 Call `tools.ops_load_sdk({ tools: ['grep', 'read_files'] })` inside `run_code`. A completed Outcome contains `data.tools` and `data.nextTurn: true`. Finish the current tool round; the owning session's committed `step/end` makes the requested APIs visible in the immediately following provider request. They are absent from the current frozen SDK snapshot. Prompt and diagnostic assembly before that boundary, and registry notifications, never activate queued names. Assembly waits for owned publication and obtains a fresh public snapshot when needed; internal presentation probes bypass that barrier to avoid recursion.
 
