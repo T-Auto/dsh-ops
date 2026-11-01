@@ -19,6 +19,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 从安装本包的 profile 探测 `dsh-win-pwsh7` 联动，宿主进程没有 `DSH_PROFILE_DIR` 也能判定；保存其它开关不再把「跟随检测」写成显式值，而手动拨动联动开关一定落盘。
 - Name the row setting instead of the removed Compatibility mode when an official tool has an OPS replacement.
 - 官方工具被 OPS 替代时，拒绝信息改指行设置，不再提已删除的兼容模式。
+- Document the read → edit composition inside one `run_code` program: a read receipt supplies both the unique `oldText` anchor and the `expectedRevision` the edit consumes, and a revision that went stale during the program stays a `REVISION_CONFLICT` with `effectState: none`.
+- 说明同一段 `run_code` 内的 read → edit 组合：读取回执同时提供唯一 `oldText` 锚点与编辑所需的 `expectedRevision`；程序内已过期的 revision 仍返回 `REVISION_CONFLICT` 与 `effectState: none`。
 
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 

@@ -21,6 +21,23 @@ PTC 行配置由统一配置入口验证：
 
 先检查 Outcome.status 再使用 data。部分结果保留覆盖信息及 continuation；失败保留错误代码、影响状态和重试策略。加载器不执行文件操作，也不授予文件系统权限。本页不声称 token 基准或 IO 提速。
 
+## 在同一段程序里组合读取与编辑
+
+常驻或已加载的读取回执足以驱动同一段 run_code 内的编辑：某一行的 text 就是唯一的 oldText，data.revision 正是编辑本来就需要的 expectedRevision。无需第二个模型步骤，也不必手工重新推导行号。
+
+```js
+const read = await tools.ops_inspect_local_file({ path: 'plan.md' })
+const anchor = read.data.items.find(item => item.text === 'omega step').text
+const edited = await tools.ops_edit_file({
+  path: 'plan.md',
+  expectedRevision: read.data.revision,
+  edits: [{ oldText: anchor, newText: anchor + ' (done)' }],
+})
+return { read: read.status, edited }
+```
+
+先看 status 再用 data：completed 的编辑回执带有新 revision，被拒绝时保留 error.code 与 error.effectState。REVISION_CONFLICT 表示该次读取之后字节已变化，应重新读取而不是重发旧 revision；partial 读取从不代表整份文件。编辑仍执行唯一匹配、CAS 与原子发布；SDK 不替调用方决定改哪一行、不做 rebase，也不会把分页行拼回文件内容。
+
 ## 实时 PTC 目录
 
 关闭常驻发布时，目录与加载器只使用配置的 `allowedTools` 加 `result` 例外，不再隐式恢复 `inspect_local_file`，也不恢复允许池中缺失的 `read_files`。配置解析仍拒绝仅常驻名称；开启常驻时的普通基础发布行为不变。

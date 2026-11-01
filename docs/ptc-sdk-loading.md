@@ -21,6 +21,23 @@ Selections belong to the exact live agent and persist until its component or age
 
 Read Outcome status before data. A partial result retains coverage and a continuation; failures retain code, effect state and retry policy. The loader performs no file work and grants no filesystem permission. No token benchmark or IO speedup is claimed here.
 
+## Composing a read with an edit
+
+A resident or already-loaded read receipt is enough to drive an edit inside the same `run_code` program: a line's `text` supplies a unique `oldText`, and `data.revision` is the `expectedRevision` the edit already requires. No second model step and no manual re-derivation of line numbers is involved.
+
+```js
+const read = await tools.ops_inspect_local_file({ path: 'plan.md' })
+const anchor = read.data.items.find(item => item.text === 'omega step').text
+const edited = await tools.ops_edit_file({
+  path: 'plan.md',
+  expectedRevision: read.data.revision,
+  edits: [{ oldText: anchor, newText: anchor + ' (done)' }],
+})
+return { read: read.status, edited }
+```
+
+Read `status` before `data`: a `completed` edit carries the new `revision`, while a refusal keeps `error.code` and `error.effectState`. `REVISION_CONFLICT` means the bytes changed since that read — inspect again rather than resending the stale revision — and a `partial` read never describes the whole file. The edit still enforces unique match, CAS and atomic publication; the SDK does not choose which line should change, does not rebase, and never reassembles paged lines into file content on the caller's behalf.
+
 ## Live PTC directory
 
 With resident publication disabled, the directory and loader use configured `allowedTools` plus `result` only. They no longer implicitly restore `inspect_local_file`, or `read_files` when it is absent from the allowed pool. The config parser still rejects resident-only names; ordinary resident-on baseline publication is unchanged.
