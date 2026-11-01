@@ -7,6 +7,18 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Stop the discovery refresh/reconcile feedback loop (#526). A tool or prompt
+  registry change made while this plugin's own presentation probe is assembling
+  is now attributed to that probe instead of being applied inline, and each
+  external activation may spend at most one trailing reconciliation; a component
+  that keeps mutating the registry during assembly gets a single warning and its
+  change is dropped. One external `tools/change` now costs one reconcile (two
+  with a one-off in-assembly change) instead of an unbounded boot-time storm.
+- 修复 discovery 的 refresh/reconcile 自激回路（#526）。本插件自身展示探针装配期间发生的
+  工具或 prompt 注册表变更，现在归属到该探针而不再内联应用；每次外部触发最多追加一次尾随
+  收敛；在装配期间持续修改注册表的组件只告警一次，其变更被丢弃。一次外部 `tools/change`
+  现在只产生一次收敛（装配内有一次性变更时为两次），不再是无界的启动期风暴。
+
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 
 - This unstable prerelease summarizes changes since v0.5.0-alpha2; use an isolated test environment.
