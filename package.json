@@ -36,6 +36,10 @@
     ".": {
       "default": "./lib/index.js"
     },
+    "./prompt-injection": {
+      "types": "./lib/prompt-injection/index.d.ts",
+      "default": "./lib/prompt-injection/index.js"
+    },
     "./policy": {
       "default": "./lib/policy.js"
     },
