@@ -1,423 +1,479 @@
-// @ts-nocheck — ported from the shipped 4.1.8 reader as-is: the runtime is unchanged, the types
-// are the open work. Tracked in docs/CHANGELOG.md under Unreleased.
-'use strict';
+/**
+ * Reading one file: open, gate, decode, page — with one deadline for the whole chain.
+ *
+ * Three structural choices, all of them load-bearing:
+ *
+ *   a) `open` then `handle.stat()`, never `stat` then `open`: the fstat lands on the descriptor that was
+ *      actually opened, so a path swapped underneath cannot produce a size from a different file.
+ *   b) read and decode in chunks instead of probing 4 KiB, reading 2 MiB and truncating after — the
+ *      character quota stops the read, which is what keeps a 2 MiB file from slowing the batch.
+ *   c) **one deadline, one timer** for open/fstat/read. The previous version built a timer per phase:
+ *      20 files meant 80 timers; now it is one deadline plus one `close` cap per file.
+ *
+ * @module dsh-ops/file/reader/read-one
+ */
 
-const fsp = require('fs').promises;
-const crypto = require('crypto');
-const { StringDecoder } = require('string_decoder');
+import { promises as fsp, type Stats } from 'node:fs'
+import type { FileHandle } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { StringDecoder } from 'node:string_decoder'
 
-const { DEFAULTS, TRUNCATED_MARK, OpsError, emptyResult, sleep } = require('./core.cjs');
-const { resolveTarget, fenceRealPath, LINK_DENIED, assertParentDirs, startLeafCheck } = require('./path-safety.cjs');
-const { countNewlines, cutChars, truncate } = require('./text.cjs');
+import { emptyResult, OpsError, sleep, TRUNCATED_MARK, type ReadEntry, type ResolvedOptions } from './core.cjs'
+import { assertParentDirs, fenceRealPath, LINK_DENIED, resolveTarget, startLeafCheck, type ReaderMemo } from './path-safety.cjs'
+import { countNewlines, cutChars } from './text.cjs'
 
-async function openWithRetry(target, opts, guard, deadline, isAbandoned) {
-  for (let attempt = 0; ; attempt++) {
+/** A page request: keep lines `[from, to]`, capped at `maxBytes` of line bytes. */
+export interface LineWindow {
+  from: number
+  to: number
+  maxBytes: number
+}
+
+/** The options a single read sees: the resolved defaults plus the batch memo and the page window. */
+export type ReadContext = ResolvedOptions & ReaderMemo & { lineWindow?: LineWindow | null }
+
+/** Everything a cache hit restores; `path`, `status` and `elapsedMs` are rebuilt per call. */
+interface CachedPayload {
+  content: string | null
+  truncated: boolean
+  bytes: number | null
+  scannedBytes: number
+  rows: string[] | null
+  rowsClipped: boolean
+  lineCount: number | null
+  revision: string | null
+}
+
+/** A decoder that either validates (strict UTF-8) or substitutes. */
+type Decoder = TextDecoder | StringDecoder
+
+/**
+ * Open with retries on descriptor exhaustion.
+ *
+ * Concurrency is the point of this reader, and its side effect is that a host already tight on descriptors
+ * hits EMFILE sooner. Failing immediately on EMFILE would defeat the purpose, so it backs off 8/16 ms.
+ */
+export async function openWithRetry(target: string, opts: ReadContext, guard: <T,>(pending: Promise<T>) => Promise<T>, deadline: number, isAbandoned: () => boolean): Promise<FileHandle> {
+  for (let attempt = 0; ; attempt += 1) {
     try {
-      const pending = fsp.open(target, 'r');
-      // race 输给超时之后，open 仍会在几百毫秒后带着一个句柄落地。没人接就是泄漏一个 FD，
-      // 反复调用能把进程的 FD 表磨干 —— 正是本工具声称要防的那件事。
-      // close 本身失败（句柄已被系统回收 / 网络盘断开）没有可行动作，吞掉是为了不让
-      // 一个"清理失败"变成 unhandledRejection 打崩调用方；泄漏与否由 FD 计数用例兜底。
-      pending.then((h) => { if (isAbandoned()) h.close().catch(() => {}); }, () => {});
-      return await guard(pending);
-    } catch (err) {
-      const retryable = err.code === 'EMFILE' || err.code === 'ENFILE' || err.code === 'EBUSY';
-      if (!retryable || attempt >= opts.maxOpenRetries) throw err;
-      if (deadline - Date.now() <= 0) throw new OpsError('TIMEOUT', '重试期间耗尽总预算');
-      await sleep(8 * (attempt + 1));   // 让其它协程先把 FD 还回来
+      const pending = fsp.open(target, 'r')
+      // The race may already have lost to the timeout while `open` is still in flight; when its handle
+      // arrives nobody is waiting, and an unclosed descriptor is exactly the leak this tool exists to
+      // prevent. A failing close has no actionable answer, so it is swallowed: a cleanup failure must not
+      // become an unhandled rejection that takes the caller down.
+      pending.then(handle => {
+        if (isAbandoned()) handle.close().catch(() => {})
+      }, () => {})
+      return await guard(pending)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      const retryable = code === 'EMFILE' || code === 'ENFILE' || code === 'EBUSY'
+      if (!retryable || attempt >= opts.maxOpenRetries) throw error
+      if (deadline - Date.now() <= 0) throw new OpsError('TIMEOUT', 'the retry budget ran out')
+      await sleep(8 * (attempt + 1)) // let the other coroutines return their descriptors first
     }
   }
 }
 
 /**
- * 跨调用读取缓存（LRU，进程内）。
+ * Cross-call cache (LRU, in-process).
  *
- * 同一文件在一次会话里被读两遍是常态（读一次、改一次、再读一次确认），而每次都重新付
- * open + fstat + read + 解码 + SHA-256 + 切行。open 与 fstat 必须每次都付 —— 它们是"这个
- * 文件现在是什么"的唯一凭据；能省的是它们之后那段，也就是真正贵的部分。
+ * Reading the same file twice in a session is normal (read, edit, read back to confirm), and every read
+ * pays open + fstat + read + decode + SHA-256 + line splitting. Open and fstat must be paid every time —
+ * they are the only evidence of what the file is *now*; what can be saved is the expensive part after them.
  *
- * 键里带着 dev:ino:size:mtime 与全部影响正文的开关（full/hash/normalize/stripBom/strictUtf8、
- * 行窗口、字符额度）。inode 拿不到（部分网络盘报 0）就不缓存 —— 没有身份就没有命中判断，
- * 宁可慢也不能给出旧正文。
+ * The key carries dev:ino:size:mtime plus every switch that affects the text, so a hit is equivalent to
+ * "same bytes, same window, same switches". No inode (some network shares report 0) means no key at all:
+ * without identity there is no way to tell a hit from a stale answer, and stale text is worse than slow.
  */
-const READ_CACHE_MAX_ENTRIES = 64;
-const READ_CACHE_MAX_CHARS = 8 << 20;
-const readCache = new Map();
-let readCacheChars = 0;
-let readCacheHits = 0;
-let readCacheMisses = 0;
+const READ_CACHE_MAX_ENTRIES = 64
+const READ_CACHE_MAX_CHARS = 8 << 20
+const readCache = new Map<string, { value: CachedPayload, chars: number }>()
+let readCacheChars = 0
+let readCacheHits = 0
+let readCacheMisses = 0
 
-function readCacheGet(key) {
-  const hit = readCache.get(key);
+/** Look up a key, refreshing its recency on a hit. */
+export function readCacheGet(key: string): CachedPayload | undefined {
+  const hit = readCache.get(key)
   if (hit === undefined) {
-    readCacheMisses++;
-    return undefined;
+    readCacheMisses += 1
+    return undefined
   }
-  // LRU：命中即挪到队尾
-  readCache.delete(key);
-  readCache.set(key, hit);
-  readCacheHits++;
-  return hit.value;
+  readCache.delete(key)
+  readCache.set(key, hit)
+  readCacheHits += 1
+  return hit.value
 }
 
-function readCacheSet(key, value) {
+/** Store a payload, evicting least-recently-used entries until both caps hold. */
+export function readCacheSet(key: string, value: CachedPayload): void {
   const chars = (value.content ? value.content.length : 0)
-    + (value.rows ? value.rows.reduce((n, row) => n + row.length, 0) : 0);
-  if (chars > READ_CACHE_MAX_CHARS) return;      // 单个巨块不值得占着窗口
-  readCache.set(key, { value, chars });
-  readCacheChars += chars;
+    + (value.rows ? value.rows.reduce((n, row) => n + row.length, 0) : 0)
+  if (chars > READ_CACHE_MAX_CHARS) return // one huge entry is not worth the window
+  readCache.set(key, { value, chars })
+  readCacheChars += chars
   while (readCache.size > READ_CACHE_MAX_ENTRIES || readCacheChars > READ_CACHE_MAX_CHARS) {
-    const oldest = readCache.keys().next();
-    if (oldest.done) break;
-    readCacheChars -= readCache.get(oldest.value).chars;
-    readCache.delete(oldest.value);
+    const oldest = readCache.keys().next()
+    if (oldest.done) break
+    readCacheChars -= (readCache.get(oldest.value as string) as { chars: number }).chars
+    readCache.delete(oldest.value as string)
   }
 }
 
-function readCacheStats() {
-  return { entries: readCache.size, chars: readCacheChars, hits: readCacheHits, misses: readCacheMisses };
+/** Counters for the diagnostics path. */
+export function readCacheStats(): { entries: number, chars: number, hits: number, misses: number } {
+  return { entries: readCache.size, chars: readCacheChars, hits: readCacheHits, misses: readCacheMisses }
 }
 
-/** 单文件读取（async 路径）：open -> fstat -> 分块读（边解码边判闸门）。
+/** Drop everything the cache holds, including the counters. */
+export function readCacheReset(): void {
+  readCache.clear()
+  readCacheChars = 0
+  readCacheHits = 0
+  readCacheMisses = 0
+}
+
+/**
+ * Read one file.
  *
- * 三个结构要点：
- *   a) 不 stat + open 各解析一次路径，改成 open 后 handle.stat()。fstat 落在已打开的 FD 上，
- *      路径被换掉也拿不到错的 size。
- *   b) 不"先探测 4KB 再读满 2MB 再截断"，改成边读边解码，字符数到上限就停。
- *   c) **全链路只用一个 deadline、一个 timer**。上一版 open/fstat/read 各一个 withTimeout，
- *      20 个文件实测建 80 个 timer；现在 1 个 deadline + 1 个 close 兜底 = 40 个。
- *      超时靠共享的 expired promise 在任何 await 处立刻炸，不靠每段重新计时。
+ * Returns a `ReadEntry` in every case, including failure: the caller never has to catch for a per-file
+ * error, and a failed file keeps its place in the batch.
  */
-async function readOne(filePath, opts, startedAt) {
-  const deadline = startedAt + opts.timeoutMs;
-  // 键与结果里的 path 同源：normalize 时统一 POSIX，否则原样回写（兼容层要逐字节一致）
-  const base = emptyResult(opts.normalize ? filePath.replace(/\\/g, '/') : filePath);
+export async function readOne(filePath: string, opts: ReadContext, startedAt: number): Promise<ReadEntry> {
+  const deadline = startedAt + opts.timeoutMs
+  // The key and the reported path come from the same place: POSIX under `normalize`, verbatim otherwise —
+  // the compat entry point needs byte-identical paths.
+  const base = emptyResult(opts.normalize ? filePath.replace(/\\/g, '/') : filePath)
 
-  let timer = null;
-  let abandoned = false;                // 计时器打穿后，晚到的句柄要由 openWithRetry 关掉
-  const timeout = new Promise((_, reject) => {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let abandoned = false // the timer fired; a handle that arrives later must be closed by openWithRetry
+  const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      abandoned = true;
-      reject(new OpsError('TIMEOUT', `超出 ${opts.timeoutMs}ms 总预算`));
-    }, Math.max(1, opts.timeoutMs));
-  });
-  timeout.catch(() => {});              // 超时后不再有人 await 它，先挂空 catch 防 unhandledRejection
+      abandoned = true
+      reject(new OpsError('TIMEOUT', `exceeded the ${opts.timeoutMs}ms budget`))
+    }, Math.max(1, opts.timeoutMs))
+  })
+  timeout.catch(() => {}) // after the timeout nobody awaits it
 
-  // 取消也要能打断**进行中**的 open/read：只在每个 chunk 边界查 aborted 时，
-  // 一个挂在坏盘上的 open 会把"已取消"拖到 timeoutMs 才生效。
-  // 注意 listener 必须在 finally 摘掉，否则同批 20 个文件往同一个 signal 上挂 20 个闭包。
-  const signal = opts.signal;
-  let onAbort = null;
+  // Cancellation has to interrupt an *in-flight* open or read: checking `aborted` only at chunk boundaries
+  // lets an open stuck on a bad disk run until the timeout. The listener must come off in `finally`, or a
+  // batch of 20 files hangs 20 closures on one signal.
+  const signal = opts.signal
+  let onAbort: (() => void) | null = null
   const aborted = signal && typeof signal.addEventListener === 'function'
-    ? new Promise((_, reject) => {
-      onAbort = () => { abandoned = true; reject(new OpsError('ABORTED', '调用方已取消本批次')); };
-      if (signal.aborted) onAbort();
-      else signal.addEventListener('abort', onAbort, { once: true });
+    ? new Promise<never>((_, reject) => {
+      onAbort = () => {
+        abandoned = true
+        reject(new OpsError('ABORTED', 'the caller cancelled this batch'))
+      }
+      if (signal.aborted) (onAbort as () => void)()
+      else signal.addEventListener('abort', onAbort as () => void, { once: true })
     })
-    : null;
-  if (aborted) aborted.catch(() => {});          // 文件先读完时这个 rejection 没人 await
+    : null
+  if (aborted) aborted.catch(() => {}) // a file that finishes first leaves this rejection unobserved
 
-  const guard = (p) => {
-    p.catch(() => {});                  // race 输掉的那一方也必须有人接住
-    return aborted ? Promise.race([p, timeout, aborted]) : Promise.race([p, timeout]);
-  };
+  const guard = <T,>(pending: Promise<T>): Promise<T> => {
+    pending.catch(() => {}) // the losing side of every race still needs a handler
+    return aborted ? Promise.race([pending, timeout, aborted]) as Promise<T> : Promise.race([pending, timeout]) as Promise<T>
+  }
 
-  let handle;
+  let handle: FileHandle | undefined
   try {
-    if (opts.signal && opts.signal.aborted) throw new OpsError('ABORTED', '调用方已取消本批次');
+    if (opts.signal?.aborted) throw new OpsError('ABORTED', 'the caller cancelled this batch')
 
-    // 1) 开句柄：之后所有元数据都从这个 FD 拿，不再二次解析路径
-    const target = resolveTarget(filePath, opts.root);
-    // 传了 root 才付这次 realpath：词法检查拦 '../'，真实路径检查拦 symlink / junction
-    const opened = opts.root ? await guard(fenceRealPath(target, opts.root, opts)) : target;
-    let leafStat = null;
+    // 1) Open once; every piece of metadata comes off this descriptor afterwards.
+    const target = resolveTarget(filePath, opts.root)
+    // The realpath is only paid with a root: the lexical check stops '../', the real check stops links.
+    const opened = opts.root ? await guard(fenceRealPath(target, opts.root, opts)) : target
+    let leafPending: Promise<Stats> | null = null
     if (!opts.allowLinks) {
-      await guard(assertParentDirs(opened, opts));   // 目录链：批级缓存
-      leafStat = startLeafCheck(opened);             // 叶子：与 open 同一个 syscall 窗口
+      await guard(assertParentDirs(opened, opts)) // the directory chain, cached per batch
+      leafPending = startLeafCheck(opened) as Promise<Stats> // the leaf, in the same syscall window as the open
     }
-    handle = await openWithRetry(opened, opts, guard, deadline, () => abandoned);
-    if (leafStat) {
-      leafStat = await guard(leafStat);
-      if (leafStat.isSymbolicLink()) throw new OpsError('PATH_RESTRICTED', LINK_DENIED);
+    handle = await openWithRetry(opened, opts, guard, deadline, () => abandoned)
+    let leafStat: Stats | null = null
+    if (leafPending) {
+      leafStat = await guard(leafPending)
+      if (leafStat.isSymbolicLink()) throw new OpsError('PATH_RESTRICTED', LINK_DENIED)
     }
 
-    // 2) 大小闸门（fstat）：先拦后读，2MB 以上的文件一个字节都不读
-    const stat = await guard(handle.stat());
-    // lstat 与 open 是并发的：两者之间把普通文件换成链接，lstat 仍说"普通"，而 open 已经
-    // 跟到栏外。句柄的身份（dev+ino）与 lstat 的身份不一致，就是那次替换。关句柄由 finally
-    // 负责；这一判等价于原装 open_nofollow 的原子性，不额外付 syscall（两个 stat 本来就有）。
+    // 2) Size gate on the fstat: refuse before reading a byte.
+    const stat = await guard(handle.stat()) as Stats
+    // The lstat and the open run concurrently: swapping a regular file for a link between them leaves the
+    // lstat saying "regular" while the open already followed the link. A dev+ino mismatch is that swap.
+    // The handle is closed by `finally`; this check costs no extra syscall.
     if (leafStat && leafStat.ino !== 0 && stat.ino !== 0
-        && (stat.ino !== leafStat.ino || stat.dev !== leafStat.dev)) {
-      throw new OpsError('PATH_RESTRICTED', LINK_DENIED + ' (replaced between check and open)');
+      && (stat.ino !== leafStat.ino || stat.dev !== leafStat.dev)) {
+      throw new OpsError('PATH_RESTRICTED', `${LINK_DENIED} (replaced between check and open)`)
     }
-    if (!stat.isFile()) throw new OpsError('NOT_A_FILE', '不是普通文件（目录 / 设备 / 管道）');
-    base.size = stat.size;
-    base.mtimeMs = Number.isFinite(stat.mtimeMs) ? Math.round(stat.mtimeMs) : null;
+    if (!stat.isFile()) throw new OpsError('NOT_A_FILE', 'not a regular file (directory, device or pipe)')
+    base.size = stat.size
+    base.mtimeMs = Number.isFinite(stat.mtimeMs) ? Math.round(stat.mtimeMs) : null
     if (stat.size > opts.maxFileSize) {
-      throw new OpsError('FILE_TOO_LARGE', `文件 ${stat.size} 字节，超过上限 ${opts.maxFileSize} 字节，已拒绝读取`);
+      throw new OpsError('FILE_TOO_LARGE', `the file is ${stat.size} bytes, over the ${opts.maxFileSize}-byte ceiling; refusing to read it`)
     }
 
-    // 3) 分块读 + 边解码边判闸门
-    //    行窗口模式（兼容层）：只留 [from,to] 行，正文不进内存
-    //    —— 20×1MB 实测堆占用 28.6MB → 1.6MB
-    const win = opts.lineWindow || null;
-    const rows = win ? [] : null;
-    const winMaxBytes = win && win.maxBytes > 0 ? win.maxBytes : 0;
-    let winBytes = 0;
-    let rowsClipped = false;
-    let winStop = 0;                     // 本页的终止行号：页内行必须是从 from 起的稠密前缀
-    let carry = '';
-    let lineNo = 0;
+    // 3) Chunked read with the gates applied while decoding.
+    //    Window mode keeps only lines [from, to]: the body never enters memory
+    //    (measured 20×1MB: 28.6 MB of heap down to 1.6 MB).
+    const win = opts.lineWindow ?? null
+    const rows: string[] | null = win ? [] : null
+    const winMaxBytes = win && win.maxBytes > 0 ? win.maxBytes : 0
+    let winBytes = 0
+    let rowsClipped = false
+    let winStop = 0 // the page's closing line: page rows must be a dense prefix from `from`
+    let carry = ''
+    let lineNo = 0
 
-    let text = '';
-    let bytes = 0;
-    let position = 0;
-    let lineBreaks = 0;
-    let lastChar = '';
-    let truncated = false;
-    let textCut = false;                // 正文真的被 keep 切掉过（区别于"字节读完了"）
-    let decoder = null;                 // 首块见过 BOM 之后再建
-    let enc = opts.encoding;
-    let nulGate = true;                 // UTF-16 天然含 NUL，命中 BOM 后关掉这道闸
-    // native 模式：单文件能交付多少字符；full 模式：留多少正文用于切行
-    const keep = opts.full ? opts.maxChars : Math.min(opts.maxChars, opts.maxTotalChars);
+    let text = ''
+    let bytes = 0
+    let position = 0
+    let lineBreaks = 0
+    let lastChar = ''
+    let truncated = false
+    let textCut = false // the body really was cut by `keep`, as opposed to "the bytes ran out"
+    let decoder: Decoder | null = null // built after the first chunk reveals a BOM
+    let enc = opts.encoding
+    let nulGate = true // UTF-16 contains NUL by nature; the BOM turns this gate off
+    // native: how many characters one file may deliver; full: how much body to keep for line counting
+    const keep = opts.full ? opts.maxChars : Math.min(opts.maxChars, opts.maxTotalChars)
 
-    // 3.5) 缓存命中：身份（dev:ino:size:mtime）+ 所有影响正文的开关都进键，
-    //      所以命中即等价于"同样的字节、同样的窗口、同样的开关"。
+    // 3.5) Cache hit: identity plus every switch that affects the text, so a hit means identical output.
     const cacheKey = stat.ino !== 0
       ? `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}|${opts.full ? 1 : 0}${opts.hash ? 1 : 0}${opts.normalize ? 1 : 0}${opts.stripBom ? 1 : 0}${opts.strictUtf8 ? 1 : 0}|${keep}|${win ? `${win.from}:${win.to}:${win.maxBytes}` : '-'}`
-      : null;
+      : null
     if (cacheKey !== null) {
-      const cached = readCacheGet(cacheKey);
-      if (cached !== undefined) {
-        return { ...base, status: 'success', ...cached, elapsedMs: Date.now() - startedAt };
-      }
+      const cached = readCacheGet(cacheKey)
+      if (cached !== undefined) return { ...base, status: 'success', ...cached, elapsedMs: Date.now() - startedAt }
     }
-    // 摘要必须是"整个文件"的摘要。早停模式下哈希只覆盖前缀，产出的 revision 会被上层
-    // 当成内容指纹做 CAS 判旧，错得无声无息 —— 所以 hash 只在读到 EOF 的 full 模式生效。
-    const hasher = opts.hash && opts.full ? crypto.createHash('sha256') : null;
-    // 整文件只分配一次缓冲；超时后该缓冲被遗弃，不会被下一次 read 复用。
-    // 长度至少 3 字节：BOM 判定（UTF-8 是 3 字节）必须能在一块内看全，否则 chunkBytes=1/2 时
-    // BOM 跨块 —— U+FEFF 会漏进首行，UTF-16 会被 NUL 闸误杀成二进制。
-    const buf = Buffer.allocUnsafe(Math.max(3, Math.min(opts.chunkBytes, Math.max(1, stat.size))));
+    // A digest has to cover the whole file. In early-stop mode it would cover only a prefix, and the
+    // revision would then be used upstream as a content fingerprint for CAS — wrong, and silently so. So
+    // hashing only happens in full mode, which reads to EOF.
+    const hasher = opts.hash && opts.full ? createHash('sha256') : null
+    // One buffer per file. At least 3 bytes, because the BOM decision must fit in a single chunk: with
+    // chunkBytes of 1 or 2 the BOM would straddle chunks — U+FEFF would leak into the first line, and UTF-16
+    // would be killed by the NUL gate as binary.
+    const buf = Buffer.allocUnsafe(Math.max(3, Math.min(opts.chunkBytes, Math.max(1, stat.size))))
 
-    /** 喂一段已解码文本：窗口模式只记行号与命中行，非窗口模式累积正文 */
-    const feed = (piece) => {
-      if (piece.length === 0) return;
-      lastChar = piece[piece.length - 1];        // 末尾有没有换行，决定 lineCount 要不要 +1
+    /** Feed decoded text: window mode records line numbers and matching lines; otherwise it accumulates. */
+    const feed = (piece: string): void => {
+      if (piece.length === 0) return
+      lastChar = piece[piece.length - 1] // a trailing newline decides whether lineCount needs +1
       if (!win) {
-        if (opts.full) lineBreaks += countNewlines(piece);
-        if (textCut) return;                        // 配额已满：后续只喂行数/摘要，不再拼正文
-        const room = keep - text.length;
-        // 判据是"这一块比剩余配额长"。注意 textCut 置位后必须一直保留判断，
-        // 否则块很小时（chunkBytes=1）正文满了却不再报截断，还会把整个文件白读完。
+        if (opts.full) lineBreaks += countNewlines(piece)
+        if (textCut) return // quota spent: keep counting lines and hashing, stop building text
+        const room = keep - text.length
+        // The test is "this chunk is longer than what is left", and it must stay in force after textCut is
+        // set: with small chunks the old code stopped reporting truncation once the body filled up.
         if (piece.length > room) {
-          textCut = true;
-          text += cutChars(piece, room);
+          textCut = true
+          text += cutChars(piece, room)
         } else {
-          text += piece;
+          text += piece
         }
-        return;
+        return
       }
-      let start = 0;
+      let start = 0
       for (;;) {
-        const nl = piece.indexOf('\n', start);
-        if (nl === -1) break;
-        lineNo++;
+        const nl = piece.indexOf('\n', start)
+        if (nl === -1) break
+        lineNo += 1
         if (winStop === 0 && lineNo >= win.from && lineNo <= win.to) {
-          // carry 只在"当前行落在窗口内"时累积，窗口外的巨行不会把内存吃掉
-          const line = carry.length > 0 ? carry + piece.slice(start, nl) : piece.slice(start, nl);
-          // 窗口行总字节封顶在输出预算：超了也送不到上层，多留纯属浪费堆
-          if (winMaxBytes && winBytes + line.length > winMaxBytes && rows.length > 0) {
-            // **一旦削行，本页立即定界**。此前只是跳过这一行、后面的小行继续往里塞，
-            // 结果 page 变成"有洞"的数组；而上层拿到的行号是 offset+i 算出来的稠密编号，
-            // 于是巨行之后每一行都被报成前一行号（实测 400KB 行之后整体错位 1 行，
-            // 巨行内容则彻底丢失）。定界后 rows 恒为 [from, nextOffset) 的稠密前缀。
-            rowsClipped = true;
-            winStop = lineNo;
+          // `carry` only accumulates while the current line is inside the window, so an enormous line
+          // outside it cannot eat memory.
+          const line = carry.length > 0 ? carry + piece.slice(start, nl) : piece.slice(start, nl)
+          if (winMaxBytes && winBytes + line.length > winMaxBytes && (rows as string[]).length > 0) {
+            // Clipping a line closes the page immediately. The old code skipped the line and kept adding
+            // later ones, producing a page with a hole — while the caller derives line numbers as
+            // offset+i, so every line after the huge one was reported one number too early (measured after
+            // a 400 KB line) and the huge line itself was lost. Closing here keeps rows a dense prefix.
+            rowsClipped = true
+            winStop = lineNo
           } else {
-            rows.push(line.charCodeAt(line.length - 1) === 13 ? line.slice(0, -1) : line);
-            winBytes += line.length;
+            ;(rows as string[]).push(line.charCodeAt(line.length - 1) === 13 ? line.slice(0, -1) : line)
+            winBytes += line.length
           }
         }
-        carry = '';
-        start = nl + 1;
+        carry = ''
+        start = nl + 1
       }
-      // 未闭合的尾部：只在页未定界时继续累积，且"这一整行"超预算就当场定界。
-      // 不这么做的话，巨行会被截成「前半段 + 最后一块」拼起来当作完整行交付（内容中间缺一段）。
+      // An unclosed tail: keep accumulating only while the page is still open, and close it if this single
+      // line busts the budget. Otherwise a huge line would be delivered as "first part + last chunk" with
+      // the middle missing.
       if (start < piece.length && winStop === 0 && lineNo + 1 >= win.from && lineNo + 1 <= win.to) {
-        const rest = piece.length - start;
-        if (winMaxBytes && winBytes + carry.length + rest > winMaxBytes && rows.length > 0) {
-          rowsClipped = true;
-          winStop = lineNo + 1;
+        const rest = piece.length - start
+        if (winMaxBytes && winBytes + carry.length + rest > winMaxBytes && (rows as string[]).length > 0) {
+          rowsClipped = true
+          winStop = lineNo + 1
         } else {
-          carry += piece.slice(start);
+          carry += piece.slice(start)
         }
       }
-    };
+    }
 
     while (bytes < stat.size) {
-      if (opts.signal && opts.signal.aborted) throw new OpsError('ABORTED', '调用方已取消本批次');
+      if (opts.signal?.aborted) throw new OpsError('ABORTED', 'the caller cancelled this batch')
 
-      const cap = Math.min(buf.length, stat.size - bytes);
-      const { bytesRead } = await guard(handle.read(buf, 0, cap, position));
-      if (bytesRead === 0) break;                 // 文件被并发截短
-      // 判定要对 buf.length，不是 cap。最后一次读通常 cap < buf.length（文件大小不是块大小的整数倍），
-      // 用 cap 判定会把整块 buf 当成新数据，把上一块的尾部重新解码一遍 —— 100000 字节文件实测
-      // 末尾多解 34464 字节，直接导致内容重复 + 假截断。
-      const view = bytesRead === buf.length ? buf : buf.subarray(0, bytesRead);
-      bytes += bytesRead;
-      position += bytesRead;
-      if (hasher) hasher.update(view);            // 摘要按原始字节算，含 BOM，和原装 revision 同源
+      const cap = Math.min(buf.length, stat.size - bytes)
+      const { bytesRead } = await guard(handle.read(buf, 0, cap, position))
+      if (bytesRead === 0) break // the file was truncated underneath us
+      // The test is against buf.length, not cap. The last read usually has cap < buf.length (the size is not
+      // a multiple of the chunk), and testing against cap re-decodes the whole buffer including the previous
+      // chunk's tail — measured: 34464 extra bytes decoded on a 100000-byte file, i.e. duplicated content
+      // plus a fake truncation.
+      const view = bytesRead === buf.length ? buf : buf.subarray(0, bytesRead)
+      bytes += bytesRead
+      position += bytesRead
+      if (hasher) hasher.update(view) // the digest covers raw bytes including BOM, matching the original
 
-      let body = view;
+      let body: Buffer = view
       if (decoder === null) {
-        // 4) 解码闸门：BOM 优先于调用方的 encoding
+        // 4) Decode gate: a BOM outranks the caller's encoding.
         if (body.length >= 3 && body[0] === 0xef && body[1] === 0xbb && body[2] === 0xbf) {
-          if (opts.stripBom) body = body.subarray(3);   // 兼容层不剥：返回文本必须与磁盘逐字节一致
+          if (opts.stripBom) body = body.subarray(3) // the compat path does not strip: text must match disk
         } else if (body.length >= 2 && body[0] === 0xff && body[1] === 0xfe) {
-          // 严格模式（兼容层）只接受 UTF-8：UTF-16 原装报 ERR_INVALID_ENCODING，
-          // 而且放它过去更危险 —— 上层 ops_edit_file 按 UTF-8 回写会把整个文件写坏。
-          if (opts.strictUtf8) throw new OpsError('INVALID_UTF8', 'File is not valid UTF-8');
-          enc = 'utf16le'; nulGate = false; body = body.subarray(2);   // Windows 的 Unicode 文本
+          // Strict mode only accepts UTF-8; and letting UTF-16 through is worse — an upstream writer that
+          // writes UTF-8 would corrupt the whole file.
+          if (opts.strictUtf8) throw new OpsError('INVALID_UTF8', 'File is not valid UTF-8')
+          enc = 'utf16le'
+          nulGate = false
+          body = body.subarray(2) // Windows "Unicode" text
         } else if (body.length >= 2 && body[0] === 0xfe && body[1] === 0xff) {
-          throw new OpsError(opts.strictUtf8 ? 'INVALID_UTF8' : 'UNSUPPORTED_ENCODING',
-            opts.strictUtf8 ? 'File is not valid UTF-8' : '检测到 UTF-16BE BOM，暂不支持；请先转成 UTF-8');
+          throw new OpsError(
+            opts.strictUtf8 ? 'INVALID_UTF8' : 'UNSUPPORTED_ENCODING',
+            opts.strictUtf8 ? 'File is not valid UTF-8' : 'a UTF-16BE BOM was detected, which is not supported; convert to UTF-8 first',
+          )
         }
-        // 严格模式用 fatal TextDecoder：非法字节当场抛，而不是塞一堆 U+FFFD 进上下文。
-        // 它自带跨块缓冲，UTF-8 被切成半截序列也不会误判（StringDecoder 不做合法性检查）。
-        // ignoreBOM 必须显式 true：TextDecoder 默认会自己再剥一次 BOM，与上面的 subarray(3)
-        // 叠加成"剥两层" —— 双 BOM 文件在兼容层被吃掉两个 U+FEFF，而 native 只吃一个。
-        decoder = opts.strictUtf8
-          ? new TextDecoder(enc, { fatal: true, ignoreBOM: true })
-          : new StringDecoder(enc);
+        // Strict mode uses a fatal TextDecoder: invalid bytes throw instead of filling the context with
+        // U+FFFD. It buffers across chunks itself, so a UTF-8 sequence split at a boundary is not a false
+        // positive (StringDecoder does not validate). `ignoreBOM` must be explicit: TextDecoder strips a BOM
+        // by default, which would double-strip on top of the subarray(3) above — a double-BOM file would
+        // lose two U+FEFF in the compat path and only one in native.
+        decoder = opts.strictUtf8 ? new TextDecoder(enc, { fatal: true, ignoreBOM: true }) : new StringDecoder(enc)
       }
 
-      // 5) 二进制闸门：解码窗口内出现 NUL 即判二进制，绝不按 utf-8 吐几百万乱码
+      // 5) Binary gate: a NUL in the decoded window means binary; never return megabytes of mojibake.
       if (nulGate && body.includes(0)) {
-        throw new OpsError('BINARY_FILE', `前 ${bytes} 字节内检测到 NUL，判定为二进制文件，拒绝按文本返回`);
+        throw new OpsError('BINARY_FILE', `a NUL was found within the first ${bytes} bytes; treating this as binary and refusing to return text`)
       }
 
       try {
-        feed(opts.strictUtf8 ? decoder.decode(body, { stream: true }) : decoder.write(body));
-      } catch (err) {
-        if (opts.strictUtf8 && err && err.code === 'ERR_ENCODING_INVALID_ENCODED_DATA') {
-          throw new OpsError('INVALID_UTF8', 'File is not valid UTF-8');
+        const active = decoder
+        feed(opts.strictUtf8 ? (active as TextDecoder).decode(body, { stream: true }) : (active as StringDecoder).write(body))
+      } catch (error) {
+        if (opts.strictUtf8 && (error as { code?: string }).code === 'ERR_ENCODING_INVALID_ENCODED_DATA') {
+          throw new OpsError('INVALID_UTF8', 'File is not valid UTF-8')
         }
-        throw err;
+        throw error
       }
 
-      // 6) 单文件截断：字符配额真被切掉就停手，尾部压根不读 —— 这是 2MB 文件不拖慢整批的关键。
-      //    判据是 textCut 而不是 text.length >= keep：文件小于一个 chunk 时一次就读到 EOF，
-      //    此时 bytes == stat.size，但字符照样可能被 keep 砍掉（60,000 字符的文件读成 50,000）。
-      //    只看字节就会把这种真截断报成 truncated=false。
-      if (!opts.full && !win && textCut) { truncated = true; break; }
-      // 注意不把"短读"当 EOF：SMB / 网络盘会返回不满的读，短读即停会把文件悄悄读半截。
-      // 退出条件只看 bytes >= stat.size 或 bytesRead === 0。
+      // 6) Per-file truncation: once the character quota really cut something, stop reading — this is what
+      //    keeps a 2 MiB file from slowing the whole batch. The test is `textCut`, not `text.length >= keep`:
+      //    a file smaller than one chunk reads to EOF in a single pass, so `bytes === stat.size` while the
+      //    body was still cut by `keep` (a 60000-character file read as 50000); byte-counting alone would
+      //    report that as truncated=false.
+      if (!opts.full && !win && textCut) {
+        truncated = true
+        break
+      }
+      // A short read is deliberately not treated as EOF: SMB and network shares return partial reads, and
+      // stopping there would silently return half a file. Only `bytes >= stat.size` or a zero read ends it.
     }
 
-    let tail = '';
+    let tail = ''
     if (decoder) {
       try {
-        tail = opts.strictUtf8 ? decoder.decode() : decoder.end();   // 冲掉残留的半截序列
-      } catch (err) {
-        if (opts.strictUtf8 && err && err.code === 'ERR_ENCODING_INVALID_ENCODED_DATA') {
-          throw new OpsError('INVALID_UTF8', 'File is not valid UTF-8');
+        tail = opts.strictUtf8 ? (decoder as TextDecoder).decode() : (decoder as StringDecoder).end()
+      } catch (error) {
+        if (opts.strictUtf8 && (error as { code?: string }).code === 'ERR_ENCODING_INVALID_ENCODED_DATA') {
+          throw new OpsError('INVALID_UTF8', 'File is not valid UTF-8')
         }
-        throw err;
+        throw error
       }
     }
-    if (tail.length > 0) feed(tail);
-    if (win && lastChar && lastChar !== '\n') {  // 末行没有换行符
-      lineNo++;
+    if (tail.length > 0) feed(tail)
+    if (win && lastChar && lastChar !== '\n') {
+      // The last line has no newline.
+      lineNo += 1
       if (winStop === 0 && carry.length > 0 && lineNo >= win.from && lineNo <= win.to) {
-        // 只有被 '\n' 结束的行才剥 '\r'（那是 CRLF 的一半）。文件末尾孤零零一个 '\r'
-        // 是内容本身：原装给 "a\rb\rc\r"，上层的 diff / 编辑都按这个原文算。
-        rows.push(carry);
+        // Only a line ended by '\n' loses its '\r' (that half of a CRLF). A lone '\r' at end of file is
+        // content: the original returns "a\rb\rc\r" and its callers diff and edit exactly that.
+        ;(rows as string[]).push(carry)
       }
     }
 
-    // 跨平台清洗：CRLF → LF。先探再换 —— 纯 LF 文件零分配；1.5MB 有 CR 时 2.15ms，
-    // 不探直接 replace 是 4.97ms（2.3×），因为 V8 对无命中 replace 有快速路径但正则仍要建栈。
-    // 放在截断之后、补标记之前：标记自身含 \n，先归一不会把它切出半个 \r。
-    if (opts.normalize && text.indexOf('\r') !== -1) text = text.replace(/\r\n/g, '\n');
+    // CRLF to LF, probing before replacing: a pure-LF file allocates nothing, and 1.5 MB with CRs costs
+    // 2.15 ms against 4.97 ms for an unconditional replace (2.3×) because V8 fast-paths a regex that never
+    // matches. This runs after truncation and before the marker: the marker itself contains '\n', and
+    // normalizing it first would cut a '\r' in half.
+    if (opts.normalize && text.indexOf('\r') !== -1) text = text.replace(/\r\n/g, '\n')
 
-    // full 模式为了 lineCount / 摘要必须读完整个文件，但正文一样会被 keep 砍掉。
-    // 此前只有"提前 break"那条路会置 truncated，full 模式读满 80000 字符只回 50000
-    // 却报 truncated=false —— 上层拿到半截内容当成完整，与 native 早停是同源的静默错误。
-    if (!win && textCut) truncated = true;
-    // 停读时正文已按 keep 切齐，这里只补标记；不能走 truncate()，恰好切在 keep 上时它不补标记
-    if (truncated) text += TRUNCATED_MARK;
+    // Full mode reads the whole file for lineCount and the digest, but its body is still cut by `keep`.
+    // Only the early-break path used to set `truncated`, so a full read of 80000 characters that returned
+    // 50000 claimed truncated=false — the same silent error as the native early stop.
+    if (!win && textCut) truncated = true
+    // The body is already cut to `keep`; this only appends the marker. `truncate()` cannot be used: a cut
+    // that lands exactly on `keep` would not append the marker.
+    if (truncated) text += TRUNCATED_MARK
 
-    const payload = {
+    const payload: CachedPayload & { status: 'success', elapsedMs: number } = {
       status: 'success',
       content: text,
       truncated,
       bytes,
-      // 二进制闸门与解码闸门覆盖的字节数。早停时它 < size —— 上层据此知道
-      // "这只是一段前缀，且前缀之后的内容没做 NUL 判定"，而不是把 truncated 当前缀长度看。
+      // Bytes covered by the binary and decode gates. Below `size` when the read stopped early — that is how
+      // a caller knows "this is a prefix, and nothing after it was checked for NULs" rather than reading
+      // `truncated` as a prefix length.
       scannedBytes: bytes,
       rows,
       rowsClipped,
-      // 行数只对"读到 EOF"的 full 模式有意义；native 模式提前停读，报 null 而不是报错数
+      // Line counts only mean something in full mode, which reads to EOF; the early-stop mode reports null
+      // rather than a wrong number.
       lineCount: win ? lineNo : (opts.full ? lineBreaks + (lastChar && lastChar !== '\n' ? 1 : 0) : null),
       revision: hasher ? hasher.digest('hex') : null,
       elapsedMs: Date.now() - startedAt,
-    };
-    // 只缓存"成功且未被取消"的读：取消是调用方的事，不该把一个半成品留给下一次调用。
-    if (cacheKey !== null && !(signal && signal.aborted)) {
-      const { elapsedMs, ...rest } = payload;
-      readCacheSet(cacheKey, { ...rest, rows: rest.rows ? rest.rows.slice() : rest.rows });
     }
-    return { ...base, ...payload };
-  } catch (err) {
+    // Only a successful, uncancelled read is cached: a cancellation is the caller's business and a half
+    // result must not be handed to the next call.
+    if (cacheKey !== null && !(signal && signal.aborted)) {
+      const { elapsedMs, ...rest } = payload
+      readCacheSet(cacheKey, { ...rest, rows: rest.rows ? rest.rows.slice() : rest.rows })
+    }
+    return { ...base, ...payload }
+  } catch (error) {
+    const problem = error as NodeJS.ErrnoException
     return {
       ...base,
-      error: { code: err.code || err.name || 'UNKNOWN', message: err.message || String(err) },
+      error: { code: problem.code || problem.name || 'UNKNOWN', message: problem.message || String(error) },
       elapsedMs: Date.now() - startedAt,
-    };
-  } finally {
-    clearTimeout(timer);
-    if (signal && onAbort && typeof signal.removeEventListener === 'function') {
-      signal.removeEventListener('abort', onAbort);
     }
-    // 无论成败、无论超时，FD 一定回收 —— 这正是本工具存在的理由。
-    // close 自身也可能卡在同一块坏盘上：给它上限，超过就放手（FD 由进程回收），
-    // 否则一个坏文件能拖住整批，比泄漏一个句柄更糟。
+  } finally {
+    clearTimeout(timer as unknown as ReturnType<typeof setTimeout>)
+    if (signal && onAbort && typeof signal.removeEventListener === 'function') {
+      signal.removeEventListener('abort', onAbort as () => void)
+    }
+    // The descriptor is returned on every path — that is why this tool exists. `close` itself can hang on
+    // the same bad disk, so it gets a cap: past it the process reclaims the handle, which is better than one
+    // broken file holding up the batch.
     if (handle) {
-      const remaining = deadline - Date.now();
-      const capMs = remaining > 0 ? Math.min(opts.closeMs, remaining) : 1;
-      // 这个 timer 必须显式清掉：正常路径 close 只要几微秒，但 Promise.race 不会取消输家，
-      // 不清就会留一个 100ms 的 timer 在堆里 —— 20 个文件 20 个，白白占着 libuv 的 timer 堆。
-      let ct = null;
-      const cap = new Promise((resolve) => { ct = setTimeout(resolve, capMs); if (ct.unref) ct.unref(); });
+      const remaining = deadline - Date.now()
+      const capMs = remaining > 0 ? Math.min(opts.closeMs, remaining) : 1
+      // This timer must be cleared explicitly: on the normal path `close` takes microseconds, but
+      // Promise.race does not cancel the loser, so an uncleared 100 ms timer per file would pile up on
+      // libuv's timer heap.
+      let closeTimer: ReturnType<typeof setTimeout> | null = null
+      const cap = new Promise<void>(resolve => {
+        closeTimer = setTimeout(resolve, capMs)
+        closeTimer.unref?.()
+      })
       try {
-        // close 失败同样没有可行动作（句柄可能已被回收），吞掉只影响这一处；
-        // 真正要防的是 close 卡死，那由上面的 cap 计时器解决。
-        await Promise.race([handle.close().catch(() => {}), cap]);
+        // A failing close has no actionable answer either; what this guards against is a close that hangs,
+        // and that is what the cap is for.
+        await Promise.race([handle.close().catch(() => {}), cap])
       } finally {
-        clearTimeout(ct);
+        clearTimeout(closeTimer as unknown as ReturnType<typeof setTimeout>)
       }
     }
   }
 }
-/**
- * 对外入口。
- *
- * @param {string[]} filePaths              待读文件路径数组
- * @param {object}   [options]              覆盖 DEFAULTS 的任意字段
- * @returns {Promise<Object<string, {path:string,status:'success'|'error',content:string|null,
- *                                   error:{code:string,message:string}|null,truncated:boolean,
- *                                   size:number|null,bytes:number|null,mtimeMs:number|null,
- *                                   lineCount:number|null,revision:string|null,elapsedMs:number}>>}
- */
-/** 参数兜底：并发至少 1，阈值 <= 0 视为非法并回落到默认（两处入口共用一份，避免漂移） */
-
-function readCacheReset() {
-  readCache.clear();
-  readCacheChars = 0;
-  readCacheHits = 0;
-  readCacheMisses = 0;
-}
-
-module.exports = { openWithRetry, readCacheGet, readCacheSet, readCacheStats, readCacheReset, readOne };
