@@ -27,7 +27,8 @@ function targets(file: string): { path: string; role: 'image' | 'ancestor' }[] {
   try { images.push(fs.realpathSync.native(file)) } catch { /* query will report unknown */ }
   // PortableGit's bin/bash.exe starts usr/bin/bash.exe; both images matter.
   for (const image of [...images]) {
-    if (path.basename(path.dirname(image)).toLowerCase() === 'bin' && path.basename(path.dirname(path.dirname(image))).toLowerCase() !== 'usr') {
+    if (path.basename(image).toLowerCase() === 'bash.exe' && path.basename(path.dirname(image)).toLowerCase() === 'bin'
+      && path.basename(path.dirname(path.dirname(image))).toLowerCase() !== 'usr') {
       const actual = path.resolve(path.dirname(image), '../usr/bin/bash.exe')
       if (fs.existsSync(actual)) {
         images.push(actual)

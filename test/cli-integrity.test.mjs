@@ -35,6 +35,9 @@ await test('ladder separates actual Low image/ancestor labels from static compat
   }
   assert.equal(before.shells.bash.integrity.entries.find(entry => entry.path === image).label, 'unlabeled', JSON.stringify(before.shells.bash.integrity))
   assert.equal(before.shells.bash.integrity.entries.find(entry => entry.path === actual).label, 'unlabeled', 'the wrapper and actual image are inspected separately')
+  const other = path.join(path.dirname(image), 'other.exe')
+  fs.copyFileSync(image, other)
+  assert.equal(bashIntegrityReport(other).entries.some(entry => entry.path === actual), false, 'a configured other image must not infer a PortableGit wrapper')
   // Only our temporary copies change labels. Neither the installed image nor user data is touched.
   for (const target of [image, path.dirname(image)]) {
     assert.ok(path.resolve(target).startsWith(path.resolve(root) + path.sep))
