@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dsh-ops-download-guard",
+    "description": "Refuse recognized shell downloads to disk and suggest the operator's configured downloader. Does nothing until downloadGuard.template is set."
+  }
+}

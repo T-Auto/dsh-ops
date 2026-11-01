@@ -29,6 +29,12 @@
           residentTools: true
         discovery:
           enabled: true
+        # Inert until template is set; off by default so an install that never
+        # opted in gets no listener at all.
+        download-guard:
+          enabled: false
+          downloadGuard:
+            template: ""
         panel:
           enabled: false
         tui:

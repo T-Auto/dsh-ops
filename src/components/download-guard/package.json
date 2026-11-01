@@ -1,0 +1,6 @@
+{
+  "name": "dsh-ops-download-guard",
+  "description": "Refuse recognized disk-writing shell downloads and name the operator's configured downloader. Inert until downloadGuard.template is set.",
+  "icon": "./icon.png",
+  "type": "module"
+}

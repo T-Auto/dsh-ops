@@ -87,6 +87,8 @@ falling back to the built-in surface; scoped diagnostics remain accessible.
 | `binaryPath` / `bashPath` | managed worker/Shell resolution unless explicitly selected |
 | `required` | false; missing required worker fails activation |
 | `denyCredentialReads` | true; Native-only override, PTC rejects overrides and retains its boundary |
+| `downloadGuard.template` | empty; inert until set. A suggested command with standalone unquoted `{url}` (required) and optional `{file}` arguments; never executed automatically |
+| `downloadGuard.shell` | `bash` by default; `pwsh` quotes suggested arguments for PowerShell. See [download guard](download-guard.md) for the opt-in row section and detection limits |
 | `allowSystemShellFallback` | false; Windows automatic fallback is opt-in |
 
 `shell: false` retains explicit `bashPath`, `allowSystemShellFallback` and `hidePwsh` intent,
