@@ -1,53 +1,67 @@
-// @ts-nocheck — ported from the shipped 2.1.1 engine as-is: the runtime is unchanged, the types
-// are the open work. Tracked in docs/CHANGELOG.md under "Unreleased → known gaps".
-"use strict";
 /**
- * `@ast-grep/napi` 的双锚点惰性解析。
+ * Lazy, dual-anchor resolution of `@ast-grep/napi`.
  *
- * 这个包是可选 peer，不是 `dsh-ops` 的声明依赖（`dependencies` 是 `null`）。一旦有人在包目录里
- * 跑 `pnpm install` / 重装，`dsh-ops/node_modules` 会被清掉，五个 `ops_ptc_*` 就一起变成
- * `EXECUTOR_UNAVAILABLE` —— 而包本身还在盘上。
+ * The package is an optional peer, not a declared dependency of `dsh-ops`. A `pnpm install` (or any
+ * reinstall) inside the package directory wipes `dsh-ops/node_modules`, and all five `ops_ptc_*`
+ * tools turn into `EXECUTOR_UNAVAILABLE` while the package itself is still on disk.
  *
- * 所以解析走两条锚点：先 nested `node_modules`，再随包分发的 `vendor/deps`。第二条是 15 MB
- * 的 win32-x64 副本，运行期零成本，但让「依赖被清」从功能失效降级成「什么也没发生」。
+ * So resolution has two anchors: the nested `node_modules` first, then the `vendor/deps` copy that
+ * ships with the package. The second one costs nothing at runtime and turns "dependencies were
+ * pruned" from a broken feature into a non-event.
  *
- * 导出的 `napi` 是个 Proxy：调用点写 `napi_1.parse(...)` 一个字都不用改，而解析推迟到第一次
- * 真正调用，启动期不再把原生 `.node` 拉进进程。
+ * `napi` is a Proxy: call sites keep writing `napi.parse(...)` unchanged, while resolution is
+ * deferred to the first real call — the native `.node` is no longer pulled in at load time.
+ *
+ * @module dsh-ops/ptc/engine-load
  */
-const path = require("node:path");
-const { createRequire } = require("node:module");
 
-const ANCHORS = [
-    path.join(__dirname, "..", "..", "package.json"),
-    path.join(__dirname, "..", "..", "vendor", "deps", "package.json"),
-];
+import { createRequire } from 'node:module'
+import path from 'node:path'
 
-let loaded;
-function load() {
-    if (loaded !== undefined)
-        return loaded;
-    let last;
-    for (const anchor of ANCHORS) {
-        try {
-            loaded = createRequire(anchor)("@ast-grep/napi");
-            return loaded;
-        }
-        catch (error) {
-            last = error;
-        }
+/** Files used as resolution anchors, in order. Exported so a diagnostic can show the chain. */
+export const ANCHORS: readonly string[] = [
+  path.join(__dirname, '..', '..', 'package.json'),
+  path.join(__dirname, '..', '..', 'vendor', 'deps', 'package.json'),
+]
+
+/** The shape this module needs from `@ast-grep/napi`; the rest is passed through untouched. */
+export type NapiModule = Record<string, unknown>
+
+let loaded: NapiModule | undefined
+
+/**
+ * Resolve `@ast-grep/napi` once, or throw the last anchor's error.
+ *
+ * The throw carries the real `MODULE_NOT_FOUND` so the refusal message downstream can name the exact
+ * package the caller has to install — a synthesized error would lose that.
+ */
+export function load(): NapiModule {
+  if (loaded !== undefined) return loaded
+  let last: unknown
+  for (const anchor of ANCHORS) {
+    try {
+      loaded = createRequire(anchor)('@ast-grep/napi') as NapiModule
+      return loaded
+    } catch (error) {
+      last = error
     }
-    throw last;
+  }
+  throw last
 }
 
-const napi = new Proxy({}, {
-    get(_target, key) {
-        const mod = load();
-        const value = mod[key];
-        return typeof value === "function" ? value.bind(mod) : value;
-    },
-    has(_target, key) {
-        return key in load();
-    },
-});
-
-module.exports = { load, napi, ANCHORS };
+/**
+ * Lazy view of the native module.
+ *
+ * A method is bound to the module it came from: the napi binding exposes functions that expect their
+ * receiver to be the module object, and an unbound function loses that.
+ */
+export const napi: NapiModule = new Proxy({} as NapiModule, {
+  get(_target, key): unknown {
+    const mod = load()
+    const value = mod[key as string]
+    return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(mod) : value
+  },
+  has(_target, key): boolean {
+    return key in load()
+  },
+}) as NapiModule
