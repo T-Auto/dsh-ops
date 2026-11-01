@@ -31,8 +31,8 @@ await test('the catalogue covers every owned file, PTC and shell tool exactly on
 })
 
 await test('metadata separates the Native resident core from discoverable capabilities', () => {
-  for (const entry of [...FILE_CAPABILITIES, ...SHELL_CAPABILITIES]) assert.deepEqual(entry.presentations, ['native', 'ptc', 'both'])
-  for (const entry of PTC_CAPABILITIES) assert.deepEqual(entry.presentations, entry.rawName === 'result' ? ['native', 'ptc', 'both'] : ['ptc'])
+  for (const entry of [...FILE_CAPABILITIES, ...SHELL_CAPABILITIES]) assert.deepEqual(entry.presentations, ['native', 'ptc'])
+  for (const entry of PTC_CAPABILITIES) assert.deepEqual(entry.presentations, entry.rawName === 'result' ? ['native', 'ptc'] : ['ptc'])
   assert.deepEqual(NATIVE_RESIDENT_FILE_TOOLS, ['read_files'])
   assert.equal(capability('result').nativeProjection.availability, 'discoverable')
   assert.deepEqual(FILE_CAPABILITIES.filter(entry => entry.availability === 'discoverable').map(entry => entry.rawName).sort(), DISCOVERABLE_TOOLS.filter(name => name !== 'result').sort())

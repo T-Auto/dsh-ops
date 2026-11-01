@@ -137,7 +137,7 @@ refused — and the manifest gate fails if one appears. See
 
 ### Host compatibility and display metadata
 
-The package declares the bounded DSH compatibility range `>=0.2.0-rc.2 <0.2.2-0` in both `engines.dsh` and the legacy DSH peer dependency. This includes `0.2.0-rc.2`, `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4` and the `0.2.1` stable line, while rejecting `0.2.0-rc.1`, `0.2.2` prereleases and `0.3.0`. The rc4 host graph is validated separately in the isolated host matrix; the plugin's native adapter preserves the existing Cordis tool, prompt, policy, subprocess, PTC and UI behavior.
+The package declares the bounded DSH compatibility range `>=0.2.0-rc.2 <0.2.2-0` in both `engines.dsh` and the legacy DSH peer dependency. This includes `0.2.0-rc.2`, `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` and the `0.2.1` stable line, while rejecting `0.2.0-rc.1`, `0.2.2` prereleases and `0.3.0`. The range is checked against the Host's own evaluator on every run, and the whole suite is validated twice over the same source — on `0.2.0-rc.2` and on `0.2.1-rc.5` — so one shipped build serves both the older and the newest supported Host; the plugin's native adapter preserves the existing Cordis tool, prompt, policy, subprocess, PTC and UI behavior.
 
 The bundle icon comes from the root manifest. Each component exports its own
 `dsh-ops/<component>/icon` and `locale/*.json`; DSH 0.2.1 does not use a component's

@@ -9,6 +9,7 @@ import { RuntimeActions } from '../lib/settings/runtime-actions.js'
 import { RUNTIME_DESCRIPTORS } from '../lib/settings/runtime-contract.js'
 import { runtimeProcessRunner, mountRuntimeSettings } from '../lib/settings/runtime-host.js'
 import { assert, test, report, TEST_HOME } from './lib/harness.mjs'
+import { ownerPeer } from './lib/peer.mjs'
 const active = () => new AbortController().signal
 const fixture = label => { const home = path.join(TEST_HOME, label); fs.mkdirSync(home, { recursive: true }); return { DSH_HOME: home } }
 const success = async () => ({ started: true, exitCode: 0, signal: null })
@@ -114,6 +115,10 @@ await test('real gateway validates exact named inputs before action and withdraw
   const ctx = new Context(); ctx.logger.level = 0
   let calls = 0
   try {
+    // rc.5 loads the gateway only once `remoteAccess` is present: the Host's own
+    // policy hook is what admits or refuses every non-owner Remote call. These
+    // fixture calls are owner-level, so the hook always allows.
+    ctx.provide('remoteAccess', { decide: () => ({ kind: 'allow' }) })
     await ctx.plugin(Registry); await ctx.plugin(Gateway, {})
     const service = new RuntimeActions(options('gateway', { run: async () => { calls++; return success() } }))
     const fiber = await ctx.plugin({ inject: ['typert'], apply(inner) {
@@ -121,7 +126,10 @@ await test('real gateway validates exact named inputs before action and withdraw
       inner.typert.register({ package: 'dsh-ops', face: 'host', schemas: [], model: { services: [], events: [], objects: [] }, invocations: RUNTIME_DESCRIPTORS })
       inner.effect(() => () => service.dispose())
     } })
-    const invoke = (method, args) => ctx.typertGateway.invoke({ namespace: 'opsSettings', method, args })
+    // rc.5 requires every `invoke` to name the Peer it speaks for; this fixture
+    // is the Host itself, so the Peer is an owner with no live client stream.
+    const peer = ownerPeer(ctx, active())
+    const invoke = (method, args) => ctx.typertGateway.invoke({ namespace: 'opsSettings', method, args, peer })
     await assert.rejects(invoke('plan', { action: 'command' }), /failed boundary validation/)
     await assert.rejects(invoke('plan', { action: 'install-bash', command: 'arbitrary' }), /unexpected/)
     await assert.rejects(invoke('execute', { id: 'not-a-plan' }), /failed boundary validation/)
