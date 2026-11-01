@@ -7,7 +7,7 @@ export interface NativeCapability {
   /** Provider authorization is mandatory and is rechecked immediately before execution. */
   authorize(context: Readonly<ToolExecution>): boolean | Promise<boolean>
   available?(agent: Agent): boolean
-  /** Side-effect-free directory visibility; this never authorizes execution. */
+  /** Synchronous, side-effect-free visibility: only true exposes; never authorizes execution. */
   discoverable?(agent: Agent): boolean
   disclosure?: 'resident' | 'on-demand'
 }
@@ -29,9 +29,23 @@ export function providers(ctx: Context, agent: Agent): Provider[] {
   }
   return [...result.values()]
 }
-/** Return directory visibility without invoking execution authorization. */
+/**
+ * Return directory visibility without invoking execution authorization.
+ *
+ * The hook is deliberately synchronous: only the literal boolean `true` exposes an
+ * entry. If an implementation accidentally returns a Promise, consume its outcome
+ * so a rejected result cannot become an unhandled rejection, but fail closed rather
+ * than treating asynchronous eligibility as supported.
+ */
 export function providerDiscoverable(provider: Provider, agent: Agent): boolean {
-  try { return provider.capability.discoverable?.(agent) !== false } catch { return false }
+  try {
+    if (provider.capability.discoverable === undefined) return true
+    const result: unknown = provider.capability.discoverable(agent)
+    if ((typeof result === 'object' && result !== null) || typeof result === 'function') {
+      void Promise.resolve(result).catch(() => {})
+    }
+    return result === true
+  } catch { return false }
 }
 
 export function onProvidersChange(ctx: Context, listener: () => void): () => void {

@@ -40,12 +40,15 @@ presentation checks still run at lifecycle/execution boundaries; this is not a p
 discoverable?(agent: Agent): boolean
 ```
 
-This synchronous hook must be side-effect-free. `available(agent)` describes provider readiness;
-`discoverable(agent)` describes directory/search visibility. An explicit `false` or an exception
-hides the entry. Omitting `discoverable` preserves existing readiness-based discovery. Use it to
-hide entries that the current agent should not discover. A provider that needs permission-aware
-visibility must implement this check from its own authoritative state; OPS cannot infer execution
-permissions from descriptions. Changing visibility does not itself revoke execution authorization.
+This synchronous hook must be side-effect-free and return exactly the boolean `true` to expose an
+entry. `false`, `undefined`, `null`, `0`, objects, promises (including a resolved `true` or `false`),
+or an exception hide the entry. If an accidental Promise rejects, OPS consumes the rejection and
+still fails closed; asynchronous eligibility is not supported. `available(agent)` describes provider
+readiness; `discoverable(agent)` describes directory/search visibility. Omitting `discoverable`
+preserves existing readiness-based discovery. Use it to hide entries that the current agent should
+not discover. A provider that needs permission-aware visibility must implement this check from its
+own authoritative state; OPS cannot infer execution permissions from descriptions. Changing visibility
+does not itself revoke execution authorization.
 
 Both hooks are read again for lookup, rather than caching a discovery permission. Provider changes
 must use the existing disposer and re-registration lifecycle to notify controllers and invalidate

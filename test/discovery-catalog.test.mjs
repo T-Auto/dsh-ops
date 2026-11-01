@@ -274,4 +274,59 @@ await test('invalid visibility hooks are rejected and available exceptions fail 
   } finally { await shutdown(ctx) }
 }))
 
+await test('explicit visibility hooks expose only synchronous true in both directory and search', () => withTempDir('catalog-hook-result', async dir => {
+  const { ctx, tools, mint, assemble, provider } = await setup(dir)
+  const unhandled = []
+  const captureRejection = reason => { unhandled.push(reason) }
+  process.on('unhandledRejection', captureRejection)
+  try {
+    const owner = await mint()
+    const cases = [
+      ['omitted', undefined, true],
+      ['true', () => true, true],
+      ['false', () => false, false],
+      ['async false', async () => false, false],
+      ['async true', async () => true, false],
+      ['async reject', async () => { throw new Error('visibility rejected') }, false],
+      ['null', () => null, false],
+      ['undefined', () => undefined, false],
+      ['zero', () => 0, false],
+      ['object', () => ({}), false],
+      ['throw', () => { throw new Error('visibility failed') }, false],
+    ]
+    for (const [label, discoverable, visible] of cases) {
+      let authorized = 0, executed = 0
+      const remove = await provider(ctx, {
+        discoverable,
+        authorize: () => { ++authorized; return true },
+        definition: definition('acme_lookup', () => { ++executed; return { answer: 42 } }),
+      })
+      try {
+        assert.equal((await assemble(owner)).text.includes('- acme_lookup:'), visible, label + ': directory')
+        assert.equal(authorized, 0, label + ': directory is not execution authorization')
+        for (const query of ['inventory', 'select:acme_lookup']) {
+          assert.deepEqual((await call(ctx, owner, DISCOVER, { query })).value.activated,
+            visible ? ['acme_lookup'] : [], label + ': search ' + query)
+        }
+        assert.equal(authorized, 0, label + ': search is not execution authorization')
+        await step(ctx, owner)
+        assert.equal(Boolean(tools.get('acme_lookup', owner)), visible, label + ': publication')
+        assert.equal(authorized, 0, label + ': selection is not execution authorization')
+        if (visible) {
+          assert.equal((await call(ctx, owner, 'acme_lookup')).value.answer, 42, label + ': dispatch')
+          assert.equal(authorized, 1, label + ': real dispatch checks authorization')
+          assert.equal(executed, 1, label + ': real dispatch executes once')
+        } else assert.equal(executed, 0, label + ': hidden provider never executes')
+        // Let Node report any unsupported async rejection: it must have been consumed,
+        // not converted into a visibility grant or left as an unhandled rejection.
+        await new Promise(resolve => setImmediate(resolve))
+        assert.deepEqual(unhandled, [], label + ': no unhandled rejection')
+      } finally { remove(); await assemble(owner) }
+    }
+  } finally {
+    process.off('unhandledRejection', captureRejection)
+    await shutdown(ctx)
+  }
+}))
+
 report('discovery-catalog')
