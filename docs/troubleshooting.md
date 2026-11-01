@@ -116,6 +116,30 @@ an empty false-success result is a separate problem (#374 and #373).
 ### Bash approval is rejected or unavailable
 
 `ops_bash` uses host approval for a strictly wider `sandbox_permissions` mode. Supply a non-empty `justification` for that exact command. A rejection or missing approval service prevents execution; do not retry through another shell. Approval does not repair an incompatible restricted Bash runtime.
+
+### Desktop returns an empty successful Bash result
+
+An Electron host can return its Desktop executable as the Node sandbox runner.
+Without an explicit Node-mode environment, this launches the application again;
+the single-instance handler may exit 0 without running Bash (#484). OPS now stops
+this argv shape before spawning and reports `EXECUTOR_UNAVAILABLE`, with no command
+effects. The host must provide a supported runner or explicitly prepared Electron
+Node mode. OPS does not guess private Desktop entry points or enable Node mode on
+the host's behalf. This guard diagnoses the integration error; it does not repair
+the host runner. A legitimate command that exits 0 with no output remains successful.
+
+### Windows reports exit code 3221225794 or -1073741502
+
+Both values represent `STATUS_DLL_INIT_FAILED` (`0xC0000142`). OPS names this
+status and retains unknown command effects (#417). It may originate in the host
+runner, MSYS initialization, or a child process; an application can also forward
+the same exit value. The number alone cannot establish the failing layer. Inspect
+existing effects without repeating the command, and collect the host/OPS versions,
+sandbox mode, resolved executable and runner paths, and complete stderr. If the
+host's own PowerShell has the same failure, include that evidence in the host
+report. Keep sandbox and system protections enabled. This diagnostic does not
+repair token construction, DLL initialization, or a foreign MSYS shared object's ACL.
+
 ### Empty placeholder arguments on file tools
 
 Strict tool-call adapters that fill every schema field send `""`, `null` or `[]` for unused optional fields of `ops_inspect_local_file`, `ops_grep`, `ops_glob` and `ops_replace`. The plugin drops those placeholders for optional fields before the native worker runs, so they no longer trip `path`/`encoding`/`view` validation. Required fields, `replacement: ""`, `false` and `0` are forwarded unchanged, so genuinely invalid values still error.
