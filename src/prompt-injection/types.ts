@@ -1,5 +1,4 @@
-import type { Agent, AssembleContext } from '../adapter/dsh/types.js'
-import type { UserMessage } from '@deepseek-ai/dsh-llm'
+import type { Agent, AssembleContext, UserMessage } from '../adapter/dsh/types.js'
 
 /** Stable identity within one agent and contribution kind. Dispose before replacing a revision. */
 export interface PromptContribution {

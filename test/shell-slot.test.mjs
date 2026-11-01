@@ -9,7 +9,7 @@ import { integration } from '../lib/integration/index.js'
 import { resolveIntegrationConfig } from '../lib/consumer/options.js'
 import { gateConsumer } from '../lib/consumer/gates.js'
 import { mountIntegration } from '../lib/integration/index.js'
-import { BASH_TOOL } from '../lib/policy.js'
+import { BASH_TOOL, modeSectionName } from '../lib/policy.js'
 import { BASH_PROMPT_SECTION, renderBashGuidance } from '../lib/shells/prompt.js'
 import { readRowValues, changedFields } from '../lib/client/row-schema.js'
 import { mountDshOpsBridge } from './fixtures/shell-slot-pwsh7/dsh-ops-bridge.mjs'
@@ -91,6 +91,61 @@ for (const bash of [false, true]) for (const pwsh of [false, true]) {
       assert.equal(bashSections(await assemble(agent)).length, 0)
       assert.equal((await assemble(agent)).sections.some(section => section.name.startsWith(BASH_PROMPT_SECTION + ':')), false, 'disposal removes the registered section, not only its text')
       assert.equal(names(agent).includes('pwsh'), pwsh)
+    } finally { await shutdown(ctx) }
+  }))
+}
+
+for (const preset of ['standard', 'cordis']) {
+  await test(`${preset} resident Native + Shell assembly keeps guidance single-owned across withdrawal and reload`, () => withTempDir('shell-slot-resident', async cwd => {
+    const { ctx, mint, assemble } = await boot(cwd)
+    const guidance = 'Preserve the resident assembly fixture boundary.'
+    const textOf = assembly => assembly.sections.map(section => section.text).join('\n')
+    const count = (assembly, value) => textOf(assembly).split(value).length - 1
+    try {
+      const config = { minimal: off, standard: off, ptc: off, cordis: off,
+        [preset]: { enabled: true, extraGuidance: guidance }, other: { pwsh7Link: false } }
+      let row = await ctx.plugin(Bundle, config)
+      const agent = await mint('resident-' + preset, { preset, pwsh: false })
+      const peer = await mint('peer-' + preset, { preset, pwsh: false })
+      const assembly = await assemble(agent)
+      for (const name of ['ops_read_files', 'ops_glob', 'ops_grep', 'ops_inspect_local_file', 'ops_result', 'ops_discover_tools']) {
+        assert.ok(assembly.tools.some(tool => tool.name === name), `${name} is resident or the discovery entry`)
+      }
+      const fileText = assembly.sections.find(section => section.name === modeSectionName('mode-' + preset))?.text ?? ''
+      assert.match(fileText, /^# Repository file tools/m)
+      assert.doesNotMatch(fileText, /ops_bash|Bash command execution|host PowerShell|Windows-native shell/)
+      assert.doesNotMatch(textOf(assembly), /# Repository tooling|# Repository tool routing/)
+      assert.equal(count(assembly, guidance), 1, 'extraGuidance has exactly one owner')
+      assert.equal(assembly.tools.filter(tool => tool.name === BASH_TOOL).length, process.platform === 'win32' ? 1 : 0)
+      assert.equal(bashSections(assembly).length, process.platform === 'win32' ? 1 : 0)
+      assert.equal((textOf(assembly).match(/^# .*Bash command execution/gm) ?? []).length, process.platform === 'win32' ? 1 : 0)
+      assert.equal(assembly.tools.some(tool => tool.name === 'pwsh'), false)
+      agent.session.mode = 'unavailable'
+      await ctx.serial('session/event', agent.session, { type: 'sandbox/mode' })
+      const withdrawn = await assemble(agent)
+      assert.equal(bashSections(withdrawn).length, 0)
+      assert.equal(count(withdrawn, guidance), 1, 'live Native section retains guidance after Bash withdrawal')
+      assert.equal(count(await assemble(peer), guidance), 1, 'peer retains independent guidance')
+      agent.session.mode = 'danger-full-access'
+      await ctx.serial('session/event', agent.session, { type: 'sandbox/mode' })
+      for (const [bash, residentTools, owner] of [[false, true, 'Native'], [true, false, 'Bash']]) {
+        await row.dispose()
+        assert.equal(count(await assemble(agent), guidance), 0, 'disposal removes the old owner')
+        row = await ctx.plugin(Bundle, { ...config, [preset]: { ...config[preset], bash, residentTools } })
+        const current = await assemble(agent)
+        assert.equal(count(current, guidance), 1, `${owner} keeps exactly one contribution after reload: ${textOf(current)}`)
+        assert.equal(current.tools.some(tool => tool.name === 'ops_read_files'), residentTools)
+        assert.equal(bashSections(current).length, bash && process.platform === 'win32' ? 1 : 0)
+      }
+      await row.dispose()
+      const otherGuidance = 'Keep the discovery-only consumer independent.'
+      const otherRow = await ctx.plugin(integration({ preset: 'directory-only', profile: 'discovery', extraGuidance: otherGuidance }))
+      const other = await mint('directory-only', { preset: 'directory-only', pwsh: false })
+      assert.equal(count(await assemble(other), otherGuidance), 1)
+      assert.equal(count(await assemble(other), guidance), 0)
+      assert.equal(count(await assemble(agent), otherGuidance), 0)
+      await otherRow.dispose()
+      assert.equal(count(await assemble(other), otherGuidance), 0)
     } finally { await shutdown(ctx) }
   }))
 }

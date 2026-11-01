@@ -1,6 +1,5 @@
-import type { Agent, Context } from '../adapter/dsh/types.js'
-import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
-import type { UserMessage } from '@deepseek-ai/dsh-llm'
+import type { Agent, Context, PreStepDecision, UserMessage } from '../adapter/dsh/types.js'
+import { loadUserMessage } from '../adapter/dsh/host.js'
 import { PromptProviderError } from './types.js'
 import type { PromptContribution, PromptDisposer, StepTailContext, StepTailProviderOptions, SystemSectionOptions } from './types.js'
 export type { PromptContribution, PromptDisposer, StepTailContext, StepTailProviderOptions, SystemSectionOptions } from './types.js'
@@ -93,7 +92,7 @@ async function appendTails(state: AgentState, payload: Omit<StepTailContext, 'me
   }
   if (!pending.length || payload.signal.aborted) return decision
   // Value imports are resolved only at admission, never while loading the plugin.
-  const { createUserMessage } = await import('@deepseek-ai/dsh-llm')
+  const createUserMessage = await loadUserMessage()
   if (payload.signal.aborted) return decision
   // Final active check before handing the snapshot back to the host pre-step.
   // No await follows: disposal after this boundary cannot revoke these messages.

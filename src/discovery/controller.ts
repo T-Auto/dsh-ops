@@ -28,6 +28,8 @@ import { scopedReconciliation, scopeFamilies } from '../publication/reconciliati
 
 export interface DiscoveryGate {
   allows(agent: Agent): boolean; watch?(notify: () => void): () => void; guidance?: boolean; extraGuidance?: string
+  /** True only when this agent's assembled prompt has another live section owning this guidance. */
+  extraGuidanceOwner?(agent: Agent): boolean
   residentTools?(agent: Agent): ReadonlySet<string> | readonly string[]
   external?: { allowed: readonly string[]; alwaysLoaded: readonly string[]; disabled: readonly string[] }
 }
@@ -406,7 +408,8 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
         const callable = new Set(tools.schemas(agent).map(tool => tool.name))
         const directory = config.enabled && entry.owned.has(DISCOVER) && callable.has(DISCOVER)
           ? renderNativeDirectory(catalog(agent, callable)) : ''
-        const policy = renderToolingPolicy({ published: [...entry.owned].filter(name => callable.has(name)), shellComponent: false, extraGuidance: gate.extraGuidance })
+        const policy = renderToolingPolicy({ published: [...entry.owned].filter(name => callable.has(name)), shellComponent: false,
+          extraGuidance: gate.extraGuidanceOwner?.(agent) ? '' : gate.extraGuidance })
         return [policy, directory].filter(Boolean).join('\n\n')
       },
     }), 'dsh-ops: discovered capability guidance')
