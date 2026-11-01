@@ -1,34 +1,31 @@
-// @ts-nocheck — ported from the shipped 4.1.8 reader as-is: the runtime is unchanged, the types
-// are the open work. Tracked in docs/CHANGELOG.md under Unreleased.
-'use strict';
+/**
+ * Text helpers: newline counting and surrogate-safe truncation.
+ *
+ * @module dsh-ops/file/reader/text
+ */
 
-const { TRUNCATED_MARK } = require('./core.cjs');
+import { TRUNCATED_MARK } from './core.cjs'
 
-function countNewlines(text) {
-  let n = 0;
-  let i = -1;
-  while ((i = text.indexOf('\n', i + 1)) !== -1) n++;
-  return n;
-}
-
-/** 按字符切，且不劈开代理对（半截 emoji 会变成两个替换符） */
-function cutChars(text, max) {
-  if (text.length <= max) return text;
-  const last = text.charCodeAt(max - 1);
-  return text.slice(0, last >= 0xd800 && last <= 0xdbff ? max - 1 : max);
-}
-
-/** 智能截断：截断时补标记，标记本身不计入 maxChars（由调用方决定预算口径） */
-function truncate(text, maxChars) {
-  if (text.length <= maxChars) return { content: text, truncated: false };
-  return { content: cutChars(text, maxChars) + TRUNCATED_MARK, truncated: true };
+/** Count `\n` without allocating a split array. */
+export function countNewlines(text: string): number {
+  let count = 0
+  let index = -1
+  while ((index = text.indexOf('\n', index + 1)) !== -1) count += 1
+  return count
 }
 
 /**
- * open 带 FD 耗尽退避。
- *
- * 并发的意义是把 10 个 open 压进一个窗口，副作用是宿主进程本来就紧张时更容易撞 EMFILE。
- * 撞上就立刻失败等于"防 FD 耗尽"这件事防了个寂寞，所以重试两次、退避 8/16ms。
+ * Cut to `max` UTF-16 units without splitting a surrogate pair — half an emoji becomes two replacement
+ * characters, which is a silent corruption of the content the caller is about to edit.
  */
+export function cutChars(text: string, max: number): string {
+  if (text.length <= max) return text
+  const last = text.charCodeAt(max - 1)
+  return text.slice(0, last >= 0xd800 && last <= 0xdbff ? max - 1 : max)
+}
 
-module.exports = { countNewlines, cutChars, truncate };
+/** Truncate and append the marker; the marker is not counted against `maxChars`. */
+export function truncate(text: string, maxChars: number): { content: string, truncated: boolean } {
+  if (text.length <= maxChars) return { content: text, truncated: false }
+  return { content: cutChars(text, maxChars) + TRUNCATED_MARK, truncated: true }
+}
