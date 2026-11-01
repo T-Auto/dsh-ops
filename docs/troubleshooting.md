@@ -2,6 +2,9 @@
 
 Start here when installation fails, an error is unclear, or behaviour is unexpected.
 
+For Windows Low-integrity, MSYS startup, antivirus, heredoc or approval reports,
+collect [runtime evidence](windows-runtime-evidence.md) before assigning a cause.
+
 ---
 
 ## Installation and payloads
