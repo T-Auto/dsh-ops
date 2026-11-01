@@ -361,7 +361,7 @@ function preserveTrailer(orig: string, next: string, eol: string): string {
 }
 
 /** Ask ast-grep for matches with replacements; an identity pattern/rewrite pair is refused up front. */
-async function queryRewrite(cfg: PtcConfig, file: string, o: RewriteOptions): Promise<SgMatch[]> {
+export async function queryRewrite(cfg: PtcConfig, file: string, o: RewriteOptions): Promise<SgMatch[]> {
   if (o.pattern === o.rewrite) {
     throw new PtcOutcomeError('E_ASTGREP_IDENTITY', 'astgrep', 'pattern and rewrite are identical; nothing to do')
   }
@@ -376,7 +376,7 @@ async function queryRewrite(cfg: PtcConfig, file: string, o: RewriteOptions): Pr
 }
 
 /** Turn ast-grep matches into a sorted, non-overlapping edit list. */
-function finishRewrite(cfg: PtcConfig, matches: SgMatch[], o: RewriteOptions): Edit[] {
+export function finishRewrite(cfg: PtcConfig, matches: SgMatch[], o: RewriteOptions): Edit[] {
   const edits: Edit[] = []
   for (const match of matches) {
     if (match.replacement == null || !match.replacementOffsets) continue
