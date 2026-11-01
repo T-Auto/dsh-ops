@@ -99,6 +99,10 @@ dsh plugin --profile dsh-tui add dsh-ops
 
 A regular DSH CLI cannot manage the reserved `desktop` profile; do not confuse it with the desktop app's own entry point.
 
+Install the published registry package or a fully built and packed source tarball.
+Direct `git+https` installation and unbuilt source checkouts lack the complete runtime; see
+[installing from Git is not a supported channel](docs/upgrading.md#installing-from-git-is-not-a-supported-channel).
+
 #### Update
 
 Host compatibility is declared for DSH **0.2.0-rc.2 and 0.2.1-rc.2**. See

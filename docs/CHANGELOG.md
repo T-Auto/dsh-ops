@@ -17,6 +17,18 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 一小时后回收私有 Bash 运行时缓存中被中断的 `stage-*` 副本，计入可回收字节，并在确认后的 `bash-runtime clean-cache` 中一并清除（#512）。
 - Document how to diagnose and recover an interrupted restricted-Bash staging or lifecycle lock.
 - 文档补充受限 Bash staging 中断与生命周期锁的诊断与恢复方法。
+- Document how to identify the failing dependency in `ERR_PNPM_UNKNOWN` / `UNKNOWN: unknown error, open '<path>'` reports without inferring an unverified filesystem or security-software cause, and state that the
+  `git+https`/source channel cannot produce a loadable plugin because `lib/` and the staged
+  `runtime/` are not in Git. The manifest gate now fails if `package.json` declares any
+  install-time lifecycle hook — `prepare`, `preprepare`, `postprepare`, `install`, `preinstall`
+  or `postinstall` — and names the gate's rule truthfully, so "fix the Git channel with `prepare`"
+  cannot land silently (#524).
+- 说明如何从 `ERR_PNPM_UNKNOWN` / `UNKNOWN: unknown error, open '<path>'` 报告确定失败依赖，而不推断未经验证的文件系统或安全软件根因；同时明确直接 `git+https`/未构建源码通道无法提供完整发行物，因为
+  `lib/` 与已 stage 的 `runtime/` 不在 Git 里。清单门禁现在会在 `package.json` 声明任何
+  安装期生命周期钩子时失败——`prepare`、`preprepare`、`postprepare`、`install`、
+  `preinstall`、`postinstall`——并按实际行为描述该规则，使「用 prepare 修 Git 通道」
+  无法静默落地（#524）。
+
 - Keep Native file routing separate from the independent Bash prompt section, so resident Native + Shell consumers do not repeat Bash guidance or advertise host PowerShell routing. Keep deployment guidance single-owned across Bash, Native and discovery sections, including withdrawal and reload.
 - 将 Native 文件路由提示与独立 Bash 提示段分开，避免 Native + Shell 常驻消费者重复 Bash 指导或把 Bash 宣传为宿主 PowerShell 路由。部署指导在 Bash、Native 与发现提示段之间仅保留一份，并覆盖撤回与重载。
 - Update preset hints and rendered settings UI to describe default Bash/PowerShell coexistence; hiding host PowerShell remains an explicit choice.
