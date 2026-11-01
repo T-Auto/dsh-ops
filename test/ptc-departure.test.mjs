@@ -44,13 +44,13 @@ await test('an agent departure republishes without re-probing the survivors', ()
     prompt.assemble = context => { if (isPresentationProbe(context)) ++probes; return assemble(context) }
     try {
     const keep = await mint('ptc'), leave = await mint('ptc')
-    await waitFor(() => names(ctx, keep).includes('run_code') && names(ctx, leave).includes('run_code'))
+    await waitFor(() => names(ctx, keep).includes('ops_load_sdk') && names(ctx, leave).includes('ops_load_sdk'))
     await wait(200)
     const before = probes
     const settled = await bounded(ctx.serial('agent/disposed', { agent: leave }).then(() => 'done'), 5000)
     assert.equal(settled, 'done', 'a departure must not stall its own event')
     assert.equal(probes, before, 'a departure names no agent to probe, so the survivors keep the verdict they already have')
-    assert.ok(names(ctx, keep).includes('run_code'), 'the surviving agent keeps the PTC surface the departure left intact')
+    assert.ok(names(ctx, keep).includes('ops_load_sdk'), 'the surviving agent keeps the PTC surface the departure left intact')
     // run_code stays visible: presentAs('ptc') is the departing scope's own layer,
     // while the PTC row's own APIs are what a departure must withdraw.
     assert.equal(names(ctx, keep).filter(name => name.startsWith('ops_')).includes('ops_load_sdk'), true)

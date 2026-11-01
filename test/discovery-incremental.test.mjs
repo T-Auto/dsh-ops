@@ -165,7 +165,14 @@ await test('Native, PTC and re-declared mode changes retain scoped ownership and
     await second.dispose(); await flush(child)
     assert.equal(visible(ctx, child, 'ops_stat'), false)
     assert.equal((await cached.execute({ path: '.' }, { agent: child })).status, 'rejected')
-    native(); lift(); await flush(parent); await flush(child)
+    native(); lift()
+    if (typeof ctx.get('tools').setExecutor === 'function') {
+      await assert.rejects(ctx.get('systemPrompt').assemble({ scope: child }), /executor.*unavailable/i)
+      // Executor disposal deliberately leaves a tombstone on the newer host.
+      // Replacing each selection is explicit; it never inherits authority.
+      parent.ctx.tools.presentAs('native'); child.ctx.tools.presentAs('native')
+    }
+    await flush(parent); await flush(child)
     assert.equal(visible(ctx, parent), true); assert.equal(visible(ctx, child), true)
   } finally { await shutdown(ctx) }
 }))

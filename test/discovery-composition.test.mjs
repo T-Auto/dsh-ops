@@ -88,8 +88,9 @@ await test('the first Native-to-PTC assembly withdraws private probe tools witho
     await owner.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.presentAs('ptc') } })
     const assembled = await prompt.assemble({ scope: owner })
     stopCounting()
-    assert.equal(seen.size, 4, 'three presentation probes plus one public assembly of the request')
-    assert.equal(probes.size, 3, 'only the Native discovery probe needs no withdrawal rebuild')
+    const expectedProbes = typeof ctx.get('tools').setExecutor === 'function' ? 2 : 3
+    assert.equal(seen.size, expectedProbes + 1, 'presentation probes plus one public assembly of the request')
+    assert.equal(probes.size, expectedProbes, 'executor registration does not add a legacy registry notification')
     assert.ok(assembled.sections.some(section => section.name.startsWith('dsh-ops:repository-tooling:mode-ptc') && section.text))
     assert.deepEqual(assembled.tools.map(tool => tool.name), ['run_code'])
   } finally { await shutdown(ctx) }

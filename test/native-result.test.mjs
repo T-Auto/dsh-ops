@@ -210,6 +210,7 @@ await test('agent-scoped file rows isolate sibling pagers and yield only their e
       await waitFor(() => !ctx.get('tools').get('ops_grep', late) && current(late)?.parameters.properties.action.enum.includes('put'), { timeoutMs: 5000, what: 'file mounted after PTC' })
       await component.dispose()
       for (const value of [left, late]) { value.liftPresentation(); await value.ctx.plugin({ inject: ['tools'], apply(inner) { value.liftPresentation = inner.tools.presentAs('native') } }) }
+      for (const value of [left, late]) await ctx.get('systemPrompt').assemble({ scope: value })
       await waitFor(() => current(left)?.parameters.properties.action.enum.length === 2 && current(late)?.parameters.properties.action.enum.length === 2, { timeoutMs: 5000, what: 'Native peer resumes on PTC unload' })
       await leftFile.dispose(); assert.equal(current(left), undefined)
       assert.equal(current(right).parameters.properties.action.enum.length, 2)

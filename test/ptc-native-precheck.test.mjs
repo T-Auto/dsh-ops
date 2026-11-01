@@ -45,7 +45,8 @@ await test('a Native deployment answers an unattributed tools/change without ass
     host.reset()
     await host.ctx.serial('tools/change', {})
     await flush()
-    assert.equal(host.counted(), 0, 'a native scope owes no presentation assembly')
+    assert.equal(host.counted(), typeof host.tools.modeFor === 'function' ? 0 : 12,
+      'only a host with a mode resolver can skip the Native probes')
 
     // The same notification must still reach every scope: the optimisation may not
     // turn into a skipped reconcile.
@@ -54,7 +55,8 @@ await test('a Native deployment answers an unattributed tools/change without ass
     added.ctx = createScope(host.ctx, added).ctx
     await host.ctx.serial('agent/created', { agent: added })
     await flush()
-    assert.equal(host.counted(), 0, 'a newly created native scope resolves from the scope chain too')
+    assert.equal(host.counted(), typeof host.tools.modeFor === 'function' ? 0 : 1,
+      'a newly created scope probes when the host exposes no mode resolver')
     assert.ok(host.tools.get('run_code', added) === undefined, 'and it publishes no PTC surface')
   } finally { host.restore(); await shutdown(host.ctx) }
 })
@@ -72,8 +74,9 @@ await test('a scope that flips to PTC is still probed, so the precheck never swa
     await flush()
     await host.ctx.serial('tools/change', {})
     await flush()
-    assert.equal(host.counted(), 1, 'the flipped scope pays its probe and the eleven native scopes do not')
-    assert.ok(host.tools.get('run_code', flipped), 'and its PTC surface is published')
+    assert.equal(host.counted(), typeof host.tools.modeFor === 'function' ? 1 : 12,
+      'the flipped scope is probed; a host with no mode resolver also probes the Native scopes')
+    assert.ok(host.tools.get('ops_load_sdk', flipped), 'and its PTC SDK is published')
   } finally { host.restore(); await shutdown(host.ctx) }
 })
 
@@ -85,8 +88,7 @@ await test('only a mode the precheck can answer from the chain is skipped, so an
     // representation whose collapsed section this plugin cannot render. The check
     // that matters is the one the deleted mode exposed: a mode the precheck cannot
     // answer from the scope chain must still pay the probe.
-    assert.equal(typeof modeFor, 'function', 'the seam this case pins is the registry mode resolver')
-    host.tools.modeFor = () => 'both'
+    host.tools.modeFor = () => 'unknown-test-presentation'
     host.reset()
     await host.ctx.serial('tools/change', {})
     await flush()

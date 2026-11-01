@@ -154,7 +154,7 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
       .filter(provider => externalAvailable(provider, agent) && providerDiscoverable(provider, agent))
     const catalog = (agent: Agent, callable: ReadonlySet<string>) => nativeCatalog(
       config.allowedTools.filter(tool => selectable(agent, tool)), externalDiscoverable(agent), callable)
-    const ptcOnly = (assembly: PromptAssembly): boolean => assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
+    const ptcOnly = (assembly: Pick<PromptAssembly, 'sections'>): boolean => assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
     const invalidate = (entry: Entry) => { ++entry.revision; entry.presentation = undefined }
     // A session this component can actually coordinate: it has a scope context, this
     // component owns it, and its mode keeps discovery tools in play. Both the
@@ -442,9 +442,24 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
       // this request still contains an already-rendered Native SDK section.
       const heldNative = Boolean(entry?.owned.size)
       const result = await next()
-      if (!entry || context.signal?.aborted || entries.get(context.scope as Agent) !== entry || !heldNative || !ptcOnly(result)) return result
+      if (!entry || context.signal?.aborted || entries.get(context.scope as Agent) !== entry) return result
+      // Executor replacement can restore Native presentation without a registry
+      // notification. A public assembly is fresh evidence; confirm it through
+      // the normal scoped probe before restoring this row's publication.
+      if (!heldNative && entry.presentation?.native !== true && !ptcOnly(result)
+        && !isPresentationProbe(context) && coordinable(context.scope as Agent, entry)) {
+        invalidate(entry)
+        await reconcile([context.scope as Agent])
+        if (entry.owned.size && claimPresentationRebuild(context)) return prompt.assemble(context)
+        return result
+      }
+      if (!heldNative || !ptcOnly(result)) return result
       mutating = true
-      try { cancelEntry(entry, 'Native presentation withdrawn'); clear(entry) }
+      try {
+        cancelEntry(entry, 'Native presentation withdrawn'); clear(entry); ++entry.revision
+        try { entry.presentation = { inputs: inputs(context.scope as Agent), native: false } }
+        catch { entry.presentation = undefined }
+      }
       finally { mutating = false }
       // The withdrawal already settled this probe's verdict. Its stale tool list
       // is private to the inspection; only a public assembly needs rebuilding.

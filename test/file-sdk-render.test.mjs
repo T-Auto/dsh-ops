@@ -1,6 +1,6 @@
 /** File schemas and model rendering use the actual pinned host contract. */
 import fs from 'node:fs'
-import { assertSupportedJsonSchema, jsonSchemaToTs } from '@deepseek-ai/dsh-tools'
+import { assertSupportedJsonSchema, jsonSchemaToTs } from './lib/host-schema.mjs'
 import { FILE_TOOLS, PARAMETERS, definition, DESCRIPTIONS } from '../lib/file/contract.js'
 import { capNativeText, NATIVE_OUTPUT_BYTES } from '../lib/file/native/render.js'
 import { renderToolingPolicy, publicToolName } from '../lib/policy.js'

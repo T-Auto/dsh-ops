@@ -5,7 +5,7 @@ import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import FileSystem from '@deepseek-ai/dsh-fs-local'
 import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
 import { createScope } from '@deepseek-ai/dsh-scope'
-import { assertSupportedJsonSchema, jsonSchemaToTs } from '@deepseek-ai/dsh-tools'
+import { assertSupportedJsonSchema, jsonSchemaToTs } from './lib/host-schema.mjs'
 import { assert, test, report, withTempDir, wait, waitFor } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
@@ -101,9 +101,9 @@ await test('Native/PTC child scopes preserve projections and same-layer file row
   await withTempDir('ptc-projection-scopes', async root => {
     const { ctx, agent, mountFile, component } = await setup(root, { native: true })
     try {
-      const parent = await agent(), child = await agent('native', parent), both = await agent('both'), independent = await agent()
+      const parent = await agent(), child = await agent('native', parent), native = await agent('native'), independent = await agent()
       assert.deepEqual(visible(ctx, parent), ['ops_inspect_local_file', 'ops_load_sdk', 'ops_result'])
-      for (const scope of [child, both]) { await waitFor(() => visible(ctx, scope).includes('ops_grep'), { timeoutMs: 5000, what: 'configured Native advanced tools' }); assert.equal(visible(ctx, scope).includes('ops_load_sdk'), false) }
+      for (const scope of [child, native]) { await waitFor(() => visible(ctx, scope).includes('ops_grep'), { timeoutMs: 5000, what: 'configured Native advanced tools' }); assert.equal(visible(ctx, scope).includes('ops_load_sdk'), false) }
       assert.equal(ctx.get('tools').get('ops_result', child).parameters.properties.action.enum.includes('put'), false)
       const previousNative = ctx.get('tools').get('ops_stat', child)
       const scopedFile = await mountFile(parent.ctx)
@@ -187,24 +187,26 @@ await test('nearer overlapping PTC rows own their scopes without duplicate regis
     } finally { await shutdown(ctx) }
   })
 })
-await test('same-surface both to ptc and unsignalled prompt flips publish the resident SDK', async () => {
+await test('Native to PTC and unsignalled prompt flips publish the resident SDK', async () => {
   await withTempDir('ptc-verdict-transition', async root => {
     const {ctx,agent}=await setup(root)
     try {
-      const owner=await agent('both')
+      const owner=await agent('native')
       assert.equal(visible(ctx,owner).includes('ops_load_sdk'),false)
       owner.lift()
       await owner.ctx.plugin({inject:['tools'],apply(inner){owner.lift=inner.tools.presentAs('ptc')}})
       await step(ctx,owner)
       assert.ok(visible(ctx,owner).includes('ops_load_sdk'))
       let collapse=false
-      const other=await agent('both')
+      const other=await agent('ptc')
       // A waterfall can alter presentation without a tool-registry event.
       ctx.on('system-prompt/assemble',async (_a,context,next)=>{
         const result=await next()
-        if(context.scope!==other || !collapse)return result
-        return {...result,tools:result.tools.filter(t=>t.name==='run_code'),sections:[...result.sections,{name:'tools:ptc-only',text:'PTC only'}]}
+        if(context.scope!==other || collapse)return result
+        return {...result,sections:result.sections.filter(section=>section.name!=='tools:ptc-only')}
       })
+      await step(ctx,other)
+      assert.equal(visible(ctx,other).includes('ops_load_sdk'),false)
       collapse=true
       await step(ctx,other)
       assert.ok(visible(ctx,other).includes('ops_load_sdk'),'fresh verdict change must publish even with no pending SDK selection')
@@ -251,7 +253,8 @@ await test('an unattributed tools/change assembles no prompt for a live Native s
       // no probe: paying one full assembly per live session is the defect this guards.
       await ctx.serial('tools/change', {})
       await wait(300)
-      assert.equal(assemblies, 0, 'an unattributed tools/change must not assemble a prompt per live session')
+      const expected = typeof ctx.get('tools').modeFor === 'function' ? 0 : natives.length
+      assert.equal(assemblies, expected, 'a host without a mode resolver uses the conservative Native probe fallback')
       // Losing no capability: the next step still probes and the published rows survive.
       await step(ctx, ptcOwner)
       assert.ok(visible(ctx, ptcOwner).length > 0, 'the PTC row stays published across the deferred change')

@@ -1,7 +1,7 @@
 /** Document tools share live authority while preserving separate Native/PTC projections. */
 import fs from 'node:fs'
 import path from 'node:path'
-import { assertSupportedJsonSchema, jsonSchemaToTs } from '@deepseek-ai/dsh-tools'
+import { assertSupportedJsonSchema, jsonSchemaToTs } from './lib/host-schema.mjs'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { shutdown } from './lib/host.mjs'
 import { requireWorker } from './lib/boundary.mjs'

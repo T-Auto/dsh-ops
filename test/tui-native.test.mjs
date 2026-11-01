@@ -8,6 +8,7 @@ import { pathToFileURL } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { Writable, PassThrough } from 'node:stream'
 import { assert, test, report, skipSuite, TEST_HOME, PACKAGE_ROOT, waitFor, tick } from './lib/harness.mjs'
+import { installPresentationCompat } from './lib/tools-presentation.mjs'
 import { NativeFileTools } from '../lib/file/runtime.js'
 import { createActivityStore } from '../lib/tui/activity.js'
 
@@ -72,7 +73,14 @@ try {
   await root.loader.await()
   await waitFor(() => panelStore.get(id) !== undefined, { what: 'admitted native-test sidebar' })
   await root.plugin(Agents); await root.plugin(Sessions); await root.plugin(Projections)
-  await root.plugin(Prompt, {}); await root.plugin(Tools, { mode: 'native' }); await root.plugin(Subprocess)
+  await root.plugin(Prompt, {}); await root.plugin(Subprocess)
+  // 0.2.2 drives presentation through executor plugins; the rc2 line uses `mode` config.
+  if (await installPresentationCompat(await import('@deepseek-ai/dsh-tools'))) {
+    await root.plugin(Tools, {})
+    await root.plugin(await import('@deepseek-ai/dsh-tool-executor-native'))
+  } else {
+    await root.plugin(Tools, { mode: 'native' })
+  }
   await root.plugin(ctx => {
     ctx.provide('sandboxPolicy', { resolve: ({ session }) => ({ mode: modes.get(session.id) ?? 'danger-full-access', workspaceRoot: workspace }) })
     ctx.provide('llm', { async prepareCall(config) { return { config, adapterDefaults: {}, stream: async function* (request) {

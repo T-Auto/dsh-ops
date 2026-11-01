@@ -100,3 +100,5 @@ enabled and the expected scoped tool remains absent, capture a minimal profile,
 exact versions, Native/PTC mode, affected scoped schemas, and a timed lifecycle
 trace showing the pending publication. Restart/new-session results are useful
 comparisons, not proof that an indefinite hot-mount stall cannot recur.
+
+The 0.2.2-alpha.2 investigation is [tracked separately](host-022-validation.md). Its step-admission regressions remain unresolved, so it is not in the supported range.
