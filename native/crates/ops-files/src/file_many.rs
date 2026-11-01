@@ -33,12 +33,16 @@ pub(super) fn read_files(request: &Request) -> Result<Value> {
     let sink = request.output_sink.as_deref();
     let (mut observed_count, mut source_failed, mut source_complete) = (0, 0, true);
     let mut inline_closed = false;
-    for file in args.files {
+    'ranges: for group in args.files.chunks(prefetch::WIDTH) {
+        if sink.is_some_and(|sink| sink.exhausted()) || (room < 1024 && sink.is_none()) { break; }
+        let authorized = group.iter().map(|file| (file.path.clone(), request.authorize_path(Path::new(&file.path)))).collect();
+        let prepared = prefetch::load(authorized, &load_inspection);
+        for (file, prepared) in group.iter().zip(prepared) {
         // Once inline output fills, only a bounded capture may observe further files.
-        if sink.is_some_and(|sink| sink.exhausted()) { break; }
-        if room < 1024 { if sink.is_none() { break; } inline_closed = true; }
-        let observed = request.authorize_path(Path::new(&file.path)).and_then(|()| {
-            inspect_args(InspectArgs { path: file.path.clone(), offset: file.offset, limit: file.limit, encoding: utf8(), view: text() }, room.saturating_sub(1), true, sink.map(|sink| (sink, true)))
+        if sink.is_some_and(|sink| sink.exhausted()) { break 'ranges; }
+        if room < 1024 { if sink.is_none() { break 'ranges; } inline_closed = true; }
+        let observed = prepared.and_then(|prepared| {
+            inspect_prepared(InspectArgs { path: file.path.clone(), offset: file.offset, limit: file.limit, encoding: utf8(), view: text() }, prepared, room.saturating_sub(1), true, sink.map(|sink| (sink, true)))
         });
         let item = match observed {
             Ok(item) => item,
@@ -54,13 +58,14 @@ pub(super) fn read_files(request: &Request) -> Result<Value> {
         let size = output::size(&item) + 1;
         if inline_closed || size > room {
             if let Some(sink) = sink { sink.clipped(); inline_closed = true; continue; }
-            break;
+            break 'ranges;
         }
         room -= size;
         if item.get("error").is_some() { failed += 1; }
         complete &= item["complete"] == true;
         truncated |= item["truncated"] == true;
         items.push(item);
+        }
     }
     if let Some(sink) = sink {
         let full = source_complete && observed_count == total;

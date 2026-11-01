@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Overlap at most two bounded native reads inside `ops_read_files`, retaining request order, duplicate ranges, full revisions, per-file errors, credential/no-follow checks and ordered aggregate capture. Single-file reads avoid thread setup; the worker deadline remains authoritative (#477).
+- `ops_read_files` 内部最多重叠两个有界原生读取，保留输入顺序、重复范围、完整 revision、逐文件错误、凭证/no-follow 检查和有序总预算捕获；单文件不启动线程，仍以 worker 截止为准（#477）。
+
 - Keep Native file routing separate from the independent Bash prompt section, so resident Native + Shell consumers do not repeat Bash guidance or advertise host PowerShell routing. Keep deployment guidance single-owned across Bash, Native and discovery sections, including withdrawal and reload.
 - 将 Native 文件路由提示与独立 Bash 提示段分开，避免 Native + Shell 常驻消费者重复 Bash 指导或把 Bash 宣传为宿主 PowerShell 路由。部署指导在 Bash、Native 与发现提示段之间仅保留一份，并覆盖撤回与重载。
 - Update preset hints and rendered settings UI to describe default Bash/PowerShell coexistence; hiding host PowerShell remains an explicit choice.
