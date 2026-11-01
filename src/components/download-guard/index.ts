@@ -23,11 +23,12 @@ import type { Context } from '../../adapter/dsh/types.js'
 import { resolveConfig } from '../../config.js'
 import { inspectCommand } from '../../download-guard/detect.js'
 import { decideDownload } from '../../download-guard/policy.js'
+import { BASH_TOOL } from '../../policy.js'
 
 export const name = 'dsh-ops-download-guard'
 
 /** Shell tools whose `command` argument is worth inspecting. */
-const SHELL_TOOLS = new Set(['ops_bash', 'bash', 'pwsh', 'pwsh_persistent', 'shell'])
+const SHELL_TOOLS = new Set([BASH_TOOL, 'bash', 'pwsh', 'pwsh_persistent', 'shell'])
 
 /**
  * Mount the row.
@@ -44,22 +45,22 @@ export function apply(ctx: Context, rawConfig?: unknown): void {
   if (guard.template.trim() === '') return
 
   ctx.on('tools/pre-execute', async (exec, next) => {
+    const toolName = typeof exec?.name === 'string' ? exec.name : ''
+    if (!SHELL_TOOLS.has(toolName)) return next()
+    const args = exec?.arguments as { command?: unknown, script_path?: unknown } | undefined
+    if (args === null || typeof args !== 'object') return next()
+    // File contents are not present in this call; do not read or guess them.
+    if (typeof args.script_path === 'string' && args.script_path !== '') return next()
+    let decision
     try {
-      const toolName = typeof exec?.name === 'string' ? exec.name : ''
-      if (!SHELL_TOOLS.has(toolName)) return next()
-      const args = exec?.arguments as { command?: unknown, script_path?: unknown } | undefined
-      if (args === null || typeof args !== 'object') return next()
-      // `script_path` runs a file whose contents are not in this call, so there
-      // is nothing to inspect. Guessing at the file would be a false positive.
-      if (typeof args.script_path === 'string' && args.script_path !== '') return next()
       const command = args.command
       const hit = inspectCommand(command)
-      const decision = decideDownload(hit, guard, typeof command === 'string' ? command : '')
-      if (decision.kind === 'allow') return next()
-      return { kind: 'deny', reason: decision.reason, info: decision.info }
+      decision = decideDownload(hit, guard, typeof command === 'string' ? command : '')
     } catch {
       // A detector bug must never block an unrelated command.
       return next()
     }
+    if (decision.kind === 'allow') return next()
+    return { kind: 'deny', reason: decision.reason, info: decision.info }
   })
 }

@@ -116,7 +116,7 @@ function resolveDownloadGuard(rawConfig: unknown): DownloadGuardConfig {
     throw new ConfigError(`downloadGuard must be an object, got ${JSON.stringify(rawConfig)}`)
   }
   const raw = rawConfig as Record<string, unknown>
-  rejectUnknownKeys(raw, ['template'])
+  rejectUnknownKeys(raw, ['template', 'shell'])
   // An empty string is how the shipped patch row spells "not set", so it must
   // resolve to the same inert state as an absent key rather than failing the
   // load of an install that never configured anything.
@@ -131,7 +131,23 @@ function resolveDownloadGuard(rawConfig: unknown): DownloadGuardConfig {
       + `got ${JSON.stringify(template)}`,
     )
   }
-  return { template }
+  for (const token of template.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []) {
+    if (/\{(?:url|file)\}/.test(token) && token !== '{url}' && token !== '{file}') {
+      throw new ConfigError('downloadGuard.template placeholders must be standalone unquoted arguments; the guard quotes literal values')
+    }
+  }
+  let quote = ''
+  for (let index = 0; index < template.length; index++) {
+    const char = template[index]
+    if (char === '\\' && quote !== "'") { index++; continue }
+    if (char === quote) quote = ''
+    else if (!quote && (char === '"' || char === "'")) quote = char
+    if (quote && /^\{(?:url|file)\}/.test(template.slice(index))) throw new ConfigError('downloadGuard.template placeholders must be unquoted')
+  }
+  if (quote) throw new ConfigError('downloadGuard.template must use balanced quotes')
+  const shell = raw.shell
+  if (shell !== undefined && shell !== 'bash' && shell !== 'pwsh') throw new ConfigError('downloadGuard.shell must be bash or pwsh')
+  return { template, ...(shell === undefined ? {} : { shell }) }
 }
 
 /** The resolved configuration, with every default applied. */
@@ -160,6 +176,7 @@ export interface ResolvedConfig {
 export interface DownloadGuardConfig {
   /** Command template with `{url}` (required to act) and optional `{file}`. */
   template: string
+  shell?: 'bash' | 'pwsh'
 }
 
 /**

@@ -111,11 +111,13 @@ function commandWordOf(segment: string): { word: string, rest: string } {
  * @param flags - short and long spellings to look for, e.g. `['-o', '--output']`.
  * @returns the value when one is found.
  */
-function flagValue(args: string[], flags: readonly string[]): string | undefined {
+function flagValue(args: string[], flags: readonly string[], ignoreCase = false): string | undefined {
   let found: string | undefined
   for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index] as string
-    for (const flag of flags) {
+    const original = args[index] as string
+    const arg = ignoreCase ? original.toLowerCase() : original
+    for (const rawFlag of flags) {
+      const flag = ignoreCase ? rawFlag.toLowerCase() : rawFlag
       if (arg === flag) {
         const next = args[index + 1]
         // A leading `-` normally means the next option, not a value; `-` alone
@@ -123,27 +125,37 @@ function flagValue(args: string[], flags: readonly string[]): string | undefined
         if (next !== undefined && (next === '-' || !next.startsWith('-'))) found = next
         continue
       }
-      if (arg.startsWith(`${flag}=`)) { found = arg.slice(flag.length + 1); continue }
+      if (arg.startsWith(`${flag}=`)) { found = original.slice(flag.length + 1); continue }
       // A short flag may carry its value with no separator: -oFILE.
-      if (flag.length === 2 && arg.startsWith(flag) && arg.length > 2) found = arg.slice(2)
+      if (flag.length === 2 && arg.startsWith(flag) && arg.length > 2) found = original.slice(2)
     }
   }
-  return found !== undefined && found !== '' ? found : undefined
+  return found !== undefined && found !== '' ? literal(found) : undefined
 }
 
 /** First `http://` or `https://` token in the segment, if any. */
 function urlOf(segment: string): string | undefined {
-  const match = /(https?:\/\/[^\s"'`]+)/i.exec(segment)
-  return match?.[1]
+  const urls = argumentsOf(segment).map(literal).filter((value): value is string => value !== undefined && /^https?:\/\/\S+$/i.test(value))
+  return urls.length === 1 ? urls[0] : undefined
 }
 
 /** A trailing `> FILE` / `>> FILE` redirect target, when present. */
 function redirectTargetOf(segment: string): string | undefined {
-  const match = /(?:^|[^>\d])>{1,2}\s*(?![&|])([^\s;|&]+)/.exec(segment)
-  const target = match?.[1]
-  if (target === undefined) return undefined
-  return target === '/dev/null' || target === 'nul' || target === '$null' ? undefined : target
+  const args = argumentsOf(segment)
+  for (let index = 0; index < args.length; index++) {
+    if (args[index] === '>' || args[index] === '>>') {
+      const target = args[index + 1] === undefined ? undefined : literal(args[index + 1])
+      return target !== undefined && !discarded(target) ? target : undefined
+    }
+  }
+  return undefined
 }
+
+function literal(value: string): string | undefined {
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) return value.slice(1, -1)
+  return /["']/.test(value) ? undefined : value
+}
+const discarded = (value: string): boolean => value === '-' || value === '/dev/null' || /^(?:nul|\$null)$/i.test(value)
 
 /**
  * Whether the sub-command fetches over the network at all.
@@ -175,6 +187,10 @@ export function inspectSegment(segment: string): DownloadHit | undefined {
   if (word === '') return undefined
   const base = word.replace(/^.*[\\/]/, '').replace(/\.exe$/i, '').toLowerCase()
   const args = argumentsOf(rest)
+  // Only literal, single-URL calls can produce a faithful alternative. Help,
+  // scripts and expanded expressions are not evidence of a disk download.
+  const url = urlOf(segment)
+  if (url === undefined || args.some(arg => ['--help', '--version', '-h', '-V', '--spider', '--head', '-I'].includes(arg))) return undefined
 
   // curl: -o / --output names a file; -O / --remote-name derives the name from
   // the URL but still lands one. A bare `curl URL` prints to stdout, so it is
@@ -182,7 +198,8 @@ export function inspectSegment(segment: string): DownloadHit | undefined {
   if (base === 'curl') {
     const output = flagValue(args, ['-o', '--output'])
     // `-o -` streams to stdout; nothing lands on disk.
-    if (output !== undefined && output !== '-') return { rule: 'curl-output', url: urlOf(segment), target: output }
+    if (output !== undefined && discarded(output)) return undefined
+    if (output !== undefined) return { rule: 'curl-output', url, target: output }
     const remoteName = args.some(arg => arg === '-O' || arg === '--remote-name'
       || arg === '--remote-name-all' || /^-[A-Za-z]*O[A-Za-z]*$/.test(arg))
     if (remoteName) return { rule: 'curl-remote-name', url: urlOf(segment) }
@@ -196,7 +213,8 @@ export function inspectSegment(segment: string): DownloadHit | undefined {
   // wget writes to a file by design; -O names it, -q only silences progress.
   if (base === 'wget') {
     const output = flagValue(args, ['-O', '--output-document'])
-    if (output !== undefined) return { rule: 'wget', url: urlOf(segment), target: output }
+    if (output !== undefined && discarded(output)) return undefined
+    if (output !== undefined) return { rule: 'wget', url, target: output }
     // `-O -` means stdout, not a file. It is the documented way to stream
     // wget into a pipe (`wget -qO- URL | tar xz`), so it must stay allowed.
     if (args.some(arg => arg === '-O-' || arg === '--output-document=-'
@@ -212,15 +230,15 @@ export function inspectSegment(segment: string): DownloadHit | undefined {
   // named file. `Invoke-RestMethod` without one returns a parsed object, which
   // is not a download.
   if (base === 'invoke-webrequest' || base === 'iwr') {
-    const output = flagValue(args, ['-OutFile'])
+    const output = flagValue(args, ['-OutFile'], true)
     return output === undefined ? undefined : { rule: 'Invoke-WebRequest', url: urlOf(segment), target: output }
   }
   if (base === 'invoke-restmethod' || base === 'irm') {
-    const output = flagValue(args, ['-OutFile'])
+    const output = flagValue(args, ['-OutFile'], true)
     return output === undefined ? undefined : { rule: 'Invoke-RestMethod', url: urlOf(segment), target: output }
   }
   if (base === 'start-bitstransfer') {
-    const output = flagValue(args, ['-Destination'])
+    const output = flagValue(args, ['-Destination'], true)
     return output === undefined ? undefined : { rule: 'Start-BitsTransfer', url: urlOf(segment), target: output }
   }
   return undefined
@@ -234,6 +252,9 @@ export function inspectSegment(segment: string): DownloadHit | undefined {
  */
 export function inspectCommand(command: unknown): DownloadHit | undefined {
   if (typeof command !== 'string' || command.trim() === '') return undefined
+  // An intentionally incomplete detector must not mistake here-documents,
+  // comments, substitutions, or script bodies for commands being dispatched.
+  if (/<<|[$`]|(?:^|\s)#/.test(command)) return undefined
   for (const segment of splitSubcommands(command)) {
     const hit = inspectSegment(segment)
     if (hit !== undefined) return hit

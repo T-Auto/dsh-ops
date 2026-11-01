@@ -59,7 +59,7 @@ export async function apply(root: Context, rawConfig: unknown): Promise<void> {
       const effective = gateConsumer(resolved, config.global, linked)
       await host.plugin({ name: `dsh-ops/custom-${resolved.preset}`, apply(ctx: Context) { return mountIntegration(ctx, effective) } })
     }
-    await mount(downloadGuardModule, config['download-guard'])
+    await mount(downloadGuardModule, config['download-guard'], { downloadGuard: config['download-guard'].config })
     await mount(panelModule, config.panel)
     await mount(tuiModule, config.tui)
   } finally { endMergedRow() }

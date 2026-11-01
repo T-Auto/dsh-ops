@@ -24,6 +24,8 @@ import type { DownloadHit } from './detect.js'
 export interface ForwarderConfig {
   /** The command to suggest, containing `{url}` and optionally `{file}`. */
   template: string
+  /** Syntax of the configured alternative, independent of the original tool. */
+  shell?: 'bash' | 'pwsh'
 }
 
 /** What the guard decided for one call. */
@@ -32,10 +34,10 @@ export type DownloadDecision =
   | { kind: 'deny', reason: string, info: { name: string, code: string } }
 
 /** Quote one path for a POSIX shell only when it would otherwise split. */
-function shellQuote(value: string): string {
+function shellQuote(value: string, shell: 'bash' | 'pwsh'): string {
   if (value === '') return "''"
   if (/^[A-Za-z0-9_\-./:=@%+,]+$/.test(value)) return value
-  return `'${value.replace(/'/g, `'\\''`)}'`
+  return shell === 'pwsh' ? `'${value.replaceAll("'", "''")}'` : `'${value.replace(/'/g, `'\\''`)}'`
 }
 
 /**
@@ -51,11 +53,11 @@ function shellQuote(value: string): string {
  * @param hit - the detection result.
  * @returns the command to show the model.
  */
-export function renderForwarder(template: string, hit: DownloadHit): string {
-  let rendered = template
-  if (hit.url !== undefined) rendered = rendered.split('{url}').join(shellQuote(hit.url))
-  if (hit.target !== undefined) rendered = rendered.split('{file}').join(shellQuote(hit.target))
-  return rendered
+export function renderForwarder(template: string, hit: DownloadHit, shell: 'bash' | 'pwsh' = 'bash'): string {
+  return template.replace(/\{(url|file)\}/g, (placeholder, key: string) => {
+    const value = key === 'url' ? hit.url : hit.target
+    return value === undefined ? placeholder : shellQuote(value, shell)
+  })
 }
 
 /**
@@ -70,16 +72,17 @@ export function renderForwarder(template: string, hit: DownloadHit): string {
  * @param command - the original command, for context.
  * @returns the refusal reason.
  */
-export function refusalReason(hit: DownloadHit, template: string, command: string): string {
+export function refusalReason(hit: DownloadHit, template: string, command: string, shell: 'bash' | 'pwsh' = 'bash'): string {
   const shown = command.length > 240 ? `${command.slice(0, 240)}...` : command
   const lines = [
-    `This command downloads to disk through ${hit.rule}, which writes one connection at a time.`,
+    `The configured download policy refuses this disk-writing ${hit.rule} call. No command was executed.`,
     hit.target === undefined
-      ? 'The bytes land in a local file either way, so a downloader built for the job is strictly faster.'
-      : `The bytes go to ${hit.target} either way, so a downloader built for the job is strictly faster.`,
+      ? 'The original command chooses the output filename.'
+      : `Requested output: ${JSON.stringify(hit.target)}.`,
     '',
-    'Use the configured downloader instead:',
-    `  ${renderForwarder(template, hit)}`,
+    `Use the configured downloader (${shell} syntax), after preserving required request options:`,
+    `  ${renderForwarder(template, hit, shell)}`,
+    'Keep the current sandbox and approval requirements. This alternative has not been executed or benchmarked.',
   ]
   if (hit.url !== undefined) lines.push('', `URL: ${hit.url}`)
   lines.push(
@@ -113,9 +116,10 @@ export function decideDownload(
   if (config === undefined || config.template.trim() === '') return { kind: 'allow' }
   // A template that cannot name the URL cannot produce a runnable alternative.
   if (!config.template.includes('{url}') || hit.url === undefined) return { kind: 'allow' }
+  if (config.template.includes('{file}') && hit.target === undefined) return { kind: 'allow' }
   return {
     kind: 'deny',
-    reason: refusalReason(hit, config.template, command),
+    reason: refusalReason(hit, config.template, command, config.shell),
     info: { name: 'DownloadGuardError', code: 'DOWNLOAD_TO_FILE' },
   }
 }

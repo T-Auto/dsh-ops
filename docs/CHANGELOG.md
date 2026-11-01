@@ -20,6 +20,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Name the row setting instead of the removed Compatibility mode when an official tool has an OPS replacement.
 - 官方工具被 OPS 替代时，拒绝信息改指行设置，不再提已删除的兼容模式。
 
+- Add an opt-in download guard with operator-owned Bash/PowerShell alternatives, conservative literal-command detection and actual Native/PTC dispatch coverage. Unconfigured, ambiguous and streaming calls stay unchanged; replacements are never executed automatically (#506).
+- 新增可选下载约束，由用户配置 Bash/PowerShell 替代下载命令，保守识别字面命令并覆盖真实 Native/PTC 派发。未配置、含歧义或流式输出的调用保持原状，绝不自动执行替代命令（#506）。
+
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 
 - This unstable prerelease summarizes changes since v0.5.0-alpha2; use an isolated test environment.
