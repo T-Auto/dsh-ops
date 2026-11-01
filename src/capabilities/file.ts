@@ -25,6 +25,15 @@ export const PARAMETERS = Object.freeze({
   read_files: bounded({ files: { type: 'array', description: '1-32 file ranges.', items: bounded({
     path: string, offset: { type: 'integer', description: 'Line >=1; default 1.' }, limit: range(1, 10000, 'Default 200.'),
   }, ['path']) } }, ['files']),
+  symbol_map: bounded({
+    path: filePath,
+    name: { ...string, description: 'Case-sensitive exact symbol-name filter.' },
+    scope: { ...string, description: 'Optional outer-first scope filter, e.g. "Foo.bar".' },
+    lang: { ...string, description: 'Grammar override for an ambiguous extension.' },
+    extended: { type: 'boolean', description: 'Also report non-declaration symbols; default false.' },
+    offset: integer,
+    limit: range(1, 5000, 'Default 200 symbols.'),
+  }, ['path']),
   inspect_local_file: bounded({
     path: filePath,
     offset: { type: 'integer', description: '1-based line or 16-byte hex row; default 1. Legacy 0 also reads the first unit.' },
@@ -109,11 +118,23 @@ export const SEARCH_OUTPUT: JsonSchemaNode = {
   },
 }
 
+/** A symbol map answers with position strings, not the legacy object form. */
+export const SYMBOL_MAP_OUTPUT: JsonSchemaNode = {
+  ...OUTPUT, properties: {
+    ...OUTPUT.properties,
+    file: string, lang: string, revision: string, hash: string, fileHash: string, partial: { type: 'boolean' },
+    symbols: { type: 'array', description: 'One "start-end kind name" position line per symbol.', items: string },
+    syntaxErrors: { type: 'integer' }, nextOffset: { type: 'integer' },
+    truncatedBy: { type: 'string', enum: ['row-limit', 'output-budget', 'none'] },
+  },
+}
+
 /** Every projection declares the same canonical execution shape. */
 export function fileOutput(rawName: keyof typeof PARAMETERS): JsonSchemaNode {
   const document = documentOutput(rawName)
   if (document) return document
   if (rawName === 'read_files') return READ_FILES_OUTPUT
+  if (rawName === 'symbol_map') return SYMBOL_MAP_OUTPUT
   if (rawName === 'glob' || rawName === 'grep') return SEARCH_OUTPUT
   return OUTPUT
 }
@@ -123,6 +144,7 @@ const RESULT = ' Failures resolve as {status:"error"|"rejected", error.code}; th
 const EDIT_DESCRIPTION = 'Precisely patch one UTF-8 file using 1-100 oldText/newText edits against the SAME original bytes. Every nonempty oldText must occur exactly once; overlapping edits reject all. Required expectedRevision from inspect/stat. Atomic CAS; dryRun previews. Darwin nonempty extended ACLs fail closed with METADATA_UNSUPPORTED. Preserve CRLF/BOM explicitly in text. Windows preserves owner/group/ordered DACL and supported basic attributes/timestamps; readonly overwrite is refused and unsupported streams/EA/special storage fail with METADATA_UNSUPPORTED. SACL/audit labels are not preserved.' + RESULT
 export const DESCRIPTIONS = Object.freeze({
   ...DOCUMENT_DESCRIPTIONS,
+  symbol_map: 'Outline ONE source file as symbol position lines, answered in-process without spawning a worker. offset counts SYMBOLS, not lines; nextOffset continues the listing. The receipt carries positions and identity, never a symbol body. A file with a syntax error still yields the symbols below the error, and a missing grammar names its install command.' + RESULT,
   read_files: 'Read UTF-8 ranges relative to session cwd. Check each file complete/error; nextOffset continues lines, nextIndex resumes pending files. Binary needs a binary reader. Failures return status:error|rejected and error.code; never throw.',
   inspect_local_file: 'Read bounded UTF-8 text lines or a hex view from path relative to the DSH session cwd. Directories are rejected; use ops_glob or ops_grep.' + RESULT,
   glob: 'Find regular files below path relative to the current session cwd. pattern is an ARRAY of globs matched against paths relative to path: ["**/*.md","!vendor/**"]; "*.md" matches the top level only, "!" excludes, at least one positive entry. Symlinks, reparse points, hidden files and dependency/build directories are excluded. limit defaults to 100; paging uses 0-based offset/nextOffset. Check scanComplete and pageComplete; matchedTotal exists only after a complete scan. Prefer continuation with unchanged options; SEARCH_STALE means restart. Incomplete scans require a narrower query.' + RESULT,

@@ -170,6 +170,7 @@ export function renderNative(tool: string, args: unknown, result: unknown): stri
   else if (record(result.error) || ['error', 'rejected', 'conflict', 'unknown', 'failed'].includes(String(result.status))) lines = failure(result)
   else if (tool === 'result') return capNativeText(renderResult(input, result), NATIVE_OUTPUT_BYTES, 'Repeat the same offset with smaller limit/maxBytes; do not advance past undisplayed rows.')
   else if (tool === 'read_files') lines = compactRanges(input, result) ?? readMany(result)
+  else if (tool === 'symbol_map') lines = symbolMap(result)
   else if (tool === 'inspect_local_file') lines = inspect(input, result)
   else if (mutations.has(tool)) lines = receipts(tool, result)
   else if (tool === 'stat') lines = stat(input, result)
@@ -183,6 +184,24 @@ export function renderNative(tool: string, args: unknown, result: unknown): stri
   return capNativeText(lines.join('\n'), NATIVE_OUTPUT_BYTES, mutations.has(tool)
     ? 'Inspect current state before another mutation; do not repeat the write to recover undisplayed receipts.'
     : isDocumentTool(tool) ? 'Use the stored reference when available; otherwise repeat this range with a smaller limit or use a dedicated reader for a large record. Do not advance past undisplayed content.' : undefined)
+}
+
+/**
+ * One position line per symbol: `<start>-<end> <kind> <name>`.
+ *
+ * A map exists to save the caller's context, so the projection carries positions and the one-letter
+ * kind and nothing else. When the parser had to recover rows the header says so — a best-effort
+ * outline must never be read as a clean one.
+ */
+function symbolMap(value: Row): string[] {
+  const symbols = Array.isArray(value.symbols) ? value.symbols : []
+  const output: string[] = [`=== SYMBOLS: ${label(value.file)} (${label(value.lang)}, ${count(value.total) ? value.total : symbols.length} symbols) ===`]
+  if (value.partial === true || count(value.syntaxErrors)) {
+    output.push('[Notice: positions recovered best-effort after a parse error; symbols below the error are kept, and a recovered range is never invented.]')
+  }
+  for (const symbol of symbols) output.push(typeof symbol === 'string' ? label(symbol) : JSON.stringify(symbol))
+  output.push(...notices(value, symbols.length))
+  return output
 }
 
 function readMany(value: Row): string[] {

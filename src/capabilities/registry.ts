@@ -10,15 +10,23 @@ import type { CapabilityMetadata, Component, SchemaCapability } from './types.js
 export type FileToolName = keyof typeof fileParameters
 export type PtcToolName = keyof typeof ptcParameters
 // Preserve the published registration order independently of schema object key order.
-const fileOrder = ['inspect_local_file', 'grep', 'glob', 'replace', 'write_file', 'edit_file', 'diff', 'stat', 'copy', 'move', 'remove', 'read_files', 'read_table', 'read_docx', 'read_pdf'] as const satisfies readonly FileToolName[]
+const fileOrder = ['inspect_local_file', 'grep', 'glob', 'replace', 'write_file', 'edit_file', 'diff', 'stat', 'copy', 'move', 'remove', 'read_files', 'symbol_map', 'read_table', 'read_docx', 'read_pdf'] as const satisfies readonly FileToolName[]
+/**
+ * File tools this package answers without spawning the worker.
+ *
+ * They stay inside `NATIVE_FILE_TOOLS` because the host publishes them on the native surface, but
+ * `invoke()` dispatches them before any worker path is resolved.
+ */
+export const NO_WORKER_FILE_TOOLS = Object.freeze(['symbol_map'] as const satisfies readonly FileToolName[])
+const noWorkerFileTools = new Set<FileToolName>(NO_WORKER_FILE_TOOLS)
 const fileMutations = new Set<FileToolName>(['replace', 'write_file', 'edit_file', 'copy', 'move', 'remove'])
-const continuationReaders = new Set<FileToolName>(['inspect_local_file', 'read_files', 'glob', 'grep', 'diff', 'read_table', 'read_docx', 'read_pdf'])
+const continuationReaders = new Set<FileToolName>(['inspect_local_file', 'read_files', 'glob', 'grep', 'diff', 'symbol_map', 'read_table', 'read_docx', 'read_pdf'])
 const observedReaders = new Set<FileToolName>(['inspect_local_file', 'read_files'])
 const allPresentations = Object.freeze(['native', 'ptc', 'both'] as const)
 
 export const FILE_CAPABILITIES = Object.freeze(fileOrder.map(rawName => Object.freeze({
   rawName, component: 'file' as const, presentations: allPresentations,
-  availability: rawName === 'read_files' ? 'resident' as const : 'discoverable' as const, mutates: fileMutations.has(rawName),
+  availability: rawName === 'read_files' || noWorkerFileTools.has(rawName) ? 'resident' as const : 'discoverable' as const, mutates: fileMutations.has(rawName),
   concurrencySafe: !fileMutations.has(rawName),
   ptcAvailability: rawName === 'inspect_local_file' ? 'resident' as const : 'discoverable' as const,
   supportsContinuation: continuationReaders.has(rawName), observesRead: observedReaders.has(rawName),

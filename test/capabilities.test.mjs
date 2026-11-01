@@ -1,6 +1,6 @@
 /** Registry migration preserves the complete previously published host definitions. */
 import { createHash } from 'node:crypto'
-import { CAPABILITIES, NATIVE_FILE_TOOLS, NATIVE_RESIDENT_FILE_TOOLS, FILE_CAPABILITIES, PTC_CAPABILITIES, SHELL_CAPABILITIES, capability, capabilitiesFor } from '../lib/capabilities/registry.js'
+import { CAPABILITIES, NATIVE_FILE_TOOLS, NATIVE_RESIDENT_FILE_TOOLS, NO_WORKER_FILE_TOOLS, FILE_CAPABILITIES, PTC_CAPABILITIES, SHELL_CAPABILITIES, capability, capabilitiesFor } from '../lib/capabilities/registry.js'
 import { FILE_TOOLS, FILE_MUTATIONS, IN_PROCESS_TOOLS, BASH_TOOL, publicToolName } from '../lib/policy.js'
 import { definition as fileDefinition, PARAMETERS as fileParameters, DESCRIPTIONS as fileDescriptions } from '../lib/file/contract.js'
 import { definition as ptcDefinition, PTC_TOOLS, PARAMETERS as ptcParameters, DESCRIPTIONS as ptcDescriptions } from '../lib/ptc/contract.js'
@@ -10,9 +10,9 @@ import { BASH_TOOL_NAME } from '../lib/shells/constants.js'
 import { assert, test, report } from './lib/harness.mjs'
 
 await test('the catalogue covers every owned file, PTC and shell tool exactly once', () => {
-  assert.equal(CAPABILITIES.length, 20)
+  assert.equal(CAPABILITIES.length, 21)
   assert.equal(new Set(CAPABILITIES.map(item => item.rawName)).size, CAPABILITIES.length)
-  assert.deepEqual(FILE_TOOLS, ['inspect_local_file', 'grep', 'glob', 'replace', 'write_file', 'edit_file', 'diff', 'stat', 'copy', 'move', 'remove', 'read_files', 'read_table', 'read_docx', 'read_pdf'])
+  assert.deepEqual(FILE_TOOLS, ['inspect_local_file', 'grep', 'glob', 'replace', 'write_file', 'edit_file', 'diff', 'stat', 'copy', 'move', 'remove', 'read_files', 'symbol_map', 'read_table', 'read_docx', 'read_pdf'])
   assert.deepEqual(FILE_MUTATIONS, ['replace', 'write_file', 'edit_file', 'copy', 'move', 'remove'])
   assert.deepEqual(PTC_TOOLS, ['batch', 'result'])
   assert.deepEqual(IN_PROCESS_TOOLS, ['bash'])
@@ -33,11 +33,13 @@ await test('the catalogue covers every owned file, PTC and shell tool exactly on
 await test('metadata separates the Native resident core from discoverable capabilities', () => {
   for (const entry of [...FILE_CAPABILITIES, ...SHELL_CAPABILITIES]) assert.deepEqual(entry.presentations, ['native', 'ptc', 'both'])
   for (const entry of PTC_CAPABILITIES) assert.deepEqual(entry.presentations, entry.rawName === 'result' ? ['native', 'ptc', 'both'] : ['ptc'])
-  assert.deepEqual(NATIVE_RESIDENT_FILE_TOOLS, ['read_files'])
+  assert.deepEqual(NATIVE_RESIDENT_FILE_TOOLS, ['read_files', 'symbol_map'])
   assert.equal(capability('result').nativeProjection.availability, 'discoverable')
-  assert.deepEqual(FILE_CAPABILITIES.filter(entry => entry.availability === 'discoverable').map(entry => entry.rawName).sort(), DISCOVERABLE_TOOLS.filter(name => name !== 'result').sort())
+  assert.deepEqual(FILE_CAPABILITIES.filter(entry => entry.availability === 'discoverable').map(entry => entry.rawName).sort(), DISCOVERABLE_TOOLS.filter(name => name !== 'result' && name !== 'symbol_map').sort())
   for (const entry of CAPABILITIES) {
-    assert.equal(entry.availability, entry.component === 'file' && entry.rawName !== 'read_files' ? 'discoverable' : 'resident')
+    // `read_files` and the no-worker tools stay resident: they need no worker to answer.
+    const resident = entry.component !== 'file' || entry.rawName === 'read_files' || NO_WORKER_FILE_TOOLS.includes(entry.rawName)
+    assert.equal(entry.availability, resident ? 'resident' : 'discoverable')
     assert.equal(entry.concurrencySafe, entry.component === 'file' && !entry.mutates)
   }
 })
@@ -59,7 +61,7 @@ const snapshot = (names, definition) => names.map(name => {
 await test('business file and batch definitions retain their original serialized contracts', () => {
   // Captured before this migration, covering every argument/output contract and published description.
   const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
-  assert.equal(hash(snapshot(FILE_TOOLS.filter(name => !['glob', 'grep', 'read_files', 'edit_file', 'read_table', 'read_docx', 'read_pdf'].includes(name)), fileDefinition)), '0297e7d3f819dc90dcc296a5e4ee1af88c37b742ed7ca06c77c54a477c52eb4b')
+  assert.equal(hash(snapshot(FILE_TOOLS.filter(name => !['glob', 'grep', 'read_files', 'edit_file', 'read_table', 'read_docx', 'read_pdf'].includes(name)), fileDefinition)), '36dd01972cd16748d62bb95baabf655e2bdd83a6f7fdfdf7e339378a5d3bfaa9')
   const batch = ptcDefinition('batch', async () => null)
   assert.equal(batch.parameters, ptcParameters.batch); assert.ok(batch.description.startsWith(ptcDescriptions.batch)); assert.match(batch.description, /PTC returns Outcome/)
   assert.ok(batch.output.schema.oneOf.every(branch => branch.properties.status))
@@ -68,7 +70,7 @@ await test('business file and batch definitions retain their original serialized
 await test('file parameter schemas preserve their reviewed structural constraints', () => {
   // #384 intentionally adds the optional exactTotal boolean; all other constraints remain pinned.
   const hash = createHash('sha256').update(JSON.stringify(withoutDescriptions(fileParameters))).digest('hex')
-  assert.equal(hash, '637df1383940fa6fdb2d65a68e67ce1e333a7e2ecbfceff5ffef7a4c1133ea8b')
+  assert.equal(hash, '910544e1f89bec656b572e8a28f8f34fb69de71e3ddbe8c698ab222342aef9f2')
 })
 
 await test('native registration consumes the catalogue while execute values stay unchanged', async () => {

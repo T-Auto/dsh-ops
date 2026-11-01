@@ -64,6 +64,10 @@ export function continuationFor(tool: string, rawArgs: unknown, data: CanonicalD
     const next = readMany(args, data)
     return next ? encode('read_files', next) : undefined
   }
+  if (tool === 'symbol_map' && integer(data.nextOffset)
+    && data.nextOffset > Number(args.offset ?? 0)) {
+    return encode('symbol_map', { ...args, offset: data.nextOffset })
+  }
   if ((tool === 'inspect_local_file' || tool === 'diff') && integer(data.nextOffset)
     && data.nextOffset > Number(args.offset ?? (tool === 'inspect_local_file' ? 1 : 0))) {
     return encode(tool, { ...args, offset: data.nextOffset })

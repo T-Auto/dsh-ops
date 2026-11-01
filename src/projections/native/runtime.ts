@@ -4,7 +4,7 @@ import type { FileToolName } from '../../capabilities/registry.js'
 import { WORKER_TIMEOUT_MS } from '../../execution/protocol.js'
 import { publicToolName } from '../../policy.js'
 import { definition } from './contract.js'
-import { NATIVE_FILE_TOOLS } from '../../capabilities/registry.js'
+import { NATIVE_FILE_TOOLS, NO_WORKER_FILE_TOOLS } from '../../capabilities/registry.js'
 import { resultDefinition, invokeResult } from './result.js'
 import { registerNativeProvider } from '../../publication/providers.js'
 import { safeDisposeAll } from '../../teardown.js'
@@ -41,7 +41,13 @@ export class NativeFileTools {
     this.file = this.config.workerPath
     if (!this.file) {
       if (this.config.required) throw new Error('Native file worker path is unavailable.')
-      return []
+      // A missing worker degrades to "the tools that never needed one", never to nothing. An empty
+      // request stays empty: external discovery asks for no resident surface at all.
+      const local = names
+        .filter(rawName => (NO_WORKER_FILE_TOOLS as readonly string[]).includes(rawName))
+        .map(rawName => this.definition(rawName))
+      if (local.length) this.unregisterProvider = await registerNativeProvider(this.ctx, local, tool => this.ctx.tools.register(tool))
+      return local.map(tool => tool.name)
     }
     const definitions = names.map(rawName => this.definition(rawName))
     // Discovery starts a worker without a resident surface. Do not emit a
@@ -57,7 +63,10 @@ export class NativeFileTools {
 
   async call(tool: NativeToolName, args: unknown, exec: Execution): Promise<unknown> {
     if (this.stopped) return failure('POLICY_DENIED', 'Native file component is disposed.')
-    if (!this.file) return failure('EXECUTOR_UNAVAILABLE', 'Native file worker path is unavailable.')
+    // symbol_map answers in-process; `invoke` dispatches it before it ever looks at a worker path.
+    if (!this.file && !(NO_WORKER_FILE_TOOLS as readonly string[]).includes(tool)) {
+      return failure('EXECUTOR_UNAVAILABLE', 'Native file worker path is unavailable.')
+    }
     try {
       return await this.calls.run(exec?.signal, signal => tool === 'result'
         ? invokeResult(this.ctx, this.file!, args, exec, signal, this.config)

@@ -1,4 +1,4 @@
-import { FILE_TOOLS, NATIVE_FILE_TOOLS, IN_PROCESS_TOOLS, DISCOVERY_TOOL_NAME } from './capabilities/registry.js'
+import { FILE_TOOLS, NATIVE_FILE_TOOLS, NO_WORKER_FILE_TOOLS, IN_PROCESS_TOOLS, DISCOVERY_TOOL_NAME } from './capabilities/registry.js'
 export { FILE_TOOLS, FILE_MUTATIONS, IN_PROCESS_TOOLS } from './capabilities/registry.js'
 
 /** Model-facing routing, kept in one section. No shared registry mutation. */
@@ -42,11 +42,11 @@ interface ToolingPolicyOptions {
 /** A single compact table; absent tools never get advertised. */
 export function renderToolingPolicy({ published, mounted, levels, shellComponent = true, extraGuidance = '' }: ToolingPolicyOptions) {
   const names = new Set(published ?? (mounted || levels?.files
-    ? [...NATIVE_FILE_TOOLS, ...(levels?.bash ? IN_PROCESS_TOOLS : [])].map(publicToolName) : []))
+    ? [...NATIVE_FILE_TOOLS, ...NO_WORKER_FILE_TOOLS, ...(levels?.bash ? IN_PROCESS_TOOLS : [])].map(publicToolName) : []))
   if (levels?.pwsh) names.add('pwsh')
   if (!shellComponent) names.delete('pwsh')
   const hasDiscovery = names.has(publicToolName(DISCOVERY_TOOL_NAME))
-  const hasFiles = NATIVE_FILE_TOOLS.some(name => names.has(publicToolName(name)))
+  const hasFiles = [...NATIVE_FILE_TOOLS, ...NO_WORKER_FILE_TOOLS].some(name => names.has(publicToolName(name)))
   const hasBash = names.has(BASH_TOOL)
   const hasPwsh = shellComponent && names.has('pwsh')
   if (!hasFiles && !hasBash && !hasPwsh && !hasDiscovery) return ''
@@ -62,6 +62,7 @@ export function renderToolingPolicy({ published, mounted, levels, shellComponent
   row('read_docx', 'Read DOCX main-body paragraphs')
   row('read_pdf', 'Read supported PDF text-layer pages')
   row('inspect_local_file', 'Bounded UTF-8 lines / hex')
+  row('symbol_map', 'Outline one source file as symbol position lines')
   if (hasFiles && names.has('read_image')) lines.push('| Images | read_image (host) |')
   row('grep', 'Search contents')
   row('glob', 'Find paths')
