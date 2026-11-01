@@ -76,6 +76,21 @@ await test('handoff retires old callbacks and old-owner disposal cannot remove t
   } finally { await shutdown(ctx) }
 }))
 
+await test('returning to the original preset does not revive its retained Bash callback', () => withTempDir('bash-preset-roundtrip', async cwd => {
+  const { ctx, tools, mint, select } = await setup(cwd)
+  try {
+    const owner = await mint('roundtrip', 'ptc'), old = tools.get('ops_bash', owner)
+    await select(owner, 'standard'); await select(owner, 'ptc')
+    assert.notEqual(tools.get('ops_bash', owner), old)
+    const subprocess = ctx.get('subprocess'), spawn = subprocess.spawn.bind(subprocess)
+    let spawns = 0
+    subprocess.spawn = (...args) => { ++spawns; return spawn(...args) }
+    const denied = await old.execute({ command: 'echo MUST_NOT_RUN', description: 'Check retired publication' }, { agent: owner, signal: new AbortController().signal })
+    assert.equal(denied.status, 'failed')
+    assert.equal(spawns, 0, 'reselecting a preset cannot reactivate its retired callback')
+  } finally { await shutdown(ctx) }
+}))
+
 await test('handoff never withdraws an unrelated same-name provider', () => withTempDir('bash-preset-foreign', async cwd => {
   const { ctx, tools, mint, select } = await setup(cwd)
   try {

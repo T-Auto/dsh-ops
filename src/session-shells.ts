@@ -224,7 +224,8 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
       if (!publishable) continue
       const base = bashToolDefinition({ file: bash.file, source: bash.source, subprocess: ctx.get('subprocess') })
       const definition = hostBashDefinition(ctx, base,
-        (args, exec, standing, policy, dshEnv, options) => startSessionBash({ ctx, bash, active: () => exec.agent !== undefined && entries.has(exec.agent) && allowed(exec.agent) },
+        (args, exec, standing, policy, dshEnv, options) => startSessionBash({ ctx, bash, active: () => entry.published === true && entry.definition === definition
+          && exec.agent !== undefined && entries.has(exec.agent) && allowed(exec.agent) },
           args, exec, standing, policy, dshEnv, options), async (args, session, exec) => {
             const basis = await resolveSessionDirectory(ctx, exec.agent, exec.signal)
             return { workdir: sessionWorkdir(args, { header: { cwd: basis.cwd } }), basis }
