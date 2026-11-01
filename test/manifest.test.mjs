@@ -17,7 +17,7 @@ import {
   publicToolName,
   renderToolingPolicy,
 } from '../lib/policy.js'
-import { NATIVE_FILE_TOOLS } from '../lib/capabilities/registry.js'
+import { CAPABILITIES, NATIVE_FILE_TOOLS } from '../lib/capabilities/registry.js'
 import { COMPONENTS, componentEnabled, componentEntry } from '../lib/components/defaults.js'
 import { assert, PACKAGE_ROOT, report, test } from './lib/harness.mjs'
 
@@ -51,7 +51,7 @@ await test('$schema is an absolute URI matching the pinned manifest version', ()
   assert.match(raw.$schema, /dsh-plugin-0\.15\.schema\.json$/)
 })
 
-await test('every declared tool is one the policy actually names', () => {
+await test('declared file tools have routing and other namespaces name owned capabilities', () => {
   const namespaces = raw.contributes['x-tool-namespaces']
   // The policy as a deployment that resolved every rung renders it: a bundled
   // shell is named only when it resolved, and a level left off would hide a
@@ -75,8 +75,8 @@ await test('every declared tool is one the policy actually names', () => {
   // The FastCtx background backend was removed: no namespace may still advertise it.
   assert.equal(namespaces.some((entry) => entry.serverName === 'fastctx' || entry.transport === 'stdio'), false)
 
-  // Every further namespace is this plugin's own in-process surface, so its
-  // names are checked against the shell capability and against the policy.
+  // Additional namespaces describe the shell and scoped PTC/discovery controls.
+  // Static inventory is not the model's current prompt or publication authority.
   for (const [offset, entry] of namespaces.slice(1).entries()) {
     const index = offset + 1
     assert.ok(
@@ -84,12 +84,19 @@ await test('every declared tool is one the policy actually names', () => {
       `the namespace at index ${index} must declare its tools`,
     )
     for (const tool of entry.tools) {
-      assert.ok(
-        ['bash', 'pwsh'].includes(tool),
-        `the namespace at index ${index} declares ${tool}, which the plugin does not register itself`,
-      )
-      assert.ok(policy.includes(publicToolName(tool)), `the policy never names ${publicToolName(tool)}`)
+      assert.ok(CAPABILITIES.some(entry => entry.rawName === tool),
+        `the namespace at index ${index} declares an unknown capability: ${tool}`)
     }
+  }
+})
+
+await test('the namespace inventory covers every owned capability exactly once', () => {
+  const namespaces = raw.contributes['x-tool-namespaces']
+  assert.deepEqual(namespaces.flatMap(entry => entry.tools).sort(), CAPABILITIES.map(entry => entry.rawName).sort())
+  for (const entry of namespaces) {
+    assert.equal(entry.serverName, 'dsh-ops')
+    assert.equal(entry.transport, 'in-process')
+    assert.equal(entry.publicPrefix, TOOL_PREFIX)
   }
 })
 
