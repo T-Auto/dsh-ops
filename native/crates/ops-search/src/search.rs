@@ -82,6 +82,8 @@ pub fn grep(request: &Request) -> Result<Value> {
     let wanted = cursor.offset.saturating_add(args.limit);
     scan.walk(&root, &args.glob, request, |file, _, scan| {
         let Some(bytes) = scan.read(file) else { return Ok(()); };
+        let started = scan.profile.start();
+        let result = (|| {
         let text = match String::from_utf8(bytes) { Ok(text) => text, Err(_) => { scan.skip("invalid-encoding", true, true); return Ok(()); } };
         if text.is_empty() { return Ok(()); }
         let mut hits = 0;
@@ -124,6 +126,9 @@ pub fn grep(request: &Request) -> Result<Value> {
             if early && !content && file_count >= wanted { scan.stopped = Some(TruncatedBy::RowLimit); }
         }
         Ok(())
+        })();
+        scan.profile.record("matchAndResults", started);
+        result
     })?;
     let total = if args.output_mode == "summary" { 0 } else if content { match_count } else { file_count };
     let extra = if args.output_mode == "summary" { json!({"files":file_count,"matches":match_count}) } else { json!({}) };

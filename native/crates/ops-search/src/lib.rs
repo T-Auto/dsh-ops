@@ -3,6 +3,7 @@
 mod scan;
 mod paging;
 mod search;
+mod profile;
 use ops_protocol::{Failure, Request, Result};
 use ops_files::{file_path, target, relative_display, read_bytes, result, lock_and_read_for_update, atomic_write, MAX_OUTPUT_BYTES, MAX_FILE_BYTES};
 use ops_files as publication;
