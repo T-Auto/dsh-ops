@@ -1,32 +1,42 @@
 #!/usr/bin/env node
-// @ts-nocheck — ported from the shipped 2.1.1 engine as-is: the runtime is unchanged, the types
-// are the open work. Tracked in docs/CHANGELOG.md under "Unreleased → known gaps".
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-const inproc_1 = require("./inproc.cjs");
-const HELP = `ops-ptc — 进程内 AST 重构引擎（零外部二进制）
+/**
+ * The `ops-ptc` command line: locate, refactor, or an MCP stdio server.
+ *
+ * Exit codes are the contract a shell caller branches on: 0 success, 1 the engine refused for a business
+ * reason (the output names the code), 2 bad arguments. `--help` alone is 0; a bare invocation is 2,
+ * because "you asked for nothing" is a usage error rather than a successful help dump.
+ *
+ * @module dsh-ops/ptc/cli
+ */
 
-用法:
-  ops-ptc locate   --symbol <名字> [--roots <目录>] [--ext ts,tsx] [--limit 5] [--strategy auto|walk|everything]
-  ops-ptc refactor --pattern <AST pattern> --rewrite <模板> [--symbol <名字>] [--file <路径>]
-                   [--roots <目录>] [--mode apply|preview] [--limit 1] [--strict]
+import { runInprocCli } from './inproc.cjs'
+
+const HELP = `ops-ptc — in-process AST refactoring engine (no external binary)
+
+usage:
+  ops-ptc locate   --symbol <name> [--roots <dir>] [--ext ts,tsx] [--limit 5] [--strategy auto|walk|everything]
+  ops-ptc refactor --pattern <AST pattern> --rewrite <template> [--symbol <name>] [--file <path>]
+                   [--roots <dir>] [--mode apply|preview] [--limit 1] [--strict]
   ops-ptc mcp      # MCP stdio server
 
-说明:
-  --strategy auto        按目录规模自动选寻址（默认；>1.2 万文件且装了 es.exe 才切 Everything）
-  --strategy everything  强制走 es.exe（需本机运行 Everything）
-  --strict               落盘前额外用 sg CLI 对账命中数（+36ms，需装 ast-grep）
+notes:
+  --strategy auto        pick enumeration by tree size (default; Everything only above ~12k files with es.exe)
+  --strategy everything  force es.exe (requires Everything running on this host)
+  --strict               reconcile hit counts with the sg CLI before writing (+36ms, requires ast-grep)
 
-退出码: 0=成功, 1=业务熔断（见输出里的 code）, 2=参数错误
-`;
-const argv = process.argv.slice(2);
+exit codes: 0=success, 1=business refusal (see code in the output), 2=bad arguments
+`
+
+const argv = process.argv.slice(2)
+
 if (argv.length === 0 || argv[0] === '-h' || argv[0] === '--help' || argv[0] === 'help') {
-    process.stdout.write(HELP);
-    process.exit(argv.length === 0 ? 2 : 0);
+  process.stdout.write(HELP)
+  process.exit(argv.length === 0 ? 2 : 0)
 }
+
 if (argv[0] === 'mcp') {
-    require('./mcp.cjs');
-}
-else {
-    process.exit((0, inproc_1.runInprocCli)(argv));
+  // The MCP server owns the process from here; importing it is the whole action.
+  require('./mcp.cjs')
+} else {
+  process.exit(runInprocCli(argv))
 }
