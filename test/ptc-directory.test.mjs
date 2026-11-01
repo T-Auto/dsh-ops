@@ -100,6 +100,43 @@ await test('actual assembly and Node PTC dispatch preserve next-step selection a
     } finally { prompt.assemble = assemble; subprocess.spawn = spawn }
   } finally { await shutdown(ctx) }
 }))
+for (const allowedTools of [[], ['stat'], ['read_files']]) {
+  await test('resident=false honors configured pool ' + JSON.stringify(allowedTools) + ' plus result only', () => withTempDir('ptc-directory-nonresident', async root => {
+    const { ctx, mint } = await setup(root, { allowedTools }, { allows: () => true, resident: false })
+    try {
+      const agent = await mint(), eligible = [...allowedTools, 'result']
+      const blocked = ['inspect_local_file', 'read_files', 'grep'].filter(raw => !allowedTools.includes(raw))
+      const directory = await text(ctx, agent)
+      assert.deepEqual([...directory.matchAll(/^- (\w+): /gm)].map(match => match[1]), eligible)
+      const def = ctx.get('tools').get(loader, agent)
+      assert.ok(def.description.endsWith('Allowed raw names: ' + eligible.join(', ') + '.'))
+      for (const raw of [...eligible, ...blocked]) assert.equal(ctx.get('tools').get(publicToolName(raw), agent), undefined)
+      const selected = await code(ctx, agent, `const rejected = [];
+        for (const raw of ${JSON.stringify(blocked)}) rejected.push(await tools.${loader}({tools:[raw]}));
+        const loaded = await tools.${loader}({tools:${JSON.stringify(eligible)}});
+        return {rejected,loaded,callable:${JSON.stringify(eligible.map(publicToolName))}.map(name=>typeof tools[name]==='function')};`)
+      for (const rejection of selected.rejected) assert.equal(rejection.error.code, 'INVALID_ARGUMENT')
+      assert.equal(selected.loaded.status, 'completed'); assert.equal(selected.loaded.data.nextTurn, true)
+      assert.deepEqual(selected.loaded.data.tools, eligible)
+      assert.deepEqual(selected.callable, eligible.map(() => false), 'selection does not change the current SDK snapshot')
+      assert.deepEqual(await text(ctx, agent), directory, 'assembly does not commit selection')
+      await step(ctx, agent)
+      assert.doesNotMatch(await text(ctx, agent), /On-demand PTC SDK directory/)
+      assert.deepEqual(await code(ctx, agent, `return ${JSON.stringify(eligible.map(publicToolName))}.map(name=>typeof tools[name]==='function');`), eligible.map(() => true))
+      for (const raw of blocked) assert.equal(ctx.get('tools').get(publicToolName(raw), agent), undefined, raw + ' stays unpublished')
+    } finally { await shutdown(ctx) }
+  }))
+}
+await test('resident-on empty dynamic pool preserves ordinary resident SDK baseline', () => withTempDir('ptc-directory-resident', async root => {
+  const { ctx, mint } = await setup(root, { allowedTools: [] })
+  try {
+    const agent = await mint()
+    assert.doesNotMatch(await text(ctx, agent), /On-demand PTC SDK directory/)
+    assert.deepEqual(await code(ctx, agent, `return ${JSON.stringify(['inspect_local_file', 'result', 'read_files'].map(publicToolName))}.map(name=>typeof tools[name]==='function');`), [true, true, false])
+    const rejected = await code(ctx, agent, `return await tools.${loader}({tools:['read_files']});`)
+    assert.equal(rejected.error.code, 'INVALID_ARGUMENT')
+  } finally { await shutdown(ctx) }
+}))
 await test('disabled and empty pools do not advertise loading; availability and read-only filter the real allowed pool', () => withTempDir('ptc-directory-policy', async root => {
   const { ctx, mint, state } = await setup(root, { allowedTools: ['grep', 'write_file', 'batch'] })
   try {

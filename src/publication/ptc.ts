@@ -77,7 +77,9 @@ export function apply(root: Context, rawConfig: unknown, gate: PtcGate = { allow
 /** Mount the owned service for an explicit preset integration. */
 export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { allows: () => true }): void {
   const config = resolvePtcConfig(rawConfig)
-  const loadable = gate.resident === false ? [...new Set([...config.allowedTools, ...PTC_RESIDENT_TOOLS])] : config.allowedTools
+  // Residency-off selection honors configuration; only result stays eligible
+  // outside allowedTools, whose parser excludes the resident-only APIs.
+  const loadable: ApiName[] = gate.resident === false ? [...config.allowedTools, 'result'] : config.allowedTools
   mountWorkspacePreparation(root)
   let file: string
   try { file = resolveWorker(config) } catch (error) {

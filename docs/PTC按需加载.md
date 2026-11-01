@@ -1,6 +1,6 @@
 # PTC SDK 按需加载
 
-PTC 组件独立于 Native 文件组件提供文件 API。PTC-only 代理初始只包含 ops_inspect_local_file、ops_result 和 ops_load_sdk。宿主根据已注册的参数与 Outcome 输出 schema 生成类型化 SDK；Native 与 both 模式不显示 SDK 加载器。
+PTC 组件独立于 Native 文件组件提供文件 API。PTC-only 代理通常初始只包含 ops_inspect_local_file、ops_result 和 ops_load_sdk。宿主根据已注册的参数与 Outcome 输出 schema 生成类型化 SDK；Native 与 both 模式不显示 SDK 加载器。
 
 在 run_code 内调用 tools.ops_load_sdk({ tools: ['grep', 'read_files'] })。成功 Outcome 的 data.tools 列出请求名称，data.nextTurn 为 true。当前工具轮次结束、所属会话提交 step/end 后，请求的 API 会在紧接着的供应商请求中发布；当前冻结的 SDK 快照无法调用新 API。该边界前的系统提示组装、诊断组装以及工具注册通知不会提前激活排队请求。组装会等待本插件发布并按需通过公开服务获取新快照；内部呈现探测跳过此屏障，防止递归等待。
 
@@ -10,7 +10,7 @@ PTC 行配置由统一配置入口验证：
 
 | 配置 | 默认值 | 含义 |
 | --- | --- | --- |
-| allowedTools | 所有已实现的高级文件 API 和 batch | 加载器可请求的原始名称；空数组禁止动态选择。 |
+| allowedTools | 所有已实现的高级文件 API 和 batch | 加载器可请求的原始名称；空数组禁止高级选择，关闭常驻时仅保留 result 例外。 |
 | alwaysLoaded | [] | 立即在本行覆盖的 PTC 代理中发布的高级 API，独立于允许池。 |
 | binaryPath | 打包的 worker | 可选的绝对 worker 可执行文件路径。 |
 | required | false | worker 不可用时令组件启动失败。 |
@@ -22,6 +22,8 @@ PTC 行配置由统一配置入口验证：
 先检查 Outcome.status 再使用 data。部分结果保留覆盖信息及 continuation；失败保留错误代码、影响状态和重试策略。加载器不执行文件操作，也不授予文件系统权限。本页不声称 token 基准或 IO 提速。
 
 ## 实时 PTC 目录
+
+关闭常驻发布时，目录与加载器只使用配置的 `allowedTools` 加 `result` 例外，不再隐式恢复 `inspect_local_file`，也不恢复允许池中缺失的 `read_files`。配置解析仍拒绝仅常驻名称；开启常驻时的普通基础发布行为不变。
 
 只有本行实际的 `ops_load_sdk` 可用时，现有 OPS 作用域提示段才会显示紧凑任务目录。原始名称和任务提示来自 PTC 能力元数据，允许池与加载器实际选择共用。优先使用常驻或已经可调用的 SDK；足以完成任务时不加载更多。否则查阅提示，选择 1–5 个列出的准确原始名称，等待下一个模型步骤。不存在关键字搜索 SDK API；没有匹配项只表示当前可用池中没有对应提示，不说明还有其他工具可用。
 
