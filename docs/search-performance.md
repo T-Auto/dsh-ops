@@ -73,6 +73,12 @@ accounted for 4,918 ms, relative metadata for 933 ms, absolute metadata for 765 
 for 45 ms. This motivates measuring safely reusable path context separately; preparing globs once
 does not remove the dominant filesystem work.
 
+In the subsequent five-sample old/new comparison, exact queries retained the same result hash,
+7,120 scanned files and 7,407 total matches. Median glob-filter time was 72.05 → 39.01 ms;
+the glob query retained 2,239 total matches and measured 34.13 → 22.82 ms in that stage.
+Request preparation adds roughly 0.01 ms. These are stage observations under the load below,
+not a claim about full-task latency; the new exact-call wall times ranged from 8.64 to 24.90 seconds.
+
 The machine also ran other validation work. The same-binary control itself produced differing
 partial results when miss queries reached the 30-second deadline. Preserve these failures rather
 than comparing unequal work as a speedup. First-touch and warm samples, worker hashes and the
