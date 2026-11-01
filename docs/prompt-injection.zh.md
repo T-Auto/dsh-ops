@@ -22,12 +22,12 @@ const removeTail = registerStepTailProvider(ctx, agent, {
   id: 'example:state', revision: '1', priority: 10,
   provide: ({ signal, step }) => signal.aborted ? undefined : `Current step: ${step}`,
 })
-// Optional early withdrawal; plugin/Agent teardown also releases both.
+// 撤销后续贡献；已经交给宿主的尾部快照仍可能被日志接纳。
 removeTail()
 removeSection()
 ```
 
-两个函数均返回可重复调用的 `() => void`。同一目标 agent、同一贡献种类的 id 必须唯一（包括不同 owner 插件之间）；重复会抛错。替换 revision 前先释放旧注册。priority 默认为零，必须是有限值，按升序排列，同值按 id 的 code-unit 顺序排列。id 与 revision 必须非空。revision 是不可变的注册元数据，不会自动触发缓存失效。释放时正在计算的尾部会被撤回，替代注册从下一个被接纳 batch 起生效。
+两个函数均返回可重复调用的 `() => void`。同一目标 agent、同一贡献种类的 id 必须唯一（包括不同 owner 插件之间）；重复会抛错。替换 revision 前先释放旧注册。priority 默认为零，必须是有限值，按升序排列，同值按 id 的 code-unit 顺序排列。id 与 revision 必须非空。revision 是不可变的注册元数据，不会自动触发缓存失效。释放只会在 batch 交还给宿主 pre-step 之前撤回尾部。越过该边界后，即使 provider 在提交前被释放，已完成的快照仍可能被接纳并写入日志。替代注册只从后续的非空接纳 batch 起生效。
 
 系统段落 text 也可为同步 `(context: AssembleContext) => string`；只能使用当前组装的 signal，不能用其控制后续 turn。尾部 `provide` 返回 `string | undefined` 或对应 Promise；`''` 和 `undefined` 不产生消息。输入 messages 是深度冻结的独立快照，不是可写 inbox 视图。signal 在 admission 取消或 provider 移除时结束，provider 应配合取消。异常包装为带 id、revision、cause 的 `PromptProviderError`，可在正常 `agent/error` 中观察；不会隐藏重试。
 
@@ -37,8 +37,8 @@ removeSection()
 
 ## 已接纳步骤尾部
 
-`registerStepTailProvider(owner, agent, options)` 仅在宿主 `agent/pre-step` waterfall 返回 `enter` 且决定包含非空用户消息 batch 时运行 provider。provider 收到冻结的只读快照、agent、turn、step 与本次 admission signal。结果按 priority 和 id 排序，并作为带插件归属的 `UserMessage` 追加到已接纳 batch 尾部。
+`registerStepTailProvider(owner, agent, options)` 包装宿主 `agent/pre-step` waterfall：下游 `next()` 返回 `enter` 后，只有该决定包含非空的已接纳用户消息 batch 时才运行 provider。provider 收到冻结的只读快照、agent、turn、step 与本次 admission signal。结果按 priority 和 id 排序，并作为带插件归属的 `UserMessage` 追加到已接纳 batch 尾部。
 
-这是会写入 session 日志的历史，不是临时 request overlay、system-role 尾部、伪造的用户授权，也不是保证每次模型请求都运行的 hook。空 batch（包括纯工具续步与 turn-closing 探针）不会调用 provider，也不能借此唤醒 loop。空结果不创建消息。provider 拒绝会沿宿主正常错误路径中止 admission；取消不会提交。模型重试复用同一批已接纳消息，不会重复追加。
+这是会写入 session 日志的历史，不是临时 request overlay、system-role 尾部、伪造的用户授权，也不是保证每次模型请求都运行的 hook。空 batch（包括纯工具续步与 turn-closing 探针）不会调用 provider，也不能借此唤醒 loop。空结果不创建消息。provider 拒绝会沿宿主正常错误路径中止 admission；admission signal 在提交前取消会阻止提交。provider 释放的范围更窄：它会取消等待中的计算，不等待不协作的 promise；已完成的贡献会在本 hook 把 batch 交还给宿主 pre-step 之前进行最后一次 active 检查，并且该检查与返回之间没有异步间隙。这就是快照交接（线性化）边界，不是直到 commit 都可撤回的保证。已安装宿主随后还会运行 `agent/request` 和 `prepareCall()`，才把接纳 batch 追加到 session 日志；这些阶段中的释放不会撤回已经交接的快照，也不会擦除已有历史。模型重试复用同一批已接纳消息，不会重复追加尾部。
 
 source kind 为 `dsh-ops:step-tail`，并携带 contributor、revision、turn、step 元数据以支持归属与回放。

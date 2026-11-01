@@ -132,7 +132,8 @@ await test('two concurrent agents remain isolated and unregister/reload during p
     await h.run(b)
     stop(); stop()
     registerStepTailProvider(owner, a, { id: 'same', revision: 'new', provide: () => 'A new' })
-    release(); await first
+    await first
+    release() // A non-cooperative old promise cannot hold admission open after disposal.
     const forA = h.requests.filter(r => r.sessionId === a.session.id), forB = h.requests.filter(r => r.sessionId === b.session.id)
     assert.equal(tailMessages(forA[0]).length, 0)
     assert.equal(tailMessages(forB[0])[0].source.revision, 'b')
@@ -144,6 +145,60 @@ await test('two concurrent agents remain isolated and unregister/reload during p
     assert.deepEqual(h.errors, [])
   } finally { await h.close() }
 })
+await test('completed contributions are withdrawn when disposed before batch handoff', async () => {
+  const h = await promptHost()
+  try {
+    const a = await h.agent(), owner = h.owner()
+    let release, entered
+    const blocked = new Promise(resolve => { release = resolve }), began = new Promise(resolve => { entered = resolve })
+    const stop = registerStepTailProvider(owner, a, { id: 'a', revision: '1', provide: () => 'Withdraw before handoff' })
+    registerStepTailProvider(owner, a, { id: 'b', revision: '1', provide: async () => { entered(); await blocked; return 'Keep other provider' } })
+    const first = h.run(a)
+    await began
+    stop()
+    release()
+    await first
+    assert.deepEqual(tailMessages(h.requests[0]).map(m => m.source.contributor), ['b'])
+    assert.equal(h.events.some(({ event }) => event.type === 'user/message' && event.data.source.contributor === 'a'), false)
+    assert.equal(h.requests[0].messages.find(m => m.source?.kind === 'user').content[0].text, 'Real user task.')
+    assert.deepEqual(h.errors, [])
+  } finally { await h.close() }
+})
+
+await test('handoff snapshot survives request barrier disposal; replacement starts on the next nonempty batch', async () => {
+  const h = await promptHost()
+  try {
+    const a = await h.agent(), owner = h.owner()
+    let oldCalls = 0, newCalls = 0, otherCalls = 0
+    const oldStop = registerStepTailProvider(owner, a, { id: 'state', revision: 'old', priority: 10, provide: () => { ++oldCalls; return 'Old snapshot' } })
+    registerStepTailProvider(owner, a, { id: 'other', revision: 'stable', priority: 20, provide: () => { ++otherCalls; return 'Other provider' } })
+    let release, entered; const barrier = new Promise(resolve => { release = resolve }); const reached = new Promise(resolve => { entered = resolve })
+    let firstRequest = true
+    a.ctx.on('agent/request', async (_payload, next) => {
+      const config = await next()
+      if (firstRequest) { firstRequest = false; entered(); await barrier }
+      return config
+    })
+    const first = h.run(a)
+    await reached
+    oldStop()
+    registerStepTailProvider(owner, a, { id: 'state', revision: 'new', priority: 10, provide: () => { ++newCalls; return 'New revision' } })
+    release()
+    await first
+    assert.equal(h.requests.length, 1)
+    assert.equal(h.requests[0].messages.find(m => m.source?.kind === 'user').content[0].text, 'Real user task.')
+    assert.deepEqual(tailMessages(h.requests[0]).map(m => m.source.revision), ['old', 'stable'])
+    const logged = () => h.events.filter(({ session, event }) => session === a.session && event.type === 'user/message').map(({ event }) => event.data)
+    assert.deepEqual(logged(), h.requests[0].messages.filter(m => m.role === 'user'), 'handed-off snapshot is logged exactly as captured')
+    assert.deepEqual([oldCalls, newCalls, otherCalls], [1, 0, 1], 'empty closing probe neither wakes nor evaluates the replacement')
+    await h.run(a)
+    assert.deepEqual(logged().filter(m => m.source.kind === 'dsh-ops:step-tail').map(m => m.source.revision), ['old', 'stable', 'new', 'stable'])
+    assert.deepEqual([oldCalls, newCalls, otherCalls], [1, 1, 2])
+    assert.deepEqual(logged().filter(m => m.source.kind === 'user').map(m => m.content[0].text), ['Real user task.', 'Real user task.'])
+    assert.deepEqual(h.errors, [])
+  } finally { await h.close() }
+})
+
 await test('agent teardown releases registrations owned by a longer-lived plugin', async () => {
   const h = await promptHost()
   try {

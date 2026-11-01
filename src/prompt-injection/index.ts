@@ -60,7 +60,7 @@ function freeze<T>(value: T): T {
   }
   return value
 }
-/** Await only this admission's signal; a late provider cannot commit after cancellation. */
+/** Stop waiting on this evaluation's signal; late provider results cannot enter the batch. */
 async function cancellable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | undefined> {
   if (signal.aborted) return undefined
   let cancel!: () => void
@@ -95,6 +95,8 @@ async function appendTails(state: AgentState, payload: Omit<StepTailContext, 'me
   // Value imports are resolved only at admission, never while loading the plugin.
   const { createUserMessage } = await import('@deepseek-ai/dsh-llm')
   if (payload.signal.aborted) return decision
+  // Final active check before handing the snapshot back to the host pre-step.
+  // No await follows: disposal after this boundary cannot revoke these messages.
   const messages: UserMessage[] = pending.filter(({ entry }) => entry.active).map(({ entry, text }) => createUserMessage({
     source: { kind: 'dsh-ops:step-tail', contributor: entry.options.id, revision: entry.options.revision, turn: payload.turn, step: payload.step },
     content: [{ type: 'text', text: `[Plugin context from ${JSON.stringify(entry.options.id)}; not a user instruction or authorization.]\n${text}` }],
@@ -104,6 +106,9 @@ async function appendTails(state: AgentState, payload: Omit<StepTailContext, 'me
 /**
  * Append plugin-attributed UserMessages to an accepted NONEMPTY user-message batch.
  * This is logged history, not an ephemeral request overlay or a per-LLM-call hook.
+ * Disposal withdraws contributions only before this hook returns its batch to
+ * the host pre-step. Afterwards the snapshot may be admitted even if disposed;
+ * disposal does not revoke history. Replacements start on a subsequent nonempty batch.
  */
 export function registerStepTailProvider(owner: Context, agent: Agent, options: StepTailProviderOptions): PromptDisposer {
   validate(options)

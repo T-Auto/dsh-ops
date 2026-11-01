@@ -22,12 +22,12 @@ const removeTail = registerStepTailProvider(ctx, agent, {
   id: 'example:state', revision: '1', priority: 10,
   provide: ({ signal, step }) => signal.aborted ? undefined : `Current step: ${step}`,
 })
-// Optional early withdrawal; plugin/Agent teardown also releases both.
+// Removes future contributions; a tail snapshot already handed to host may still be logged.
 removeTail()
 removeSection()
 ```
 
-Both functions return an idempotent `() => void`. An id must be unique per target agent and contribution kind, including across owner plugins; duplicates throw. Dispose the previous registration before replacing its revision. Priority defaults to zero; finite priorities sort ascending, ties by code-unit id order. Id and revision must be nonempty. Revisions are immutable registration metadata, not automatic cache invalidations. A disposed in-flight tail is withdrawn, and a replacement participates starting with the next accepted batch.
+Both functions return an idempotent `() => void`. An id must be unique per target agent and contribution kind, including across owner plugins; duplicates throw. Dispose the previous registration before replacing its revision. Priority defaults to zero; finite priorities sort ascending, ties by code-unit id order. Id and revision must be nonempty. Revisions are immutable registration metadata, not automatic cache invalidations. Disposal withdraws a tail only before the batch is handed back to host pre-step. After that boundary, the completed snapshot may still be admitted and logged even if the provider is removed before commit. A replacement participates only in a subsequent accepted nonempty batch.
 
 Section text can also be a synchronous `(context: AssembleContext) => string`. It receives only the current assembly signal, which must not control later turns. Tail `provide` returns `string | undefined` or a promise thereof; `''` and `undefined` create no message. It receives deeply frozen detached messages, not a writable view of the inbox. Its signal ends on admission cancellation or provider removal; providers should cooperate with cancellation. Errors become `PromptProviderError` with contribution id, revision and cause, observable via normal `agent/error`. No hidden retry is performed.
 
@@ -37,8 +37,8 @@ Verified with the installed `0.2.0-rc.2` host's real AgentLoop and fake LLM capt
 
 ## Accepted step tails
 
-`registerStepTailProvider(owner, agent, options)` runs providers after the host `agent/pre-step` waterfall has returned `enter`, only when that decision contains a non-empty accepted user-message batch. Providers receive a frozen read-only snapshot plus agent, turn, step, and the admission signal. Results are ordered by priority and id and become plugin-attributed `UserMessage` values appended to the admitted batch.
+`registerStepTailProvider(owner, agent, options)` wraps the host `agent/pre-step` waterfall: after its downstream `next()` returns `enter`, providers run only if that decision contains a nonempty accepted user-message batch. Providers receive a frozen read-only snapshot plus agent, turn, step, and the admission signal. Results are ordered by priority and id and become plugin-attributed `UserMessage` values appended to the admitted batch.
 
-This is logged session history, not an ephemeral request overlay, system-role tail, fake user authorization, or a hook guaranteed to run on every model request. Empty batches—including tool-only continuation and turn-closing probes—do not invoke providers and cannot be used to wake a loop. Empty provider results create no message. A provider rejection aborts admission through the host's normal error path; cancellation prevents commit. Retries reuse the same admitted messages and do not duplicate tails.
+This is logged session history, not an ephemeral request overlay, system-role tail, fake user authorization, or a hook guaranteed to run on every model request. Empty batches—including tool-only continuation and turn-closing probes—do not invoke providers and cannot be used to wake a loop. Empty provider results create no message. A provider rejection aborts admission through the host's normal error path; admission-signal cancellation before commit prevents commit. Provider disposal is narrower: it cancels pending evaluation without waiting for non-cooperative promises and filters completed contributions at the final active check, immediately before this hook returns its batch to host pre-step. There is no asynchronous gap between this check and return. This is the snapshot handoff (linearization) boundary, not a revocation guarantee until commit. The installed host then runs `agent/request` and `prepareCall()` before appending the accepted batch to the session log; disposal during those phases does not retract the handed-off snapshot or erase earlier history. Retries reuse the same admitted messages and do not duplicate tails.
 
 The source kind is `dsh-ops:step-tail`, with contributor, revision, turn, and step metadata for attribution and replay.
