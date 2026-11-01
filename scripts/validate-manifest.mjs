@@ -29,7 +29,7 @@ import {
   publicToolName,
   renderToolingPolicy,
 } from '../lib/policy.js'
-import { NATIVE_FILE_TOOLS } from '../lib/capabilities/registry.js'
+import { CAPABILITIES, NATIVE_FILE_TOOLS } from '../lib/capabilities/registry.js'
 import { resolvePtcConfig } from '../lib/ptc/index.js'
 import { resolveTuiConfig } from '../lib/components/tui/index.js'
 import { resolvePanelConfig } from '../lib/components/panel/index.js'
@@ -296,9 +296,8 @@ const equippedPolicy = renderToolingPolicy({
   levels: { files: true, bash: true, pwsh: true },
 })
 
-// Every namespace after the first describes tools this plugin registers itself,
-// so those names are checked against `IN_PROCESS_TOOLS` and against the policy
-// text that has to name them. Written against whatever the manifest declares.
+// Shell routing names the owned shell surface. PTC/discovery controls have their
+// own scoped guidance; the static inventory must not make them resident.
 check(
   IN_PROCESS_TOOLS.every((toolName) => equippedPolicy.includes(publicToolName(toolName))),
   'the tools this plugin registers itself are named by the tooling policy',
@@ -307,14 +306,21 @@ check(
 for (const [index, entry] of namespaces.slice(1).entries()) {
   const declared = Array.isArray(entry?.tools) ? entry.tools : []
   const identified = declared.filter((toolName) => typeof toolName === 'string'
-    && IN_PROCESS_TOOLS.includes(toolName)
-    && equippedPolicy.includes(publicToolName(toolName)))
+    && CAPABILITIES.some(capability => capability.rawName === toolName))
   check(
-    declared.length > 0 && identified.length === declared.length,
+    declared.length > 0 && identified.length === declared.length
+      && entry.serverName === 'dsh-ops' && entry.transport === 'in-process' && entry.publicPrefix === TOOL_PREFIX,
     `every tool of the namespace at index ${index + 1} is published under ${TOOL_PREFIX} by this plugin itself`,
-    `declared ${JSON.stringify(entry?.tools)} vs in-process ${IN_PROCESS_TOOLS.map(publicToolName).join(', ') || '(none)'}`,
+    `declared ${JSON.stringify(entry?.tools)} vs catalogue ${CAPABILITIES.map(entry => entry.rawName).join(', ')}`,
   )
 }
+const namespaceTools = namespaces.flatMap(entry => Array.isArray(entry?.tools) ? entry.tools : []).sort()
+const catalogueTools = CAPABILITIES.map(entry => entry.rawName).sort()
+check(
+  JSON.stringify(namespaceTools) === JSON.stringify(catalogueTools),
+  'the namespace inventory covers every owned capability exactly once',
+  `manifest ${namespaceTools.join(',')} vs catalogue ${catalogueTools.join(',')}`,
+)
 
 const sections = manifestRaw.contributes?.['x-prompt-sections'] ?? []
 const sectionNames = sections.map((section) => section.name)
