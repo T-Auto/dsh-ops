@@ -191,9 +191,9 @@ export function npm(args, options = {}) {
 export function parseNpmJson(stdout, what) {
   const trimmed = stdout.trim()
   const candidates = [trimmed]
-  const start = trimmed.indexOf('[')
-  const end = trimmed.lastIndexOf(']')
-  if (start >= 0 && end > start) candidates.push(trimmed.slice(start, end + 1))
+  const frames = [['[', ']'], ['{', '}']].map(([open, close]) => ({ start: trimmed.indexOf(open), end: trimmed.lastIndexOf(close) }))
+    .filter(({ start, end }) => start >= 0 && end > start).sort((a, b) => a.start - b.start)
+  for (const { start, end } of frames) candidates.push(trimmed.slice(start, end + 1))
   for (const candidate of candidates) {
     try {
       return JSON.parse(candidate)
@@ -202,6 +202,26 @@ export function parseNpmJson(stdout, what) {
     }
   }
   throw new Error(`cannot parse npm --json output for ${what}: ${trimmed.slice(0, 400)}`)
+}
+
+/** Normalize npm <=11 arrays and npm 12 package-keyed pack reports, failing closed. */
+export function parseNpmPackReport(stdout, what, manifest) {
+  const value = parseNpmJson(stdout, what)
+  const object = entry => entry !== null && typeof entry === 'object' && !Array.isArray(entry)
+  const invalid = () => { throw new Error(`invalid npm pack report for ${what}: expected one matching package with safe tarball and file metadata`) }
+  if (!object(manifest) || typeof manifest.name !== 'string' || typeof manifest.version !== 'string') invalid()
+  const entries = Array.isArray(value) ? value : object(value) ? Object.values(value) : []
+  if (entries.length !== 1 || (!Array.isArray(value) && Object.keys(value)[0] !== manifest.name)) invalid()
+  const [entry] = entries
+  const relativeFile = name => typeof name === 'string' && name.length > 0 && !/[\\:\0]/u.test(name)
+    && !path.posix.isAbsolute(name) && !name.split('/').some(part => part === '' || part === '.' || part === '..')
+  if (!object(entry) || entry.name !== manifest.name || entry.version !== manifest.version
+    || entry.id !== `${manifest.name}@${manifest.version}` || !relativeFile(entry.filename)
+    || entry.filename.includes('/') || !entry.filename.endsWith('.tgz')
+    || !Number.isSafeInteger(entry.unpackedSize) || entry.unpackedSize < 0
+    || !Array.isArray(entry.files) || entry.files.length === 0
+    || !entry.files.every(file => object(file) && relativeFile(file.path))) invalid()
+  return entry
 }
 
 /** The main package's manifest, read once per run. */

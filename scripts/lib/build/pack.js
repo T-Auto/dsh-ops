@@ -11,7 +11,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fixUnixWorkerModes } from './tar-modes.js'
 import {
-  gitRevision, log, mainManifest, npm, parseNpmJson, readJsonIfExists, sha256File, size, writeJson,
+  gitRevision, log, mainManifest, npm, parseNpmPackReport, readJsonIfExists, sha256File, size, writeJson,
 } from './util.js'
 
 /**
@@ -21,10 +21,11 @@ import {
  * @returns {Promise<object>} the tarball facts.
  */
 export async function packDirectory(directory, dist) {
+  const manifest = readJsonIfExists(path.join(directory, 'package.json'))
   const result = npm(['pack', '--ignore-scripts', '--pack-destination', dist, '--json'], { cwd: directory })
-  const [reported] = parseNpmJson(result.stdout, `npm pack in ${directory}`)
+  const reported = parseNpmPackReport(result.stdout, `npm pack in ${directory}`, manifest)
   const tarball = path.join(dist, reported.filename)
-  if (readJsonIfExists(path.join(directory, 'package.json'))?.name === 'dsh-ops') {
+  if (manifest.name === 'dsh-ops') {
     await fixUnixWorkerModes(tarball)
   }
   return {
