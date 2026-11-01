@@ -20,7 +20,9 @@ export function commandBashRuntime(action = 'status', options: BashRuntimeComman
     if (apply && options.allHostsStopped !== true) throw new Error('Stop every OPS host and Bash job, then confirm with --yes --all-hosts-stopped. No cache was changed.')
     if (apply) recoverBashLifecycleLock(inventory.root, { confirmedStopped: true })
     result = { action: apply ? 'removed' : 'preview', root: inventory.root, current: inventory.current,
-      ...reclaimBashGenerations(inventory.root, inventory.current ?? '', { confirmedStopped: true, dryRun: !apply }) }
+      // A confirmed stop covers every host and confined shell, so interrupted `stage-*` trees are
+      // not merely aged out here — they are removed (stagingTtlMs: 0) along with old generations (#512).
+      ...reclaimBashGenerations(inventory.root, inventory.current ?? '', { confirmedStopped: true, dryRun: !apply, stagingTtlMs: 0 }) }
   }
   else if (action === 'status') {
     const shells = resolveShells(resolveConfig(readRowConfig(options.configFile)))

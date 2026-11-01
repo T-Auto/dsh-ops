@@ -145,7 +145,9 @@ await test('malformed IPC proxy receipts fail before staging a runtime', async (
     fs.mkdirSync(path.join(plugin, 'runtime/win32-x64/bash-ipc'), { recursive: true })
     fs.mkdirSync(path.join(payload, 'usr/bin'), { recursive: true })
     fs.writeFileSync(path.join(plugin, 'package.json'), JSON.stringify({ type: 'module' }))
-    for (const file of ['bash-ipc.js', 'bash-ipc-lifecycle.js', 'bash-pe.js', 'shells/types.js']) {
+    // The isolated install must carry every module the copied graph imports; a missing one makes
+    // the fixture fail with ERR_MODULE_NOT_FOUND instead of the receipt condition it tests (#512).
+    for (const file of ['bash-ipc.js', 'bash-ipc-lifecycle.js', 'bash-runtime-failure.js', 'bash-pe.js', 'shells/types.js']) {
       fs.copyFileSync(path.resolve('lib', file), path.join(plugin, 'lib', file))
     }
     const dll = Buffer.from('receipt validation must precede PE parsing')
@@ -154,8 +156,11 @@ await test('malformed IPC proxy receipts fail before staging a runtime', async (
       platform: 'win32-x64', msysSha256: createHash('sha256').update(dll).digest('hex'), files: null,
     }))
     const isolated = await import(pathToFileURL(path.join(plugin, 'lib/bash-ipc.js')).href)
+    // The raw runtime error names the stage; the session layer adds the EXECUTOR_UNAVAILABLE prefix
+    // when it renders the failure for the model (#512).
     assert.throws(() => isolated.confinedBash(path.join(payload, 'usr/bin/bash.exe'), { home, platform: 'win32' }),
-      /^Error: EXECUTOR_UNAVAILABLE: This MSYS version has no verified DSH IPC compatibility build/)
+      error => error.code === 'bash-ipc-mismatch'
+        && /^This MSYS version has no verified DSH IPC compatibility build/.test(error.message))
     assert.equal(fs.existsSync(home), false, 'invalid receipts cannot create a private runtime')
     assert.deepEqual(fs.readFileSync(path.join(payload, 'usr/bin/msys-2.0.dll')), dll)
   })
