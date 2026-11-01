@@ -78,6 +78,8 @@ export function claimNativeSelection(ctx: Host, scope: unknown, names: ReadonlyS
   owner.selections.add(selection); changed(owner, scope); refresh(owner, scope)
   return () => { owner.selections.delete(selection); changed(owner, scope); refresh(owner, scope) }
 }
+/** Whether this plugin holds an exact PTC claim over that layer, which excludes its Native tools. */
+export function ptcSurfaceClaimed(ctx: Host, scope: unknown): boolean { return state(ctx).ptc.has(scope) }
 /** Yield only this plugin's registrations in the exact layer being claimed. */
 export function claimPtcSurface(ctx: Host, scope: unknown): () => void {
   const owner = state(ctx)
@@ -90,9 +92,36 @@ export function trackNativeShadow(ctx: Host, scope: unknown, definition: ToolDef
   owner.shadows.add(shadow)
   return () => { owner.shadows.delete(shadow) }
 }
+/**
+ * A name lookup over one scope's visible definitions, read from a single view.
+ *
+ * `tools.get(name, scope)` IS `this.view(scope).visible.get(name)`, so asking it
+ * per provider rebuilds the whole scope view per provider and makes a scan of P
+ * candidates cost P view copies. A PTC publish scans every provider of every live
+ * scope, which made one unattributed change rebuild the view 82,365 times over
+ * 198 sessions. The view already holds every answer this scan needs, so read it
+ * once and look the names up in the map it returned. A host that serves no view
+ * still resolves through `get()`, as `surfaceOf` already does.
+ * @param tools - the tool registry, or undefined before it is provided.
+ * @param scope - the scope to read, or undefined for the global layer.
+ * @returns a lookup returning the definition that scope resolves, if any.
+ */
+function visibleOf(tools: ReturnType<Host['get']>, scope: unknown): (name: string) => ToolDefinition | undefined {
+  if (tools === undefined) return () => undefined
+  // Duck-typed rather than `instanceof Map`, for the reason `surfaceOf` records: a host may
+  // serve the view through a subclass or a proxy, and a failed instanceof would silently
+  // take the per-provider `get()` path forever — the exact cost this function removes.
+  const visible = (tools as unknown as { view?(scope?: object): { visible?: { get?(name: string): unknown } } | undefined }).view?.(scope as object)?.visible
+  if (visible !== undefined && typeof visible.get === 'function') {
+    const get = visible.get.bind(visible)
+    return name => get(name) as ToolDefinition | undefined
+  }
+  return name => tools.get(name, scope)
+}
+
 /** Capture before publishing PTC: external restrictions and sibling scopes remain authoritative. */
 export function nativeProviders(ctx: Host, scope: unknown, respectSelections = false): NativeProvider[] {
-  const tools = ctx.get('tools'), owner = state(ctx)
-  return [...owner.providers, ...owner.shadows].filter(provider => provider.active && tools?.get(provider.definition.name, scope) === provider.definition
+  const owner = state(ctx), visible = visibleOf(ctx.get('tools'), scope)
+  return [...owner.providers, ...owner.shadows].filter(provider => provider.active && visible(provider.definition.name) === provider.definition
     && (!respectSelections || selectionAllows(owner, scope, provider)))
 }

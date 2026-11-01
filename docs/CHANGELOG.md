@@ -48,6 +48,11 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Bound 0.4.4 presentation feedback by attributing probe-owned tool/prompt changes to their asynchronous flow and allowing one trailing convergence pass. Unattributed discovery changes probe one representative; scoped changes and Native provider scans avoid unrelated full prompt/view copies. PTC uses its registry mode and committed publication generation before rebuilding, and withdrawal hooks share one request budget. Fresh pre-step/execution checks remain authoritative; this does not establish Desktop wall-clock performance.
+- 在 0.4.4 中按异步流程识别探测自身引发的工具/提示变化，仅允许一次尾随收敛；未点名作用域的发现变化只探测代表会话，已归属变化与 Native provider 扫描不再重复复制无关完整提示/视图。PTC 在重建前检查注册表模式与已提交发布代次，撤回 hook 共用请求重建预算。pre-step/执行时的新鲜检查仍是权威，不据此宣称 Desktop 耗时已达标。
+- Transfer the exact owned Bash registration between preset consumers before the new one publishes, preventing same-layer collisions from leaving a switched session without Bash. Former-owner cleanup cannot remove its successor; stale callbacks cannot spawn, and foreign providers are untouched.
+- 切换预设时先交接确切所属的 Bash 注册，再由新消费者发布，避免同层冲突导致会话丢失 Bash；旧消费者清理不能撤销接任者，旧回调不能启动进程，外部提供者不受影响。
+
 - 收敛所有 DSH 产品类型、懒加载 scope 与 profile carrier 入口到项目自有 `adapter/dsh` 边界；保持现有 Cordis 工具注册、提示词、权限、subprocess、PTC、结果与 UI 行为不变，并将宿主兼容声明扩展至 `>=0.2.0-rc.2 <0.2.2-0`，覆盖已验证的 DSH 0.2.1-rc.4。
 - Converge DSH product types, lazy scope loading and profile-carrier entrypoints behind the project-owned `adapter/dsh` boundary without changing existing Cordis tool, prompt, policy, subprocess, PTC, result or UI behavior; widen the bounded host range to `>=0.2.0-rc.2 <0.2.2-0`, including validated DSH 0.2.1-rc.4.
 - Add candidate-only benchmark component switches with conservative patch editing, composed-config verification and a bounded readiness turn. Archive effective switches, show them in reports, and reject comparisons across different candidate switch sets (#296).
