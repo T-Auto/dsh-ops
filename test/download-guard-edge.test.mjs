@@ -2,6 +2,7 @@ import { assert, test, report } from './lib/harness.mjs'
 import { inspectCommand } from '../lib/download-guard/detect.js'
 import { decideDownload, renderForwarder } from '../lib/download-guard/policy.js'
 import { resolveConfig } from '../lib/config.js'
+import { spawnSync } from 'node:child_process'
 
 await test('stdout, discarded output, quoted text and script bodies are not disk download calls', () => {
   for (const command of [
@@ -35,4 +36,21 @@ await test('PowerShell alternatives quote an apostrophe as literal data', () => 
   assert.equal(renderForwarder('fetch {url}', { rule: 'wget', url: "https://example.test/a'b" }, 'pwsh'), "fetch 'https://example.test/a''b'")
   assert.equal(renderForwarder('fetch {url} {file}', { rule: 'wget', url: 'https://example.test/{file}', target: 'out' }), "fetch 'https://example.test/{file}' out")
 })
+await test('ambiguous escaped filename bytes are allowed without a rewritten suggestion', () => {
+  for (const command of [
+    String.raw`curl -o "a\"b" https://example.test/x`,
+    String.raw`curl -o "a\\b" https://example.test/x`,
+    String.raw`curl -o a\ b https://example.test/x`,
+    String.raw`wget -O "a\"b" https://example.test/x`,
+  ]) assert.equal(inspectCommand(command), undefined, command)
+})
+if (process.platform === 'win32') await test('a real PowerShell argument binding preserves a comma URL as one literal value', () => {
+  const url = 'https://example.test/a,b'
+  const template = '& { param([string[]] $Values) ConvertTo-Json -Compress -InputObject $Values } {url}'
+  const code = renderForwarder(template, { rule: 'wget', url }, 'pwsh')
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', code], { encoding: 'utf8', windowsHide: true, timeout: 10_000 })
+  assert.equal(result.status, 0, result.stderr)
+  assert.deepEqual(JSON.parse(result.stdout), [url])
+})
+else console.log('  skip real Windows PowerShell argument binding')
 report('download-guard-edge')

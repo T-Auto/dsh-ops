@@ -185,6 +185,9 @@ function argumentsOf(rest: string): string[] {
 export function inspectSegment(segment: string): DownloadHit | undefined {
   const { word, rest } = commandWordOf(segment)
   if (word === '') return undefined
+  // Backslashes in arguments have different literal/escape meanings across
+  // Bash and PowerShell. Do not suggest a filename whose bytes we cannot prove.
+  if (rest.includes('\\')) return undefined
   const base = word.replace(/^.*[\\/]/, '').replace(/\.exe$/i, '').toLowerCase()
   const args = argumentsOf(rest)
   // Only literal, single-URL calls can produce a faithful alternative. Help,

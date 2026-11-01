@@ -32,7 +32,7 @@ the component removes the guard; it never changes tool schemas or prompt bytes.
 This is a workflow preference, not a shell parser or security boundary. It does
 not infer download size, inspect `script_path` contents, expand variables, parse
 here-documents/substitutions, or translate arbitrary shell programs. Ambiguous
-commands, multiple URLs, stdout/discard destinations and unrecognized spellings
+commands, escaped/backslash argument spellings, multiple URLs, stdout/discard destinations and unrecognized spellings
 are allowed. A detector error also allows the original call. Operators should
 not rely on it to prevent network access.
 

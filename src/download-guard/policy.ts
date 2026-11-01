@@ -36,8 +36,11 @@ export type DownloadDecision =
 /** Quote one path for a POSIX shell only when it would otherwise split. */
 function shellQuote(value: string, shell: 'bash' | 'pwsh'): string {
   if (value === '') return "''"
+  // PowerShell treats punctuation such as commas as argument syntax. Always
+  // quote its literal values rather than borrowing POSIX's bare-word set.
+  if (shell === 'pwsh') return `'${value.replaceAll("'", "''")}'`
   if (/^[A-Za-z0-9_\-./:=@%+,]+$/.test(value)) return value
-  return shell === 'pwsh' ? `'${value.replaceAll("'", "''")}'` : `'${value.replace(/'/g, `'\\''`)}'`
+  return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
 /**
