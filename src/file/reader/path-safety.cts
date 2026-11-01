@@ -1,155 +1,166 @@
-// @ts-nocheck — ported from the shipped 4.1.8 reader as-is: the runtime is unchanged, the types
-// are the open work. Tracked in docs/CHANGELOG.md under Unreleased.
-'use strict';
+/**
+ * Path safety for the reader: component validation, the optional root fence, and link refusal.
+ *
+ * Three separate jobs, all of which exist because Windows resolves some names to *devices* rather than
+ * files — `NUL` reads as empty, `CON` blocks waiting for input, `x.txt:stream` is an alternate data stream
+ * that no directory listing shows. For an agent, "read something that does not exist" and "read something
+ * you cannot see" are both silent errors, so all of them are refused.
+ *
+ * The lexical fence (`resolve` + `relative`) cannot see through a symlink or junction: a junction inside
+ * the root produces `link/secret.txt`, which looks contained and reads outside. So the fence has a second
+ * half that re-checks the real path — and opens the *real* path, because the thing checked and the thing
+ * opened must be the same object.
+ *
+ * @module dsh-ops/file/reader/path-safety
+ */
 
-const fsp = require('fs').promises;
-const path = require('path');
+import { promises as fsp } from 'node:fs'
+import path from 'node:path'
 
-const { OpsError } = require('./core.cjs');
+import { OpsError, type ReadOptions } from './core.cjs'
 
-const RESERVED_NAMES = new Set(['CON', 'PRN', 'AUX', 'NUL', 'CONIN$', 'CONOUT$']);
-const ILLEGAL_CHARS = /[:*?<>|"]/;
+const RESERVED_NAMES = new Set(['CON', 'PRN', 'AUX', 'NUL', 'CONIN$', 'CONOUT$'])
+const ILLEGAL_CHARS = /[:*?<>|"]/
 
-function validateName(name) {
-  if (name === '') return;
-  if (name.includes('\u0000')) throw new OpsError('INVALID_PATH', `Invalid path component ${JSON.stringify(name)}`);
-  if (name === '.' || name === '..') return;
-  if (process.platform !== 'win32') return;
-  const base = name.split('.')[0].trimEnd().toUpperCase();
-  const port = base.startsWith('COM') || base.startsWith('LPT') ? base.slice(3) : null;
+/** The message a link refusal carries; the caller surfaces it verbatim. */
+export const LINK_DENIED = 'Links, reparse points and special objects are not traversed; inspect the target path for the offending entry'
+
+/** The memo a batch shares: the root's real path and the directory link checks. */
+export interface ReaderMemo extends ReadOptions {
+  rootReal?: Promise<string>
+  linkCache?: Map<string, Promise<void>>
+}
+
+/** Refuse one path component that Windows would resolve to a device, or that is ambiguous. */
+export function validateName(name: string): void {
+  if (name === '') return
+  if (name.includes('\u0000')) throw new OpsError('INVALID_PATH', `Invalid path component ${JSON.stringify(name)}`)
+  if (name === '.' || name === '..') return
+  if (process.platform !== 'win32') return
+  const base = name.split('.')[0].trimEnd().toUpperCase()
+  const port = base.startsWith('COM') || base.startsWith('LPT') ? base.slice(3) : null
   if (
-    name.endsWith('.') || name.endsWith(' ') ||
-    ILLEGAL_CHARS.test(name) ||
-    RESERVED_NAMES.has(base) ||
-    (port !== null && /^[1-9¹²³]$/.test(port))
+    name.endsWith('.') || name.endsWith(' ')
+    || ILLEGAL_CHARS.test(name)
+    || RESERVED_NAMES.has(base)
+    || (port !== null && /^[1-9¹²³]$/.test(port))
   ) {
-    throw new OpsError('INVALID_PATH', `Reserved, ambiguous or device path component ${JSON.stringify(name)}`);
+    throw new OpsError('INVALID_PATH', `Reserved, ambiguous or device path component ${JSON.stringify(name)}`)
   }
 }
 
 /**
- * 快速排除：99% 的路径在这一次正则里就判定"干净"，不做分割与逐段判断。
- * 命中任何可疑形状（冒号、非法字符、设备名、尾点/尾空格）才走慢路径精确判定 ——
- * 慢路径会给出确切的分量名，快路径只需要回答"有没有可能有问题"。
+ * A fast negative: 99% of paths are dismissed by this one regex, with no split and no per-component work.
+ * Anything that looks suspicious takes the slow path, which is the one that names the offending component.
  */
-const SUSPECT_PATH = /[:*?<>|"\u0000]|(^|[\\/])(?:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|[\\/]|$)|[. ][\\/]|[. ]$/i;
+const SUSPECT_PATH = /[:*?<>|"\u0000]|(^|[\\/])(?:CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|[\\/]|$)|[. ][\\/]|[. ]$/i
 
-/** 逐分量校验；盘符（`K:`）作为第一段放过，其余走 validateName */
-function validatePath(raw) {
-  let s = String(raw);
-  // canonicalize / 超长路径会给出 verbatim 形式：`\\?\K:\...`、`\\?\UNC\srv\shr\...`。
-  // 原装把这两种归一后接受，`\\.\`（设备）一律拒绝 —— 跟着做。
-  if (s.startsWith('\\\\?\\')) {
-    const rest = s.slice(4);
-    if (/^UNC[\\/]/i.test(rest)) s = '\\\\' + rest.slice(4);
-    else if (/^[A-Za-z]:/.test(rest)) s = rest;
-    else throw new OpsError('INVALID_PATH', 'Device and verbatim paths are unsupported');
-  } else if (s.startsWith('\\\\.\\')) {
-    throw new OpsError('INVALID_PATH', 'Device and verbatim paths are unsupported');
+/** Validate every component; a drive letter passes as the first one. */
+export function validatePath(raw: string): void {
+  let value = String(raw)
+  // Long-path handling produces verbatim forms: `\\?\K:\...` and `\\?\UNC\srv\shr\...`. The original
+  // normalizes and accepts those, and refuses `\\.\` (device) outright — this follows it.
+  if (value.startsWith('\\\\?\\')) {
+    const rest = value.slice(4)
+    if (/^UNC[\\/]/i.test(rest)) value = `\\\\${rest.slice(4)}`
+    else if (/^[A-Za-z]:/.test(rest)) value = rest
+    else throw new OpsError('INVALID_PATH', 'Device and verbatim paths are unsupported')
+  } else if (value.startsWith('\\\\.\\')) {
+    throw new OpsError('INVALID_PATH', 'Device and verbatim paths are unsupported')
   }
-  if (process.platform !== 'win32' || !SUSPECT_PATH.test(s)) return;
-  const parts = s.split(/[\\/]+/);
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i];
-    if (i === 0 && /^[A-Za-z]:$/.test(part)) continue;
-    validateName(part);
+  if (process.platform !== 'win32' || !SUSPECT_PATH.test(value)) return
+  const parts = value.split(/[\\/]+/)
+  for (let i = 0; i < parts.length; i += 1) {
+    if (i === 0 && /^[A-Za-z]:$/.test(parts[i])) continue
+    validateName(parts[i])
   }
 }
 
 /**
- * 路径围栏（opt-in）。传了 root 时：
- *   - 相对路径按 root 解析；
- *   - 绝对路径必须落在 root 内；
- *   - 越界返回 ESCAPE_ROOT，而不是靠上层自己记得校验。
- * path.relative 对 win32 的大小写与盘符差异已经做过归一，无需自己拼字符串。
- */
-function resolveTarget(filePath, root) {
-  validatePath(filePath);
-  if (!root) return filePath;
-  const base = path.resolve(root);
-  const target = path.resolve(base, filePath);
-  const rel = path.relative(base, target);
-  // 越界只有三种形状：'..'、'..' + 分隔符 开头、或绝对路径（跨盘符）。
-  // rel 为空表示目标就是 root 自身 —— 那是围栏内，让它落到 fstat 去报 NOT_A_FILE，
-  // 别用 ESCAPE_ROOT 撒谎。也不能写 startsWith('..')：root 下名为 '..foo' 的合法子目录
-  // 会算出 rel='..foo'，被误杀成越界（Windows 上 '..foo' 是合法目录名）。
-  if (rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) {
-    throw new OpsError('ESCAPE_ROOT', `路径越出 root 围栏：${filePath}`);
-  }
-  return target;
-}
-
-/**
- * 重解析点复核（仅 root 模式）。
+ * The opt-in root fence.
  *
- * 词法围栏（path.resolve + path.relative）看不穿 symlink / junction：root 下放一个指向
- * 栏外的目录联接，算出来的 rel 是 'link/secret.txt'，看着在栏内，实际读到栏外。
- * 这里把真实路径再判一次，并且**用真实路径去 open** —— 判的和开的必须是同一个东西。
- * root 的 realpath 每批只算一次（记忆在 opts 上），单文件只多一次 syscall。
+ * With a root, relative paths resolve against it and absolute paths must stay inside it; escaping returns
+ * `ESCAPE_ROOT` instead of leaving the check to the caller.
  */
-async function fenceRealPath(target, root, opts) {
+export function resolveTarget(filePath: string, root?: string | null): string {
+  validatePath(filePath)
+  if (!root) return filePath
+  const base = path.resolve(root)
+  const target = path.resolve(base, filePath)
+  const rel = path.relative(base, target)
+  // Three shapes mean "outside": '..', '..' plus a separator, or an absolute path (a different drive).
+  // An empty rel means the target *is* the root — that is inside, so it falls through to fstat and
+  // reports NOT_A_FILE rather than lying with ESCAPE_ROOT. `startsWith('..')` alone would be wrong:
+  // a legitimate child named '..foo' yields rel='..foo' and would be killed as an escape.
+  if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+    throw new OpsError('ESCAPE_ROOT', `path escapes the root fence: ${filePath}`)
+  }
+  return target
+}
+
+/**
+ * Re-check the fence against the real path.
+ *
+ * The root's realpath is computed once per batch and memoized on the options object; a single file then
+ * costs one extra syscall.
+ */
+export async function fenceRealPath(target: string, root: string, opts: ReaderMemo): Promise<string> {
   if (!opts.rootReal) {
-    opts.rootReal = fsp.realpath(path.resolve(root));
-    opts.rootReal.catch(() => {});     // 失败时不让它变成 unhandledRejection，下次调用会重算
+    opts.rootReal = fsp.realpath(path.resolve(root))
+    opts.rootReal.catch(() => { /* a failure must not become an unhandled rejection; the next call retries */ })
   }
-  const realRoot = await opts.rootReal;
-  const realTarget = await fsp.realpath(target);
-  const rel = path.relative(realRoot, realTarget);
-  if (rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) {
-    throw new OpsError('ESCAPE_ROOT', `路径越出 root 围栏（重解析点指向栏外）：${target}`);
+  const realRoot = await opts.rootReal
+  const realTarget = await fsp.realpath(target)
+  const rel = path.relative(realRoot, realTarget)
+  if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+    throw new OpsError('ESCAPE_ROOT', `path escapes the root fence (a reparse point points outside): ${target}`)
   }
-  return realTarget;
+  return realTarget
 }
 
 /**
- * 重解析点拒绝（兼容层默认开，对齐原装 Rust `regular()` 的 open_nofollow）。
+ * One directory in the chain.
  *
- * junction 能把 'repo/link/secret.txt' 拼成一个词法上完全合法的路径，读到的却是栏外文件，
- * 而目录联接在 Windows 上不需要管理员权限就能建 —— 原装因此对每一级都做 symlink_metadata。
- * 这里同样逐级验证，但把代价压到最低：目录链走批级缓存，叶子与 open 并发。
+ * The cache holds the *pending promise*, not a boolean: with 20 files in one directory, a boolean cache
+ * still lets all 20 lstat the same chain before the first one fills it (measured 20×5 = 100 calls);
+ * caching the promise costs the batch 5 calls in total.
  */
-const LINK_DENIED = 'Links, reparse points and special objects are not traversed; inspect the target path for the offending entry';
-
-/** 目录链校验：缓存的是**进行中的 promise**，不是结果。
- *  20 个文件同目录时，若只缓存布尔结果，它们会在缓存填好之前各自 lstat 一遍
- *  同一条目录链（实测 20×5=100 次）；缓存 promise 之后整批只付 5 次。 */
-function dirLinkCheck(dir, cache) {
-  let p = cache.get(dir);
-  if (!p) {
-    p = fsp.lstat(dir).then((st) => {
-      if (st.isSymbolicLink()) throw new OpsError('PATH_RESTRICTED', LINK_DENIED);
-    });
-    p.catch(() => {});                     // 主流程可能已经失败退出，别让缓存里的 rejection 冒泡
-    cache.set(dir, p);
+export function dirLinkCheck(dir: string, cache: Map<string, Promise<void>>): Promise<void> {
+  let pending = cache.get(dir)
+  if (!pending) {
+    pending = fsp.lstat(dir).then(stats => {
+      if (stats.isSymbolicLink()) throw new OpsError('PATH_RESTRICTED', LINK_DENIED)
+    })
+    // The main flow may already have failed and walked away; a rejection nobody awaits must not bubble.
+    pending.catch(() => {})
+    cache.set(dir, pending)
   }
-  return p;
+  return pending
 }
 
-async function assertParentDirs(target, opts) {
-  const cache = opts.linkCache || (opts.linkCache = new Map());
-  const dirs = [];
-  let dir = path.dirname(target);
+/** Check the whole directory chain up to the drive root, using the batch cache. */
+export async function assertParentDirs(target: string, opts: ReaderMemo): Promise<void> {
+  const cache = opts.linkCache ?? (opts.linkCache = new Map<string, Promise<void>>())
+  const dirs: string[] = []
+  let dir = path.dirname(target)
   for (;;) {
-    dirs.push(dir);
-    if (cache.has(dir)) break;
-    const up = path.dirname(dir);
-    if (up === dir) break;                 // 到盘符根：它自己也要验一次
-    dir = up;
+    dirs.push(dir)
+    if (cache.has(dir)) break
+    const up = path.dirname(dir)
+    if (up === dir) break // the drive root still gets checked
+    dir = up
   }
-  await Promise.all(dirs.map((d) => dirLinkCheck(d, cache)));
+  await Promise.all(dirs.map(entry => dirLinkCheck(entry, cache)))
 }
 
 /**
- * 叶子校验：与 open 并发发起，不额外占墙钟时间。
- * open 本来就要一次 syscall（几十微秒），lstat 挤在同一个窗口里完成；
- * 句柄已拿到但 lstat 说是链接时，由 finally 关掉再抛。
+ * The leaf check, started concurrently with `open` so it costs no wall-clock time.
+ *
+ * `open` already needs a syscall; the lstat lands in the same window. If the handle came back and the
+ * lstat then says "link", the caller closes the handle and throws.
  */
-function startLeafCheck(target) {
-  const p = fsp.lstat(target);
-  p.catch(() => {});                       // 主流程可能先抛，别让它变成 unhandledRejection
-  return p;
+export function startLeafCheck(target: string): ReturnType<typeof fsp.lstat> {
+  const pending = fsp.lstat(target)
+  pending.catch(() => { /* the main flow may throw first */ })
+  return pending
 }
-
-/** 数一段文本里的换行数（full 模式算 lineCount，不需要留存全文） */
-
-module.exports = { validateName, validatePath, resolveTarget, fenceRealPath, LINK_DENIED, dirLinkCheck, assertParentDirs, startLeafCheck };
