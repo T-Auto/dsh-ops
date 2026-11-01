@@ -120,7 +120,7 @@
         "tools": [
           "discover_tools"
         ],
-        "shellPermission": "Native/both scoped selection only; selecting a capability does not execute it or authorize its later calls"
+        "shellPermission": "Scoped Native discovery selection only; selecting a capability does not execute it or authorize its later calls"
       }
     ],
     "x-components": [
