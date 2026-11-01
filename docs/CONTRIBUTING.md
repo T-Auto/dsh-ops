@@ -258,3 +258,19 @@ restart against temporary installed profiles. `settings-client` covers exact com
 backups and atomic rollback; it never migrates a developer profile.
 
 `src/panel/collect.ts` uses typed filesystem seams and validates persisted event fields before folding. Valid capture documents keep their text, counters and archive behavior. Invalid persisted text/usage/timestamp fields are counted as malformed and mark the result degraded, with incomplete usage totals; they cannot be silently coerced. Stopping still cancels queued work, waits for issued I/O and retains the append log; explicit sealing remains separate. Run `node test/run.mjs ops-panel-collect panel-records panel-stop kernel-types` for recovery, bounded data, physical-stop and type checks.
+
+## Windows IPC build paths
+
+`npm run build:bash-ipc` supports non-ASCII checkout, Visual Studio and temporary
+paths without changing the machine's console code page. Its generated batch file
+contains only ASCII commands; absolute paths travel through Unicode process
+environment values. Delayed expansion is disabled so `!` in a path stays literal.
+The helper ships under `bin/lib`, alongside the build entry.
+
+The linker uses `/Brepro` so identical source/toolchain inputs produce the same
+DLL bytes in ASCII and non-ASCII checkouts, including PE build metadata. This is
+not a promise that different MSVC versions produce identical binaries. The normal
+provenance receipt records the actual output hashes; no generated runtime is
+committed. `node test/run.mjs bash-ipc-build` covers the pure batch builder and a
+real `cmd.exe` round trip under code page 936. POSIX explicitly reports that the
+Windows round-trip fixture is unavailable and does not count it as passing.
