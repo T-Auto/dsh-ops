@@ -25,9 +25,16 @@ The JSON contains:
 - Up to three closing issues, their assignees and possible claim comments from
   the last ten comments. A comment match carries author, excerpt and URL. It does
   not prove ownership; other timeline cross-references are not collected.
-- The newest matching `pull_request` run for the exact head SHA and PR number,
+- The newest matching `pull_request` run for the exact head SHA. A nonempty PR
+  association list must contain the requested number; fork runs with an empty
+  list retain their evidence with `prAssociation: exact-head-only`. Missing or
+  malformed association data remains unknown. The snapshot includes
   its event, attempt, URL and up to 50 job conclusions. A push or manual run is
   never substituted for PR validation.
+- `githubMerge` records GitHub's mergeability (`true`, `false`, or `null`), its
+  merge-state label, and the PR base ref/SHA. `matchesRequestedBase` distinguishes
+  that assessment from a probe against a different requested base. `BLOCKED`
+  can coexist with conflict-free changes; mergeability is not approval.
 - The current requested base SHA and its newest matching `push` run for the
   **same workflow**. This separates base evidence from PR evidence. It is not an
   aggregate verdict over other workflows, required checks or branch protection.
@@ -42,6 +49,12 @@ head. Run lookup examines at most 20 matching API results. Absent credentials,
 missing runs, invalid responses, missing local commit objects, process failures
 and timeouts remain explicit unknown evidence. Narrow file/issue/comment/job
 windows are not represented as complete inventories.
+
+CI states such as `action_required`, `queued`, `in_progress`, `failure` and
+`success` are preserved. An empty fork association is disclosed rather than
+treated as a missing run. GitHub mergeability does not replace the optional
+local probe: their results and base identities stay separate. When neither
+source determines mergeability against the requested base, the snapshot is partial.
 
 Each subprocess has a 20-second deadline and 512 KiB collection ceiling, with a
 120-second invocation signal. JSON output is capped at 64 KiB; if details exceed
