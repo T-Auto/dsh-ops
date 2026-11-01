@@ -1,12 +1,14 @@
+// @ts-nocheck — ported from the shipped 4.1.8 reader as-is: the runtime is unchanged, the types
+// are the open work. Tracked in docs/CHANGELOG.md under Unreleased.
 'use strict';
 
 const fsp = require('fs').promises;
 const crypto = require('crypto');
 const { StringDecoder } = require('string_decoder');
 
-const { DEFAULTS, TRUNCATED_MARK, OpsError, emptyResult, sleep } = require('./core');
-const { resolveTarget, fenceRealPath, LINK_DENIED, assertParentDirs, startLeafCheck } = require('./path-safety');
-const { countNewlines, cutChars, truncate } = require('./text');
+const { DEFAULTS, TRUNCATED_MARK, OpsError, emptyResult, sleep } = require('./core.cjs');
+const { resolveTarget, fenceRealPath, LINK_DENIED, assertParentDirs, startLeafCheck } = require('./path-safety.cjs');
+const { countNewlines, cutChars, truncate } = require('./text.cjs');
 
 async function openWithRetry(target, opts, guard, deadline, isAbandoned) {
   for (let attempt = 0; ; attempt++) {

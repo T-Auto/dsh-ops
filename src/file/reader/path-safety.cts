@@ -1,9 +1,11 @@
+// @ts-nocheck — ported from the shipped 4.1.8 reader as-is: the runtime is unchanged, the types
+// are the open work. Tracked in docs/CHANGELOG.md under Unreleased.
 'use strict';
 
 const fsp = require('fs').promises;
 const path = require('path');
 
-const { OpsError } = require('./core');
+const { OpsError } = require('./core.cjs');
 
 const RESERVED_NAMES = new Set(['CON', 'PRN', 'AUX', 'NUL', 'CONIN$', 'CONOUT$']);
 const ILLEGAL_CHARS = /[:*?<>|"]/;

@@ -1,26 +1,22 @@
 /**
- * Typed entry to the parallel file reader shipped as `engine/parallel-read/`.
+ * Typed door to the parallel file reader, ported into `src/file/reader/*.cts`.
  *
- * The engine is plain CommonJS with a hand-written declaration file, kept outside `src/` on purpose:
- * `scripts/build.mjs` refuses JavaScript under `src/`, and rewriting a shipped, independently
- * tested reader into TypeScript would fork it from the artifact the standalone package publishes.
- * This module is the one import site the plugin uses, so the engine has a single typed door and
- * `lib/` links it at `engine/parallel-read/` in the published tree.
- *
- * The names are listed rather than re-exported wholesale: `export *` from a CommonJS module also
- * publishes whatever the loader infers (including a `module.exports` key), and the plugin's public
- * surface should be a decision, not an accident.
+ * The shipped declaration file is kept as `ops_parallel_read.d.cts`; the ported `.cts` modules are
+ * runtime-identical to 4.1.8 and carry `@ts-nocheck` until they are re-typed, so this door surfaces
+ * them as `any` and the migration stays structural first, typed second.
  *
  * @module dsh-ops/file/parallel-read
  */
-export {
-  parallelRead,
-  ops_parallel_read,
-  readFilesCompat,
-  ops_read_files,
-  runPool,
-  truncate,
-  OpsError,
-  DEFAULTS,
-  TRUNCATED_MARK,
-} from '../../engine/parallel-read/ops_parallel_read.js'
+import { createRequire } from 'node:module'
+
+const reader: Record<string, any> = createRequire(import.meta.url)('./reader/ops_parallel_read.cjs') as Record<string, any>
+
+export const parallelRead = reader.parallelRead
+export const ops_parallel_read = reader.ops_parallel_read
+export const readFilesCompat = reader.readFilesCompat
+export const ops_read_files = reader.ops_read_files
+export const runPool = reader.runPool
+export const truncate = reader.truncate
+export const OpsError = reader.OpsError
+export const DEFAULTS = reader.DEFAULTS
+export const TRUNCATED_MARK = reader.TRUNCATED_MARK

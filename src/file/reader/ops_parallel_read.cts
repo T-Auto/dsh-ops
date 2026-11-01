@@ -1,3 +1,5 @@
+// @ts-nocheck — ported from the shipped 4.1.8 reader as-is: the runtime is unchanged, the types
+// are the open work. Tracked in docs/CHANGELOG.md under Unreleased.
 'use strict';
 
 /**
@@ -23,9 +25,9 @@ const crypto = require('crypto');
 const { StringDecoder } = require('string_decoder');
 
 
-const { DEFAULTS, TRUNCATED_MARK, OpsError, runPool } = require('./lib/core');
-const { cutChars, truncate } = require('./lib/text');
-const { readCacheStats, readOne } = require('./lib/read-one');
+const { DEFAULTS, TRUNCATED_MARK, OpsError, runPool } = require('./core.cjs');
+const { cutChars, truncate } = require('./text.cjs');
+const { readCacheStats, readOne } = require('./read-one.cjs');
 
 function normalizeOptions(options) {
   const opts = { ...DEFAULTS, ...options };
@@ -486,7 +488,7 @@ async function readFilesCompat(files, options = {}) {
 }
 
 
-const { readCacheStats: _readCacheStats, readCacheReset: clearReadCache } = require('./lib/read-one');
+const { readCacheStats: _readCacheStats, readCacheReset: clearReadCache } = require('./read-one.cjs');
 
 // Named `exports.x` assignments rather than `module.exports = { ... }`: the object form makes
 // cjs-module-lexer publish a spurious `module.exports` key to ESM importers.

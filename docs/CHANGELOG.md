@@ -7,8 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-- Answer `read_files` in-process and delete the native many-file arm: `native/crates/ops-files/src/file_many.rs` and its dispatch are gone, `src/execution/files.ts` reads through `engine/parallel-read/`, and the `fs/observed` event the worker's read used to produce is now emitted by the host after each successful read, so read-before-edit keeps working. 20–53× faster on the same request with identical bytes; there is no switch, one reader and one behaviour.
-- `read_files` 改为进程内应答并删除原生多文件臂：`native/crates/ops-files/src/file_many.rs` 与其分派已删除，`src/execution/files.ts` 经 `engine/parallel-read/` 读取；worker 读取原本产生的 `fs/observed` 事件改由宿主在每次读成功后发出，read-before-edit 因此继续有效。同一请求快 20–53×、字节完全一致；没有开关，一个读取器一种行为。
+- Answer `read_files` in-process and delete the native many-file arm: `native/crates/ops-files/src/file_many.rs` and its dispatch are gone, `src/execution/files.ts` reads through `src/file/reader/`, and the `fs/observed` event the worker's read used to produce is now emitted by the host after each successful read, so read-before-edit keeps working. 20–53× faster on the same request with identical bytes; there is no switch, one reader and one behaviour.
+- `read_files` 改为进程内应答并删除原生多文件臂：`native/crates/ops-files/src/file_many.rs` 与其分派已删除，`src/execution/files.ts` 经 `src/file/reader/` 读取；worker 读取原本产生的 `fs/observed` 事件改由宿主在每次读成功后发出，read-before-edit 因此继续有效。同一请求快 20–53×、字节完全一致；没有开关，一个读取器一种行为。
 
 
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease

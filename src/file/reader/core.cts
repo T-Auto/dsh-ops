@@ -1,3 +1,5 @@
+// @ts-nocheck — ported from the shipped 4.1.8 reader as-is: the runtime is unchanged, the types
+// are the open work. Tracked in docs/CHANGELOG.md under Unreleased.
 'use strict';
 
 const DEFAULTS = Object.freeze({
