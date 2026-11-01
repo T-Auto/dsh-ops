@@ -4,6 +4,7 @@ mod scan;
 mod paging;
 mod search;
 mod profile;
+mod patterns;
 use ops_protocol::{Failure, Request, Result};
 use ops_files::{file_path, target, relative_display, read_bytes, result, lock_and_read_for_update, atomic_write, MAX_OUTPUT_BYTES, MAX_FILE_BYTES};
 use ops_files as publication;
@@ -185,14 +186,6 @@ fn unc_display(display: &Path) -> bool {
     )
 }
 
-fn positive_patterns(patterns: &[String]) -> impl Iterator<Item = &String> { patterns.iter().filter(|p| !p.starts_with('!')) }
-fn matches_any(root: &Path, file: &Path, patterns: &[String]) -> bool {
-    let name = relative_display(root, file);
-    let positives: Vec<_> = positive_patterns(patterns).collect();
-    let included = positives.is_empty() || positives.iter().any(|p| glob_match(p, &name));
-    let excluded = patterns.iter().filter_map(|p| p.strip_prefix('!')).any(|p| glob_match(p, &name));
-    included && !excluded
-}
 fn files_for(path: &str, patterns: &[String], request: &Request) -> Result<WalkResult> {
     let root = target(path, false)?;
     request.authorize_path(&root)?;
@@ -200,17 +193,13 @@ fn files_for(path: &str, patterns: &[String], request: &Request) -> Result<WalkR
         return Ok(WalkResult { files: vec![root.clone()], truncated: false });
     }
     let walked = walk(&root, request)?;
+    let patterns = patterns::Patterns::new(patterns);
     Ok(WalkResult {
         files: walked.files.into_iter()
-            .filter(|f| matches_any(&root, f, patterns))
+            .filter(|f| patterns.matches(&root, f))
             .collect(),
         truncated: walked.truncated,
     })
-}
-fn glob_match(pattern: &str, value: &str) -> bool {
-    let p: Vec<_> = pattern.trim_start_matches("./").split('/').collect();
-    let v: Vec<_> = value.split('/').collect();
-    glob_segments(&p, &v)
 }
 fn glob_segments(p: &[&str], v: &[&str]) -> bool {
     if p.is_empty() { return v.is_empty(); }

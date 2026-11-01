@@ -80,6 +80,9 @@ impl Scan {
     where F: FnMut(&Path, &cap_std::fs::Metadata, &mut Self) -> Result<()> {
         let started = self.profile.start();
         let result = (|| {
+        let compiled = self.profile.start();
+        let patterns = patterns::Patterns::new(patterns);
+        self.profile.record("globCompile", compiled);
         request.authorize_path(root)?;
         if !self.running() { return Ok(()); }
         let target = file_path::checked(root.to_str().ok_or_else(|| Failure::new("INVALID_ARGUMENT", "Non-UTF8 path"))?)?;
@@ -87,12 +90,12 @@ impl Scan {
         self.stamp(root, &metadata);
         if metadata.is_file() { self.scanned += 1; return each(root, &metadata, self); }
         let directory = target.parent.open_dir_nofollow(&target.name)?;
-        self.visit(root, root, directory, 0, patterns, request, &mut each)
+        self.visit(root, root, directory, 0, &patterns, request, &mut each)
         })();
         self.profile.record("walkTotal", started);
         result
     }
-    fn visit<F>(&mut self, root: &Path, display: &Path, directory: cap_std::fs::Dir, depth: usize, patterns: &[String], request: &Request, each: &mut F) -> Result<()>
+    fn visit<F>(&mut self, root: &Path, display: &Path, directory: cap_std::fs::Dir, depth: usize, patterns: &patterns::Patterns<'_>, request: &Request, each: &mut F) -> Result<()>
     where F: FnMut(&Path, &cap_std::fs::Metadata, &mut Self) -> Result<()> {
         if !self.running() { return Ok(()); }
         if depth > MAX_DEPTH { self.stopped = Some(TruncatedBy::ScanBudget); return Ok(()); }
@@ -149,7 +152,7 @@ impl Scan {
                 if self.scanned >= self.max_files { self.stopped = Some(TruncatedBy::ScanBudget); break; }
                 self.scanned += 1;
                 let started = self.profile.start();
-                let matched = matches_any(root, &child, patterns);
+                let matched = patterns.matches(root, &child);
                 self.profile.record("globFilter", started);
                 if !matched { self.skip("pattern", true, false); continue; }
                 self.stamp(&child, &metadata);

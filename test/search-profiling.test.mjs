@@ -20,6 +20,7 @@ await test('opt-in search stage timing preserves canonical results and contains 
       assert.equal(plain.stderr,''); assert.deepEqual(profiled.value,plain.value)
       const profile=JSON.parse(profiled.stderr.trim().slice('dsh-ops-search-profile '.length))
       assert.equal(profile.version,1); assert.equal(profile.stages.walkTotal.calls,1)
+      assert.equal(profile.stages.globCompile?.calls,1, 'patterns compile once per scan, not once per file')
       assert.ok(profile.stages.globFilter.calls>0)
       assert.equal(profiled.stderr.includes(root),false); assert.equal(profiled.stderr.includes('privateFixtureText'),false)
       for(const stage of Object.values(profile.stages)) {
