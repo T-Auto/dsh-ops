@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Add an opt-in WSL readonly file route for same-distribution UNC workspaces, preserving Windows credential/path restrictions, backend-bound search cursors and Windows-owned result storage; see [WSL file reads](wsl-readonly.md) (#498).
+- 为同发行版 UNC 工作目录增加可选 WSL 只读文件路由，保留 Windows 凭据和路径限制、后端绑定搜索游标及 Windows 结果存储所有权；见 [WSL 只读文件操作](WSL只读文件操作.md)（#498）。
+
 - Keep Native file routing separate from the independent Bash prompt section, so resident Native + Shell consumers do not repeat Bash guidance or advertise host PowerShell routing. Keep deployment guidance single-owned across Bash, Native and discovery sections, including withdrawal and reload.
 - 将 Native 文件路由提示与独立 Bash 提示段分开，避免 Native + Shell 常驻消费者重复 Bash 指导或把 Bash 宣传为宿主 PowerShell 路由。部署指导在 Bash、Native 与发现提示段之间仅保留一份，并覆盖撤回与重载。
 - Update preset hints and rendered settings UI to describe default Bash/PowerShell coexistence; hiding host PowerShell remains an explicit choice.

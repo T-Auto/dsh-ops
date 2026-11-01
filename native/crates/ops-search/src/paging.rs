@@ -13,7 +13,7 @@ impl Cursor {
         let root = file_path::checked(&request.root)?;
         let identity = root.parent.symlink_metadata(&root.name)?;
         let binding = digest(&serde_json::to_vec(&json!([request.tool, query, request.scope, request.root,
-            identity.dev(), identity.ino(), request.read_only, request.write_roots, request.deny_roots, request.deny_credential_names]))?);
+            identity.dev(), identity.ino(), request.read_only, request.write_roots, request.deny_roots, request.deny_credential_names, request.windows_paths]))?);
         let mut cursor = Self { offset, binding, snapshot: None };
         if let Some(token) = token {
             let parts: Vec<_> = token.split(':').collect();
@@ -113,4 +113,23 @@ pub fn finish(mut scan: Scan, cursor: Cursor, page: Page, observed: usize, item_
         sink.source(source);
     }
     Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn cursors_bind_the_delegated_path_policy_without_weakening_native_validation() {
+        let root = fs::canonicalize(std::env::temp_dir()).unwrap().join(format!("dsh-wsl-cursor-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let mut request: Request = serde_json::from_value(json!({"root":root,"scope":"wsl-cursor","tool":"glob","args":{"path":root,"pattern":["**"]}})).unwrap();
+        let original = Cursor::new(&request, 0, None).unwrap().token(&"a".repeat(64), 5);
+        assert!(Cursor::new(&request, 0, Some(&original)).is_ok());
+        request.windows_paths = true;
+        assert!(Cursor::new(&request, 0, Some(&original)).is_err());
+        let delegated = Cursor::new(&request, 0, None).unwrap().token(&"a".repeat(64), 5);
+        assert!(Cursor::new(&request, 0, Some(&delegated)).is_ok());
+        assert!(Cursor::new(&request, 6, Some(&delegated)).is_err());
+        fs::remove_dir(root).unwrap();
+    }
 }

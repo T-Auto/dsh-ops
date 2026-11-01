@@ -23,6 +23,7 @@ import { withCallBudget, CallBudgetError } from '../kernel/call-budget.js'
 import { withResultSession } from '../kernel/result-lifecycle.js'
 import { resultStorage } from '../kernel/result-storage.js'
 import { resolveSessionDirectory } from '../adapter/dsh/working-directory.js'
+import { tryWslRead } from './wsl-worker.js'
 
 export { resolveWorker }
 
@@ -198,7 +199,25 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
       if (mutates && (current.mode === 'read-only' || (current.mode === 'workspace-write' && required === 'danger-full-access'))) return denied(current, tool, required, 'Authority changed during preparation; no files were changed.')
       return authorityChanged(current, tool)
     }
-    const result = await exchange(subprocess, { argv, cwd, stdio: { stdin: { data: input }, stdout: { maxBytes: envelope.budget.maxBytes }, stderr: { maxBytes: 16 * 1024 } }, graceMs: 1000, signal }, () => { spawned = true })
+    const delegated = await tryWslRead(subprocess, file, envelope, cwd, signal, () => {
+      const latest = policyService.resolve({ session })
+      return latest.mode === policy.mode && latest.workspaceRoot === policy.workspaceRoot
+    }, config)
+    let transportInput = input
+    if (!delegated.handled) {
+      signal.throwIfAborted()
+      const latest = policyService.resolve({ session })
+      if (latest.mode !== policy.mode || latest.workspaceRoot !== policy.workspaceRoot) {
+        if (!['read-only', 'workspace-write', 'danger-full-access'].includes(latest?.mode) || !path.isAbsolute(latest?.workspaceRoot ?? '')) return failure('EXECUTOR_UNAVAILABLE', 'Invalid authoritative DSH policy after WSL preparation.')
+        const required = mutates ? requiredMode(latest) : undefined
+        if (mutates && (latest.mode === 'read-only' || (latest.mode === 'workspace-write' && required === 'danger-full-access'))) return denied(latest, tool, required, 'Authority changed during preparation; no files were changed.')
+        return authorityChanged(latest, tool)
+      }
+      if (signal.aborted || delegated.remainingMs < 1) return failure('TIMEOUT', 'The original call budget expired during WSL preparation; no replay was attempted.')
+      transportInput = JSON.stringify({ ...envelope, budget: { ...envelope.budget, timeoutMs: delegated.remainingMs } })
+    }
+    const result = delegated.handled ? { readers: true, interrupted: false, lossy: false, exitCode: 0, stderr: '', value: delegated.value, invalid: undefined }
+      : await exchange(subprocess, { argv, cwd, stdio: { stdin: { data: transportInput }, stdout: { maxBytes: envelope.budget.maxBytes }, stderr: { maxBytes: 16 * 1024 } }, graceMs: 1000, signal }, () => { spawned = true })
     if (!result.readers) return failure('RESULT_UNKNOWN', 'Worker output readers are unavailable; inspect postconditions.', 'verify', 'unknown')
     if (result.interrupted) return failure('RESULT_UNKNOWN', 'Worker interrupted; inspect postconditions.', 'execute', 'unknown')
     if (result.lossy) return failure('OUTPUT_LIMIT', 'Worker output exceeded the byte budget; operation facts may have changed.', 'verify', 'unknown')
