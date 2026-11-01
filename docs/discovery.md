@@ -54,6 +54,8 @@ Arbitrary dynamic prompt providers need not emit any change event. For that reas
 
 ## Incremental publication boundaries
 
+When a preset switch changes the owner of an agent's Bash tool, the eligible consumer first retires the previous OPS registration if that consumer's live gate no longer admits the agent. The handoff stays outside the session append window and does not retry registration or remove foreign providers. Later cleanup by the former owner cannot remove the new definition.
+
 PTC publication lifts and rebuilds only the affected inheritance family, preserving unrelated root sessions' SDK and Bash definition identities. A connected parent/child family is processed together because an ancestor's PTC claim can hide the Native provider a child must inherit. Native source-provider revisions detect registrations hidden behind an existing PTC override; unknown external registry changes conservatively revalidate Native shadows so a foreign ancestor restriction cannot be bypassed. Superseded publication requests are merged rather than dropped. Live execution still checks the authoritative calling scope and presentation.
 
 The Bash component retains unchanged per-session definitions and inherited masks. Authority transitions update changed layers, while jobs/subprocess service replacement explicitly refreshes definitions. Neither component eliminates all inexpensive ownership, policy or tool-view scans. Real-host counter tests (`session-incremental`, `shells-incremental`) assert bounded attach probe/event counts and unchanged unrelated definition identities, separately from wall-clock GUI/session-create performance.
