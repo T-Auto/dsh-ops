@@ -19,6 +19,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 从安装本包的 profile 探测 `dsh-win-pwsh7` 联动，宿主进程没有 `DSH_PROFILE_DIR` 也能判定；保存其它开关不再把「跟随检测」写成显式值，而手动拨动联动开关一定落盘。
 - Name the row setting instead of the removed Compatibility mode when an official tool has an OPS replacement.
 - 官方工具被 OPS 替代时，拒绝信息改指行设置，不再提已删除的兼容模式。
+- Mask the selected official tools in a `run_code` (PTC) scope, so the generated `tools:sdk` declaration (`ToolArgsMap`) no longer advertises `read`/`glob`/`grep` while the guard refuses them. A collapsed scope owns no native counterpart to prove, so it is masked on its refusal contract instead: exactly the official names it refuses stay hidden, the program's other SDK sub-calls dispatch again after a surface change, and a native presentation keeps the readiness-gated mask (#415).
+- 在 `run_code`（PTC）作用域内屏蔽所选官方工具，生成的 `tools:sdk` 声明（`ToolArgsMap`）不再列出守卫会拒绝的 `read`/`glob`/`grep`。折叠作用域没有可证明的 native 对应能力，改按其拒绝契约屏蔽：只隐藏它拒绝派发的那些官方工具，程序内其它合法 SDK 子调用在表面变化后仍可派发，Native 展示维持按就绪状态屏蔽（#415）。
 
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 

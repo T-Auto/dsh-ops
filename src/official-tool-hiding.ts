@@ -15,7 +15,8 @@ import { retired as retiredLegacyRow } from './settings/legacy.js'
 
 interface Entry { context: Context; lifts: (() => void)[]; cleanupError?: string; error?: string; reported?: string
   /** Set from the assembled surface: this scope presents one program entry, so its
-   * selected official names are not native duplicates and must stay dispatchable. */
+   * selected counterparts can only ever be SDK functions and native ownership of
+   * them is unprovable by construction. */
   collapsed?: boolean }
 interface Plan { deny: string[]; failure?: string }
 const message = (error: unknown): string => error instanceof Error ? error.message : String(error)
@@ -58,6 +59,12 @@ export function apply(root: Context, raw?: unknown): void {
         return visible !== undefined && owned.has(visible)
       })
     }
+    // A program presentation resolves the host's reserved transport in this scope view.
+    // The host generates the model-facing SDK section from that same view, so whatever
+    // stays visible there is advertised as callable. A native presentation has no
+    // transport and keeps the reviewed native replacement contract.
+    const program = (agent: object): boolean =>
+      typeof tools.get === 'function' && tools.get(RUN_CODE, agent) !== undefined
     const prepare = (agent: object, entry: Entry): Plan => {
       const names = typeof tools.schemas === 'function' ? tools.schemas(agent).map(schema => schema.name) : []
       const hidden = names.filter(hideable)
@@ -72,9 +79,17 @@ export function apply(root: Context, raw?: unknown): void {
         ...entry.cleanupError ? [entry.cleanupError] : [],
         ...missing.length ? [`missing OPS surface: ${[...new Set(missing)].join(', ')}`] : [],
       ]
-      const failure = diagnostics.length ? blocked(diagnostics.join('; ')) : undefined
-      // A failed plan hides nothing: no partial mask over an unready scope.
-      return { deny: failure ? [] : hidden, failure }
+      // A collapsed scope owns one program entry and is judged on the assembled surface,
+      // not on native readiness: there, every selected counterpart is an SDK function, so
+      // the missing-counterpart gate cannot apply.
+      const failure = diagnostics.length && entry.collapsed !== true ? blocked(diagnostics.join('; ')) : undefined
+      // The mask names exactly what the guard refuses in this scope. A native presentation
+      // keeps the reviewed rule — a failed plan hides nothing, no partial mask over an
+      // unready scope. A program presentation masks those names even while it fails,
+      // because the SDK section it advertises comes from this view and must never offer a
+      // call the guard will throw on. Masking a name this component refuses cannot hide a
+      // call it would have served, so the safe side of the disagreement is to mask.
+      return { deny: failure && !program(agent) ? [] : hidden, failure }
     }
     // Compare public surfaces before touching masks. Other components also
     // reconcile tools/change; emitting a fresh restriction for an unchanged
@@ -99,7 +114,17 @@ export function apply(root: Context, raw?: unknown): void {
         // Each scope owns its readiness and mask. A failed child is blocked at
         // assembly/dispatch; it does not make a healthy ancestor or root fail.
         for (const [agent, entry, plan] of plans) {
-          if (plan.failure) { clear(entry); entry.error = plan.failure; continue }
+          if (plan.failure) {
+            clear(entry)
+            // A program presentation keeps the refused names masked while it is blocked:
+            // its model-facing section is generated from this view, so an advertised name
+            // could only ever be refused at dispatch. The failure stays authoritative.
+            if (plan.deny.length) {
+              try { entry.lifts.push(entry.context.tools.restrict({ deny: plan.deny })) }
+              catch (error) { entry.error = blocked(message(error)); continue }
+            }
+            entry.error = plan.failure; continue
+          }
           try {
             // One restriction per complete plan; never partially hide when a
             // single required replacement is absent.
@@ -164,10 +189,10 @@ export function apply(root: Context, raw?: unknown): void {
       reconcile()
       const wire = Array.isArray(result?.tools) ? result.tools.map(schema => schema.name) : []
       // A collapsed scope receives one program entry and nothing else: its selected
-      // official tools are not native duplicates there, and their OPS counterparts can
-      // only ever be SDK functions, so readiness is unprovable by construction. Fail
-      // closed on the assembled surface instead: a scope that really kept a selected
-      // official tool still throws, while a run_code scope owns no mask and no error.
+      // counterparts can only ever be SDK functions, so native readiness is unprovable
+      // there by construction. Judge the scope on the assembled surface instead: a scope
+      // that really kept a selected official tool still throws, while a run_code scope is
+      // judged by its refusal contract and masks the names it refuses.
       // A host that transforms the presentation here attaches the tool array only after
       // this waterfall, so the wire proves nothing then. The host also publishes the
       // `tools:ptc-only` section for a real program presentation, renders it empty for a
@@ -184,18 +209,19 @@ export function apply(root: Context, raw?: unknown): void {
         if (!collapsed) throw new Error(entry.error)
         clear(entry); entry.error = undefined
       }
+      // Re-plan with the presentation now known: a collapsed scope swaps native readiness
+      // for the refusal contract, and its mask has to be in place before the surface below
+      // is verified. A host that transformed the presentation already rendered its sections
+      // from the previous view, so the restriction also lands for the next request.
+      reconcile()
       // DSH 0.2.1 transforms a presentation here and attaches the tool array only
       // after the waterfall, so the payload proves nothing about the assembled
       // surface. Ask the scope view instead: an official tool this component
       // selected is either still resolvable there or genuinely hidden. A host
       // that still supplies schemas keeps the stricter assembled-surface check.
-      // A collapsed scope keeps the selected official names resolvable on purpose (the
-      // program calls their OPS counterparts) and owns no mask, so there is no assembled
-      // surface to leak there; the guard still refuses to dispatch them.
-      const leaked = collapsed ? []
-        : Array.isArray(result?.tools)
-          ? wire.filter(hideable)
-          : replaceTools.filter(tool => typeof tools.get === 'function' && tools.get(tool, context.scope) !== undefined)
+      const leaked = Array.isArray(result?.tools)
+        ? wire.filter(hideable)
+        : replaceTools.filter(tool => typeof tools.get === 'function' && tools.get(tool, context.scope) !== undefined)
       if (leaked.length) throw block(context.scope, `assembled surface still contains hidden official tools: ${leaked.join(', ')}`)
       return result
     })

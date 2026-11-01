@@ -229,8 +229,8 @@ The plugin renders routing guidance from what it actually published. The excerpt
 Standard and Cordis replace the official `read`, `glob` and `grep` with these reviewed read/search
 workflows; every enabled mode replaces the Windows official shell. Their names, arguments and results
 differ from the host tools; calls are never translated or forwarded under an official name. A
-`run_code` presentation (PTC) is never masked: its transport is not gated, while the replaced
-official names stay refused in that scope. The replacement contract covers native presentation only.
+`run_code` presentation (PTC) keeps its transport ungated and masks the selected official names in
+that scope, so the generated SDK declaration never offers a call the executor refuses.
 
 <!-- hide-official-scope:start -->
 | Official tool | OPS alternative | Reviewed purpose |
@@ -255,9 +255,13 @@ the corresponding official tools. Removed `replaceTools` and other legacy hiding
 Hiding is per agent scope and only applies while the OPS counterpart is registered and visible as an
 exact OPS-owned Native definition. A foreign registration with the same name or identical schema does
 not qualify, and a missing counterpart leaves the official tool exposed instead of blocking prompt
-assembly. Ownership changes are rechecked even when the schema bytes stay unchanged; Native shadows
-created by the OPS PTC adapter retain their tracked ownership. Disabling a consumer or its
-replacement switch restores the corresponding official tool.
+assembly. A `run_code` presentation (PTC) cannot own such a counterpart by construction, so it is
+masked on the refusal contract instead: every selected official name still visible in that scope is
+hidden — exactly the names the guard refuses — while the program's other SDK sub-calls keep
+dispatching, and a missing counterpart there masks rather than blocking prompt assembly. Ownership
+changes are rechecked even when the schema bytes stay unchanged; Native shadows created by the OPS PTC
+adapter retain their tracked ownership. Disabling a consumer or its replacement switch restores the
+corresponding official tool.
 
 The resident `ops_read_files` is not the counterpart for `read`; Standard and Cordis publish
 `ops_inspect_local_file`, `ops_glob` and `ops_grep` as the reviewed counterparts.

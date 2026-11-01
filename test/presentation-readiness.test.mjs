@@ -50,10 +50,10 @@ for (const official of ['read', 'glob']) for (const hidingFirst of [true, false]
     assert.equal((await request(official)).isError, true, 'selected official dispatch remains blocked')
     ctx.provide('ptcRuntime', { language: 'typescript' })
     const lift = agent.ctx.tools.presentAs('ptc')
-    // A run_code scope cannot own a native counterpart, so it is never masked and
-    // never gated: the model receives the program entry and nothing else.
+    // A run_code scope cannot own a native counterpart, so it is judged on its refusal
+    // contract instead: the model receives the program entry and nothing it refuses.
     assert.deepEqual((await assemble()).tools.map(tool => tool.name), ['run_code'])
-    assert.ok(scopedToolNames(ctx, agent).includes(official), 'a collapsed scope hides nothing')
+    assert.equal(scopedToolNames(ctx, agent).includes(official), false, 'a collapsed scope masks the names it refuses')
     const direct = await request(official)
     assert.equal(direct.isError, true, 'a direct official call stays refused in a collapsed scope')
     await waitFor(() => !scopedToolNames(ctx, agent).includes(publicToolName(raw)))

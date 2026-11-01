@@ -192,7 +192,7 @@ export async function officialToolHidingMountChecks() {
       await assemble(ctx, agent)
     } finally { await shutdown(ctx) }
   })
-  await test('a run_code-presented scope is not gated by native readiness', async () => {
+  await test('a run_code-presented scope masks the official tools it refuses', async () => {
     const { ctx } = await bootHost({ toolsMode: 'ptc' })
     try {
       ctx.provide('ptcRuntime', { language: 'typescript' })
@@ -203,7 +203,23 @@ export async function officialToolHidingMountChecks() {
       const agent = await mint(ctx, 'ptc-scope-not-gated')
       const assembly = await assemble(ctx, agent)
       assert.ok(assembly.tools.some(schema => schema.name === 'run_code'))
-      assert.ok(scopedToolNames(ctx, agent).includes('read'), 'nothing is hidden without a native replacement')
+      // The host renders `tools:sdk` from the same scope view, so an unmasked official
+      // name is a call the model is told to make and the guard refuses (#415).
+      const sdk = assembly.sections.find(section => section.name === 'tools:sdk')?.text ?? ''
+      const declares = name => sdk.includes(`\n  ${name}: `)
+      assert.ok(declares('foreign'), 'the SDK still declares a tool this component serves')
+      for (const name of ['read', 'glob', 'grep']) {
+        assert.equal(declares(name), false, `${name} must not be declared in tools:sdk`)
+        assert.equal(scopedToolNames(ctx, agent).includes(name), false, `${name} is masked in the program scope`)
+      }
+      // The mask covers the presentation that refuses these names, not the deployment:
+      // a Native scope in the same host still advertises them.
+      const native = await mint(ctx, 'ptc-scope-native-sibling')
+      const liftNative = native.ctx.tools.presentAs('native')
+      for (const name of ['read', 'glob', 'grep']) {
+        assert.ok(scopedToolNames(ctx, native).includes(name), `${name} stays advertised to a Native scope`)
+      }
+      liftNative()
       const decision = await ctx.waterfall('tools/pre-execute', { agent, name: 'run_code' }, () => ({ kind: 'allow' }))
       assert.equal(decision.kind, 'allow', 'the transport is not blocked in a collapsed scope')
       for (const name of ['read', 'glob', 'grep']) {
@@ -216,6 +232,10 @@ export async function officialToolHidingMountChecks() {
       ctx.tools.register(tool('post-collapse-probe'))
       const again = await ctx.waterfall('tools/pre-execute', { agent, name: 'run_code' }, () => ({ kind: 'allow' }))
       assert.equal(again.kind, 'allow', 'a later tools/change must not re-block the transport')
+      // Nor may the re-run plan refuse the program's legal sub-calls: the collapsed scope
+      // owns no native-readiness error, so only the refused names stay blocked.
+      const nested = await ctx.waterfall('tools/pre-execute', { agent, name: 'foreign', parent: {} }, () => ({ kind: 'allow' }))
+      assert.equal(nested.kind, 'allow', 'a legal SDK sub-call stays dispatchable after a tools/change')
     } finally { await shutdown(ctx) }
   })
   await test('legacy blanket selections deactivate without guessing replacements or warning', async () => {
@@ -422,7 +442,7 @@ export async function officialToolHidingMountChecks() {
       const agent = await mint(ctx, 'ptc-after-assembly')
       const assembly = await assemble(ctx, agent)
       assert.ok(assembly.tools.some(entry => entry.name === 'run_code'), 'the transport is published')
-      assert.ok(scopedToolNames(ctx, agent).includes('read'), 'a collapsed scope hides nothing')
+      assert.equal(scopedToolNames(ctx, agent).includes('read'), false, 'a collapsed scope masks the names it refuses')
       const decision = await ctx.waterfall('tools/pre-execute', { agent, name: 'run_code' }, () => ({ kind: 'allow' }))
       assert.equal(decision.kind, 'allow', 'the transport stays dispatchable')
       for (const name of ['read', 'glob', 'grep']) {
