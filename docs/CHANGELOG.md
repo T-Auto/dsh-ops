@@ -7,9 +7,26 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-- Adapt the host type boundary and compatibility declaration for the exact DSH 0.2.2-alpha.2 prerelease; keep other unverified 0.2.2 versions excluded (#482).
-- 适配精确版本 DSH 0.2.2-alpha.2 的宿主类型边界和兼容声明；其他尚未验证的 0.2.2 版本仍不接受（#482）。
+- Recover Native discovery from a fresh public assembly when a scoped executor replacement emits no registry change. Keep host 0.2.2-alpha.2 excluded: direct executor checks pass, but its frozen step admission still loses startup and next-step tools. Preserve the isolated compatibility fixtures and evidence for #482.
+- 当作用域 executor 替换未发送注册表通知时，根据新的公共装配恢复 Native discovery。继续排除宿主 0.2.2-alpha.2：直接 executor 检查通过，但其冻结的步骤准入仍遗漏启动和下一步骤的工具。保留 #482 的隔离兼容夹具与证据。
 
+- Keep one build serving both ends of the supported range. The whole suite now passes on the locked `0.2.0-rc.2` graph and on the `0.2.1-rc.5` graph over the same source, and the compatibility assertion names rc.5 alongside the earlier ones. The precheck case that needed the removed `both` mode now pins the seam instead: a registry mode the precheck cannot answer from the scope chain still owes a probe.
+- 同一份构建同时服务受支持范围的两端：整套测试在锁定的 `0.2.0-rc.2` 依赖图与 `0.2.1-rc.5` 依赖图上分别全绿，兼容性断言也把 rc.5 与更早版本并列。原先需要已删除的 `both` 模式的预检用例改为锁住接缝：作用域链解析不出的注册表模式仍要付一次探针。
+- Track the official 0.2.1-rc.5 line: `@deepseek-ai/dsh-*` moves to `0.2.1-rc.5` and Cordis to `4.0.5`. `ToolPresentationMode` no longer carries `both`, so every presentation list, loader description and doc sentence names only `native` and `ptc`; `ConfigFormSnapshot` no longer carries `mode`, so a Client form is editable when it is ready and writable; and `run_code` now asks the host for the directory it executes in, which the test hosts provide only where a suite really runs code. Test fixtures follow rc.5 as well: `invoke` names its `PeerScope`, a user message carries its `source`, and the gateway client is resolved through its condition exports.
+- 跟进官方 0.2.1-rc.5 线：`@deepseek-ai/dsh-*` 升到 `0.2.1-rc.5`，Cordis 升到 `4.0.5`。`ToolPresentationMode` 不再有 `both`，因此所有展示模式清单、加载器描述与文档句子只写 `native` 与 `ptc`；`ConfigFormSnapshot` 不再有 `mode`，Client 表单改为「就绪且可写即可编辑」；`run_code` 现在会向宿主索取执行目录，测试宿主只在真正运行代码的套件里提供。测试夹具同样跟进 rc.5：`invoke` 必须指明 `PeerScope`，用户消息必须携带 `source`，gateway 客户端按其条件导出解析。
+- Retire the last `both` traces rc.5 invalidated: the presentation-mismatch diagnostic no longer offers a mode that does not exist, the docs name only `native` and `ptc`, test scopes request a real presentation instead of the removed one, and the discovery-incremental case that needed a mixed scope retires with it. A ready Host document that refuses writes is now asserted to stay uneditable.
+- 清理 rc.5 使 `both` 失效后残留的痕迹：展示不匹配诊断不再建议一个已不存在的模式，文档只写 `native` 与 `ptc`，测试作用域改为申请真实存在的展示模式，需要混合模式的 discovery-incremental 用例随该模式一起退役；并补上「就绪但拒绝写入的宿主文档不可编辑」的断言。
+
+- Bound an unattributed `tools/change` to one representative probe: the registry notification may name the affected scope, and when the host names none only one session is re-probed synchronously while the rest stay stale until their next `agent/pre-step` or tool execution, both of which check freshly regardless of cached state. `system-prompt/change` takes the same lazy path, a scope the host names but no session knows falls back to the conservative path, and the representative probe no longer cascades into its own scope family. This removes the one-full-assembly-per-live-session cost that made session creation scale with the live count (198 live sessions: 23,143ms and 1,393 assemblies before, 7,097ms and 400 after with only the discovery path bounded; zero live sessions are unchanged at 103-129ms).
+- 未点名作用域的 `tools/change` 收敛为只同步重探一个代表会话：宿主点名时只失效该作用域及其后代；未点名时其余条目保持过期，在各自下一个 `agent/pre-step` 或工具执行时重新观测——这两处无论缓存状态如何都会做新鲜检查。`system-prompt/change` 走同一条惰性路径；宿主点名但无任何会话认识的作用域改走保守路径；代表会话的探测不再连带重探它自己的作用域族。这去掉了「每个存活会话一次完整装配」的成本（198 存活会话：修复前 23,143ms / 1,393 次装配，仅收敛 discovery 路径后 7,097ms / 400 次；零存活会话时两者一致，103-129ms）。
+- Reduce the first Native-to-PTC switch from seven prompt assemblies to four in the 150-tool host fixture. Keep full host presentation probes and their Native withdrawal, but do not rebuild a private probe after withdrawal; rebuild a public assembly only when its PTC publication generation is stale, so next-step SDK declarations still arrive exactly at request two (#490).
+- 在 150 工具宿主夹具中，首次 Native→PTC 切换的提示词装配从 7 次降到 4 次。保留完整宿主展示探针及其 Native 撤回，但私有探针撤回后不再重建；公共装配仅在 PTC 发布代次过期时重建，下一请求的 SDK 声明仍恰好在第二次请求出现（#490）。
+- Stop spending a presentation probe per session on an unattributed `tools/change`. A registration the host reports without naming a scope cannot move a presentation mode — only `presentAs` does — so the publish still runs, but the verdict is deferred and the next real probe confirms it at pre-step. A `system-prompt/change` since the last re-derivation is the evidence that a mode may have flipped, and only then does the next change owe that probe.
+- 未点名作用域的 `tools/change` 不再逐会话花一次展示探针。宿主报告但没有点名作用域的注册不可能移动展示模式——只有 `presentAs` 会——所以发布照常进行，但判定被延后，由下一次真实探针在 pre-step 确认。自上次重推导以来出现过 `system-prompt/change` 才是「模式可能已翻转」的证据，只有那时下一次变化才欠这次探针。
+- Answer a probe whose scope resolves to a non-`ptc` registry mode from the scope chain instead of assembling: `modeFor` is the same source the collapsed section reads, so an assembly for such a scope can only return the verdict already held. A mixed-native deployment still probes, because only `ptc` renders the collapsed section.
+- 作用域链解析出的注册表模式不是 `ptc` 时，直接由链上答案回答而不装配：`modeFor` 正是折叠段落读取的同一来源，对它做装配只能得到已经持有的判定。混合 Native 部署仍照常探测，因为只有 `ptc` 会渲染折叠段落。
+- Scan a scope's Native providers against one registry view: the scan asked the registry once per provider whether that scope resolves the provider's own definition, and `tools.get(name, scope)` rebuilds the entire scope view on every call, so a publish that touches every live scope rebuilt the view once per provider per scope — 82,365 rebuilds for one unattributed `tools/change` over 198 live sessions. Reading the view once and looking the names up in the map it returns removes that whole factor: one unattributed change over 198 sessions drops from 3,970 assemblies' worth of rebuilds and 8,580ms to 1 assembly and 218ms, and `create-ptc` from 1,194 to 6.5 assemblies. A host that serves no view still resolves through `get()`, as `surfaceOf` already does.
+- 作用域的 Native provider 扫描改为只读一次注册表视图：原先对每个 provider 都要问一次该作用域是否解析到它自己那份定义，而 `tools.get(name, scope)` 每次调用都会重建整个作用域视图，于是「一次触及所有存活作用域的发布」的重建次数是「provider 数 × 作用域数」——198 个存活会话上的单次未点名 `tools/change` 就重建了 82,365 次。改为读一次视图、在它返回的 Map 里逐个查名，整个因子消失：198 会话上单次未点名变化从相当于 3,970 次装配的重建量、8,580ms 降到 1 次装配、218ms，`create-ptc` 从 1,194 次装配降到 6.5 次。宿主不提供视图时仍走 `get()` 解析，与 `surfaceOf` 的既有做法一致。
 - Keep Native file routing separate from the independent Bash prompt section, so resident Native + Shell consumers do not repeat Bash guidance or advertise host PowerShell routing. Keep deployment guidance single-owned across Bash, Native and discovery sections, including withdrawal and reload.
 - 将 Native 文件路由提示与独立 Bash 提示段分开，避免 Native + Shell 常驻消费者重复 Bash 指导或把 Bash 宣传为宿主 PowerShell 路由。部署指导在 Bash、Native 与发现提示段之间仅保留一份，并覆盖撤回与重载。
 - Update preset hints and rendered settings UI to describe default Bash/PowerShell coexistence; hiding host PowerShell remains an explicit choice.
@@ -22,6 +39,21 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 从安装本包的 profile 探测 `dsh-win-pwsh7` 联动，宿主进程没有 `DSH_PROFILE_DIR` 也能判定；保存其它开关不再把「跟随检测」写成显式值，而手动拨动联动开关一定落盘。
 - Name the row setting instead of the removed Compatibility mode when an official tool has an OPS replacement.
 - 官方工具被 OPS 替代时，拒绝信息改指行设置，不再提已删除的兼容模式。
+- Stop the discovery refresh/reconcile feedback loop (#526). A tool or prompt
+  registry change made while this plugin's own presentation probe is assembling
+  is now attributed to that probe instead of being applied inline, and each
+  external activation may spend at most one trailing reconciliation; a component
+  that keeps mutating the registry during assembly gets a single warning and its
+  change is dropped. One external `tools/change` now costs one reconcile (two
+  with a one-off in-assembly change) instead of an unbounded boot-time storm.
+- 修复 discovery 的 refresh/reconcile 自激回路（#526）。本插件自身展示探针装配期间发生的
+  工具或 prompt 注册表变更，现在归属到该探针而不再内联应用；每次外部触发最多追加一次尾随
+  收敛；在装配期间持续修改注册表的组件只告警一次，其变更被丢弃。一次外部 `tools/change`
+  现在只产生一次收敛（装配内有一次性变更时为两次），不再是无界的启动期风暴。
+- Bound a presentation withdrawal to one rebuild per request: `claimPresentationRebuild` in `src/publication/presentation.ts` lets the first hook that retires tools re-assemble, and every later hook in the same request keeps the assembly it already holds. Two hooks that each withdrew in one request used to re-assemble in turns, which is the spin behind an idle Host burning a core.
+- 将展示撤回限制为每个请求最多重建一次：`src/publication/presentation.ts` 的 `claimPresentationRebuild` 只允许第一个撤回工具的发钩重建，同一请求中后续钩子保留已有装配。此前两个钩子在同一请求里交替重建，正是空闲宿主吃满单核的自旋。
+- Stop the session shell hook from waiting on reconciles scheduled after its own assembly started, and let it answer an inspection instead of waiting for a publication an inspection cannot change.
+- 会话 shell 钩子不再等待自身装配开始之后才排队的 reconcile；探测（inspection）不再等待它无法改变的发布。
 
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 

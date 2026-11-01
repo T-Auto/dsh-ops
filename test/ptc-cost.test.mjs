@@ -25,7 +25,7 @@ await test('measure PTC enhancement separately from the existing file/shell decl
       inner.provide('subprocess', { spawn() { throw new Error('cost probe must never spawn') } })
     })
     const agents = []
-    for (const mode of ['native', 'ptc', 'both']) {
+    for (const mode of ['native', 'ptc']) {
       const agent = { id: `cost-${mode}`, session: { id: `cost-${mode}`, header: { cwd: process.cwd() } } }
       const scope = createScope(ctx, agent); scopes.push(scope); agent.ctx = scope.ctx
       await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.presentAs(mode) } })
@@ -73,7 +73,7 @@ await test('measure PTC enhancement separately from the existing file/shell decl
     const evidence = { platform: process.platform, node: process.version, samples, deltas,
       limitations: ['No model requests, tokenizer, cache accounting or actual task usage measured.',
         'File/shell are held constant to isolate PTC enhancement; #148 enabled snapshots also added file/shell and cannot establish a PTC-only delta.',
-        'Native/both zero delta concerns this enhancement only, not the file/shell plugin cost.',
+        'Native zero delta concerns this enhancement only, not the file/shell plugin cost.',
         'No net token saving or reproduction of the historical +9462-character snapshot is claimed.'] }
     console.log(JSON.stringify({ declarationCost: deltas }))
     if (process.env.DSH_OPS_PTC_COST_REPORT) fs.writeFileSync(process.env.DSH_OPS_PTC_COST_REPORT, JSON.stringify(evidence, null, 2) + '\n')

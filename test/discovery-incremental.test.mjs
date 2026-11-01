@@ -5,6 +5,7 @@ import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import * as discoveryModule from '../lib/discovery/index.js'
 import { isPresentationProbe } from '../lib/presentation.js'
+import { withToolChange } from '../lib/publication/changes.js'
 import { assert, test, report, waitFor, withTempDir } from './lib/harness.mjs'
 import { bootHost, scopedToolNames, shutdown } from './lib/host.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
@@ -145,7 +146,7 @@ await test('runtime invalidation waits for the real asynchronous Fiber restart t
   } finally { release?.(); await shutdown(ctx) }
 }))
 
-await test('Native, PTC and both mode changes retain scoped ownership and restore on unload', () => withTempDir('discovery-incremental', async dir => {
+await test('Native, PTC and re-declared mode changes retain scoped ownership and restore on unload', () => withTempDir('discovery-incremental', async dir => {
   const { ctx, mint, mount, flush } = await setup(dir)
   try {
     ctx.provide('ptcRuntime', { language: 'typescript' })
@@ -154,7 +155,7 @@ await test('Native, PTC and both mode changes retain scoped ownership and restor
     await flush(parent); await flush(child)
     assert.equal(visible(ctx, parent), false); assert.equal(visible(ctx, child), false)
     assert.equal(visible(ctx, sibling), true)
-    const both = child.ctx.tools.presentAs('both')
+    const native = child.ctx.tools.presentAs('native')
     await flush(child)
     assert.equal(visible(ctx, child), true)
     const second = await mount(child.ctx, { alwaysLoaded: ['stat'] })
@@ -164,7 +165,14 @@ await test('Native, PTC and both mode changes retain scoped ownership and restor
     await second.dispose(); await flush(child)
     assert.equal(visible(ctx, child, 'ops_stat'), false)
     assert.equal((await cached.execute({ path: '.' }, { agent: child })).status, 'rejected')
-    both(); lift(); await flush(parent); await flush(child)
+    native(); lift()
+    if (typeof ctx.get('tools').setExecutor === 'function') {
+      await assert.rejects(ctx.get('systemPrompt').assemble({ scope: child }), /executor.*unavailable/i)
+      // Executor disposal deliberately leaves a tombstone on the newer host.
+      // Replacing each selection is explicit; it never inherits authority.
+      parent.ctx.tools.presentAs('native'); child.ctx.tools.presentAs('native')
+    }
+    await flush(parent); await flush(child)
     assert.equal(visible(ctx, parent), true); assert.equal(visible(ctx, child), true)
   } finally { await shutdown(ctx) }
 }))
@@ -317,24 +325,10 @@ await test('overlapping agent creation preserves new work without reprobes of ol
   } finally { release?.(); await shutdown(ctx) }
 }))
 
-await test('optional PTC runtime mount and unmount refresh failed both-mode probes', () => withTempDir('discovery-incremental', async dir => {
-  const { ctx, mint, flush } = await setup(dir)
-  try {
-    const owner = await mint()
-    const lift = owner.ctx.tools.presentAs('both')
-    // Without a runtime the host rejects this presentation before its waterfall.
-    await waitFor(() => !visible(ctx, owner))
-    const mountRuntime = () => ctx.plugin(inner => inner.provide('ptcRuntime', { language: 'typescript' }))
-    const runtime = await mountRuntime()
-    await flush(owner)
-    assert.equal(visible(ctx, owner), true)
-    await runtime.dispose()
-    await waitFor(() => !visible(ctx, owner))
-    await mountRuntime(); await flush(owner)
-    assert.equal(visible(ctx, owner), true)
-    lift()
-  } finally { await shutdown(ctx) }
-}))
+// rc.5 dropped the `both` presentation: a scope is native or PTC, and a pure PTC
+// scope never publishes discovery. The mixed scope this case needed — a discovery
+// row published beside a PTC transport whose availability tracked `ptcRuntime` —
+// can no longer be constructed, so the case retires with the presentation it tested.
 
 await test('unloading during a probe cannot resurrect registrations or leave change listeners', () => withTempDir('discovery-incremental', async dir => {
   const { ctx, row, counts, mint } = await setup(dir)
@@ -357,6 +351,60 @@ await test('unloading during a probe cannot resurrect registrations or leave cha
     await ctx.serial('tools/change'); await ctx.serial('system-prompt/change'); await tick()
     assert.equal(counts.size, 0)
   } finally { release?.(); await shutdown(ctx) }
+}))
+
+await test('an unattributed prompt change is answered by one scope per family', () => withTempDir('discovery-incremental', async dir => {
+  const { ctx, counts, mint, flush } = await setup(dir)
+  try {
+    // A parent and its child form one family. Clearing every member before the family
+    // is probed would make reconcile walk it member by member, so the count is what
+    // separates "one representative answers" from "every member re-derives".
+    const owner = await mint(), child = await mint(owner)
+    await flush(owner); await flush(child)
+    counts.clear()
+    await ctx.serial('system-prompt/change'); await tick()
+    const spent = [...counts.values()].reduce((sum, count) => sum + count, 0)
+    console.log(`  unattributed prompt change: probes=${spent}`)
+    assert.equal(spent, 1, 'one scope answers for its whole family')
+    assert.ok(visible(ctx, owner) && visible(ctx, child))
+  } finally { await shutdown(ctx) }
+}))
+
+await test('a family sibling retired with its representative re-observes before its next assembly', () => withTempDir('discovery-incremental', async dir => {
+  const { ctx, prompt, counts, mint, flush } = await setup(dir)
+  try {
+    const owner = await mint(), child = await mint(owner)
+    await flush(owner); await flush(child)
+    assert.ok(visible(ctx, child))
+    // Collapse every scope to PTC while each scope's own surface stays put, so the
+    // sibling's cached Native verdict is only retired by the invalidation that follows
+    // the representative probe.
+    const lift = prompt.section({ name: 'tools:ptc-only', order: 20, text: 'PTC only' })
+    await tick()
+    await ctx.serial('system-prompt/change')
+    for (let i = 0; i < 8; i++) await tick()
+    await flush(child)
+    console.log(`  sibling after the representative round: native=${visible(ctx, child)}`)
+    assert.equal(visible(ctx, child), false, 'the sibling must not answer from the verdict the representative round retired')
+    lift()
+  } finally { await shutdown(ctx) }
+}))
+
+await test('a change this package attributes itself never republishes an unrelated verdict', () => withTempDir('discovery-incremental', async dir => {
+  const { ctx, counts, mint, flush } = await setup(dir)
+  try {
+    const owner = await mint(), sibling = await mint()
+    await flush(owner); await flush(sibling)
+    counts.clear()
+    const stranger = {}
+    await withToolChange([stranger], () => ctx.emit('tools/change'))
+    await tick()
+    assert.equal(counts.size, 0, 'a locally attributed scope on no tracked chain cannot have moved a verdict')
+    // The host naming the same scope is the opposite case: registry state this row has
+    // not admitted yet, which takes the conservative path.
+    await ctx.serial('tools/change', { scope: stranger }); await tick()
+    assert.ok([...counts.values()].reduce((sum, count) => sum + count, 0) > 0, 'a host-attributed scope outside every chain must still be treated as unadmitted')
+  } finally { await shutdown(ctx) }
 }))
 
 report('discovery-incremental')

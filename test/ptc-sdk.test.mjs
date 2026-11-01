@@ -5,12 +5,13 @@ import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import FileSystem from '@deepseek-ai/dsh-fs-local'
 import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
 import { createScope } from '@deepseek-ai/dsh-scope'
-import { assertSupportedJsonSchema, jsonSchemaToTs } from '@deepseek-ai/dsh-tools'
-import { assert, test, report, withTempDir, waitFor } from './lib/harness.mjs'
+import { assertSupportedJsonSchema, jsonSchemaToTs } from './lib/host-schema.mjs'
+import { assert, test, report, withTempDir, wait, waitFor } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
 import * as ptcModule from '../lib/ptc/index.js'
 import { withToolChange } from '../lib/tool-changes.js'
+import { isPresentationProbe } from '../lib/presentation.js'
 import { mountNativeCatalogue } from './lib/native-catalogue.mjs'
 import { resolvePtcConfig } from '../lib/config.js'
 import { sdkDefinition, requestedApis } from '../lib/ptc/sdk.js'
@@ -18,9 +19,10 @@ import { legacyComponent } from './lib/legacy-component.mjs'
 const ptc = legacyComponent(ptcModule)
 requireWorker('ptc-sdk')
 let serial = 0
+const tick = () => new Promise(resolve => setImmediate(resolve))
 const visible = (ctx, agent) => ctx.get('tools').schemas(agent).map(tool => tool.name).filter(name => name.startsWith('ops_')).sort()
 async function setup(root, { native = false, config = {}, real = false } = {}) {
-  const { ctx } = await bootHost()
+  const { ctx } = await bootHost({ withWorkingDirectory: true })
   const agents = []; ctx.provide('agents', { list: () => agents })
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem)
   await ctx.plugin(inner => {
@@ -99,9 +101,9 @@ await test('Native/PTC child scopes preserve projections and same-layer file row
   await withTempDir('ptc-projection-scopes', async root => {
     const { ctx, agent, mountFile, component } = await setup(root, { native: true })
     try {
-      const parent = await agent(), child = await agent('native', parent), both = await agent('both'), independent = await agent()
+      const parent = await agent(), child = await agent('native', parent), native = await agent('native'), independent = await agent()
       assert.deepEqual(visible(ctx, parent), ['ops_inspect_local_file', 'ops_load_sdk', 'ops_result'])
-      for (const scope of [child, both]) { await waitFor(() => visible(ctx, scope).includes('ops_grep'), { timeoutMs: 5000, what: 'configured Native advanced tools' }); assert.equal(visible(ctx, scope).includes('ops_load_sdk'), false) }
+      for (const scope of [child, native]) { await waitFor(() => visible(ctx, scope).includes('ops_grep'), { timeoutMs: 5000, what: 'configured Native advanced tools' }); assert.equal(visible(ctx, scope).includes('ops_load_sdk'), false) }
       assert.equal(ctx.get('tools').get('ops_result', child).parameters.properties.action.enum.includes('put'), false)
       const previousNative = ctx.get('tools').get('ops_stat', child)
       const scopedFile = await mountFile(parent.ctx)
@@ -185,24 +187,26 @@ await test('nearer overlapping PTC rows own their scopes without duplicate regis
     } finally { await shutdown(ctx) }
   })
 })
-await test('same-surface both to ptc and unsignalled prompt flips publish the resident SDK', async () => {
+await test('Native to PTC and unsignalled prompt flips publish the resident SDK', async () => {
   await withTempDir('ptc-verdict-transition', async root => {
     const {ctx,agent}=await setup(root)
     try {
-      const owner=await agent('both')
+      const owner=await agent('native')
       assert.equal(visible(ctx,owner).includes('ops_load_sdk'),false)
       owner.lift()
       await owner.ctx.plugin({inject:['tools'],apply(inner){owner.lift=inner.tools.presentAs('ptc')}})
       await step(ctx,owner)
       assert.ok(visible(ctx,owner).includes('ops_load_sdk'))
       let collapse=false
-      const other=await agent('both')
+      const other=await agent('ptc')
       // A waterfall can alter presentation without a tool-registry event.
       ctx.on('system-prompt/assemble',async (_a,context,next)=>{
         const result=await next()
-        if(context.scope!==other || !collapse)return result
-        return {...result,tools:result.tools.filter(t=>t.name==='run_code'),sections:[...result.sections,{name:'tools:ptc-only',text:'PTC only'}]}
+        if(context.scope!==other || collapse)return result
+        return {...result,sections:result.sections.filter(section=>section.name!=='tools:ptc-only')}
       })
+      await step(ctx,other)
+      assert.equal(visible(ctx,other).includes('ops_load_sdk'),false)
       collapse=true
       await step(ctx,other)
       assert.ok(visible(ctx,other).includes('ops_load_sdk'),'fresh verdict change must publish even with no pending SDK selection')
@@ -234,4 +238,87 @@ await test('nested foreign ancestor masks cannot borrow an unrelated OPS attribu
     } finally {await shutdown(ctx)}
   })
 })
+await test('an unattributed tools/change assembles no prompt for a live Native session', async () => {
+  await withTempDir('ptc-unattributed-lazy', async root => {
+    const { ctx, agent } = await setup(root)
+    try {
+      const ptcOwner = await agent(), natives = [await agent('native'), await agent('native'), await agent('native')]
+      await waitFor(() => visible(ctx, ptcOwner).length > 0, { timeoutMs: 5000, what: 'the PTC row publishes' })
+      for (const native of natives) assert.equal(visible(ctx, native).includes('ops_load_sdk'), false, 'a Native row stays Native')
+      const prompt = ctx.get('systemPrompt'), assemble = prompt.assemble.bind(prompt)
+      let assemblies = 0
+      prompt.assemble = context => { ++assemblies; return assemble(context) }
+      // The official host emits `tools/change` with no payload, so nothing is attributable
+      // to a scope. A registry change cannot move a presentation mode, so the change owes
+      // no probe: paying one full assembly per live session is the defect this guards.
+      await ctx.serial('tools/change', {})
+      await wait(300)
+      const expected = typeof ctx.get('tools').modeFor === 'function' ? 0 : natives.length
+      assert.equal(assemblies, expected, 'a host without a mode resolver uses the conservative Native probe fallback')
+      // Losing no capability: the next step still probes and the published rows survive.
+      await step(ctx, ptcOwner)
+      assert.ok(visible(ctx, ptcOwner).length > 0, 'the PTC row stays published across the deferred change')
+      assert.equal(visible(ctx, natives[0]).includes('ops_load_sdk'), false, 'Native sessions stay Native')
+    } finally { await shutdown(ctx) }
+  })
+})
+await test('a prompt change re-derives the verdict of an unattributed registry change', async () => {
+  // `presentAs(mode)` flips a session without a tool-registry event of its own: it
+  // registers or drops the collapsed and SDK prompt sections, and the registry change
+  // it causes carries no scope. The prompt change is the only evidence, so it must
+  // spend the probe the bare change is allowed to skip.
+  await withTempDir('ptc-prompt-flip', async root => {
+    const { ctx, agent } = await setup(root)
+    try {
+      const value = await agent('native')
+      assert.equal(visible(ctx, value).includes('ops_load_sdk'), false, 'a Native row starts Native')
+      value.lift()
+      await value.ctx.plugin({ inject: ['tools'], apply(inner) { value.lift = inner.tools.presentAs('ptc') } })
+      await ctx.serial('tools/change', {})
+      await waitFor(() => visible(ctx, value).includes('ops_load_sdk'), { timeoutMs: 5000, what: 'the flipped session publishes the PTC row' })
+    } finally { await shutdown(ctx) }
+  })
+})
 report('ptc-sdk')
+
+await test('an unattributed registry change defers the verdict instead of spending an assembly on it', async () => {
+  await withTempDir('ptc-verdict-defer', async root => {
+    const { ctx, agent } = await setup(root)
+    try {
+      const owner = await agent('ptc'), prompt = ctx.get('systemPrompt'), probes = new Map()
+      prompt.section({ name: 'verdict-counter', order: 10, text: context => {
+        if (isPresentationProbe(context)) probes.set(context.scope, (probes.get(context.scope) ?? 0) + 1)
+        return ''
+      } })
+      await prompt.assemble({ scope: owner }); await step(ctx, owner)
+      assert.ok(visible(ctx, owner).includes('ops_load_sdk'))
+      // Registering the counter is itself a prompt change; spend that evidence first so
+      // the case below is a registry change with no prompt change behind it.
+      await ctx.serial('tools/change')
+      for (let i = 0; i < 4; i++) await tick()
+      probes.clear()
+      // A registration the host reports without naming a scope moves this scope's surface
+      // — the new name is visible in it — but cannot move the presentation mode, which
+      // only `presentAs` moves. The republish must still happen; the verdict must not cost
+      // an assembly to confirm what no registry event can have changed.
+      await ctx.plugin({ inject: ['tools'], apply(inner) {
+        inner.tools.register({ name: 'verdict_extra', description: '', parameters: { type: 'object' },
+          output: { schema: {}, render: () => [] }, execute: () => ({}) })
+      } })
+      for (let i = 0; i < 4; i++) await tick()
+      console.log('  after unattributed registration: probes=' + (probes.get(owner) ?? 0))
+      assert.equal(probes.get(owner) ?? 0, 0, 'an unattributed registry change must not re-derive a settled verdict')
+      assert.ok(visible(ctx, owner).includes('ops_load_sdk'), 'the deferred change still republishes')
+      // A prompt change is the evidence that a mode may have flipped, so the registry
+      // change that follows it must spend the probe the deferred path would have skipped.
+      await ctx.serial('system-prompt/change')
+      await ctx.plugin({ inject: ['tools'], apply(inner) {
+        inner.tools.register({ name: 'verdict_later', description: '', parameters: { type: 'object' },
+          output: { schema: {}, render: () => [] }, execute: () => ({}) })
+      } })
+      for (let i = 0; i < 4; i++) await tick()
+      console.log(`  after a prompt change and a registration: probes=${probes.get(owner) ?? 0}`)
+      assert.equal(probes.get(owner) ?? 0, 1, 'a prompt change since the last re-derivation owes one verdict probe')
+    } finally { await shutdown(ctx) }
+  })
+})

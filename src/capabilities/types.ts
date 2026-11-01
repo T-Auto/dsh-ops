@@ -3,11 +3,11 @@ import type { JsonSchemaNode, ObjectJsonSchema } from '../adapter/dsh/types.js'
 export type Component = 'file' | 'ptc' | 'shell' | 'discovery'
 /**
  * Where this catalogue publishes a capability. DSH 0.2.2 removed the host's
- * `ToolPresentationMode` in favour of per-call presenters; this vocabulary
+ * `ToolPresentationMode` in favour of scoped executors; this vocabulary
  * describes the plugin's own publication tiers, so it is declared locally and
  * its members are unchanged.
  */
-export type PresentationMode = 'native' | 'ptc' | 'both'
+export type PresentationMode = 'native' | 'ptc'
 export type ParameterSchema = ObjectJsonSchema & Record<string, unknown> & {
   properties: Record<string, JsonSchemaNode>
   required: string[]

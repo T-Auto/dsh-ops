@@ -1,5 +1,5 @@
 /**
- * Fixture adapter: presentation ergonomics across the supported DSH range.
+ * Fixture adapter: presentation ergonomics across supported and investigated DSH versions.
  *
  * The rc2 line drives presentation through the tools service's `mode` config and
  * `tools.presentAs()`; DSH 0.2.2 removed both — presentation became an executor
@@ -9,8 +9,7 @@
  * - rc2 line: nothing to patch — `presentAs` and the single-call `execute` shape
  *   are the service's own API.
  * - 0.2.2: `presentAs(mode)` mounts the published executor plugins (`native` →
- *   `NativeToolExecutor`, `ptc` → `PtcExecutor`, `both` → one composite presenting
- *   native schemas alongside the reserved transport), and the rc2 single-call
+ *   `NativeToolExecutor`, `ptc` → `PtcExecutor`), and the rc2 single-call
  *   `tools.execute({agent, callId, name, arguments, signal})` shape is translated
  *   into one `ToolBatchInput` batch.
  *
@@ -18,39 +17,7 @@
  * @module dsh-ops/test/tools-presentation
  */
 
-/** The reserved transport name every 0.2.2 executor treats as presentation infrastructure. */
-const RUN_CODE_NAME = 'run_code'
-
-/** One executor presenting native schemas AND the program transport (rc2 `both`). */
-function bothExecutor(ctx, nativeModule, ptcModule) {
-  const native = new nativeModule.NativeToolExecutor(ctx)
-  const ptc = new ptcModule.PtcExecutor(ctx)
-  return {
-    sections: ptc.sections,
-    describe(tools) {
-      const nativeView = native.describe(tools)
-      const ptcView = ptc.describe(tools)
-      return {
-        schemas: [...nativeView.schemas, ...ptcView.schemas],
-        knownNames: [...(nativeView.knownNames ?? nativeView.schemas.map(schema => schema.name)), ...(ptcView.knownNames ?? [])],
-      }
-    },
-    async execute(input) {
-      const direct = { ...input, calls: input.calls.filter(call => call.name !== RUN_CODE_NAME) }
-      const program = { ...input, calls: input.calls.filter(call => call.name === RUN_CODE_NAME) }
-      const [nativeBatch, ptcBatch] = await Promise.all([
-        direct.calls.length ? native.execute(direct) : undefined,
-        program.calls.length ? ptc.execute(program) : undefined,
-      ])
-      const settled = new Map([...nativeBatch?.results ?? [], ...ptcBatch?.results ?? []].map(entry => [entry.callId, entry]))
-      return {
-        results: input.calls.map(call => settled.get(call.id)).filter(entry => entry !== undefined),
-        additionalContexts: [...nativeBatch?.additionalContexts ?? [], ...ptcBatch?.additionalContexts ?? []],
-        concluded: (nativeBatch ?? ptcBatch ?? { concluded: false }).concluded,
-      }
-    },
-  }
-}
+const installed = new WeakMap()
 
 /**
  * Detect the installed tools architecture and patch what the 0.2.2 line removed.
@@ -62,14 +29,21 @@ export async function installPresentationCompat(toolsModule) {
   const prototype = tools.ToolsService?.prototype ?? tools.default?.prototype
   if (prototype === undefined) return false
   if (typeof prototype.setExecutor !== 'function') return false // rc2 line: native support.
+  if (installed.has(prototype)) return installed.get(prototype)
+  const installation = installExecutorAdapters(prototype)
+  installed.set(prototype, installation)
+  return installation
+}
+
+async function installExecutorAdapters(prototype) {
   const [nativeModule, ptcModule] = await Promise.all([
     import('@deepseek-ai/dsh-tool-executor-native'),
     import('@deepseek-ai/dsh-tool-executor-ptc'),
   ])
   prototype.presentAs = function presentAs(mode) {
+    if (mode !== 'native' && mode !== 'ptc') throw new Error('Unsupported executor presentation: ' + mode)
     const executor = mode === 'native' ? new nativeModule.NativeToolExecutor(this.ctx)
-      : mode === 'both' ? bothExecutor(this.ctx, nativeModule, ptcModule)
-        : new ptcModule.PtcExecutor(this.ctx)
+      : new ptcModule.PtcExecutor(this.ctx)
     return this.setExecutor(executor)
   }
   const batchExecute = prototype.execute

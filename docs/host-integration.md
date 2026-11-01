@@ -92,7 +92,7 @@ use the PTC SDK loader under the host's `run_code` presentation. Check the scope
 assembled tools and presentation, not just a global registry or a prompt section
 name. An empty discovery section alone does not identify the cause.
 
-Host support declarations and component resource exports are covered by the current adapter boundary. The package declares and tests the bounded range `>=0.2.0-rc.2 <0.2.2-0 || 0.2.2-alpha.2`, including rc2, rc3, rc4, the 0.2.1 stable line and the validated `0.2.2-alpha.2` prerelease; the isolated host matrix compares the rc4 graph against the locked rc2 control. The text-only PTC hook adaptation is not used as the sole compatibility proof.
+Host support declarations and component resource exports are covered by the current adapter boundary. The package declares and tests the bounded range `>=0.2.0-rc.2 <0.2.2-0`, including rc2, rc3, rc4, rc5 and the 0.2.1 stable line. Compatibility is validated by running the whole suite twice over the same source: once on `0.2.0-rc.2` and once on `0.2.1-rc.5`. The version range itself is re-checked on every run by `test/host-metadata.test.mjs`. Where rc.5 removed a host feature, the source reads the surviving one — `presentations` names only `native` and `ptc`, a Client form is editable when it is ready and writable, and `run_code` finds its directory through the adapter's working-directory fallback. The text-only PTC hook adaptation is not used as the sole compatibility proof.
 
 The original #346 report also describes an enabled row and a stalled publication
 chain. The profile checks above do not prove that failure fixed. If the row is
@@ -100,3 +100,5 @@ enabled and the expected scoped tool remains absent, capture a minimal profile,
 exact versions, Native/PTC mode, affected scoped schemas, and a timed lifecycle
 trace showing the pending publication. Restart/new-session results are useful
 comparisons, not proof that an indefinite hot-mount stall cannot recur.
+
+The 0.2.2-alpha.2 investigation is [tracked separately](host-022-validation.md). Its step-admission regressions remain unresolved, so it is not in the supported range.

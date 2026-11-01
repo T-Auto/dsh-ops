@@ -50,7 +50,7 @@ const put = (ctx, owner, root, items) => invoke(ctx, WORKER, 'result', { action:
 
 await test('one catalogue entry exposes distinct SDK-valid Native and PTC result contracts', () => {
   const entry = CAPABILITIES.filter(value => value.rawName === 'result')
-  assert.equal(entry.length, 1); assert.deepEqual(entry[0].presentations, ['native', 'ptc', 'both'])
+  assert.equal(entry.length, 1); assert.deepEqual(entry[0].presentations, ['native', 'ptc'])
   assert.equal(entry[0].nativeProjection.component, 'file')
   assertSupportedJsonSchema(NATIVE_RESULT_PARAMETERS); assertSupportedJsonSchema(STORAGE_REFERENCE)
   assert.deepEqual(NATIVE_RESULT_PARAMETERS.properties.action.enum, ['page', 'release'])
@@ -210,6 +210,7 @@ await test('agent-scoped file rows isolate sibling pagers and yield only their e
       await waitFor(() => !ctx.get('tools').get('ops_grep', late) && current(late)?.parameters.properties.action.enum.includes('put'), { timeoutMs: 5000, what: 'file mounted after PTC' })
       await component.dispose()
       for (const value of [left, late]) { value.liftPresentation(); await value.ctx.plugin({ inject: ['tools'], apply(inner) { value.liftPresentation = inner.tools.presentAs('native') } }) }
+      for (const value of [left, late]) await ctx.get('systemPrompt').assemble({ scope: value })
       await waitFor(() => current(left)?.parameters.properties.action.enum.length === 2 && current(late)?.parameters.properties.action.enum.length === 2, { timeoutMs: 5000, what: 'Native peer resumes on PTC unload' })
       await leftFile.dispose(); assert.equal(current(left), undefined)
       assert.equal(current(right).parameters.properties.action.enum.length, 2)

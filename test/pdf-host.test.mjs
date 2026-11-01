@@ -1,7 +1,7 @@
 /** Real Native/PTC PDF observations preserve restricted text scope and bounded page recovery. */
 import fs from 'node:fs'
 import path from 'node:path'
-import { assertSupportedJsonSchema, jsonSchemaToTs } from '@deepseek-ai/dsh-tools'
+import { assertSupportedJsonSchema, jsonSchemaToTs } from './lib/host-schema.mjs'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { shutdown } from './lib/host.mjs'
 import { requireWorker } from './lib/boundary.mjs'

@@ -13,7 +13,7 @@ import * as discovery from '../../lib/discovery/index.js'
 import * as ptc from '../../lib/ptc/index.js'
 let serial = 0
 export async function documentHost(root, names, { real = false } = {}) {
-  const { ctx } = await bootHost()
+  const { ctx } = await bootHost({ withWorkingDirectory: true })
   const agents = []; ctx.provide('agents', { list: () => agents })
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem)
   await ctx.plugin(inner => {

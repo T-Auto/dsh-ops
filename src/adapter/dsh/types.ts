@@ -19,7 +19,7 @@ export type { AssembleContext, PromptAssembly, SystemPrompt } from '@deepseek-ai
  * interface), while DSH 0.2.2 splits the presentation from the assembly and
  * attaches tools after the waterfall. Both satisfy these fields, so assemble-path
  * code that judges sections and contexts compiles against either end of the
- * declared host range without importing a version-specific name.
+ * investigated host layouts without importing a version-specific name.
  */
 export interface PromptPresentation {
   sections: ReadonlyArray<{ name: string; text: string }>
