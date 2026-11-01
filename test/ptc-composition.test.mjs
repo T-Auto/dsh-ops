@@ -37,6 +37,13 @@ async function fixture(root, run) {
     agent.ctx = createScope(ctx, agent).ctx
     await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.presentAs('ptc') } })
     agents.push(agent); await ctx.serial('agent/created', { agent })
+    // Exercise the real provider-call boundary: publication and SDK materialization settle here.
+    // Direct execute immediately after agent creation can race Node 22's initial reconciliation.
+    await ctx.waterfall('agent/pre-step', { agent, messages: [], turn: 1, step: 1,
+      signal: new AbortController().signal }, () => Promise.resolve({ kind: 'continue' }))
+    const prompt = await ctx.get('systemPrompt').assemble({ scope: agent })
+    const sdk = prompt.sections.find(section => section.name === 'tools:sdk')?.text ?? ''
+    for (const name of ['ops_inspect_local_file','ops_read_files','ops_edit_file','ops_replace']) assert.ok(sdk.includes(name), name)
     const call = async code => {
       const result = await ctx.get('tools').execute({ name: 'run_code', callId: `composition-${++serial}`,
         agent, signal: new AbortController().signal, arguments: { description: 'Verify read-to-edit composition', code } })
