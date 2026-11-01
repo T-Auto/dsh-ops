@@ -14,7 +14,7 @@ import { createNativeReadDedup } from './read-dedup.js'
 
 type Execution = Parameters<ToolDefinition['execute']>[1]
 type NativeToolName = FileToolName | 'result'
-export interface NativeRuntimeConfig { workerPath?: string; required?: boolean; denyCredentialReads?: boolean; toolCallTimeoutMs?: number }
+export interface NativeRuntimeConfig { workerPath?: string; required?: boolean; denyCredentialReads?: boolean; fileReader?: 'native' | 'inproc'; toolCallTimeoutMs?: number }
 type Reporter = (message: string, level?: string) => void
 export class NativeFileTools {
   readonly ctx: Context

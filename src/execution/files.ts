@@ -19,6 +19,7 @@ import { resolveWorker } from './runtime.js'
 import { FILE_MUTATIONS } from '../policy.js'
 import { normalizeArguments } from '../capabilities/arguments.js'
 import { resolveReadFiles } from './read-files.js'
+import { readFilesCompat } from '../file/parallel-read.js'
 import { withCallBudget, CallBudgetError } from '../kernel/call-budget.js'
 import { withResultSession } from '../kernel/result-lifecycle.js'
 import { resultStorage } from '../kernel/result-storage.js'
@@ -128,6 +129,19 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
         return credentialDenied(refusal.message)
       }
     }
+  }
+  // `fileReader: 'inproc'` answers read_files without spawning the worker. The credential fence above
+  // has already run on every requested path, so this branch reads nothing the native branch would
+  // have refused. It does NOT emit host `fs/observed` — the native read is what the host's
+  // read-before-edit table records — which is why the default stays `native`.
+  if (tool === 'read_files' && config?.fileReader === 'inproc') {
+    const readings = reads?.files ?? []
+    return await readFilesCompat(readings.map(item => {
+      const range: { path: string, offset?: number, limit?: number } = { path: String(item.path) }
+      if (Number.isSafeInteger(item.offset)) range.offset = Number(item.offset)
+      if (Number.isSafeInteger(item.limit)) range.limit = Number(item.limit)
+      return range
+    })) as unknown as Record<string, unknown>
   }
   const destination = ['copy', 'move'].includes(tool) ? absoluteTarget(args?.to, cwd) : undefined
   if (['copy', 'move'].includes(tool) && !destination) return failure('INVALID_ARGUMENT', 'to must be a non-empty path.')
