@@ -66,7 +66,10 @@ if (process.platform === 'win32') {
         const result=envelopeOf(await callTool('write_file',{path:target,content:'published',expectedRevision:'absent'},{root}),assert)
         assert.equal(result.status,'completed',JSON.stringify(result))
         const dacl=name=>ps(`(Get-Acl -LiteralPath (Join-Path $env:OPS_ACL_ROOT '${name}')).GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]::Access)`)
-        assert.equal(dacl(name+'-ops'),dacl(name+'-reference'))
+        // CreatePrivateObjectSecurityEx marks AI; CreateFile omits that provenance bit on
+        // some Windows runners. Keep protection (P) and every inherited/explicit ACE exact.
+        const comparable=value=>value.replace(/^D:AI/,'D:')
+        assert.equal(comparable(dacl(name+'-ops')),comparable(dacl(name+'-reference')))
         assert.equal(fs.readFileSync(target,'utf8'),'published')
         fs.unlinkSync(target); fs.unlinkSync(reference)
       }
