@@ -142,14 +142,22 @@ try {
     assert.equal(calls.length, 2); assert.equal(calls[0].envelope.request.windows_paths, true)
     assert.equal(Object.hasOwn(calls[0].envelope, 'storage'), false)
     assert.ok(calls[1].envelope.budget.timeoutMs < calls[0].envelope.budget.timeoutMs)
-    if (startingMode === 'workspace-write' && !value.reference) {
+    if (typeof ctx.get('sandbox')?.prepareResultStorage === 'undefined' && !value.reference) {
       assert.equal(calls[1].envelope.storage, undefined)
+      seen.length = 0
       delete process.env.DSH_OPS_WSL_READS
-      const baseline = await call('read_files', { files: [{ path: 'large.txt' }] })
-      process.env.DSH_OPS_WSL_READS = '1'
+      let baseline
+      try { baseline = await call('read_files', { files: [{ path: 'large.txt' }] }) }
+      finally { process.env.DSH_OPS_WSL_READS = '1' }
+      const baselineCalls = seen.filter(item => item.envelope)
+      assert.equal(baselineCalls.length, 1); assert.equal(baselineCalls[0].envelope.storage, undefined)
+      assert.equal(seen.some(item => item.argv.includes('--distribution')), false)
       assert.deepEqual(value, baseline)
       assert.equal(value.complete, false); assert.equal(value.truncated, true)
-      console.log('Verified existing UNC cache-preparation limitation: byte-clipped fallback exactly matches opt-out Windows result')
+      const reason = startingMode === 'danger-full-access'
+        ? 'legacy full-access host has no cache-only preparation capability'
+        : 'legacy host cannot prepare the UNC cache'
+      console.log(`Verified ${reason}: no storage authority; byte-clipped fallback exactly matches opt-out Windows result`)
       return
     }
     assert.ok(value.reference?.refId, JSON.stringify({ ...value, items: [] })); assert.ok(calls[1].envelope.storage)
