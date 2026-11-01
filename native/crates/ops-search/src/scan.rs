@@ -127,7 +127,9 @@ impl Scan {
                 self.skip("excluded", file, false);
                 continue;
             }
-            if file_path::validate_name(&name).is_err() { self.skip("invalid-path", false, true); continue; }
+            if file_path::validate_name(&name).is_err()
+                || (request.windows_paths && ops_protocol::windows_paths::validate_name(&name).is_err())
+            { self.skip("invalid-path", false, true); continue; }
             let started = self.profile.start();
             let metadata = directory.symlink_metadata(&name);
             self.profile.record("relativeMetadata", started);
@@ -177,6 +179,22 @@ mod tests {
         for name in ["a", "b", "c"] { fs::write(root.join(name), "hit\n").unwrap(); }
         let request = serde_json::from_value(json!({"root":root,"scope":"scan-test","tool":"grep","args":{}})).unwrap();
         (root, request)
+    }
+    #[cfg(unix)]
+    #[test]
+    fn windows_delegation_keeps_reserved_names_as_scan_gaps_and_denials_case_insensitive() {
+        let (root, mut request) = fixture();
+        fs::write(root.join("NUL.txt"), "must not appear").unwrap();
+        fs::create_dir(root.join("Private")).unwrap();
+        fs::write(root.join("Private/token.txt"), "must not appear").unwrap();
+        request.windows_paths = true;
+        request.deny_roots = vec![root.join("private").to_string_lossy().into_owned()];
+        let mut scan = Scan::new(); let mut paths = Vec::new();
+        scan.walk(&root, &[], &request, |path, _, _| { paths.push(path.file_name().unwrap().to_owned()); Ok(()) }).unwrap();
+        assert_eq!(paths.len(), 3); assert!(!scan.complete());
+        assert_eq!(scan.reasons.get("invalid-path"), Some(&1));
+        assert_eq!(scan.reasons.get("credential"), Some(&1));
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn file_entry_time_and_io_limits_never_claim_a_complete_scan() {
