@@ -7,6 +7,10 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Ship the engine as source under `engine/` instead of a tarball: it carries its own `.d.ts`, `engine/package.json` pins the CommonJS module format so `lib/` can reach it from an ESM package, and `src/ptc/engine.ts` is the one typed door. `package.json` publishes the directory.
+- 引擎以源码形态入库 `engine/`，不再走压缩包：自带 `.d.ts`，`engine/package.json` 固定 CommonJS 模块格式，使 ESM 包的 `lib/` 能直接访问；`src/ptc/engine.ts` 是唯一的类型化入口，`package.json` 会随包发布该目录。
+- A missing engine file now fails the build instead of failing at import time in the consumer's process.
+- 引擎文件缺失现在会让构建失败，而不是在消费方进程里以导入错误暴露。
 - Detect the `dsh-win-pwsh7` companion from the profile that installed this package, so the row's link also resolves in the host process, which gets no `DSH_PROFILE_DIR`; a save no longer freezes a detected link into an explicit value, while a flipped link is always written.
 - 从安装本包的 profile 探测 `dsh-win-pwsh7` 联动，宿主进程没有 `DSH_PROFILE_DIR` 也能判定；保存其它开关不再把「跟随检测」写成显式值，而手动拨动联动开关一定落盘。
 - Name the row setting instead of the removed Compatibility mode when an official tool has an OPS replacement.
