@@ -1,17 +1,18 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
-import { callTool, envelopeOf, requireWorker } from './lib/boundary.mjs'
+import { callTool, envelopeOf } from './lib/boundary.mjs'
+import { readFilesCompat } from '../lib/file/parallel-read.js'
 import { renderNative, NATIVE_OUTPUT_BYTES } from '../lib/file/native/render.js'
 import { compactRanges } from '../lib/file/native/ranges.js'
-requireWorker('native-ranges')
 const render = (args, value) => renderNative('read_files', args, value)
-const observed = (root, args) => callTool('read_files', args, { root, readOnly: true }).then(reply => envelopeOf(reply, assert))
+const observed = (root, args) => readFilesCompat(args.files.map(file => ({ ...file, path: path.resolve(root, file.path) })))
 await test('real bounded ranges keep exact body, shared path base, full revisions and per-file continuation', () => withTempDir('compact-ranges', async root => {
   const inputs = ['one\r\ntwo\rthree\nlast\n', '', 'α\u2028β\u0085γ\n😀\nlast']
   const files = inputs.map((body, index) => { const target = path.join(root, `路径 ${index}.txt`); fs.writeFileSync(target, body); return { path: target, offset: 1, limit: 2 } })
   const args = { files }, value = await observed(root, args), before = JSON.stringify(value), text = render(args, value)
-  assert.ok(text.startsWith('[Base: ' + JSON.stringify(root) + ']'))
+  // The in-process reader normalizes receipt paths to POSIX; the worker returned native separators.
+  assert.ok(text.startsWith('[Base: ' + JSON.stringify(root.replace(/\\/g, '/')) + ']'))
   for (const [index, item] of value.items.entries()) {
     assert.ok(text.includes(`=== FILE: ${JSON.stringify(path.basename(files[index].path))}`))
     assert.ok(text.includes('revision=' + item.revision))

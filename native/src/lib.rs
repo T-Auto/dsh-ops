@@ -37,7 +37,7 @@ fn execute(dir: &Dir, request: &Request) -> Result<Value> {
     // File reads/searches do not create or consult the durable audit store.
     // This is important for read-only sessions and keeps observation separate
     // from mutation audit records.
-    if matches!(request.tool.as_str(), "inspect_local_file" | "read_files" | "glob" | "grep" | "replace" | "write_file" | "edit_file" | "diff" | "stat" | "copy" | "move" | "remove") {
+    if matches!(request.tool.as_str(), "inspect_local_file" | "glob" | "grep" | "replace" | "write_file" | "edit_file" | "diff" | "stat" | "copy" | "move" | "remove") {
         return if matches!(request.tool.as_str(), "glob" | "grep" | "replace") {
             ops_search::dispatch(&request)
         } else {

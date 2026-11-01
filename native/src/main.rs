@@ -4,7 +4,7 @@ use serde_json::json;
 use std::io::{Read, Write};
 
 fn may_mutate(request: &Request) -> bool {
-    !request.read_only && !matches!(request.tool.as_str(), "inspect_local_file" | "read_files" | "read_table" | "read_docx" | "read_pdf" | "glob" | "grep" | "diff" | "stat")
+    !request.read_only && !matches!(request.tool.as_str(), "inspect_local_file" | "read_table" | "read_docx" | "read_pdf" | "glob" | "grep" | "diff" | "stat")
         && !(request.tool == "result" && request.args.get("action").and_then(serde_json::Value::as_str) == Some("page"))
 }
 fn main() {
