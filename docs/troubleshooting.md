@@ -1,5 +1,9 @@
 # Troubleshooting
 
+## PowerShell ConstrainedLanguage blocks workspace preparation
+
+On a Windows host with ConstrainedLanguage enforced, the trusted workspace preparation script cannot use the identity and DACL APIs it needs. OPS now reports `DSH_OPS_CONSTRAINED_LANGUAGE` before those calls, and classifies older PowerShell language-mode errors by the same cause. No ACL preparation was completed; restricted commands remain blocked at that prerequisite. This diagnostic does not change the language policy, session permissions, or confinement. Ask the host administrator for a supported preparation path; `-ExecutionPolicy Bypass` does not remove ConstrainedLanguage restrictions. Ordinary file reads that do not require this preparation keep their existing policy path.
+
 Start here when installation fails, an error is unclear, or behaviour is unexpected.
 
 ---
