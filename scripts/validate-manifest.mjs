@@ -10,7 +10,8 @@
  * prompt section the manifest advertises actually being registered by name, and
  * the display metadata the Plugin Manager reads without activating the plugin
  * (icon and locale documents) being real, package-relative, and published by the
- * `files` whitelist.
+ * `files` whitelist, and no `prepare`/`postinstall` lifecycle hook shipping a
+ * channel this package cannot satisfy.
  *
  * @module dsh-ops/validate-manifest
  */
@@ -551,6 +552,22 @@ check(
   unpublishable.length === 0,
   'the files whitelist excludes build output, test fixtures, and the gate scripts',
   `got: ${unpublishable.join(', ')}`,
+)
+
+// The `git+https` channel is not a supported install channel, and no lifecycle hook
+// may pretend otherwise (#524). `^prepare$` runs for a git-hosted dependency after
+// pnpm unpacks it, so adding one would "fix" the missing `lib/` — but the native
+// worker is staged by `npm run build:ptc`, which needs cargo, and `prepack` never
+// stages it. A git install would still resolve no worker and silently publish no
+// file tools, while every install would take on a full TypeScript build.
+// `postinstall` is refused for the same reason `bin/check-release.mjs` refuses it:
+// the payload arrives as a declared optional dependency, never from a download hook.
+const LIFECYCLE_HOOKS = /^(?:pre|post)?(?:prepare|install)$/u
+const lifecycleHooks = Object.keys(pkg.scripts ?? {}).filter((name) => LIFECYCLE_HOOKS.test(name))
+check(
+  lifecycleHooks.length === 0,
+  'package.json declares no prepare/postinstall hook: the git channel cannot be fixed with one',
+  `found ${lifecycleHooks.join(', ')}; docs/upgrading.md explains why (S4 in the #524 plan) and which channel is supported`,
 )
 
 check(

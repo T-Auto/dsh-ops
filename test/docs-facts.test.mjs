@@ -68,4 +68,20 @@ await test('docs name the object of each published checksum and keep the checker
     'the checker the docs recommend no longer exists')
 })
 
+// #524: the two facts reported from a failing machine — an unmapped Windows `open`
+// error, and the Git channel — are documented as a bilingual pair, because a reader
+// who only finds the English section will re-file the same issue. The assertion is
+// deliberately structural (the same command string in both files, each in its own
+// language's words) rather than a wording check: it fails when one language loses the
+// section, and stays green through any rewrite that keeps the diagnostic entry point.
+await test('both languages document the unmapped pnpm-store error and the Git channel', () => {
+  // Tokens no honest rewrite drops: the error code the report names, the libuv text it
+  // quotes, the executable recovery step, and the reason the Git channel cannot work.
+  const anchors = ['ERR_PNPM_UNKNOWN', 'unknown error, open', 'pnpm --store-dir', 'npm run build:ptc', 'prepare']
+  for (const file of ['docs/upgrading.md', 'docs/升级与卸载.md']) {
+    const text = read(file)
+    for (const anchor of anchors) assert.ok(text.includes(anchor), `${file} lost "${anchor}"`)
+  }
+})
+
 report('docs-facts')

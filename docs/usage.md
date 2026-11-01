@@ -121,6 +121,19 @@ dsh plugin --profile dsh-tui add dsh-ops
 
 The ordinary DSH CLI cannot manage the reserved `desktop` profile; do not confuse it with the desktop app's bundled entry point.
 
+### Which channels install a loadable plugin
+
+The registry target is the only supported install channel: `add dsh-ops` resolves the
+published tarball, which carries the compiled `lib/` and every staged `runtime/` target.
+A Git or source checkout is **not** a channel. `.gitignore` keeps `lib/` and `runtime/` out
+of the repository, and the native worker is staged by `npm run build:ptc`, which needs cargo
+and the full toolchain. `npm ci && npm run build && npm run build:ptc && npm pack` produces a
+tarball you can install; `git+https://…` on its own produces a package that loads without
+tools, because the file tools stay unpublished while no worker resolves. `package.json`
+therefore declares `prepack` and no `prepare` or `postinstall` hook, and the manifest gate
+fails if one appears. See
+[installing from Git is not a supported channel](upgrading.md#installing-from-git-is-not-a-supported-channel).
+
 ### Host compatibility and display metadata
 
 The package declares the bounded DSH compatibility range `>=0.2.0-rc.2 <0.2.2-0` in both `engines.dsh` and the legacy DSH peer dependency. This includes `0.2.0-rc.2`, `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4` and the `0.2.1` stable line, while rejecting `0.2.0-rc.1`, `0.2.2` prereleases and `0.3.0`. The rc4 host graph is validated separately in the isolated host matrix; the plugin's native adapter preserves the existing Cordis tool, prompt, policy, subprocess, PTC and UI behavior.

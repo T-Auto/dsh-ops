@@ -99,6 +99,10 @@ dsh plugin --profile dsh-tui add dsh-ops
 
 A regular DSH CLI cannot manage the reserved `desktop` profile; do not confuse it with the desktop app's own entry point.
 
+The registry target is the only install channel. `git+https` and source checkouts install
+without `lib/` or `runtime/`, so the plugin loads without tools; see
+[installing from Git is not a supported channel](docs/upgrading.md#installing-from-git-is-not-a-supported-channel).
+
 #### Update
 
 Host compatibility is declared for DSH **0.2.0-rc.2 and 0.2.1-rc.2**. See

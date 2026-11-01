@@ -86,6 +86,12 @@ installed while building, since they include the compiler. The published tarball
 compiled `lib/` and its assets, excludes `src/`, and does not require consumers to compile the
 plugin.
 
+`prepack` compiles `lib/` but does not stage the native worker, so a Git installation can
+never ship `runtime/` on its own — see [installing from Git](upgrading.md#installing-from-git-is-not-a-supported-channel).
+Adding a `prepare` hook would not repair that channel: it would compile `lib/` on every Git
+install and still leave the worker unstaged, because staging needs cargo. The manifest gate in
+`scripts/validate-manifest.mjs` fails if `prepare` or `postinstall` appears in `package.json`.
+
 ## Building the native worker
 
 Most suites drive the real native worker. Without one they cannot answer, and they **skip**:

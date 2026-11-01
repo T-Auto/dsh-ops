@@ -72,6 +72,49 @@ removed the dependency or payload. Verify the final profile manifest, bundle
 selection and installed package state through the official manager. Transaction
 rollback and registry persistence belong to DSH's package manager.
 
+## An unmapped Windows error while pnpm fetches or unpacks
+
+`ERR_PNPM_UNKNOWN` reporting `UNKNOWN: unknown error, open '<path>'` is not a
+dsh-ops failure (#524). `UNKNOWN` is how libuv reports a Windows error its table
+has no name for, so pnpm's failing `open` returned neither `EPERM` nor
+`EACCES`. When the path is under `pnpm-store/v11/tmp/…`, the file being written
+is whatever the package manager is unpacking at that moment — **not necessarily
+this plugin**, and never a dsh-ops code path. dsh-ops calls no package manager
+during installation.
+
+The same coordinates can be reproduced elsewhere: the same Git tarball unpacks
+normally from a store on `C:` and from a store on `D:`, while the failing
+machine's store lived on another volume. Work through these in order and re-run
+the identical command after each step:
+
+1. `pnpm store prune` and retry — a half-written temporary entry is not reused.
+2. Check security software's quarantine or protection history for the file named
+   in the error; an unpacked document can be removed between `open` and the
+   next retry, which retrying cannot fix. Exclude the store or the profile
+   directory temporarily to test that theory, then put the exclusion back.
+3. Move the store to another volume, for example
+   `pnpm --store-dir D:/pnpm-store add <the same spec>`. Success there
+   localises the fault to the volume or its filesystem, not to the package.
+4. Only then open an issue, with the pnpm version, store path and the exact
+   failing path.
+
+Do not disable `minimumReleaseAge`, integrity checks or the registry policy to
+work around this error: none of them produce an unmapped `open` failure, and
+turning them off removes the checks that would notice a real substitution.
+
+## Installing from Git is not a supported channel
+
+`git+https://github.com/T-Auto/dsh-ops.git` (or any source checkout) cannot
+produce a loadable dsh-ops package. `.gitignore` excludes `lib/` and
+`runtime/`; `prepack` compiles `lib/` but never stages the native worker, and
+staging it (`npm run build:ptc`) needs cargo and the full toolchain. Adding a
+`prepare` hook would compile `lib/` for every git install and still leave
+`runtime/` empty, so the file tools would publish nothing after an install that
+looks successful. This package therefore declares no `prepare` or `postinstall`
+hook, and `scripts/validate-manifest.mjs` fails if one appears. Install the
+published registry target (`add dsh-ops`), or build and `npm pack` a checkout
+yourself; see [contributing](CONTRIBUTING.md#building-the-plugin-and-installing-from-source).
+
 ## Moving from 0.4.x to 0.5.x
 
 | Change | Action after upgrade |
