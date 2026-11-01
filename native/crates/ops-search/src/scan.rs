@@ -11,6 +11,7 @@ const MAX_FILE_BYTES: usize = 32 * 1024 * 1024;
 const MAX_WALK_ENTRIES: usize = 100_000;
 
 pub struct Scan {
+    pub profile: crate::profile::Profile,
     pub scanned: usize,
     pub skipped: usize,
     pub reasons: BTreeMap<String, usize>,
@@ -26,7 +27,7 @@ pub struct Scan {
 }
 impl Scan {
     pub fn new() -> Self {
-        Self { scanned: 0, skipped: 0, reasons: BTreeMap::new(), gap: false, failed: 0, stopped: None,
+        Self { profile: crate::profile::Profile::new(), scanned: 0, skipped: 0, reasons: BTreeMap::new(), gap: false, failed: 0, stopped: None,
             hash: Sha256::new(), started: Instant::now(), timeout: SCAN_TIMEOUT,
             max_files: MAX_SCAN_FILES, entries: 0, bytes: 0 }
     }
@@ -47,26 +48,41 @@ impl Scan {
     }
     pub fn read(&mut self, path: &Path) -> Option<Vec<u8>> {
         let read = (|| -> Result<Option<Vec<u8>>> {
-            let target = file_path::checked(path.to_str().ok_or_else(|| Failure::new("INVALID_ARGUMENT", "Non-UTF8 path"))?)?;
-            let mut file = file_path::read_file(&target)?;
+            let started = self.profile.start();
+            let opened = (|| {
+                let target = file_path::checked(path.to_str().ok_or_else(|| Failure::new("INVALID_ARGUMENT", "Non-UTF8 path"))?)?;
+                file_path::read_file(&target)
+            })();
+            self.profile.record("pathValidationAndOpen", started);
+            let mut file = opened?;
             if file.metadata()?.len() > MAX_FILE_BYTES as u64 { self.skip("oversized", true, true); return Ok(None); }
             let mut bytes = Vec::new(); let mut chunk = [0; 64 * 1024];
             loop {
                 if !self.running() { return Ok(None); }
-                let count = file.read(&mut chunk)?;
+                let started = self.profile.start();
+                let read = file.read(&mut chunk);
+                self.profile.record("readIo", started);
+                let count = read?;
                 if count == 0 { break; }
                 self.bytes += count;
                 if self.bytes > MAX_SCAN_BYTES { self.stopped = Some(TruncatedBy::ScanBudget); return Ok(None); }
                 if bytes.len() + count > MAX_FILE_BYTES { self.skip("oversized", true, true); return Ok(None); }
                 bytes.extend_from_slice(&chunk[..count]);
             }
+            let started = self.profile.start();
             self.hash.update(Sha256::digest(&bytes));
+            self.profile.record("contentHash", started);
             Ok(Some(bytes))
         })();
         match read { Ok(value) => value, Err(_) => { self.skip("read-error", true, true); None } }
     }
     pub fn walk<F>(&mut self, root: &Path, patterns: &[String], request: &Request, mut each: F) -> Result<()>
     where F: FnMut(&Path, &cap_std::fs::Metadata, &mut Self) -> Result<()> {
+        let started = self.profile.start();
+        let result = (|| {
+        let compiled = self.profile.start();
+        let patterns = patterns::Patterns::new(patterns);
+        self.profile.record("globCompile", compiled);
         request.authorize_path(root)?;
         if !self.running() { return Ok(()); }
         let target = file_path::checked(root.to_str().ok_or_else(|| Failure::new("INVALID_ARGUMENT", "Non-UTF8 path"))?)?;
@@ -74,9 +90,12 @@ impl Scan {
         self.stamp(root, &metadata);
         if metadata.is_file() { self.scanned += 1; return each(root, &metadata, self); }
         let directory = target.parent.open_dir_nofollow(&target.name)?;
-        self.visit(root, root, directory, 0, patterns, request, &mut each)
+        self.visit(root, root, directory, 0, &patterns, request, &mut each)
+        })();
+        self.profile.record("walkTotal", started);
+        result
     }
-    fn visit<F>(&mut self, root: &Path, display: &Path, directory: cap_std::fs::Dir, depth: usize, patterns: &[String], request: &Request, each: &mut F) -> Result<()>
+    fn visit<F>(&mut self, root: &Path, display: &Path, directory: cap_std::fs::Dir, depth: usize, patterns: &patterns::Patterns<'_>, request: &Request, each: &mut F) -> Result<()>
     where F: FnMut(&Path, &cap_std::fs::Metadata, &mut Self) -> Result<()> {
         if !self.running() { return Ok(()); }
         if depth > MAX_DEPTH { self.stopped = Some(TruncatedBy::ScanBudget); return Ok(()); }
@@ -109,12 +128,18 @@ impl Scan {
                 continue;
             }
             if file_path::validate_name(&name).is_err() { self.skip("invalid-path", false, true); continue; }
-            let metadata = match directory.symlink_metadata(&name) {
+            let started = self.profile.start();
+            let metadata = directory.symlink_metadata(&name);
+            self.profile.record("relativeMetadata", started);
+            let metadata = match metadata {
                 Ok(metadata) => metadata, Err(_) => { self.skip("unreadable-entry", false, true); continue; }
             };
             let file = metadata.is_file();
             if request.denies_path(&child) { self.skip("credential", file, false); continue; }
-            let host = match fs::symlink_metadata(&child) {
+            let started = self.profile.start();
+            let host = fs::symlink_metadata(&child);
+            self.profile.record("absoluteMetadata", started);
+            let host = match host {
                 Ok(metadata) => metadata, Err(_) => { self.skip("unreadable-entry", file, true); continue; }
             };
             #[cfg(windows)]
@@ -126,7 +151,10 @@ impl Scan {
             if file {
                 if self.scanned >= self.max_files { self.stopped = Some(TruncatedBy::ScanBudget); break; }
                 self.scanned += 1;
-                if !matches_any(root, &child, patterns) { self.skip("pattern", true, false); continue; }
+                let started = self.profile.start();
+                let matched = patterns.matches(root, &child);
+                self.profile.record("globFilter", started);
+                if !matched { self.skip("pattern", true, false); continue; }
                 self.stamp(&child, &metadata);
                 each(&child, &metadata, self)?;
             } else if metadata.is_dir() {
