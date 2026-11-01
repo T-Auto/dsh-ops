@@ -6,7 +6,7 @@ import { NativeFileTools } from '../projections/native/runtime.js'
 import { registerNativeProviderAtScope } from './providers.js'
 import { resolveWorker } from '../execution/files.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
-import { BASH_TOOL, modeSectionName, MODE_SECTION_ORDERS, renderToolingPolicy } from '../policy.js'
+import { modeSectionName, MODE_SECTION_ORDERS, renderToolingPolicy } from '../policy.js'
 import { visibleNames } from './surface.js'
 import { isNativePresentation, isPresentationProbe } from './presentation.js'
 import { onToolChange } from './changes.js'
@@ -33,15 +33,17 @@ export interface NativePublication {
   tools: readonly ResidentName[]
   section: string | null
   gate: PublicationGate
+  extraGuidanceOwner?(agent: Agent): boolean
 }
 
-export function mountNative(root: Context, config: ResolvedConfig, publication: NativePublication): void {
+export function mountNative(root: Context, config: ResolvedConfig, publication: NativePublication): (agent: Agent) => boolean {
   const { id: mode, tools: names, section, gate } = publication
+  let ownsGuidance: (agent: Agent) => boolean = () => false
   let worker: string
   try { worker = resolveWorker({ binaryPath: config.binaryPath }) } catch (error) {
     if (config.required) throw error
     root.logger.warn(`dsh-ops: ${mode} mode cannot resolve its native worker; native file tools stay unpublished. ${String((error as Error)?.message ?? error)}`)
-    return
+    return () => false
   }
   root.inject(['tools', 'systemPrompt', 'sandboxPolicy', 'subprocess'], async ctx => {
     const tools = ctx.get('tools')
@@ -136,22 +138,22 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
     })
     if (gate.watch) ctx.effect(() => gate.watch!(reconcile), `dsh-ops: ${mode} publication observer`)
     for (const agent of ctx.get('agents')?.list?.() ?? []) if (cover(agent)) attach(agent)
+    const renderGuidance = (agent: Agent): string => {
+      if (!agent || stopped || section === null || !config.promptPolicy || !cover(agent)) return ''
+      const entry = entries.get(agent)
+      if (!entry || entry.owned.size === 0) return ''
+      const visible = new Set(visibleNames(tools, agent))
+      const published = [...entry.owned].filter(name => visible.has(name))
+      // The same consumer's live Bash section owns deployment guidance first.
+      return renderToolingPolicy({ published, shellComponent: false,
+        extraGuidance: publication.extraGuidanceOwner?.(agent) ? '' : config.extraGuidance })
+    }
+    ownsGuidance = agent => !publication.extraGuidanceOwner?.(agent) && Boolean(renderGuidance(agent))
     if (section !== null) {
       const suffix = section
       ctx.effect(() => prompt.section({
         name: modeSectionName(suffix), order: MODE_SECTION_ORDERS[suffix] ?? 3250, interpolate: false,
-        text: context => {
-          const agent = context.agent
-          if (agent === undefined || !config.promptPolicy) return ''
-          const entry = entries.get(agent)
-          if (!entry || entry.owned.size === 0) return ''
-          const visible = new Set(visibleNames(tools, agent))
-          const published = [...entry.owned].filter(name => visible.has(name))
-          // The Windows shell replacement is published by the shared shell row;
-          // name it here when it is visible so routing text stays complete.
-          if (visible.has(BASH_TOOL)) published.push(BASH_TOOL)
-          return renderToolingPolicy({ published, shellComponent: true, extraGuidance: config.extraGuidance })
-        },
+        text: context => renderGuidance(context.agent ?? context.scope as Agent),
       }), `dsh-ops: ${mode} tooling guidance`)
     }
     ctx.effect(() => () => {
@@ -161,4 +163,5 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
     }, `dsh-ops: ${mode} native lifecycle`)
     ownership.refresh()
   })
+  return agent => ownsGuidance(agent)
 }

@@ -7,9 +7,9 @@
  */
 export type { Context, Fiber } from '@deepseek-ai/cordis'
 export type { EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
-export type { Agent } from '@deepseek-ai/dsh-agent'
+export type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 export type { FileSystem, FsTarget, FsInfo, FsObservation } from '@deepseek-ai/dsh-fs'
-export type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+export type { GenerateOptions, StreamChunk, UserMessage } from '@deepseek-ai/dsh-llm'
 export type { Session } from '@deepseek-ai/dsh-session'
 export type { SettingsPathOpView } from '@deepseek-ai/dsh-settings/types'
 export type { AssembleContext, PromptAssembly, SystemPrompt } from '@deepseek-ai/dsh-system-prompt'

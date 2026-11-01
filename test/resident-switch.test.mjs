@@ -101,7 +101,7 @@ for (const mode of ['standard', 'cordis']) for (const residentTools of [true, fa
 
 for (const residentTools of [true, false]) for (const dynamicTools of [true, false]) {
   await test('PTC: resident=' + residentTools + ', dynamic=' + dynamicTools, () => withTempDir('resident-ptc', async cwd => {
-    const { ctx, agent } = await setup(cwd, 'ptc', { residentTools, dynamicTools, alwaysLoaded: ['stat'] })
+    const { ctx, agent } = await setup(cwd, 'ptc', { residentTools, dynamicTools, alwaysLoaded: ['stat'], allowedTools: ['stat'] })
     try {
       if (residentTools) await waitFor(() => names(ctx, agent).includes(publicToolName(PTC_RESIDENT_TOOLS[0])))
       if (dynamicTools) await waitFor(() => names(ctx, agent).includes(publicToolName('load_sdk')))
@@ -109,15 +109,20 @@ for (const residentTools of [true, false]) for (const dynamicTools of [true, fal
       assert.equal(names(ctx, agent).includes(publicToolName('load_sdk')), dynamicTools, 'mode dynamicTools reaches the PTC gate')
       assert.equal(names(ctx, agent).includes(BASH_TOOL), process.platform === 'win32', 'PTC file switches never gate Bash')
       if (dynamicTools) {
-        const requested = residentTools ? ['stat'] : ['stat', ...PTC_RESIDENT_TOOLS]
+        const requested = residentTools ? ['stat'] : ['stat', 'result']
         const selected = await ctx.get('tools').execute({ agent, name: 'run_code',
-          arguments: { description: 'Load progressive OPS APIs', code: `return await tools.ops_load_sdk({tools:${JSON.stringify(requested)}})` },
+          arguments: { description: 'Load progressive OPS APIs', code: `const selected = await tools.ops_load_sdk({tools:${JSON.stringify(requested)}});
+            const blocked = await tools.ops_load_sdk({tools:['inspect_local_file']}); return {selected,blocked}` },
           callId: 'resident-' + ++sequence, signal: new AbortController().signal })
         assert.equal(selected.isError, false, JSON.stringify(selected))
-        assert.equal(selected.value.result.status, 'completed', JSON.stringify(selected))
+        assert.equal(selected.value.result.selected.status, 'completed', JSON.stringify(selected))
+        if (!residentTools) assert.equal(selected.value.result.blocked.error.code, 'INVALID_ARGUMENT', JSON.stringify(selected))
         await step(ctx, agent)
         assert.ok(names(ctx, agent).includes(publicToolName('stat')), 'progressive selection works with resident off')
-        if (!residentTools) for (const raw of PTC_RESIDENT_TOOLS) assert.ok(names(ctx, agent).includes(publicToolName(raw)), raw + ' remains loadable')
+        if (!residentTools) {
+          assert.ok(names(ctx, agent).includes(publicToolName('result')), 'result exception remains loadable')
+          for (const raw of ['inspect_local_file', 'read_files']) assert.equal(names(ctx, agent).includes(publicToolName(raw)), false, raw + ' is not implicitly loadable')
+        }
       }
     } finally { await shutdown(ctx) }
   }))

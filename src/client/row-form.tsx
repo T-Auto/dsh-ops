@@ -32,7 +32,7 @@ export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Ins
   // Detection would turn this on; an explicit off is worth naming so it is not read as a bug.
   const explicitOff = pwsh7Installed === true && draft['other.pwsh7Link'] === false
   const set = (flat: string, value: boolean) => editor.edit({ ...draft, [flat]: value })
-  return <form className="ops-settings" onSubmit={event => { event.preventDefault(); void editor.save(changedFields(draft, editor.baseline)) }}>
+  return <form className="ops-settings" onSubmit={event => { event.preventDefault(); void editor.save(changedFields(draft, editor.baseline, { pwsh7Installed })) }}>
     {groupsFor(editor.baseline).map(group => {
       const enabled = group.toggle ? draft[`${group.id}.enabled`] !== false : true
       // Disabling a preset greys its switches; it does not close the card.

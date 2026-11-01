@@ -50,7 +50,7 @@ export function renderToolingPolicy({ published, mounted, levels, shellComponent
   const hasBash = names.has(BASH_TOOL)
   const hasPwsh = shellComponent && names.has('pwsh')
   if (!hasFiles && !hasBash && !hasPwsh && !hasDiscovery) return ''
-  const heading = hasBash ? `# Shell routing: ${BASH_TOOL} → host PowerShell`
+  const heading = hasBash ? `# Bash command execution: ${BASH_TOOL}`
     : hasFiles || hasDiscovery ? '# Repository file tools' : '# Windows-native shell'
   const lines = [heading, '', '| Task | Tool |', '| --- | --- |']
   const row = (raw: string, task: string) => {
@@ -74,7 +74,7 @@ export function renderToolingPolicy({ published, mounted, levels, shellComponent
   row('move', 'Move one regular file, same filesystem')
   row('remove', 'Remove one regular file (CAS)')
   row('result', 'Page / release owned result references')
-  row('bash', 'General commands / builds / git / pipelines / scripts — preferred command executor')
+  row('bash', 'General Bash commands / builds / git / pipelines / scripts')
   if (names.has('pwsh')) lines.push(`| Windows-native cmdlets / registry / services only | pwsh (host PowerShell) |`)
   lines.push('', '- ops_* arguments are strict: pass only declared fields.')
   if (hasFiles) lines.push('- Use published file tools for file operations.')
@@ -97,9 +97,14 @@ export function renderToolingPolicy({ published, mounted, levels, shellComponent
   if (hasFiles) lines.push('- ops file tools never throw: check `status` and `error.code`/`error.nextAction`; a try/catch alone misses their failures.')
   if (names.has(publicToolName('write_file')) || names.has(publicToolName('edit_file'))) lines.push('- Read the current file state first; reuse SHA-256 `revision` as `expectedRevision` (write create-only: `absent`). Receipts include new hash, bytes and lineCount; Windows preserves owner/group/ordered DACL and supported basic attributes/timestamps; readonly overwrite is refused and unsupported streams/EA/special storage fail with METADATA_UNSUPPORTED. SACL/audit labels are not preserved. Unsupported metadata is not a permission escalation. Edit hunks target the same original and must be unique/nonoverlapping; CRLF/BOM are literal.')
   if (hasFiles) lines.push('- Follow error.nextAction; authorization denials require the user to change mode, not retries. After applied/unknown effects inspect postconditions; do not switch to a shell workaround.')
-  if (names.has(BASH_TOOL)) lines.push(`- Prefer ${BASH_TOOL} for command execution. Use PowerShell only when Windows-native functionality is necessary; fix ${BASH_TOOL} errors in ${BASH_TOOL}, do not switch shells or mix their syntax.`,
+  if (names.has(BASH_TOOL)) {
+    const fallback = hasPwsh
+      ? 'Use host pwsh only when Windows-native functionality is necessary.'
+      : 'No host pwsh tool is visible in this session; keep command execution in Bash.'
+    lines.push(`- Prefer ${BASH_TOOL} for Bash command execution. ${fallback} Fix ${BASH_TOOL} errors in ${BASH_TOOL}; do not mix shell syntax.`,
     '- Use command only for short commands and pipelines. For scripts longer than about 1 KB or containing heredocs, quotes, backslashes or non-ASCII text, write the script to a file first and pass script_path.',
     '- ops_bash requires description and returns kind foreground, background or promoted. Foreground has status (completed/failed), exitCode, stdout/stderr and error; background/promoted has jobId for host job_output/job_kill. Failures, including invalid arguments, return values with failure.code, failure.effectState and failure.retry; inspect unknown effects before repeating.')
+  }
   if (extraGuidance.trim()) lines.push('', extraGuidance.trim())
   return lines.join('\n')
 }

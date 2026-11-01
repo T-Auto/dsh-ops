@@ -295,7 +295,7 @@ function assertLadder(report_) {
     ...(levels.pwsh ? ['pwsh'] : []),
   ]
   assert.equal(report_.policy, renderToolingPolicy({ published, extraGuidance: '' }))
-  assert.equal(report_.policy.includes('| General commands'), levels.bash)
+  assert.equal(report_.policy.split('\n').includes('| General Bash commands / builds / git / pipelines / scripts | ops_bash |'), levels.bash)
   assert.equal(report_.policy.includes('bundled PowerShell 7'), false, 'resolution-only CLI must not claim a mounted pwsh overlay')
 }
 

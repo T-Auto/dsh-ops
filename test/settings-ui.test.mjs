@@ -47,7 +47,7 @@ await test('the page saves only changed switches with the host revision, then re
   const fixture = await profileFixture('browser-switches', {
     Config: (await import('../lib/settings/merged.js')).Config,
     apply(_ctx, value) { observed = value; mounts++ },
-  }, {})
+  }, { standard: { hidePwsh: true } })
   let pending
   const form = {
     state: ready(fixture.snapshot().value, fixture.snapshot().revision),
@@ -85,6 +85,20 @@ await test('the page saves only changed switches with the host revision, then re
     assert.equal(second[0][1], 'next-revision')
     assert.deepEqual(second[0][0], [{ op: 'set', path: ['ptc', 'bash'], value: false }])
   } finally { await view.close(); await shutdown(fixture.ctx) }
+})
+
+await test('rendered preset hints describe Bash coexistence and explicit PowerShell hiding', async () => {
+  const form = { state: ready({}), mutate: async () => true }
+  const view = await mount(RowForm, { form, Switch: TestSwitch })
+  try {
+    for (const label of [en.featureMinimal, en.featureStandard, en.featurePtc, en.featureCordis]) {
+      await expand(view.container, label)
+      const text = group(view.container, label).textContent
+      assert.match(text, /Publishes Bash independently; PowerShell remains available by default on Windows\.|独立发布 Bash；Windows 默认保留 PowerShell。/)
+      assert.doesNotMatch(text, /Replaces pwsh with bash|将 pwsh 替换为 bash/)
+      await expand(view.container, label)
+    }
+  } finally { await view.close() }
 })
 
 await test('only non-minimal presets expose adjacent independent resident and dynamic switches', async () => {
@@ -329,6 +343,30 @@ await test('an explicit off is named when the companion is already installed', a
   const view = await mount(RowForm, { form, Switch: TestSwitch, pwsh7Installed: true })
   try { assert.match(view.container.textContent, /已手动关闭|Manually turned off/) }
   finally { await view.close() }
+})
+
+await test('saving another card never persists a detected link', async () => {
+  const writes = []
+  const form = { state: ready({}), mutate: async ops => { writes.push(ops); return true } }
+  const view = await mount(RowForm, { form, Switch: TestSwitch, pwsh7Installed: true })
+  try {
+    const other = group(view.container, en.groupOther)
+    assert.equal(switchIn(other, en.featurePwsh7Link).getAttribute('aria-checked'), 'true', 'detection shows the link on')
+    await click(switchIn(other, en.featurePanel))
+    await click(button(view.container, en.save))
+    assert.deepEqual(writes[0], [{ op: 'set', path: ['panel', 'enabled'], value: true }])
+  } finally { await view.close() }
+})
+
+await test('a link the operator turns off is always saved', async () => {
+  const writes = []
+  const form = { state: ready({}), mutate: async ops => { writes.push(ops); return true } }
+  const view = await mount(RowForm, { form, Switch: TestSwitch, pwsh7Installed: true })
+  try {
+    await click(switchIn(group(view.container, en.groupOther), en.featurePwsh7Link))
+    await click(button(view.container, en.save))
+    assert.deepEqual(writes[0], [{ op: 'set', path: ['other', 'pwsh7Link'], value: false }])
+  } finally { await view.close() }
 })
 
 dom.window.close()
