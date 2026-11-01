@@ -1,104 +1,211 @@
-// @ts-nocheck — ported from the shipped 4.1.8 reader as-is: the runtime is unchanged, the types
-// are the open work. Tracked in docs/CHANGELOG.md under Unreleased.
-'use strict';
+/**
+ * Shared primitives for the parallel reader: defaults, the result skeleton, the error type and the pool.
+ *
+ * Everything here is deliberately dependency-free — the reader has to run on a bare Node install with no
+ * packages at all — so the pool is hand-written rather than pulled from `p-limit`.
+ *
+ * @module dsh-ops/file/reader/core
+ */
 
-const DEFAULTS = Object.freeze({
-  concurrency: 10,                     // 并发槽位上限（同时也是 FD 上限）
-  maxFileSize: 2 * 1024 * 1024,        // 单文件字节上限 2MB
-  timeoutMs: 3000,                     // 单文件总预算，覆盖 open/fstat/read/close 全程
-  maxChars: 50000,                     // 单文件返回字符上限
-  maxTotalChars: 120000,               // 全批返回字符上限（上下文防线）
-  chunkBytes: 64 * 1024,               // 分块读取粒度
-  closeMs: 100,                        // close 等待上限，卡死也放手
-  encoding: 'utf8',                    // 无 BOM 时的解码方式
-  root: null,                          // 非空则把 IO 围栏在 root 内（opt-in，比原装更严）
-  signal: null,                        // AbortSignal，取消整批
-  full: false,                         // true = 读到 EOF（兼容层用；产 lineCount / revision）
-  hash: false,                         // true = 边读边算 SHA-256（需配合 full）
-  maxOpenRetries: 2,                   // EMFILE/ENFILE/EBUSY 时的重试次数
-  strictUtf8: false,                   // true = 非法 UTF-8 直接报错，而不是填 U+FFFD（兼容层开）
-  allowLinks: true,                    // false = 拒绝 symlink / junction（兼容层关，对齐原装）
-  // true = 剥掉 UTF-8 BOM。native（AI 直读整篇）默认剥，省得首行开头挂个 U+FEFF 污染上下文；
-  // 兼容层强制 false —— 原装 dsh-ops 实测**保留** BOM（首行 "\uFEFFhello"、BOM-only 文件
-  // lineCount=1），替换路径若剥掉，上层拿返回文本做编辑 / CAS / diff 会按"少了 3 个字节"处理，
-  // 属于静默写坏。剥与不剥都保留开关，由调用方决定。
+/** One file's outcome. Success and failure share one shape so a caller never has to branch first. */
+export interface ReadEntry {
+  /** The path as it was given (not resolved). */
+  path: string
+  status: 'success' | 'error'
+  /** The text, already cut to `maxChars` and carrying `TRUNCATED_MARK`. */
+  content: string | null
+  error: { code: string, message: string } | null
+  /** Truncated during read, or cut again by the batch budget at render time. */
+  truncated: boolean
+  /** Size from `fstat`; null when the file could not be opened. */
+  size: number | null
+  /** Bytes actually read; below `size` when the read stopped early. */
+  bytes: number | null
+  /** mtime in milliseconds; null when the file could not be opened. */
+  mtimeMs: number | null
+  /** Only in full mode or line-window mode; null rather than a guess in the early-stop mode. */
+  lineCount: number | null
+  /** SHA-256 hex, only with `full` + `hash`; always null when the read stopped early. */
+  revision: string | null
+  elapsedMs: number
+  /** Lines matched by a line window; null in the plain mode. */
+  rows: string[] | null
+  /** The line window was clipped by the byte budget, as opposed to the file being truncated. */
+  rowsClipped: boolean
+  /**
+   * Bytes the binary gate and the decode gate actually covered.
+   *
+   * Below `size` when the read stopped early — that means "this is a prefix, and the part after it was
+   * never checked for NULs", so `truncated` must not be read as "the whole file was validated".
+   */
+  scannedBytes: number
+}
+
+/** Every knob the reader accepts. The two entry points fill in different defaults; see their docs. */
+export interface ReadOptions {
+  /** Concurrency, which is also the file-descriptor peak. */
+  concurrency?: number
+  /** Per-file byte ceiling; a larger file is refused without reading a byte. */
+  maxFileSize?: number
+  /** Per-file budget covering open/fstat/read/close. */
+  timeoutMs?: number
+  /** Per-file character ceiling. */
+  maxChars?: number
+  /** Batch character ceiling, settled deterministically in input order. */
+  maxTotalChars?: number
+  /** Read granularity in bytes. */
+  chunkBytes?: number
+  /** How long to wait for `close` before giving up on it. */
+  closeMs?: number
+  /** Decoding used when a BOM does not decide it. */
+  encoding?: BufferEncoding
+  /** When set, IO is fenced inside this directory. */
+  root?: string | null
+  /** Cancels the whole batch. */
+  signal?: AbortSignal | null
+  /** Read to EOF, producing `lineCount` and `revision`. */
+  full?: boolean
+  /** Hash while reading; only meaningful with `full`. */
+  hash?: boolean
+  /** Retries on EMFILE/ENFILE/EBUSY. */
+  maxOpenRetries?: number
+  /** Refuse invalid UTF-8 with `INVALID_UTF8` instead of substituting U+FFFD. */
+  strictUtf8?: boolean
+  /** `false` refuses symlinks and junctions, checked with a per-component lstat. */
+  allowLinks?: boolean
+  /** Strip a leading UTF-8 BOM. */
+  stripBom?: boolean
+  /** CRLF to LF, and path keys from `\` to `/`. */
+  normalize?: boolean
+}
+
+/** The resolved form: every field present. */
+export type ResolvedOptions = ReadOptions & {
+  concurrency: number
+  maxFileSize: number
+  timeoutMs: number
+  maxChars: number
+  maxTotalChars: number
+  chunkBytes: number
+  closeMs: number
+  encoding: BufferEncoding
+  root: string | null
+  signal: AbortSignal | null
+  full: boolean
+  hash: boolean
+  maxOpenRetries: number
+  strictUtf8: boolean
+  allowLinks: boolean
+  stripBom: boolean
+  normalize: boolean
+}
+
+/**
+ * Defaults.
+ *
+ * `stripBom` and `normalize` exist as switches because the two entry points disagree: the native reader
+ * strips and normalizes (a model reading prose does not want a stray U+FEFF or CRLF), while the compat
+ * entry point must not — the original host returns the bytes on disk, and its callers edit, CAS and diff
+ * the returned text, so cleaning it would silently lose three bytes.
+ */
+export const DEFAULTS: ResolvedOptions = Object.freeze({
+  concurrency: 10,
+  maxFileSize: 2 * 1024 * 1024,
+  timeoutMs: 3000,
+  maxChars: 50000,
+  maxTotalChars: 120000,
+  chunkBytes: 64 * 1024,
+  closeMs: 100,
+  encoding: 'utf8',
+  root: null,
+  signal: null,
+  full: false,
+  hash: false,
+  maxOpenRetries: 2,
+  strictUtf8: false,
+  allowLinks: true,
   stripBom: true,
-  // true = 跨平台清洗：CRLF → LF、路径键 \ → /。native 入口默认开（AI 直接看文本，
-  // 混着 \r 的行尾会让 diff / 编辑锚点错位）；兼容层强制 false —— 原装回写的是磁盘原文，
-  // 清洗过再交给 ops_edit_file 就是静默写坏。
   normalize: true,
-});
+} as ResolvedOptions)
 
-/** 截断标记，原样输出，便于上层用字符串匹配判断 */
-const TRUNCATED_MARK = '\n...[Warning: Content truncated]...';
+/** The cut marker, emitted verbatim so a caller can match on it. */
+export const TRUNCATED_MARK = '\n...[Warning: Content truncated]...'
 
-/** 带 error.code 的业务错误，方便上层按 code 分支处理 */
-class OpsError extends Error {
-  constructor(code, message) {
-    super(message);
-    this.name = 'OpsError';
-    this.code = code;
+/** An error carrying a `code` the caller branches on. */
+export class OpsError extends Error {
+  readonly code: string
+  constructor(code: string, message: string) {
+    super(message)
+    this.name = 'OpsError'
+    this.code = code
   }
 }
 
-/** 统一的结果骨架：只在两处构造，避免字段漂移（隐藏类一致，V8 不会退化成字典模式） */
-function emptyResult(filePath) {
+/**
+ * The one result constructor.
+ *
+ * Both the success and the failure path build through it so the field set cannot drift: same keys in the
+ * same order keeps the hidden class stable and stops V8 from falling back to dictionary mode on the hot
+ * path.
+ */
+export function emptyResult(filePath: string): ReadEntry {
   return {
-    path: filePath, status: 'error', content: null, error: null, truncated: false,
-    size: null, bytes: null, mtimeMs: null, lineCount: null, revision: null, elapsedMs: 0,
-    rows: null, rowsClipped: false, scannedBytes: 0,
-  };
+    path: filePath,
+    status: 'error',
+    content: null,
+    error: null,
+    truncated: false,
+    size: null,
+    bytes: null,
+    mtimeMs: null,
+    lineCount: null,
+    revision: null,
+    elapsedMs: 0,
+    rows: null,
+    rowsClipped: false,
+    scannedBytes: 0,
+  }
 }
 
-const sleep = (ms) => new Promise((resolve) => {
-  const t = setTimeout(resolve, ms);
-  if (t.unref) t.unref();              // 兜底等待不该阻止进程退出
-});
+/** Sleep that never keeps the process alive: this timer is a fallback, not work. */
+export const sleep = (ms: number): Promise<void> => new Promise(resolve => {
+  const timer = setTimeout(resolve, ms)
+  timer.unref?.()
+})
 
 /**
- * 极简并发池（手写，不引 p-limit）。
+ * A minimal concurrency pool.
  *
- * 一次性拉起 N 个 worker 协程共享游标：每个 worker 循环"抢号 -> 执行 -> 抢下一个号"。
- * worker 数量恒等于 concurrency，因此在飞任务数恒 <= concurrency，同步自增即可，无需锁。
+ * `limit` workers share a cursor and each one loops "take a number, do the work, take the next". The
+ * worker count is the concurrency, so the number of in-flight tasks is bounded by construction and the
+ * cursor needs no lock.
+ *
+ * `limit` may arrive as NaN or Infinity from a caller: NaN would make `Array.from({ length: NaN })` empty
+ * and silently drop the whole batch, so it is normalized to "at least one worker".
  */
-async function runPool(items, limit, worker) {
-  const total = items.length;
-  if (total === 0) return [];
-
-  const results = new Array(total);
-  // limit 可能被外部直接传成 NaN / Infinity：NaN 会让 Array.from({length:NaN}) 得到空数组，
-  // 整批静默丢失（返回一堆 undefined）。这里归一成"至少 1 个 worker"。
-  const slots = Math.max(1, Math.min(Math.floor(limit) || 1, total));
-  let cursor = 0;
-
+export async function runPool<T, R>(items: readonly T[], limit: number, worker: (item: T, index: number) => Promise<R>): Promise<Array<R | ReadEntry>> {
+  const total = items.length
+  if (total === 0) return []
+  const results = new Array<R | ReadEntry>(total)
+  const slots = Math.max(1, Math.min(Math.floor(limit) || 1, total))
+  let cursor = 0
   const runners = Array.from({ length: slots }, async () => {
-    while (true) {
-      const index = cursor++;
-      if (index >= total) return;
+    for (;;) {
+      const index = cursor++
+      if (index >= total) return
       try {
-        results[index] = await worker(items[index], index);
-      } catch (err) {
-        // 最后一道保险：兜底对象也带上 path，否则该文件会从结果里消失
+        results[index] = await worker(items[index], index)
+      } catch (error) {
+        // Last line of defence: the fallback entry carries the path too, or that file vanishes from the
+        // result set entirely and the caller never learns it existed.
+        const problem = error as { code?: string, message?: string }
         results[index] = {
           ...emptyResult(String(items[index])),
-          error: { code: err.code || 'UNKNOWN', message: err.message || String(err) },
-        };
+          error: { code: problem.code ?? 'UNKNOWN', message: problem.message ?? String(error) },
+        }
       }
     }
-  });
-
-  await Promise.all(runners);
-  return results;
+  })
+  await Promise.all(runners)
+  return results
 }
-
-/**
- * Windows 路径分量校验（对齐原装 Rust `validate_name`，逐条实测过）。
- *
- * 为什么必须有：Windows 把这些名字解析成**设备**而不是文件 ——
- *   `NUL` 读出来是空、`CON` 是控制台（读它会卡住等输入）、`x.txt:stream` 是 NTFS 备用数据流
- *   （内容不在目录列表里，扫描工具看不见）。
- * 对 AI Agent 来说这是"读到不存在的东西"和"读到看不见的东西"，两种都是静默错误，
- * 原装一律 INVALID_ARGUMENT 拒绝，这里保持一致。
- */
-
-module.exports = { DEFAULTS, TRUNCATED_MARK, OpsError, emptyResult, sleep, runPool };
