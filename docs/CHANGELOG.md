@@ -19,6 +19,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 从安装本包的 profile 探测 `dsh-win-pwsh7` 联动，宿主进程没有 `DSH_PROFILE_DIR` 也能判定；保存其它开关不再把「跟随检测」写成显式值，而手动拨动联动开关一定落盘。
 - Name the row setting instead of the removed Compatibility mode when an official tool has an OPS replacement.
 - 官方工具被 OPS 替代时，拒绝信息改指行设置，不再提已删除的兼容模式。
+- A file created by `ops_write_file` now inherits its directory's ACEs: the protected staging descriptor stays private until the bytes are complete, then the published file adopts every inheritable directory entry and keeps one explicit full-control entry for the caller, so the same session can delete what it created. Only creation adopts; a file published by an older version keeps its descriptor until it is recreated.
+- `ops_write_file` 新建的文件现在会继承所在目录的 ACE：受保护的暂存描述符在字节写完前保持私有，随后发布出的文件接收目录的每条可继承条目，并为调用方保留一条显式完全控制 ACE，因此同一会话可以删除自己创建的文件。只有新建会继承；旧版本发布的文件在重建之前保持原描述符。
 
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 

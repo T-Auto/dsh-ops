@@ -399,6 +399,14 @@ fn publish_new(
                 ));
             }
         }
+        // A brand-new file adopts its directory's inheritable ACEs: the staging object
+        // was private until the bytes above existed, and the hard link below publishes
+        // this same inode, so the destination name carries them. A copy keeps the
+        // source descriptor restored above instead.
+        #[cfg(windows)]
+        if source.is_none() {
+            publication::adopt_directory_grants(&checked.parent, &file)?;
+        }
         file.sync_all()?;
         Ok(())
     })();

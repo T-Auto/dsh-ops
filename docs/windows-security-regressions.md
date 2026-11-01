@@ -13,8 +13,9 @@ measurements apply to this version. 中文：[Windows安全回归.md](Windows安
 | W1g uncontended/contended update | A pre-acquired byte-range lock on the exact sidecar deterministically forces REVISION_CONFLICT; after release a real replace changes exactly one item and removes the sidecar. Existing replace-concurrency/lock-sidecar and Rust unit tests cover cooperating writers. |
 | W1h readers | While the acknowledged sidecar lock is held, a real inspect call and ordinary file/directory reads succeed. This proves off-target lock compatibility, not continuous observation of a production writer's entire publication window. No probabilistic large-file reader race is claimed. |
 | W1f ADS | Existing file-operations checks fail-closed METADATA_UNSUPPORTED and retained stream bytes for write/copy. Cross-user ownership, remote filesystems and every ADS/replace variant are not claimed by the new suite. |
+| W1i created file inherits its directory | `file-inherited-dacl` creates a file through the real worker and requires every object-inheritable entry of the directory to be present on the new file as an inherited ACE, one explicit full-control ACE for the caller, an unprotected DACL, and a successful same-session `remove`. Staging stays private until the bytes exist; only creation adopts, so a file published by an older version does not heal itself. |
 
-Run after building: `node test/run.mjs windows-security file-metadata file-operations lock-sidecar replace-concurrency`.
+Run after building: `node test/run.mjs windows-security file-metadata file-operations lock-sidecar replace-concurrency file-inherited-dacl`.
 The runner discovers the new suite on every host. Non-Windows reports exit 77;
 verify-gate includes only that exact platform skip in both its allowed-skip set
 and the strict runner environment. Windows may not skip this suite, even when

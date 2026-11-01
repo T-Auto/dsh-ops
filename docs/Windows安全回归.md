@@ -11,11 +11,12 @@
 | W1g 无争用/争用更新 | 预先持有准确 sidecar 的字节范围锁，确定性强制 REVISION_CONFLICT；释放后真实 replace 只更改一项并删除 sidecar。现有 replace-concurrency/lock-sidecar 和 Rust 单测覆盖协作写者。 |
 | W1h 读取兼容性 | 已确认持有 sidecar 锁时真实 inspect、普通文件和目录读取均成功。证明离目标锁不阻碍读取，不声称连续观测生产写者整个发布窗口；不采用概率性大文件读取竞态。 |
 | W1f ADS | 现有 file-operations 对 write/copy 断言 METADATA_UNSUPPORTED 闭锁拒绝及流字节保留；新增套件不覆盖跨用户所有权、远端文件系统和所有 ADS/replace 组合。 |
+| W1i 新建文件继承目录 | `file-inherited-dacl` 通过真实 worker 新建文件，要求目录上每条可被文件继承的条目都以继承 ACE 出现在新文件上、调用方保留一条显式完全控制 ACE、DACL 非保护，且同一会话 `remove` 成功。暂存期保持私有；只有新建会继承，旧版本发布的文件不会自愈。 |
 
 构建后运行：
 
 ```console
-node test/run.mjs windows-security file-metadata file-operations lock-sidecar replace-concurrency
+node test/run.mjs windows-security file-metadata file-operations lock-sidecar replace-concurrency file-inherited-dacl
 ```
 
 runner 在所有平台发现新增套件；非 Windows 明确 exit 77，verify-gate 在允许 skip 集合与 strict runner 环境中仅加入此准确平台例外。Windows 不允许新增套件 skip，缺 worker 也不可被当作通过；不重试操作失败或并发失败。

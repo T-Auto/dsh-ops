@@ -225,6 +225,16 @@ fn metadata_error(error: std::io::Error) -> Failure {
     // metadata cannot be guaranteed, not that the DSH selector denied a write.
     Failure::new("METADATA_UNSUPPORTED", error)
 }
+/// A brand-new file adopts its directory's inheritable ACEs once its bytes are
+/// complete. The staged object stays private until then, and a hard link shares the
+/// inode, so the published name carries the adopted descriptor too. Never call this
+/// for a replaced file: that path restores the target's own descriptor instead.
+#[cfg(windows)]
+pub(super) fn adopt_directory_grants(parent: &Dir, child: &File) -> Result<()> {
+    let parent = parent.try_clone()?.into_std_file();
+    dsh_ops_windows_metadata::adopt_parent_dacl(&parent, &child.try_clone()?.into_std())
+        .map_err(metadata_error)
+}
 #[cfg(windows)]
 pub(super) struct Preserved(dsh_ops_windows_metadata::Metadata);
 #[cfg(windows)]

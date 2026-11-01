@@ -12,7 +12,7 @@ use std::{
 use winapi::shared::ntdef::{OBJECT_ATTRIBUTES, UNICODE_STRING};
 use windows_permissions::{
     LocalBox, SecurityDescriptor,
-    constants::{SeObjectType::SE_FILE_OBJECT, SecurityInformation as Info},
+    constants::{AceFlags, AceType, SeObjectType::SE_FILE_OBJECT, SecurityInformation as Info},
     wrappers,
 };
 use windows_sys::Win32::{
@@ -185,6 +185,118 @@ pub fn verify_cache(file: &File, write_sid: Option<&str>) -> io::Result<()> {
     let actual_dacl = sddl(&actual)?.to_string_lossy().split("D:").nth(1).unwrap_or("").replace("AI", "");
     let expected = sddl(&private)?.to_string_lossy().into_owned();
     if actual_dacl != expected.trim_start_matches("D:") { return Err(unsupported("Private creation DACL verification failed")); }
+    Ok(())
+}
+
+/// The protected-DACL bit, the one control flag that stops a file from inheriting.
+const SE_DACL_PROTECTED_BIT: u16 = 0x1000;
+/// FILE_ALL_ACCESS, the mask this crate grants the calling process.
+const FILE_ALL_ACCESS: u32 = 0x1f01ff;
+
+/// Windows maps generic rights to the object type's specific rights while it
+/// propagates an inheritable ACE, so a directory entry spelled `GA` reaches a file
+/// as `FA` and `SDGXGWGR` as `0x1301bf`. Both sides of every comparison are reduced
+/// through the file mapping first; otherwise a correctly inherited generic entry
+/// reads as a missing one.
+fn specific_mask(mask: u32) -> u32 {
+    use windows_sys::Win32::Security::{GENERIC_MAPPING, MapGenericMask};
+    let mapping = GENERIC_MAPPING {
+        GenericRead: 0x0012_0089,    // FILE_GENERIC_READ
+        GenericWrite: 0x0012_0116,   // FILE_GENERIC_WRITE
+        GenericExecute: 0x0012_00a0, // FILE_GENERIC_EXECUTE
+        GenericAll: FILE_ALL_ACCESS,
+    };
+    let mut value = mask;
+    // SAFETY: MapGenericMask only reads the mapping and rewrites the scalar mask.
+    unsafe { MapGenericMask(&mut value, &mapping) };
+    value
+}
+
+/// One DACL entry as a comparable fact: type, specific access mask, SID.
+fn entries(sd: &SecurityDescriptor) -> Vec<(AceType, u32, String)> {
+    let Some(dacl) = sd.dacl() else { return Vec::new() };
+    (0..dacl.len())
+        .filter_map(|index| dacl.get_ace(index))
+        .filter_map(|ace| Some((ace.ace_type(), specific_mask(ace.mask().bits()), ace.sid()?.to_string())))
+        .collect()
+}
+
+/// Every entry a file child inherits from its directory: the ones carrying
+/// OBJECT_INHERIT_ACE. Container-only entries never reach a file, and inheriting
+/// them would grant more than the directory asked for.
+fn inheritable_grants(sd: &SecurityDescriptor) -> Vec<(AceType, u32, String)> {
+    let Some(dacl) = sd.dacl() else { return Vec::new() };
+    (0..dacl.len())
+        .filter_map(|index| dacl.get_ace(index))
+        .filter(|ace| ace.flags().contains(AceFlags::ObjectInherit))
+        .filter_map(|ace| Some((ace.ace_type(), specific_mask(ace.mask().bits()), ace.sid()?.to_string())))
+        .collect()
+}
+
+/// Give a just-created object the entries its directory would have inherited into it,
+/// while the calling process keeps explicit full control. The written DACL stays
+/// unprotected, so later directory changes keep propagating, and a directory deny
+/// entry survives because the operating system merges the set instead of this crate
+/// rebuilding it. The caller must not use this for a replaced file: that path keeps
+/// the target's own descriptor.
+pub fn adopt_parent_dacl(parent: &File, child: &File) -> io::Result<()> {
+    let sid = windows_permissions::utilities::current_process_sid()?;
+    let granted: LocalBox<SecurityDescriptor> = format!("D:(A;;FA;;;{sid})").parse()?;
+    let acl = granted
+        .dacl()
+        .ok_or_else(|| unsupported("Adopted descriptor lost its DACL"))?;
+    let mut handle = child.try_clone()?;
+    // UNPROTECTED is what makes the system recompute this DACL from the directory:
+    // the inherited entries arrive as inherited ACEs, not as copies this crate chose.
+    wrappers::SetSecurityInfo(
+        &mut handle,
+        SE_FILE_OBJECT,
+        Info::Dacl | Info::UnprotectedDacl,
+        None,
+        None,
+        Some(acl),
+        None,
+    )?;
+    verify_adopted(parent, child)
+}
+
+/// Fail closed unless the object now carries the directory's inheritable entries and
+/// the caller's explicit full control, and is no longer protected.
+fn verify_adopted(parent: &File, child: &File) -> io::Result<()> {
+    let adopted = descriptor(child)?;
+    if control(&adopted)? & SE_DACL_PROTECTED_BIT != 0 {
+        return Err(unsupported(
+            "Adopted DACL is still protected; the created file cannot inherit",
+        ));
+    }
+    let caller = windows_permissions::utilities::current_process_sid()?;
+    let mut explicit_caller = false;
+    if let Some(dacl) = adopted.dacl() {
+        for index in 0..dacl.len() {
+            let Some(ace) = dacl.get_ace(index) else { continue };
+            let Some(sid) = ace.sid() else { continue };
+            if *sid == *caller
+                && !ace.flags().contains(AceFlags::Inherited)
+                && ace.mask().bits() == FILE_ALL_ACCESS
+            {
+                explicit_caller = true;
+            }
+        }
+    }
+    if !explicit_caller {
+        return Err(unsupported(
+            "Adopted DACL lost the caller's explicit full control",
+        ));
+    }
+    let present = entries(&adopted);
+    let directory = descriptor(parent)?;
+    for grant in inheritable_grants(&directory) {
+        if !present.contains(&grant) {
+            return Err(unsupported(
+                "Adopted DACL is missing a directory grant the file should inherit",
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -444,6 +556,135 @@ mod tests {
         drop(file);
         drop(parent);
         assert!(!root.join("private").exists());
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn a_created_file_adopts_directory_grants_and_keeps_the_caller_ace() {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+        use windows_sys::Win32::Storage::FileSystem::CreateDirectoryW;
+        let temporary = std::env::temp_dir();
+        let root = temporary.join(format!(
+            "dsh-adopt-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let sid = windows_permissions::utilities::current_process_sid().unwrap();
+        // A distinctive inheritable grant: Remote Desktop Users may read this
+        // directory and everything created inside it. No temporary directory grants
+        // that entry, so its presence in the child can only come from this fixture.
+        let distinctive = "S-1-5-32-555";
+        // A sandboxed caller may only create children where the host's own write
+        // capability is granted, so the fixture carries the temporary directory's
+        // capability entries too. This is test scaffolding, not part of the subject.
+        let mut capability = String::new();
+        {
+            let ambient = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(0x02000000)
+                .open(&temporary)
+                .unwrap();
+            let ambient_sd = descriptor(&ambient).unwrap();
+            let Some(dacl) = ambient_sd.dacl() else { unreachable!() };
+            for index in 0..dacl.len() {
+                let Some(ace) = dacl.get_ace(index) else { continue };
+                let Some(ace_sid) = ace.sid() else { continue };
+                let name = ace_sid.to_string();
+                if name.starts_with("S-1-4-") {
+                    capability.push_str(&format!("(A;OICI;0x{:08x};;;{name})", ace.mask().bits()));
+                }
+            }
+        }
+        let directory_sd: LocalBox<SecurityDescriptor> =
+            format!("D:(A;;FA;;;{sid})(A;OICI;FR;;;{distinctive})(A;OICIIO;GA;;;AU){capability}")
+                .parse()
+                .unwrap();
+        // Create the fixture directory WITH its descriptor: this process cannot rewrite
+        // a directory DACL it did not create, and a creation-time descriptor needs none.
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: &*directory_sd as *const _ as *mut _,
+            bInheritHandle: 0,
+        };
+        let wide: Vec<u16> = root.as_os_str().encode_wide().chain(Some(0)).collect();
+        // SAFETY: NUL-terminated path and a live SECURITY_ATTRIBUTES whose descriptor
+        // outlives the call; the directory is created once and never replaced.
+        assert_ne!(
+            unsafe { CreateDirectoryW(wide.as_ptr(), &attributes) },
+            0,
+            "fixture directory creation failed"
+        );
+        let parent = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(0x02000000)
+            .open(&root)
+            .unwrap();
+        let mut file = create_private(&parent, "adopted").unwrap();
+        // Staging is private before the bytes exist; that half must not change.
+        assert_ne!(
+            control(&descriptor(&file).unwrap()).unwrap() & SE_DACL_PROTECTED_BIT,
+            0,
+            "a staged object starts private"
+        );
+        file.write_all(b"adopted bytes").unwrap();
+        adopt_parent_dacl(&parent, &file).unwrap();
+        let adopted = descriptor(&file).unwrap();
+        assert_eq!(
+            control(&adopted).unwrap() & SE_DACL_PROTECTED_BIT,
+            0,
+            "the adopted DACL must not stay protected"
+        );
+        let child = entries(&adopted);
+        assert!(
+            child
+                .iter()
+                .any(|(_, _, ace_sid)| ace_sid.as_str() == distinctive),
+            "the directory's inheritable grant must reach the created file: {:?}",
+            sddl(&adopted)
+        );
+        let dacl = adopted.dacl().unwrap();
+        assert!(
+            (0..dacl.len())
+                .filter_map(|index| dacl.get_ace(index))
+                .any(|ace| ace
+                    .sid()
+                    .is_some_and(|ace_sid| *ace_sid == *sid)
+                    && !ace.flags().contains(AceFlags::Inherited)
+                    && ace.mask().bits() == FILE_ALL_ACCESS),
+            "the caller keeps one explicit full-control entry"
+        );
+        let parent_sd = descriptor(&parent).unwrap();
+        // Generic directory rights must be compared as the specific rights Windows
+        // propagates: `GA` reaches the file as full control. Comparing the stored
+        // spelling instead reports a correctly inherited entry as missing.
+        assert!(
+            inheritable_grants(&parent_sd)
+                .iter()
+                .any(|(_, mask, ace_sid)| ace_sid == "S-1-5-11" && *mask == FILE_ALL_ACCESS),
+            "a generic directory grant is compared as the specific mask: {:?}",
+            inheritable_grants(&parent_sd)
+        );
+        for grant in inheritable_grants(&parent_sd) {
+            assert!(child.contains(&grant), "every inheritable directory entry must arrive: {grant:?}");
+        }
+        // Generic rights are mapped while they propagate: the directory's `GA` entry
+        // reaches the file as full control, and the comparison above must not read the
+        // spelling difference as a missing grant.
+        assert!(
+            child.iter().any(|(kind, mask, ace_sid)| *kind == AceType::ACCESS_ALLOWED_ACE_TYPE
+                && *mask == FILE_ALL_ACCESS
+                && ace_sid == "S-1-5-11"),
+            "the directory's generic full-control entry must arrive as full control: {:?}",
+            sddl(&adopted)
+        );
+        discard(&file).unwrap();
+        drop(file);
+        drop(parent);
+        assert!(!root.join("adopted").exists());
         std::fs::remove_dir(root).unwrap();
     }
 }
