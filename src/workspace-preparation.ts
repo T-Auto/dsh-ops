@@ -52,6 +52,9 @@ const PREREQUISITE = /not owned by the current user|reparse point|Explicit effec
 /** Name the cause of a failed preparation run, so a policy, a folder and an executor problem read differently (#66). */
 export function classifyPreparationFailure(output: string, { root, script: file = script }: { root?: string; script?: string } = {}) {
   const tail = output.trim() || '(no output)'
+  if (/DSH_OPS_CONSTRAINED_LANGUAGE|ConstrainedLanguage|CannotDefineNewType/i.test(output)) {
+    return `PowerShell ConstrainedLanguage prevents the trusted workspace ACL preparation script from using required identity and DACL APIs; no ACL preparation was completed. Keep the host security policy enabled and ask its administrator for a supported preparation path. OPS has not changed the session permission mode. Output: ${tail}`
+  }
   if (EXECUTION_POLICY.test(output)) {
     return `PowerShell execution policy blocked dsh-ops's own preparation script ${file} even with -ExecutionPolicy Bypass, so the policy comes from Group Policy (MachinePolicy/UserPolicy). Ask an administrator, check \`powershell.exe -NoProfile -Command Get-ExecutionPolicy -List\`, or use danger-full-access for this session (it skips preparation). Output: ${tail}`
   }
