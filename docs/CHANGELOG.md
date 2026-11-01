@@ -78,6 +78,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 成功完成独立长延时后，按作用域提示使用宿主 job 等待；触发前不增加提示词字节，覆盖 Native/PTC 并跟随消费者/提示策略撤回（#507）。
 - Honor configured PTC `allowedTools` when resident APIs are disabled; only `result` remains an implicit selection exception, with the directory and loader sharing the same pool.
 - 关闭常驻 API 时遵守 PTC 的 `allowedTools` 配置，仅保留 `result` 隐式选择例外，目录与加载器共用同一允许池。
+- Build Windows Bash IPC proxies from non-ASCII checkout/tool/temp paths using ASCII batch instructions and Unicode environment values; reproducible linker metadata keeps identical sources byte-identical across checkout paths (#553).
+- Windows Bash IPC 构建以 ASCII 批处理与 Unicode 环境变量支持非 ASCII 检出/工具/临时路径，并使用可复现链接元数据，使相同源码跨检出路径生成相同字节（#553）。
 - Detect the `dsh-win-pwsh7` companion from the profile that installed this package, so the row's link also resolves in the host process, which gets no `DSH_PROFILE_DIR`; a save no longer freezes a detected link into an explicit value, while a flipped link is always written.
 - 从安装本包的 profile 探测 `dsh-win-pwsh7` 联动，宿主进程没有 `DSH_PROFILE_DIR` 也能判定；保存其它开关不再把「跟随检测」写成显式值，而手动拨动联动开关一定落盘。
 - Name the row setting instead of the removed Compatibility mode when an official tool has an OPS replacement.
