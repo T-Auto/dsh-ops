@@ -9,7 +9,7 @@ const sha = (value: unknown) => typeof value === 'string' && /^[a-f0-9]{40}([a-f
 const nodes = (value: unknown) => array(object(value).nodes)
 const more = (value: unknown) => Object.values(object(object(value).pageInfo)).some(value => value === true)
 const QUERY = `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){
-number title url state isDraft reviewDecision additions deletions changedFiles headRefOid baseRefOid baseRefName maintainerCanModify
+number title url state isDraft reviewDecision mergeable mergeStateStatus additions deletions changedFiles headRefOid baseRefOid baseRefName maintainerCanModify
 author{login} headRepository{nameWithOwner}
 files(first:25){nodes{path} pageInfo{hasNextPage}}
 closingIssuesReferences(first:3){pageInfo{hasNextPage} nodes{number url assignees(first:5){nodes{login} pageInfo{hasNextPage}}
@@ -44,13 +44,18 @@ export async function reviewSnapshot(input: SnapshotInput, run: Runner = runComm
     if (!commit) return { status: 'unknown', reason: 'No verified head SHA.' }
     try {
       const response = object(await api([`repos/${request.repo}/actions/workflows/${request.workflow}/runs?event=${event}&head_sha=${commit}&per_page=20`]))
-      const runs = array(response.workflow_runs).map(object).filter(run => run.event === event && run.head_sha === commit
-        && (pr === undefined || array(run.pull_requests).some(value => object(value).number === pr)))
+      const candidates = array(response.workflow_runs).map(object)
+      // Actions can omit the association for fork PRs. Exact event/head remain mandatory;
+      // a nonempty association list must still contain the requested PR.
+      const runs = candidates.filter(run => run.event === event && run.head_sha === commit
+        && (pr === undefined || Array.isArray(run.pull_requests) && (run.pull_requests.length === 0
+          || run.pull_requests.some(value => object(value).number === pr))))
       const latest = runs.sort((a, b) => text(b.created_at).localeCompare(text(a.created_at)))[0]
-      if (!latest || !Number.isSafeInteger(latest.id)) return { status: 'unknown', reason: 'No matching run in the latest 20 results; absence is not a pass.' }
+      if (!latest || !Number.isSafeInteger(latest.id)) return { status: 'unknown', reason: `No eligible run among ${candidates.length} returned candidates (at most 20): exact event/head and compatible PR association are required; absence is not a pass.` }
       const jobs = object(await api([`repos/${request.repo}/actions/runs/${latest.id}/jobs?per_page=50`]))
       return { status: text(latest.status), conclusion: text(latest.conclusion) || null, event,
         headSha: commit, name: text(latest.name), url: text(latest.html_url, 500), attempt: latest.run_attempt,
+        ...(pr === undefined ? {} : { prAssociation: array(latest.pull_requests).length ? 'explicit' : 'exact-head-only' }),
         coverage: 'latest matching run of the requested workflow; not aggregate branch health',
         jobsTruncated: Number(jobs.total_count) > 50,
         jobs: array(jobs.jobs).slice(0, 50).map(value => { const job = object(value); return {
@@ -84,17 +89,25 @@ export async function reviewSnapshot(input: SnapshotInput, run: Runner = runComm
           truncated: more(issue.comments) || more(issue.assignees),
           claims: claims.map(comment => ({ author: text(object(comment.author).login, 80), url: text(comment.url, 500), excerpt: text(comment.body) })) }
       })
+      const githubMerge = {
+        mergeable: pr.mergeable === 'MERGEABLE' ? true : pr.mergeable === 'CONFLICTING' ? false : null,
+        mergeStateStatus: text(pr.mergeStateStatus) || 'UNKNOWN',
+        baseRef: text(pr.baseRefName), baseSha: sha(pr.baseRefOid),
+        matchesRequestedBase: Boolean(baseSha && sha(pr.baseRefOid) === baseSha),
+        coverage: 'GitHub assessment for the PR base; conflict-free does not imply checks or review approval',
+      }
       prs.push({ number, title: text(pr.title), url: text(pr.url, 500), author: text(object(pr.author).login, 80), state: text(pr.state),
         draft: pr.isDraft === true, reviewDecision: text(pr.reviewDecision), headSha: sha(pr.headRefOid), prBaseSha: sha(pr.baseRefOid),
         prBaseRef: text(pr.baseRefName), headRepo: text(object(pr.headRepository).nameWithOwner), maintainerCanModify: pr.maintainerCanModify === true,
         additions: pr.additions, deletions: pr.deletions, changedFiles: pr.changedFiles, files, filesTruncated: more(pr.files), risks,
         issues, issuesTruncated: more(pr.closingIssuesReferences), ci: await ci(sha(pr.headRefOid), 'pull_request', number),
-        merge: await probeMerge(request.checkout, baseSha, sha(pr.headRefOid), signal, run) })
+        githubMerge, merge: await probeMerge(request.checkout, baseSha, sha(pr.headRefOid), signal, run) })
     } catch (error) { prs.push({ number, status: 'unknown', reason: String(error instanceof Error ? error.message : error).slice(0, 500) }) }
   }
   const partial = !baseSha || baseCi.status === 'unknown' || ('jobsTruncated' in baseCi && baseCi.jobsTruncated) || prs.some(pr => 'status' in pr || pr.ci.status === 'unknown'
     || ('jobsTruncated' in pr.ci && pr.ci.jobsTruncated)
     || pr.filesTruncated || pr.issuesTruncated || pr.issues.some(issue => issue.truncated)
+    || (pr.merge.status === 'unknown' && (!pr.githubMerge.matchesRequestedBase || pr.githubMerge.mergeable === null))
     || (request.checkout !== undefined && pr.merge.status === 'unknown'))
   return { version: 1, status: partial ? 'partial' : 'completed', repo: request.repo, workflow: request.workflow, observedAt: new Date().toISOString(),
     base: { ref: request.base, sha: baseSha, ...(baseError ? { error: baseError } : {}), ci: baseCi }, prs,
