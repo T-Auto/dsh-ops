@@ -133,9 +133,20 @@ for (const preset of ['standard', 'cordis']) {
         assert.equal(count(await assemble(agent), guidance), 0, 'disposal removes the old owner')
         row = await ctx.plugin(Bundle, { ...config, [preset]: { ...config[preset], bash, residentTools } })
         const current = await assemble(agent)
-        assert.equal(count(current, guidance), 1, `${owner} keeps exactly one contribution after reload: ${textOf(current)}`)
+        const shellOwnsGuidance = bash && process.platform === 'win32'
+        // Native suppresses its extra guidance when the Windows Bash section is live.
+        const nativeOwnsGuidance = residentTools && !shellOwnsGuidance
+        const discoveryOwnsGuidance = current.tools.some(tool => tool.name === 'ops_discover_tools') && !shellOwnsGuidance && !nativeOwnsGuidance
+        const expectedOwners = Number(shellOwnsGuidance || nativeOwnsGuidance || discoveryOwnsGuidance)
+        assert.equal(count(current, guidance), expectedOwners, `${owner} keeps the platform-eligible owner after reload: ${textOf(current)}`)
         assert.equal(current.tools.some(tool => tool.name === 'ops_read_files'), residentTools)
-        assert.equal(bashSections(current).length, bash && process.platform === 'win32' ? 1 : 0)
+        assert.equal(current.tools.some(tool => tool.name === BASH_TOOL), shellOwnsGuidance)
+        assert.equal(bashSections(current).length, shellOwnsGuidance ? 1 : 0)
+        const nativeSection = current.sections.find(section => section.name === modeSectionName('mode-' + preset))
+        if (!expectedOwners) {
+          assert.equal(bashSections(current).length, 0, `${process.platform} has no Bash guidance owner`)
+          assert.equal(nativeSection?.text.trim() ?? '', '', `${process.platform} has no Native guidance owner`)
+        }
       }
       await row.dispose()
       const otherGuidance = 'Keep the discovery-only consumer independent.'
