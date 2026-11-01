@@ -57,9 +57,9 @@ const snapshot = (names, definition) => names.map(name => {
     concurrent: d.isConcurrencySafe?.({}) ?? false, timeoutMs: d.timeoutMs ?? null }
 })
 await test('business file and batch definitions retain their original serialized contracts', () => {
-  // Captured before this migration, covering every argument/output contract and published description.
+  // Structural contracts stay pinned below; #419 clarifies the create-only literal in write_file help.
   const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
-  assert.equal(hash(snapshot(FILE_TOOLS.filter(name => !['glob', 'grep', 'read_files', 'edit_file', 'read_table', 'read_docx', 'read_pdf'].includes(name)), fileDefinition)), '0297e7d3f819dc90dcc296a5e4ee1af88c37b742ed7ca06c77c54a477c52eb4b')
+  assert.equal(hash(snapshot(FILE_TOOLS.filter(name => !['glob', 'grep', 'read_files', 'edit_file', 'read_table', 'read_docx', 'read_pdf'].includes(name)), fileDefinition)), '7fa3aa6a22f54cf65f4ce0d243197a8ffef12949d4d6c4591ad996d853a39cdc')
   const batch = ptcDefinition('batch', async () => null)
   assert.equal(batch.parameters, ptcParameters.batch); assert.ok(batch.description.startsWith(ptcDescriptions.batch)); assert.match(batch.description, /PTC returns Outcome/)
   assert.ok(batch.output.schema.oneOf.every(branch => branch.properties.status))
@@ -69,6 +69,14 @@ await test('file parameter schemas preserve their reviewed structural constraint
   // #384 intentionally adds the optional exactTotal boolean; all other constraints remain pinned.
   const hash = createHash('sha256').update(JSON.stringify(withoutDescriptions(fileParameters))).digest('hex')
   assert.equal(hash, '637df1383940fa6fdb2d65a68e67ce1e333a7e2ecbfceff5ffef7a4c1133ea8b')
+})
+
+await test('create-only help names the required literal instead of suggesting an omitted revision', () => {
+  const schema = fileParameters.write_file
+  assert.ok(schema.required.includes('expectedRevision'))
+  assert.match(schema.properties.expectedRevision.description, /literal string "absent"/)
+  assert.match(fileDescriptions.write_file, /expectedRevision: "absent"/)
+  assert.match(fileParameters.edit_file.properties.expectedRevision.description, /"absent" is not accepted/)
 })
 
 await test('native registration consumes the catalogue while execute values stay unchanged', async () => {

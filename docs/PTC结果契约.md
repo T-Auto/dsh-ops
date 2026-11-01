@@ -1,5 +1,7 @@
 # PTC 结果契约
 
+读取后编辑的完整示例、revision 字段对照及部分替换回执见[文件读写契约](文件读写契约.md)。
+
 English: [PTC result contracts](ptc-outcomes.md).
 
 0.4.0 的 PTC 组件独立提供文件、批处理和结果引用 SDK，不依赖 Native 文件组件。

@@ -99,3 +99,30 @@ async function pdfPages() {
 // @ts-expect-error PDF encoding derives from supported fonts, not caller selection.
 void tools.ops_read_pdf({ path: 'text.pdf', encoding: 'utf-8' })
 void pdfPages
+
+async function readThenEdit() {
+  const read = await tools.ops_inspect_local_file({ path: 'a.ts' })
+  if (read.status !== 'completed' || !read.data.revision) return read
+  const row = read.data.items?.[0]
+  if (!row?.text || row.truncatedInLine) return read
+  return tools.ops_edit_file({ path: 'a.ts', expectedRevision: read.data.revision,
+    edits: [{ oldText: row.text, newText: row.text.replace('old', 'new') }] })
+}
+void tools.ops_write_file({ path: 'new.ts', content: '', expectedRevision: 'absent' })
+// @ts-expect-error Creation still requires the explicit absent literal or a revision.
+void tools.ops_write_file({ path: 'new.ts', content: '' })
+// @ts-expect-error Null is not create-only permission.
+void tools.ops_write_file({ path: 'new.ts', content: '', expectedRevision: null })
+async function replacementReceipts() {
+  const value = await tools.ops_replace({ pattern: 'old', replacement: 'new' })
+  const row = value.data?.items?.[0]
+  const before: string | undefined = row?.revision
+  const after: string | undefined = row?.revisionAfter
+  const state: 'pending' | 'completed' | 'error' | undefined = row?.status
+  // @ts-expect-error Replace uses revision for the before-image; edit_file uses revisionBefore.
+  const editBefore: string | undefined = row?.revisionBefore
+  // @ts-expect-error Per-file receipt state is not an automatic retry instruction.
+  const retry: 'retry' = row?.status
+  return { before, after, state }
+}
+void [readThenEdit, replacementReceipts]
