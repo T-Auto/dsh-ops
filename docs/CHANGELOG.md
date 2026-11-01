@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Transfer the owned Bash registration when an agent changes preset, before the new consumer publishes. PTC-to-Standard/Minimal switches no longer lose `ops_bash` to a same-layer registration collision; the retired consumer cannot remove its successor or execute a retained callback. Foreign same-name providers remain untouched.
+- 切换预设时，在新消费者发布前交接所属 Bash 注册。PTC 切到 Standard/Minimal 不再因同层同名冲突丢失 `ops_bash`；已退役消费者不能移除接任者或继续执行保留的回调，也不会撤销其它插件的同名工具。
 - Keep Native file routing separate from the independent Bash prompt section, so resident Native + Shell consumers do not repeat Bash guidance or advertise host PowerShell routing. Keep deployment guidance single-owned across Bash, Native and discovery sections, including withdrawal and reload.
 - 将 Native 文件路由提示与独立 Bash 提示段分开，避免 Native + Shell 常驻消费者重复 Bash 指导或把 Bash 宣传为宿主 PowerShell 路由。部署指导在 Bash、Native 与发现提示段之间仅保留一份，并覆盖撤回与重载。
 - Update preset hints and rendered settings UI to describe default Bash/PowerShell coexistence; hiding host PowerShell remains an explicit choice.
