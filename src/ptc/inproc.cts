@@ -160,7 +160,7 @@ const langOf = (file: string): string | null => LANG_BY_EXT[extname(file).toLowe
  * The deadline is checked every 64 entries rather than every entry: `performance.now()` in the inner
  * loop cost more than the walk itself on wide directories, and being 64 entries late is harmless.
  */
-function walkBounded(root: string, exts: Set<string>, cap: number, deadline: number): { files: string[], overflow: boolean } {
+export function walkBounded(root: string, exts: Set<string>, cap: number, deadline: number): { files: string[], overflow: boolean } {
   const out: string[] = []
   const stack = [root]
   let ticks = 0
