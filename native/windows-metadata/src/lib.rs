@@ -1,6 +1,8 @@
 //! Windows-only FFI boundary. Callers supply owned/borrowed file handles; no
 //! model paths, shells, privilege enabling, or publication policy live here.
 #![cfg(windows)]
+mod inheritance;
+pub use inheritance::inherit_new_file_dacl;
 use std::{
     ffi::c_void,
     fs::File,

@@ -399,6 +399,12 @@ fn publish_new(
                 ));
             }
         }
+        #[cfg(windows)]
+        if source.is_none() {
+            dsh_ops_windows_metadata::inherit_new_file_dacl(
+                &checked.parent.try_clone()?.into_std_file(), &file.try_clone()?.into_std(),
+            ).map_err(|error| Failure::new("METADATA_UNSUPPORTED", error))?;
+        }
         file.sync_all()?;
         Ok(())
     })();
