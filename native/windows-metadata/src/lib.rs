@@ -88,7 +88,11 @@ fn control(sd: &SecurityDescriptor) -> io::Result<u16> {
 
 /// CREATE_NEW relative to a held directory, with a protected current-process
 /// user DACL at creation, before any bytes can be written. No inherited grants.
-pub fn create_private(parent: &File, name: &str) -> io::Result<File> { create_private_object(parent, name, false, None) }
+pub fn create_private(parent: &File, name: &str) -> io::Result<File> {
+    // Exclude FILE_SHARE_WRITE for the entire publication lifetime, including after
+    // the final DACL is restored/expanded. Readers and hard-link/rename cleanup remain allowed.
+    create_private_object(parent, name, false, None, 5)
+}
 /// A private cache directory, created relative to an already-held directory.
 pub fn create_cache_object(parent: &File, name: &str, directory: bool, write_sid: Option<&str>) -> io::Result<File> {
     if let Some(capability) = write_sid {
@@ -103,7 +107,7 @@ pub fn create_cache_object(parent: &File, name: &str, directory: bool, write_sid
         });
         if !inherited { return Err(unsupported("Cache parent lacks the trusted private-temp write capability")); }
     }
-    create_private_object(parent, name, directory, write_sid)
+    create_private_object(parent, name, directory, write_sid, 7)
 }
 fn private_descriptor(write_sid: Option<&str>) -> io::Result<LocalBox<SecurityDescriptor>> {
     let sid = windows_permissions::utilities::current_process_sid()?;
@@ -120,7 +124,7 @@ fn private_descriptor(write_sid: Option<&str>) -> io::Result<LocalBox<SecurityDe
     };
     format!("D:P(A;;FA;;;{sid}){extra}").parse()
 }
-fn create_private_object(parent: &File, name: &str, directory: bool, write_sid: Option<&str>) -> io::Result<File> {
+fn create_private_object(parent: &File, name: &str, directory: bool, write_sid: Option<&str>, share: u32) -> io::Result<File> {
     if name.is_empty() || name.contains(['/', '\\', ':', '\0']) || name == "." || name == ".." {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -160,7 +164,7 @@ fn create_private_object(parent: &File, name: &str, directory: bool, write_sid: 
             &mut status,
             std::ptr::null(),
             if directory { 0x10 } else { 0x80 }, // DIRECTORY or NORMAL
-            7,                        // FILE_SHARE_READ|WRITE|DELETE
+            share,                    // publication excludes WRITE; cache retains READ|WRITE|DELETE
             2,                        // FILE_CREATE (never overwrite)
             0x00200000 | (if directory { 0x1 } else { 0x40 }) | 0x20, // no-follow, object kind, synchronous
             std::ptr::null(),

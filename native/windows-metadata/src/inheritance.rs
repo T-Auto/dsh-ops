@@ -58,3 +58,26 @@ pub fn inherit_new_file_dacl(parent: &File, file: &File) -> io::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{io::Write, os::windows::fs::OpenOptionsExt, time::{SystemTime, UNIX_EPOCH}};
+    #[test]
+    fn expanded_staging_dacl_never_admits_a_competing_writer() {
+        let root = std::env::temp_dir().join(format!("dsh-inherit-share-{}-{}", std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir(&root).unwrap();
+        let parent = std::fs::OpenOptions::new().read(true).custom_flags(0x02000000).open(&root).unwrap();
+        let mut file = crate::create_private(&parent, "staging").unwrap();
+        file.write_all(b"complete bytes").unwrap();
+        inherit_new_file_dacl(&parent, &file).unwrap();
+        let attempted = std::fs::OpenOptions::new().write(true).open(root.join("staging"));
+        assert_eq!(attempted.unwrap_err().raw_os_error(), Some(32), "FILE_SHARE_WRITE must remain excluded after expansion");
+        assert_eq!(std::fs::read(root.join("staging")).unwrap(), b"complete bytes");
+        drop(file);
+        drop(std::fs::OpenOptions::new().write(true).open(root.join("staging")).unwrap());
+        std::fs::remove_file(root.join("staging")).unwrap();
+        drop(parent); std::fs::remove_dir(root).unwrap();
+    }
+}
