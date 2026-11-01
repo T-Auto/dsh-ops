@@ -88,7 +88,7 @@ export function resolveIntegrationConfig(raw: unknown): IntegrationConfig {
   if (presentation === 'ptc' && !files) throw new ConfigError('PTC requires files: true; external PTC providers are not supported')
   if (presentation === 'ptc' && input.extraGuidance !== undefined) throw new ConfigError('extraGuidance currently applies to Native routing only')
   const replaceOfficial = boolean('replaceOfficial', false)
-  const hidePwsh = boolean('hidePwsh', replaceOfficial && shell) && shell
+  const hidePwsh = boolean('hidePwsh', false) && shell
   if (input.residentNames !== undefined && presentation === 'ptc') throw new ConfigError('residentNames applies to Native presentation; use alwaysLoaded for PTC APIs')
   // Replacement intent is retained while both publishers are off; no counterpart means no hide.
   const allowedTools = input.allowedTools ?? (enabled ? undefined : [])

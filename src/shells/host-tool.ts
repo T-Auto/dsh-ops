@@ -9,6 +9,7 @@ import { approveBashPolicy } from './approval.js'
 import { HOST_BASH_OUTPUT_SCHEMA, hostFailure, hostForeground, renderHostBash } from './host-contract.js'
 import { BashJobAdmissionError, startBashJob, waitOnBashJob } from './jobs.js'
 import { createJsonDigestProjection } from './json-digest.js'
+import { bashOperationDescription } from './prompt.js'
 
 import { bashPresentationMeta, presentBashCall, presentBashResult } from './presentation.js'
 import type { DirectoryBasis } from '../adapter/dsh/working-directory.js'
@@ -33,7 +34,7 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
   const projection = createJsonDigestProjection()
   return {
     ...base,
-    description: 'Execute a Bash command in a fresh shell using the host sandbox, approvals and jobs. Relative workdir uses the current session workspace. Output is bounded with spill paths. Use command for host-compatible calls; script_path is an OPS extension for an existing script file. Verify resolved absolute targets before delete or move. Never bypass a sandbox denial by switching shells.',
+    description: bashOperationDescription() + 'Execution uses the host sandbox, approvals and jobs. Relative workdir uses the current session workspace. Output is bounded with spill paths. Use command for short commands; script_path is an OPS extension for an existing Bash script file. description is required. Check kind: foreground includes status and exitCode; background/promoted includes jobId, not a completed exit. Failures return failure.code/effectState/retry; inspect unknown effects before repeating. Verify resolved absolute targets before delete or move. Never bypass a sandbox denial by switching shells.',
     parameters: { ...parameters },
     projectContent: projection.projectContent,
     // The host validates this value against the declared schema before invoking its renderer.

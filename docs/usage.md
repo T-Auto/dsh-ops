@@ -123,9 +123,9 @@ The ordinary DSH CLI cannot manage the reserved `desktop` profile; do not confus
 
 ### Which channels install a loadable plugin
 
-The registry target is the only supported install channel: `add dsh-ops` resolves the
-published tarball, which carries the compiled `lib/` and every staged `runtime/` target.
-A Git or source checkout is **not** a channel. `.gitignore` keeps `lib/` and `runtime/` out
+`add dsh-ops` resolves the published registry tarball, which carries the compiled
+`lib/` and every staged `runtime/` target. A fully built source tarball is also supported.
+Direct Git installation or an unbuilt checkout is unsupported. `.gitignore` keeps `lib/` and `runtime/` out
 of the repository, and the native worker is staged by `npm run build:ptc`, which needs cargo
 and the full toolchain. `npm ci && npm run build && npm run build:ptc && npm pack` produces a
 tarball you can install; `git+https://…` on its own produces a package that loads without

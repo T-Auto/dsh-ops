@@ -77,22 +77,23 @@ async function boot() {
 
 /** The activation targets are pure data; assert them without a host or worker. */
 await test('replacement targets map each mode to the tools it hides, platform by platform', () => {
-  const win = replacementTargets('standard', 'win32')
+  const win = replacementTargets('standard', 'win32', true)
   assert.equal(win.get('read'), publicToolName('inspect_local_file'))
   assert.equal(win.get('glob'), publicToolName('glob'))
   assert.equal(win.get('grep'), publicToolName('grep'))
   assert.equal(win.get('pwsh'), BASH_TOOL)
   assert.equal(win.get('pwsh_persistent'), BASH_TOOL)
+  assert.equal(replacementTargets('standard', 'win32').has('pwsh'), false, 'default Bash publication does not replace PowerShell')
   assert.equal(win.has('write'), false, 'write has no reviewed replacement')
   const linux = replacementTargets('standard', 'linux')
   assert.equal(linux.has('pwsh'), false, 'POSIX keeps the host bash')
   assert.equal(replacementTargets('cordis', 'win32').get('read'), publicToolName('inspect_local_file'))
   // Minimal and PTC replace only the Windows shell; their file tools stay official.
   for (const mode of ['minimal', 'ptc']) {
-    const targets = replacementTargets(mode, 'win32')
+    const targets = replacementTargets(mode, 'win32', true)
     assert.deepEqual([...targets.keys()].sort(), ['pwsh', 'pwsh_persistent'].sort(), mode)
     assert.equal([...targets.values()].every(value => value === BASH_TOOL), true, mode)
-    assert.equal(replacementTargets(mode, 'linux').size, 0, `${mode} replaces nothing on POSIX`)
+    assert.equal(replacementTargets(mode, 'linux', true).size, 0, `${mode} replaces nothing on POSIX`)
   }
   assert.deepEqual(residentTools('standard'), RESIDENT)
   assert.deepEqual(residentTools('cordis'), RESIDENT)
@@ -149,7 +150,7 @@ await test('creating a session does not re-plan every live session', () => withT
   ctx.provide('agents', { list: () => [...live] })
   const presets = new Map()
   ctx.provide('agentPresets', { composedPreset: scoped => presets.get(scopeParentOf(scopeOf(scoped))) })
-  const targets = replacementTargets('standard', 'win32')
+  const targets = replacementTargets('standard', 'win32', true)
   const mounted = ctx.plugin({ name: 'fixture-replacements', apply(inner) {
     mountReplacements(inner, { id: 'standard', targets, gate: { allows: () => true }, keepOfficial: () => false })
   } })

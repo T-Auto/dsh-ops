@@ -19,7 +19,7 @@ export interface ModePlan {
   nativeFiles: boolean
   /** Official file tools replaced once their OPS counterpart is visible in the same scope. */
   replacements: readonly OfficialReplacement[]
-  /** Replace the official Windows shell with ops_bash when the row is on. */
+  /** Publish the independent OPS Bash tool when the row is on. */
   shell: boolean
   /** Publish the PTC SDK APIs for matching Agents. */
   ptc: boolean
@@ -33,7 +33,7 @@ const NATIVE_REPLACEMENTS: readonly OfficialReplacement[] = Object.freeze(['read
 
 /** Everything one mode publishes; consumers read this instead of branching on ids. */
 export const MODE_PLANS: Readonly<Record<ModeId, ModePlan>> = Object.freeze({
-  // Minimal keeps its terse prompts: only the Windows shell is replaced, and
+  // Minimal keeps its terse prompts: OPS Bash is published independently, and
   // advanced tools arrive through the discovery entry when that row is on.
   minimal: Object.freeze({ nativeFiles: false, replacements: [], shell: true, ptc: false, discovery: 'all', section: null }),
   standard: Object.freeze({ nativeFiles: true, replacements: NATIVE_REPLACEMENTS, shell: true, ptc: false, discovery: 'advanced', section: 'standard' }),

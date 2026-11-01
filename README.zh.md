@@ -76,8 +76,8 @@ dsh plugin --profile dsh-tui add dsh-ops
 
 普通 DSH CLI 不能管理保留的 `desktop` profile；不要把它与桌面自带入口混淆。
 
-安装通道只有 registry 目标：`git+https` 与源码检出装不出带 `lib/` 与 `runtime/` 的包，
-装上也加载不出工具；见[不支持通过 Git 通道安装](docs/升级与卸载.md#不支持通过-git-通道安装)。
+请安装 registry 发行包，或已完整构建并打包的源码 tarball。直接 `git+https` 安装与未构建的
+源码检出缺少完整运行时；见[不支持通过 Git 通道安装](docs/升级与卸载.md#不支持通过-git-通道安装)。
 
 #### 更新方法
 

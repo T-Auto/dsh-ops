@@ -193,14 +193,13 @@ export function withBashStatus(value: ShellResult): SettledShellResult {
  * @returns {string} the description.
  */
 export function bashToolDescription() {
-  return 'Run general commands, builds, git/gh, pipelines and scripts in bash; prefer this command '
-    + 'executor over PowerShell. Use file tools for file operations. Each call uses a fresh non-login '
-    + 'shell; set workdir explicitly. For Bash scripts longer than about 1 KB or containing heredocs, '
-    + 'quotes, backslashes or non-ASCII text, write the script to a file first and pass script_path '
-    + 'instead of embedding it in command. Use command for short commands and pipelines. Fix failed '
-    + 'bash commands here, do not switch shells or mix PowerShell syntax. Output is bounded with '
-    + 'spill paths; verify absolute targets before delete/move. Foreground only: no run_in_background '
-    + 'and no job id, so a server or watcher occupies the call until timeoutMs; use host pwsh for background.'
+  return 'Run general commands, builds, git/gh, pipelines and scripts in the local Bash environment. Use file '
+    + 'tools for file operations. Each call uses a fresh non-login shell; set workdir explicitly. For Bash scripts '
+    + 'longer than about 1 KB or containing heredocs, quotes, backslashes or non-ASCII text, write the script to '
+    + 'a file first and pass script_path instead of embedding it in command. Use command for short commands and '
+    + 'pipelines. Fix failed Bash commands here, do not mix shell syntax. Output is bounded with spill paths; '
+    + 'verify absolute targets before delete/move. Foreground only: no run_in_background and no job id, so a '
+    + 'server or watcher occupies the call until timeoutMs.'
 }
 
 /**

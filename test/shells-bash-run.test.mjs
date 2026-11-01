@@ -423,14 +423,17 @@ await test('the ops_bash argument guard and its schema cannot drift apart', asyn
   })
 })
 
-await test('the ops_bash description says the tool has no background mode', async () => {
-  // The prompt is the reliable correction channel: a model that has learned
-  // "shell tools can run in the background" from the host's pwsh tool must be
-  // told otherwise where it will read it.
+await test('the standalone Bash description preserves its fresh-shell and foreground-only contract without a false pwsh fallback', () => {
   const description = bashToolDescription()
+  assert.match(description, /fresh non-login shell/)
+  assert.match(description, /set workdir explicitly/)
+  assert.match(description, /write the script to a file first and pass script_path/)
+  assert.match(description, /command for short commands and pipelines/)
+  assert.match(description, /Fix failed Bash commands here, do not mix shell syntax/)
   assert.match(description, /Foreground only/)
-  assert.match(description, /no run_in_background/)
-  assert.match(description, /pwsh/)
+  assert.match(description, /no run_in_background and no job id/)
+  assert.match(description, /occupies the call until timeoutMs/)
+  assert.doesNotMatch(description, /pwsh|PowerShell|fallback/i)
 })
 
 // A definition whose subprocess service is missing cannot exist in a real

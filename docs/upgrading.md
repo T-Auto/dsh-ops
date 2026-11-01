@@ -74,38 +74,42 @@ rollback and registry persistence belong to DSH's package manager.
 
 ## An unmapped Windows error while pnpm fetches or unpacks
 
-`ERR_PNPM_UNKNOWN` reporting `UNKNOWN: unknown error, open '<path>'` is not a
-dsh-ops failure (#524). `UNKNOWN` is how libuv reports a Windows error its table
-has no name for, so pnpm's failing `open` returned neither `EPERM` nor
-`EACCES`. When the path is under `pnpm-store/v11/tmp/…`, the file being written
-is whatever the package manager is unpacking at that moment — **not necessarily
-this plugin**, and never a dsh-ops code path. dsh-ops calls no package manager
-during installation.
+`ERR_PNPM_UNKNOWN` with `UNKNOWN: unknown error, open '<path>'` identifies an
+installation failure, but that text alone does not identify the root cause.
+Read the package URL and exact path in the operation log. In #524 the failing
+archive is `yujunzhixue/dsh-purge`, and the failing member is in that package's
+`skills/redteam/` directory. That excerpt does not show dsh-ops code running or
+establish that changing dsh-ops would repair the installation.
 
-The same coordinates can be reproduced elsewhere: the same Git tarball unpacks
-normally from a store on `C:` and from a store on `D:`, while the failing
-machine's store lived on another volume. Work through these in order and re-run
-the identical command after each step:
+1. Preserve the host operation log and record the versions, requested package,
+   archive URL, failing member, and store location. Redact credentials and user paths.
+2. Inspect protection/quarantine history and filesystem diagnostics for that
+   exact path. An absent record is not proof either way; do not disable protection
+   or add broad profile/store exclusions to force installation.
+3. If a comparison is needed, use a disposable empty directory and an alternate
+   store, for example `pnpm --store-dir D:/pnpm-store add <the same spec> --ignore-scripts`.
+   This changes only the diagnostic fixture. Success narrows the investigation but
+   does not prove which filesystem, cache, permission or security condition differed.
+4. Send the sanitized evidence to the owner of the failing package or installer.
+   A new failure naming dsh-ops itself should be reported separately with its log.
 
-1. `pnpm store prune` and retry — a half-written temporary entry is not reused.
-2. Check security software's quarantine or protection history for the file named
-   in the error; an unpacked document can be removed between `open` and the
-   next retry, which retrying cannot fix. Exclude the store or the profile
-   directory temporarily to test that theory, then put the exclusion back.
-3. Move the store to another volume, for example
-   `pnpm --store-dir D:/pnpm-store add <the same spec>`. Success there
-   localises the fault to the volume or its filesystem, not to the package.
-4. Only then open an issue, with the pnpm version, store path and the exact
-   failing path.
+Keep `minimumReleaseAge`, integrity checks and registry policy enabled. Do not
+remove user lockfiles or change an installed profile as a diagnostic shortcut.
 
-Do not disable `minimumReleaseAge`, integrity checks or the registry policy to
-work around this error: none of them produce an unmapped `open` failure, and
-turning them off removes the checks that would notice a real substitution.
+## Duplicate YAML mapping keys during installation
+
+`duplicated mapping key (12:3)` means a YAML parser encountered the same key twice
+in one mapping. The excerpt in #479 does not name the input file, so it cannot
+identify the plugin bundle, host profile, pnpm configuration or lockfile as the cause.
+Keep the operation log and obtain the parser's filename plus a sanitized surrounding
+mapping. Back up the identified file before correcting that mapping; do not delete
+the entire profile or lockfile. OPS's manifest gate parses its shipped bundle, but
+a passing bundle check does not validate a user's other YAML inputs.
 
 ## Installing from Git is not a supported channel
 
-`git+https://github.com/T-Auto/dsh-ops.git` (or any source checkout) cannot
-produce a loadable dsh-ops package. `.gitignore` excludes `lib/` and
+Direct installation of `git+https://github.com/T-Auto/dsh-ops.git` or an unbuilt
+source checkout is unsupported. `.gitignore` excludes `lib/` and
 `runtime/`; `prepack` compiles `lib/` but never stages the native worker, and
 staging it (`npm run build:ptc`) needs cargo and the full toolchain. Adding a
 `prepare` hook would compile `lib/` for every git install and still leave
