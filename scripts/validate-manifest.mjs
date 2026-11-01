@@ -28,7 +28,7 @@ import {
   publicToolName,
   renderToolingPolicy,
 } from '../lib/policy.js'
-import { NATIVE_FILE_TOOLS } from '../lib/capabilities/registry.js'
+import { DISCOVERY_TOOL_NAME, NATIVE_FILE_TOOLS, PTC_TOOLS, SDK_CAPABILITIES } from '../lib/capabilities/registry.js'
 import { resolvePtcConfig } from '../lib/ptc/index.js'
 import { resolveTuiConfig } from '../lib/components/tui/index.js'
 import { resolvePanelConfig } from '../lib/components/panel/index.js'
@@ -295,24 +295,48 @@ const equippedPolicy = renderToolingPolicy({
   levels: { files: true, bash: true, pwsh: true },
 })
 
-// Every namespace after the first describes tools this plugin registers itself,
-// so those names are checked against `IN_PROCESS_TOOLS` and against the policy
-// text that has to name them. Written against whatever the manifest declares.
+// The routing table is deliberately compact, so only the routed in-process tools
+// have to be named by it; a PTC-only API or the SDK loader is never advertised there.
 check(
   IN_PROCESS_TOOLS.every((toolName) => equippedPolicy.includes(publicToolName(toolName))),
   'the tools this plugin registers itself are named by the tooling policy',
   `policy never names ${IN_PROCESS_TOOLS.filter((name) => !equippedPolicy.includes(publicToolName(name))).map(publicToolName).join(', ')}`,
 )
+// Every namespace after the first describes tools this plugin registers itself.
+// The names come from the capability catalogue, not from a hard-coded list: the
+// shell row, the PTC-only APIs the compact native routing table never advertises,
+// the PTC SDK loader and the progressive-disclosure entry.
+const ownSurface = new Set([
+  ...IN_PROCESS_TOOLS,
+  ...PTC_TOOLS.filter((toolName) => !NATIVE_FILE_TOOLS.includes(toolName)),
+  ...SDK_CAPABILITIES.map((capability) => capability.rawName),
+  DISCOVERY_TOOL_NAME,
+])
+const declaredSurface = new Set(namespaces[0]?.tools ?? [])
 for (const [index, entry] of namespaces.slice(1).entries()) {
   const declared = Array.isArray(entry?.tools) ? entry.tools : []
-  const identified = declared.filter((toolName) => typeof toolName === 'string'
-    && IN_PROCESS_TOOLS.includes(toolName)
-    && equippedPolicy.includes(publicToolName(toolName)))
+  const identified = declared.filter((toolName) => typeof toolName === 'string' && ownSurface.has(toolName))
   check(
     declared.length > 0 && identified.length === declared.length,
     `every tool of the namespace at index ${index + 1} is published under ${TOOL_PREFIX} by this plugin itself`,
-    `declared ${JSON.stringify(entry?.tools)} vs in-process ${IN_PROCESS_TOOLS.map(publicToolName).join(', ') || '(none)'}`,
+    `declared ${JSON.stringify(entry?.tools)} vs own surface ${[...ownSurface].map(publicToolName).join(', ') || '(none)'}`,
   )
+  for (const toolName of declared) {
+    check(!declaredSurface.has(toolName), `${publicToolName(String(toolName))} is declared by exactly one namespace`)
+    declaredSurface.add(toolName)
+  }
+}
+// The advertised component surface must be the declared namespace surface (#484):
+// a name that only reaches x-components[].tools is invisible to a namespace consumer.
+for (const component of manifestRaw.contributes?.['x-components'] ?? []) {
+  for (const name of Array.isArray(component?.tools) ? component.tools : []) {
+    const raw = typeof name === 'string' && name.startsWith(TOOL_PREFIX) ? name.slice(TOOL_PREFIX.length) : undefined
+    check(
+      raw !== undefined && declaredSurface.has(raw),
+      `${String(name)} is declared by an x-tool-namespaces entry`,
+      `declared surface ${[...declaredSurface].map(publicToolName).join(', ')}`,
+    )
+  }
 }
 
 const sections = manifestRaw.contributes?.['x-prompt-sections'] ?? []

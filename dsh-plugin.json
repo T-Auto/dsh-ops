@@ -100,6 +100,18 @@
           "bash"
         ],
         "shellPermission": "Mode row enabled with the matching preset AND publishBashTool AND authoritative per-session DSH policy; restricted modes require host confinement"
+      },
+      {
+        "serverName": "dsh-ops",
+        "transport": "in-process",
+        "source": "the plugin's progressive-disclosure, PTC batch and PTC SDK loader surface",
+        "publicPrefix": "ops_",
+        "tools": [
+          "batch",
+          "load_sdk",
+          "discover_tools"
+        ],
+        "shellPermission": "No command execution of its own: batch is gated by the same per-session DSH policy and root as the file mutations it plans or runs, and load_sdk/discover_tools only select capabilities already published to that session"
       }
     ],
     "x-components": [

@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Declare the progressive-disclosure, PTC batch and PTC SDK loader tools in their own `x-tool-namespaces` entry, so the manifest's advertised tool surface matches the namespaces it publishes under, and refuse a confined argv that would start the host Electron binary instead of reporting its exit 0 as success (#484).
+- 将渐进披露、PTC batch 与 PTC SDK 加载工具声明为独立的 `x-tool-namespaces` 条目，使 manifest 宣传的工具面与其发布的命名空间一致；受限 argv 若会启动宿主 Electron 二进制，则显式拒绝，不再把它的 exit 0 当成成功（#484）。
 - Keep Native file routing separate from the independent Bash prompt section, so resident Native + Shell consumers do not repeat Bash guidance or advertise host PowerShell routing. Keep deployment guidance single-owned across Bash, Native and discovery sections, including withdrawal and reload.
 - 将 Native 文件路由提示与独立 Bash 提示段分开，避免 Native + Shell 常驻消费者重复 Bash 指导或把 Bash 宣传为宿主 PowerShell 路由。部署指导在 Bash、Native 与发现提示段之间仅保留一份，并覆盖撤回与重载。
 - Update preset hints and rendered settings UI to describe default Bash/PowerShell coexistence; hiding host PowerShell remains an explicit choice.

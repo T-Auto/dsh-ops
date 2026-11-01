@@ -6,6 +6,8 @@ import { bashToolDefinition, withBashStatus } from './tool.js'
 import { confinedBash } from '../bash-ipc.js'
 import { prepareWorkspace } from '../workspace-preparation.js'
 import { executionRestriction } from '../permissions.js'
+import { shellEnvOverrides } from './constants.js'
+import { hostRunnerRefusal } from './host-runner.js'
 
 export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bash: { file: string; source: string }; active(): boolean },
   args: Record<string, unknown>, exec: ShellCall, standing: ShellPolicy, policy: ShellPolicy, dshEnv: NodeJS.ProcessEnv, options: ExecutionOptions): ShellExecution {
@@ -23,8 +25,11 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
   try { runtime = policy.mode === 'danger-full-access' ? { file: bash.file } : confinedBash(bash.file, { source: bash.source }) }
   catch { throw new Error('EXECUTOR_UNAVAILABLE: the restricted Bash runtime is unavailable or incompatible; this is not a user authorization denial. Restore the verified pinned Bash payload and IPC runtime; changing the DSH selector is not a repair. Do not retry or bypass confinement.') }
   let confinement: ConfinedArgv | undefined
+  // The child environment is `ENV_OVERRIDES` over these overrides and nothing else,
+  // so this is also the environment the host-runner guard has to read.
+  const childEnv = { ...runtime.env, ...dshEnv }
   const definition = bashToolDefinition({ file: runtime.file, source: bash.source,
-    env: { ...runtime.env, ...dshEnv }, subprocess: ctx.get('subprocess'),
+    env: childEnv, subprocess: ctx.get('subprocess'),
     prepareArgv: async (argv: string[], signal: AbortSignal) => {
       signal.throwIfAborted()
       assertAuthority()
@@ -38,7 +43,13 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
       }
       signal.throwIfAborted()
       assertAuthority()
-      return confinement?.argv ?? argv
+      const prepared = confinement?.argv ?? argv
+      // A confinement provider that hands back the host binary itself — or a bashPath
+      // pointed at it — would start a second GUI instance under Electron and exit 0
+      // without running the command. Refuse instead of reporting that as success.
+      const refusal = hostRunnerRefusal(prepared, shellEnvOverrides(globalThis.process.env, childEnv))
+      if (refusal) throw new Error(refusal)
+      return prepared
     },
     projectResult: (value: ShellResult) => {
       const stderr = `${value.stderr?.text ?? ''}\n${value.error ?? ''}`

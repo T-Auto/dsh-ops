@@ -2,6 +2,7 @@ import { assertSupportedJsonSchema, validateJsonSchemaValue } from '@deepseek-ai
 import { bashToolDefinition } from '../lib/shells.js'
 import { hostBashDefinition } from '../lib/shells/host-tool.js'
 import { startSessionBash } from '../lib/shells/session-execution.js'
+import { hostRunnerRefusal } from '../lib/shells/host-runner.js'
 import { startBashJob, waitOnBashJob } from '../lib/shells/jobs.js'
 import { sessionWorkdir } from '../lib/session-shells.js'
 import { hostForeground } from '../lib/shells/host-contract.js'
@@ -352,6 +353,37 @@ await test('timeout cannot claim no effects while an invoked asynchronous starte
       stdout: { text: '', truncated: false }, stderr: { text: '', truncated: false } }) })
   await jobs.hooks.done
   assert.equal(stopped, true); assert.equal(jobs.outcome.status, 'killed')
+})
+
+await test('a confined argv that starts the host Electron binary is refused, not reported as success (#484)', () => {
+  const host = { execPath: 'C:/DSH/DSH Desktop Beta.exe', electron: true }
+  // The shape the Windows ACL provider returns: [process.execPath, runner, …].
+  const runner = [host.execPath, 'C:/DSH/resources/app/lib/dsh-sandbox-windows-acl/lib/runner.js',
+    '--workspace', TEST_HOME, '--', 'bash.exe', '-c', 'echo hello']
+  assert.match(hostRunnerRefusal(runner, {}, host), /^EXECUTOR_UNAVAILABLE: /)
+  // An ordinary bash argv and a non-Electron host keep spawning their own exec path.
+  assert.equal(hostRunnerRefusal(['C:/bash/usr/bin/bash.exe', '-c', 'echo hello'], {}, host), undefined)
+  assert.equal(hostRunnerRefusal(runner, {}, { execPath: host.execPath, electron: false }), undefined)
+  // A child that already asks Electron to behave as Node runs the runner correctly.
+  assert.equal(hostRunnerRefusal(runner, { ELECTRON_RUN_AS_NODE: '1' }, host), undefined)
+  // Windows environment names are case-insensitive, so a lower-cased variant counts too.
+  assert.equal(hostRunnerRefusal(runner, { electron_run_as_node: '1' }, host), undefined)
+})
+
+await test('the session executor refuses the host binary instead of spawning a second GUI instance (#484)', async () => {
+  const f = fixture({ file: process.execPath })
+  // This suite runs under plain Node; declare the Desktop runtime for this case only.
+  Object.defineProperty(process.versions, 'electron', { value: '34.0.0', configurable: true, enumerable: true, writable: true })
+  try {
+    const value = await f.definition.execute({ command: 'echo hello', description: 'Run one confined command' }, f.exec)
+    assert.equal(f.calls.length, 0, 'the host binary must never be spawned')
+    assert.equal(value.status, 'failed')
+    assert.match(value.error, /EXECUTOR_UNAVAILABLE: the confined argv starts the host Electron binary/)
+  } finally { delete process.versions.electron }
+  // Without the Desktop runtime the same argv is a plain Node invocation and stays spawnable.
+  const plain = fixture({ file: process.execPath })
+  const spawned = await plain.definition.execute({ command: 'echo hello', description: 'Run one plain command' }, plain.exec)
+  assert.equal(plain.calls.length, 1); assert.equal(spawned.error, undefined)
 })
 
 report('shells-host')

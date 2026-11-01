@@ -17,7 +17,7 @@ import {
   publicToolName,
   renderToolingPolicy,
 } from '../lib/policy.js'
-import { NATIVE_FILE_TOOLS } from '../lib/capabilities/registry.js'
+import { DISCOVERY_TOOL_NAME, IN_PROCESS_TOOLS, NATIVE_FILE_TOOLS, PTC_TOOLS, SDK_CAPABILITIES } from '../lib/capabilities/registry.js'
 import { COMPONENTS, componentEnabled, componentEntry } from '../lib/components/defaults.js'
 import { assert, PACKAGE_ROOT, report, test } from './lib/harness.mjs'
 
@@ -75,8 +75,17 @@ await test('every declared tool is one the policy actually names', () => {
   // The FastCtx background backend was removed: no namespace may still advertise it.
   assert.equal(namespaces.some((entry) => entry.serverName === 'fastctx' || entry.transport === 'stdio'), false)
 
-  // Every further namespace is this plugin's own in-process surface, so its
-  // names are checked against the shell capability and against the policy.
+  // Every further namespace is this plugin's own in-process surface, so its names
+  // are checked against the capability catalogue rather than a hard-coded list: the
+  // shell row, the PTC-only APIs the compact native routing table never advertises,
+  // the PTC SDK loader and the progressive-disclosure entry.
+  const ownSurface = new Set([
+    ...IN_PROCESS_TOOLS,
+    ...PTC_TOOLS.filter((name) => !NATIVE_FILE_TOOLS.includes(name)),
+    ...SDK_CAPABILITIES.map((capability) => capability.rawName),
+    DISCOVERY_TOOL_NAME,
+  ])
+  const declared = new Set()
   for (const [offset, entry] of namespaces.slice(1).entries()) {
     const index = offset + 1
     assert.ok(
@@ -85,10 +94,29 @@ await test('every declared tool is one the policy actually names', () => {
     )
     for (const tool of entry.tools) {
       assert.ok(
-        ['bash', 'pwsh'].includes(tool),
+        ownSurface.has(tool),
         `the namespace at index ${index} declares ${tool}, which the plugin does not register itself`,
       )
+      assert.equal(declared.has(tool), false, `${tool} is declared by two namespaces`)
+      declared.add(tool)
+    }
+    // The routing table stays compact: it advertises the file, shell and discovery
+    // rows only, so a PTC-only API or the SDK loader is legitimately absent from it.
+    for (const tool of entry.tools.filter((name) => IN_PROCESS_TOOLS.includes(name))) {
       assert.ok(policy.includes(publicToolName(tool)), `the policy never names ${publicToolName(tool)}`)
+    }
+  }
+  // The declared surface has to cover the names the component advertises (#484): a
+  // tool that appears only in x-components[].tools is invisible to anything that
+  // derives the tool surface from the namespaces.
+  const declaredSurface = new Set([...namespaces[0].tools, ...declared])
+  for (const component of raw.contributes['x-components']) {
+    for (const name of component.tools) {
+      assert.ok(name.startsWith(TOOL_PREFIX), `${name} must carry the public prefix`)
+      assert.ok(
+        declaredSurface.has(name.slice(TOOL_PREFIX.length)),
+        `the manifest advertises ${name} but no x-tool-namespaces entry declares it`,
+      )
     }
   }
 })
