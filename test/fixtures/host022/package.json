@@ -51,5 +51,8 @@
   "type": "module",
   "engines": {
     "node": ">=24.9.0"
+  },
+  "optionalDependencies": {
+    "@dsh-ops/bash-win32-x64": "0.2.1"
   }
 }
