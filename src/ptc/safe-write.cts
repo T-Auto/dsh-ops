@@ -1,87 +1,117 @@
-// @ts-nocheck — ported from the shipped 2.1.1 engine as-is: the runtime is unchanged, the types
-// are the open work. Tracked in docs/CHANGELOG.md under "Unreleased → known gaps".
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.verifySnapshot = verifySnapshot;
-exports.checkedWrite = checkedWrite;
-const node_fs_1 = require("node:fs");
-const node_crypto_1 = require("node:crypto");
-function verifySnapshot(file, expected) {
-    const st = (0, node_fs_1.lstatSync)(file);
-    if (!st.isFile() || st.isSymbolicLink() || st.nlink > 1) {
-        throw Object.assign(new Error(`拒绝替换非普通文件或硬链接: ${file}`), { code: 'E_INPROC_FILE_TYPE' });
-    }
-    if (!(0, node_fs_1.readFileSync)(file).equals(expected)) {
-        throw Object.assign(new Error(`文件在审计期间发生变化: ${file}`), { code: 'E_INPROC_CHANGED' });
-    }
-}
 /**
- * ast-grep 模板占位符落到标识符位，说明 rewrite 没被解析就把整段原文写回去了。
+ * Atomic, checked replacement of a file's bytes.
  *
- * 这个闸门是事后补的：`proc.js` 的七个函数曾被这样改成 `function safeStr($$$) { try {`
- * 并压成单行，`async` 一起丢了，模块直接加载失败。占位符只可能出现在字符串字面量里
- * （pattern 数组），一旦出现在声明名或参数位就是污染，与任何合法源码都不重叠。
+ * The contract is narrow on purpose: the caller has already produced the new bytes, and this module
+ * refuses to publish them unless the file it read during planning is still the file on disk. The lock
+ * file makes two concurrent PTC writers fail loudly instead of last-write-wins.
+ *
+ * @module dsh-ops/ptc/safe-write
  */
-const PLACEHOLDER_LEAK = /function\s+\$\$\$|class\s+\$\$\$|=>\s*\$\$\$|\(\s*\$\$\$\s*[,)]|(?:const|let|var)\s+\$\$\$\s*=/;
-function assertResolved(file, after) {
-    if (PLACEHOLDER_LEAK.test(after)) {
-        throw Object.assign(new Error(`改写结果残留未解析的 ast-grep 占位符（$$$）: ${file}`), { code: 'E_INPROC_UNRESOLVED_PLACEHOLDER' });
-    }
+
+import { chmodSync, closeSync, lstatSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+
+/** A refusal raised by this module carries one of these codes. */
+type SafeWriteCode = 'E_INPROC_FILE_TYPE' | 'E_INPROC_CHANGED' | 'E_INPROC_UNRESOLVED_PLACEHOLDER' | 'E_INPROC_LOCKED'
+
+/** Node's own errno shape; the lock branch needs `.code` off a thrown `fs` error. */
+type ErrnoLike = Error & { code?: string }
+
+/** What a successful write reports: cleanup failures that did not stop the publish. */
+export interface CheckedWriteResult {
+  cleanupErrors: string[]
 }
-function checkedWrite(file, expected, after) {
-    assertResolved(file, after);
-    const lock = `${file}.ops-ptc.lock`;
-    const tmp = `${file}.inproc-${(0, node_crypto_1.randomUUID)()}.tmp`;
-    let lockFd;
-    let tmpFd;
-    let ownsTemp = false;
-    let failure;
-    const cleanupErrors = [];
-    const cleanup = (action) => {
-        try {
-            action();
-        }
-        catch (e) {
-            const error = e;
-            cleanupErrors.push(`${error.code ?? 'E_CLEANUP'}: ${error.message ?? String(e)}`);
-        }
-    };
+
+/**
+ * Refuse to touch anything that is not a lone regular file.
+ *
+ * Symlinks and hard links are rejected rather than followed: rewriting the target behind a link is a
+ * different operation with a different blast radius, and a hard link means the bytes are shared with a
+ * file this engine was never asked about.
+ */
+export function verifySnapshot(file: string, expected: Buffer): void {
+  const stats = lstatSync(file)
+  if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink > 1) {
+    throw Object.assign(new Error(`refusing to replace a non-regular file or hard link: ${file}`), { code: 'E_INPROC_FILE_TYPE' satisfies SafeWriteCode })
+  }
+  if (!readFileSync(file).equals(expected)) {
+    throw Object.assign(new Error(`the file changed while it was being audited: ${file}`), { code: 'E_INPROC_CHANGED' satisfies SafeWriteCode })
+  }
+}
+
+/**
+ * An ast-grep template placeholder landing in an identifier position means the rewrite was never
+ * parsed and the raw pattern text was written back.
+ *
+ * This gate is the scar from a real incident: seven functions in `proc.js` were rewritten into
+ * `function safeStr($$$) { try {`, flattened onto one line with `async` dropped, and the module failed
+ * to load. A placeholder can only legitimately appear inside a string literal (the pattern array), so
+ * finding one in a declaration name or a parameter position is contamination that cannot overlap any
+ * valid source.
+ */
+const PLACEHOLDER_LEAK = /function\s+\$\$\$|class\s+\$\$\$|=>\s*\$\$\$|\(\s*\$\$\$\s*[,)]|(?:const|let|var)\s+\$\$\$\s*=/
+
+/** Reject a rewrite whose text still contains an unresolved ast-grep placeholder. */
+function assertResolved(file: string, after: string): void {
+  if (PLACEHOLDER_LEAK.test(after)) {
+    throw Object.assign(new Error(`the rewrite still contains an unresolved ast-grep placeholder ($$$): ${file}`), { code: 'E_INPROC_UNRESOLVED_PLACEHOLDER' satisfies SafeWriteCode })
+  }
+}
+
+/** Write `after` over `file`, but only if the file still holds `expected`. */
+export function checkedWrite(file: string, expected: Buffer, after: string): CheckedWriteResult {
+  assertResolved(file, after)
+  const lock = `${file}.ops-ptc.lock`
+  const temp = `${file}.inproc-${randomUUID()}.tmp`
+
+  let lockFd: number | undefined
+  let tempFd: number | undefined
+  let ownsTemp = false
+  let failure: unknown
+  const cleanupErrors: string[] = []
+
+  const cleanup = (action: () => void): void => {
     try {
-        lockFd = (0, node_fs_1.openSync)(lock, 'wx', 0o600);
-        verifySnapshot(file, expected);
-        const mode = (0, node_fs_1.lstatSync)(file).mode & 0o777;
-        tmpFd = (0, node_fs_1.openSync)(tmp, 'wx', mode);
-        ownsTemp = true;
-        (0, node_fs_1.writeFileSync)(tmpFd, after, 'utf8');
-        (0, node_fs_1.closeSync)(tmpFd);
-        tmpFd = undefined;
-        (0, node_fs_1.chmodSync)(tmp, mode);
-        verifySnapshot(file, expected);
-        (0, node_fs_1.renameSync)(tmp, file);
-        ownsTemp = false;
+      action()
+    } catch (error) {
+      const problem = error as ErrnoLike
+      cleanupErrors.push(`${problem.code ?? 'E_CLEANUP'}: ${problem.message ?? String(error)}`)
     }
-    catch (e) {
-        const error = e;
-        failure = lockFd === undefined && error.code === 'EEXIST'
-            ? Object.assign(new Error(`另一个 ops-ptc 写入占用文件: ${file}`), { code: 'E_INPROC_LOCKED' })
-            : e;
-        throw failure;
+  }
+
+  try {
+    lockFd = openSync(lock, 'wx', 0o600)
+    verifySnapshot(file, expected)
+    const mode = lstatSync(file).mode & 0o777
+    tempFd = openSync(temp, 'wx', mode)
+    ownsTemp = true
+    writeFileSync(tempFd, after, 'utf8')
+    closeSync(tempFd)
+    tempFd = undefined
+    chmodSync(temp, mode)
+    // Second check: the lock only excludes other PTC writers, not an editor or another process.
+    verifySnapshot(file, expected)
+    renameSync(temp, file)
+    ownsTemp = false
+  } catch (error) {
+    const problem = error as ErrnoLike
+    failure = lockFd === undefined && problem.code === 'EEXIST'
+      ? Object.assign(new Error(`another ops-ptc write is holding this file: ${file}`), { code: 'E_INPROC_LOCKED' satisfies SafeWriteCode })
+      : error
+    throw failure
+  } finally {
+    if (tempFd !== undefined) cleanup(() => closeSync(tempFd as number))
+    if (ownsTemp) cleanup(() => unlinkSync(temp))
+    if (lockFd !== undefined) {
+      cleanup(() => closeSync(lockFd as number))
+      cleanup(() => unlinkSync(lock))
     }
-    finally {
-        if (tmpFd !== undefined)
-            cleanup(() => (0, node_fs_1.closeSync)(tmpFd));
-        if (ownsTemp)
-            cleanup(() => (0, node_fs_1.unlinkSync)(tmp));
-        if (lockFd !== undefined) {
-            cleanup(() => (0, node_fs_1.closeSync)(lockFd));
-            cleanup(() => (0, node_fs_1.unlinkSync)(lock));
-        }
-        if (failure && typeof failure === 'object' && cleanupErrors.length) {
-            try {
-                Object.assign(failure, { cleanupErrors });
-            }
-            catch { }
-        }
+    if (failure && typeof failure === 'object' && cleanupErrors.length) {
+      try {
+        Object.assign(failure, { cleanupErrors })
+      } catch { /* the original failure is the one worth reporting */ }
     }
-    return { cleanupErrors };
+  }
+
+  return { cleanupErrors }
 }
