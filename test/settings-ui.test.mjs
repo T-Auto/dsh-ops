@@ -47,7 +47,7 @@ await test('the page saves only changed switches with the host revision, then re
   const fixture = await profileFixture('browser-switches', {
     Config: (await import('../lib/settings/merged.js')).Config,
     apply(_ctx, value) { observed = value; mounts++ },
-  }, {})
+  }, { standard: { hidePwsh: true } })
   let pending
   const form = {
     state: ready(fixture.snapshot().value, fixture.snapshot().revision),
@@ -87,6 +87,20 @@ await test('the page saves only changed switches with the host revision, then re
   } finally { await view.close(); await shutdown(fixture.ctx) }
 })
 
+await test('rendered preset hints describe Bash coexistence and explicit PowerShell hiding', async () => {
+  const form = { state: ready({}), mutate: async () => true }
+  const view = await mount(RowForm, { form, Switch: TestSwitch })
+  try {
+    for (const label of [en.featureMinimal, en.featureStandard, en.featurePtc, en.featureCordis]) {
+      await expand(view.container, label)
+      const text = group(view.container, label).textContent
+      assert.match(text, /Publishes Bash independently; PowerShell remains available by default on Windows\.|独立发布 Bash；Windows 默认保留 PowerShell。/)
+      assert.doesNotMatch(text, /Replaces pwsh with bash|将 pwsh 替换为 bash/)
+      await expand(view.container, label)
+    }
+  } finally { await view.close() }
+})
+
 await test('only non-minimal presets expose adjacent independent resident and dynamic switches', async () => {
   const writes = []
   const form = { state: ready({}), mutate: async ops => { writes.push(ops); return true } }
@@ -110,6 +124,51 @@ await test('only non-minimal presets expose adjacent independent resident and dy
     await click(button(view.container, en.save))
     assert.deepEqual(writes[0], [{ op: 'set', path: ['standard', 'residentTools'], value: false }])
   } finally { await view.close() }
+})
+
+await test('custom preset cards save exact nested paths through the real host without losing advanced options', async () => {
+  let observed
+  const fixture = await profileFixture('custom-preset-page', {
+    Config: (await import('../lib/settings/merged.js')).Config, apply(_ctx, config) { observed = config },
+  }, { presets: { 'acme.chat': { discovery: true, shell: false, residentNames: ['stat'], allowedTools: ['diff'], extraGuidance: 'Retain this guidance.' } } })
+  let pending
+  const form = { state: ready(fixture.snapshot().value, fixture.snapshot().revision), mutate(ops, revision) {
+    return pending = fixture.mutate(ops, revision).then(() => true)
+  } }
+  const view = await mount(RowForm, { form, Switch: TestSwitch })
+  try {
+    await expand(view.container, 'acme.chat')
+    const card = group(view.container, 'acme.chat')
+    await click(switchIn(card, en.dynamicTools))
+    await click(button(view.container, en.save)); await act(async () => { await pending })
+    assert.equal(observed.presets['acme.chat'].discovery, false)
+    assert.deepEqual(observed.presets['acme.chat'].residentNames, ['stat'])
+    assert.deepEqual(observed.presets['acme.chat'].allowedTools, ['diff'])
+    assert.equal(observed.presets['acme.chat'].extraGuidance, 'Retain this guidance.')
+  } finally { await view.close(); await shutdown(fixture.ctx) }
+})
+
+await test('custom PTC files stay required and Shell off saves coherent dependent settings', async () => {
+  let observed
+  const fixture = await profileFixture('custom-dependent-page', {
+    Config: (await import('../lib/settings/merged.js')).Config, apply(_ctx, config) { observed = config },
+  }, { presets: { code: { profile: 'ptc' }, shell: { profile: 'shell', hidePwsh: true, bashPath: 'C:/selected/bash.exe', allowSystemShellFallback: true } } })
+  let pending
+  const form = { state: ready(fixture.snapshot().value, fixture.snapshot().revision), mutate(ops, revision) { return pending = fixture.mutate(ops, revision).then(() => true) } }
+  const view = await mount(RowForm, { form, Switch: TestSwitch })
+  try {
+    await expand(view.container, 'code')
+    assert.equal(switchIn(group(view.container, 'code'), en.swFiles).disabled, true)
+    assert.match(group(view.container, 'code').textContent, /Typed PTC requires/)
+    await expand(view.container, 'shell')
+    await click(switchIn(group(view.container, 'shell'), en.swBash))
+    await click(button(view.container, en.save)); await act(async () => { await pending })
+    assert.equal(observed.presets.shell.shell, false)
+    assert.equal(observed.presets.shell.hidePwsh, true, 'saved hiding intent is retained while Shell is disabled')
+    assert.equal(observed.presets.shell.bashPath, 'C:/selected/bash.exe')
+    assert.equal(observed.presets.shell.allowSystemShellFallback, true)
+    assert.equal(observed.presets.code.profile, 'ptc')
+  } finally { await view.close(); await shutdown(fixture.ctx) }
 })
 
 await test('a preset starts collapsed and reveals its switches on demand', async () => {
@@ -284,6 +343,30 @@ await test('an explicit off is named when the companion is already installed', a
   const view = await mount(RowForm, { form, Switch: TestSwitch, pwsh7Installed: true })
   try { assert.match(view.container.textContent, /已手动关闭|Manually turned off/) }
   finally { await view.close() }
+})
+
+await test('saving another card never persists a detected link', async () => {
+  const writes = []
+  const form = { state: ready({}), mutate: async ops => { writes.push(ops); return true } }
+  const view = await mount(RowForm, { form, Switch: TestSwitch, pwsh7Installed: true })
+  try {
+    const other = group(view.container, en.groupOther)
+    assert.equal(switchIn(other, en.featurePwsh7Link).getAttribute('aria-checked'), 'true', 'detection shows the link on')
+    await click(switchIn(other, en.featurePanel))
+    await click(button(view.container, en.save))
+    assert.deepEqual(writes[0], [{ op: 'set', path: ['panel', 'enabled'], value: true }])
+  } finally { await view.close() }
+})
+
+await test('a link the operator turns off is always saved', async () => {
+  const writes = []
+  const form = { state: ready({}), mutate: async ops => { writes.push(ops); return true } }
+  const view = await mount(RowForm, { form, Switch: TestSwitch, pwsh7Installed: true })
+  try {
+    await click(switchIn(group(view.container, en.groupOther), en.featurePwsh7Link))
+    await click(button(view.container, en.save))
+    assert.deepEqual(writes[0], [{ op: 'set', path: ['other', 'pwsh7Link'], value: false }])
+  } finally { await view.close() }
 })
 
 dom.window.close()

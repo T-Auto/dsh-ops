@@ -13,11 +13,12 @@ export type LocaleKey = Parameters<Translator>[0]
 
 /** One editable switch. */
 export interface FieldSpec {
-  readonly path: readonly [string, string]
+  readonly path: readonly string[]
   readonly label: LocaleKey
   readonly hint?: LocaleKey
   /** Bundle switch that must be on for this field to apply. */
   readonly gatedBy?: BundleGate
+  readonly disabled?: boolean
 }
 
 /** One bundle switch name, for the page's gating hints. */
@@ -30,6 +31,8 @@ export interface GroupSpec {
   readonly hint?: LocaleKey
   /** Groups with a toggle carry their own enable switch as `[id, enabled]`. */
   readonly toggle: boolean
+  readonly labelText?: string
+  readonly togglePath?: readonly string[]
   readonly fields: readonly FieldSpec[]
 }
 
@@ -82,38 +85,73 @@ export const GROUPS: readonly GroupSpec[] = Object.freeze([
 /** What a switch runs with when it is absent. */
 const DEFAULTS: Readonly<Record<string, boolean>> = Object.freeze({
   'global.bash': true, 'global.hidePwsh': true, 'global.hideOfficialTools': true, 'global.dynamicTools': true,
-  'minimal.enabled': true, 'minimal.bash': true, 'minimal.hidePwsh': true, 'minimal.hideOfficialTools': true, 'minimal.dynamicTools': true,
-  'standard.enabled': true, 'standard.residentTools': true, 'standard.bash': true, 'standard.hidePwsh': true, 'standard.hideOfficialTools': true, 'standard.dynamicTools': true,
-  'ptc.enabled': true, 'ptc.residentTools': true, 'ptc.bash': true, 'ptc.hidePwsh': true, 'ptc.hideOfficialTools': true, 'ptc.dynamicTools': true,
-  'cordis.enabled': true, 'cordis.residentTools': true, 'cordis.bash': true, 'cordis.hidePwsh': true, 'cordis.hideOfficialTools': true, 'cordis.dynamicTools': true,
+  'minimal.enabled': true, 'minimal.bash': true, 'minimal.hidePwsh': false, 'minimal.hideOfficialTools': true, 'minimal.dynamicTools': true,
+  'standard.enabled': true, 'standard.residentTools': true, 'standard.bash': true, 'standard.hidePwsh': false, 'standard.hideOfficialTools': true, 'standard.dynamicTools': true,
+  'ptc.enabled': true, 'ptc.residentTools': true, 'ptc.bash': true, 'ptc.hidePwsh': false, 'ptc.hideOfficialTools': true, 'ptc.dynamicTools': true,
+  'cordis.enabled': true, 'cordis.residentTools': true, 'cordis.bash': true, 'cordis.hidePwsh': false, 'cordis.hideOfficialTools': true, 'cordis.dynamicTools': true,
   'panel.enabled': false, 'tui.enabled': false, 'other.pwsh7Link': false,
 })
 
 /** The draft key of one switch. */
-export const flatKey = (path: readonly [string, string]): string => `${path[0]}.${path[1]}`
+export const flatKey = (path: readonly string[]): string => path.join('.')
+
+/** What the saved config leaves open, decided by the host rather than by a stored boolean. */
+export interface ReadOptions {
+  /** Whether the companion plugin is installed; it decides an unsaved link. */
+  readonly pwsh7Installed?: boolean
+}
 
 /**
  * Read the page values out of the raw saved config.
  * @param raw - the host-provided saved values.
+ * @param options - detection inputs the saved values do not carry.
  * @returns one value per switch.
  */
-export function readRowValues(raw: Record<string, unknown>, options: { pwsh7Installed?: boolean } = {}): RowDraft {
+export function groupsFor(raw: Record<string, unknown>): readonly GroupSpec[] {
+  const presets = raw.presets && typeof raw.presets === 'object' && !Array.isArray(raw.presets) ? raw.presets as Record<string, unknown> : {}
+  const custom = Object.keys(presets).map(id => {
+    const options = presets[id] as Record<string, unknown>
+    const ptc = (options.presentation ?? (options.profile === 'ptc' ? 'ptc' : 'native')) === 'ptc'
+    const spec = (key: string, label: LocaleKey, gatedBy?: BundleGate, disabled = false, hint?: LocaleKey): FieldSpec => ({ path: ['presets', id, key], label, gatedBy, disabled, hint })
+    return { id: `presets.${id}`, label: 'customPreset' as const, labelText: id, toggle: true, togglePath: ['presets', id, 'enabled'], fields: [
+      spec('files', 'swFiles', undefined, ptc, ptc ? 'ptcFilesRequired' : undefined), spec('residentTools', 'swResidentTools'), spec('shell', 'swBash', 'bash', false, 'shellOffClears'),
+      spec('hidePwsh', 'swHidePwsh', 'hidePwsh'), spec('replaceOfficial', 'hideOfficialTools', 'hideOfficialTools'),
+      spec('discovery', 'dynamicTools', 'dynamicTools'), spec('promptPolicy', 'swPromptPolicy'),
+    ] }
+  })
+  return [...GROUPS.slice(0, -1), ...custom, GROUPS[GROUPS.length - 1]!]
+}
+
+export function readRowValues(raw: Record<string, unknown>, options: ReadOptions = {}): RowDraft {
   const draft: RowDraft = {}
   const section = (id: string): Record<string, unknown> => {
     const value = raw[id]
     return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
   }
-  const read = (path: readonly [string, string]): boolean => {
-    const value = section(path[0])[path[1]]
+  const read = (path: readonly string[]): boolean => {
+    let node: unknown = raw
+    for (const key of path) node = node && typeof node === 'object' ? Reflect.get(node, key) : undefined
+    const value = node
     if (typeof value === 'boolean') return value
+    if (path[0] === 'presets') {
+      const preset = section('presets')[path[1]!] as Record<string, unknown>
+      const profile = preset.profile ?? 'native', key = path[2]
+      if (key === 'files') return profile === 'native' || profile === 'ptc'
+      if (key === 'shell') return profile === 'shell'
+      if (key === 'hidePwsh') return false
+      if (key === 'replaceOfficial') return false
+      if (key === 'discovery') return profile !== 'shell'
+      return true
+    }
     // The link follows detection until the operator sets it explicitly.
     if (path[0] === 'other' && path[1] === 'pwsh7Link' && options.pwsh7Installed === true) return true
     return DEFAULTS[`${path[0]}.${path[1]}`] ?? true
   }
-  for (const group of GROUPS) {
-    // A group's own switch lives in its section; a shared card's switches each
-    // read their own section (panel/tui sit together in the "other" card).
-    if (group.toggle) draft[`${group.id}.enabled`] = read([group.id, 'enabled'])
+  for (const group of groupsFor(raw)) {
+    if (group.toggle) {
+      const path = group.togglePath ?? [group.id, 'enabled']
+      draft[flatKey(path)] = read(path)
+    }
     for (const spec of group.fields) draft[flatKey(spec.path)] = read(spec.path)
   }
   return draft
@@ -135,21 +173,33 @@ export function bundleGates(draft: RowDraft): Record<BundleGate, boolean> {
 
 /**
  * The nested write operations that turn the saved values into the draft.
+ *
+ * The baseline is read with the same detection the draft used. Without that, an
+ * unsaved link on an installed companion reads as `false` in the baseline and any
+ * save — even of an unrelated switch — writes it as an explicit `true`, freezing
+ * a value the operator never touched. With it, an untouched link produces no
+ * operation and keeps following detection, while a switch the operator flipped
+ * differs from the same baseline and is always written.
+ *
  * @param draft - the current page values.
  * @param raw - the saved values the draft was read from.
+ * @param options - detection inputs used to read `raw`, as the draft was.
  * @returns path operations for `form.mutate`.
  */
-export function changedFields(draft: RowDraft, raw: Record<string, unknown>): SettingsPathOpView[] {
-  const baseline = readRowValues(raw)
+export function changedFields(draft: RowDraft, raw: Record<string, unknown>, options: ReadOptions = {}): SettingsPathOpView[] {
+  const baseline = readRowValues(raw, options)
   const operations: SettingsPathOpView[] = []
-  for (const group of GROUPS) {
+  for (const group of groupsFor(raw)) {
     const paths = group.toggle
-      ? [at(group.id, 'enabled'), ...group.fields.map(spec => spec.path)]
+      ? [group.togglePath ?? at(group.id, 'enabled'), ...group.fields.map(spec => spec.path)]
       : group.fields.map(spec => spec.path)
     for (const path of paths) {
       const flat = flatKey(path)
+      if (path[0] === 'presets' && path.at(-1) === 'hidePwsh' && draft[flatKey(['presets', path[1]!, 'shell'])] === false) continue
       if (draft[flat] === baseline[flat]) continue
-      operations.push({ op: 'set', path: [path[0], path[1]], value: draft[flat] })
+      const spec = group.fields.find(field => field.path === path)
+      if (path[0] === 'presets' && path.at(-1) === 'files' && spec?.disabled) continue
+      operations.push({ op: 'set', path: [...path], value: draft[flat] })
     }
   }
   return operations

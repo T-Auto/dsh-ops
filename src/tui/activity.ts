@@ -1,6 +1,6 @@
 /** Read-only projection of live DSH tool events; never executes or retains tool input/output. */
 import { FILE_TOOLS, IN_PROCESS_TOOLS, publicToolName } from '../policy.js'
-import { PTC_TOOLS } from '../ptc/contract.js'
+import { PTC_TOOLS } from '../projections/ptc/contract.js'
 import type { BusinessOutcome, ResultDetails } from './result.js'
 import { record, resultDetails } from './result.js'
 

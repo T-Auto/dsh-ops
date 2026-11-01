@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
-import { PLATFORMS } from '../lib/ptc/runtime.js'
+import { PLATFORMS } from '../lib/execution/runtime.js'
 const { values } = parseArgs({ options: { root: { type: 'string' } } })
 const root = path.resolve(values.root ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'))
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))

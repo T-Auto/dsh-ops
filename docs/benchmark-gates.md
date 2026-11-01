@@ -37,7 +37,7 @@ The 0.3.1 baseline is commit `4b51b6333213c376c8b7c173c12f35b408fdec2d`. The pre
 
 The user confirmed OPS 0.3.x as BM-01's authoritative comparison and retained the original DSH reader as a separate comparison. BM-03 keeps Bash loaded at startup and applies the unchanged 400-token threshold to file/discovery schemas only. The full default schema total and startup message JSON remain visible. Exact inventory checks still block a missing Bash on Windows, even when the file/discovery subset fits the budget. No tool contracts, defaults, source text, workload or numerical thresholds are removed or relaxed.
 
-The actual file/discovery definitions measure 242 tokens / 1,101 bytes. The previously captured complete Windows provider surface measures 660 tokens / 3,219 bytes; the different fixture order is 661 tokens with identical bytes. The complete surface does not fit 400 and is not described as doing so. A fresh integrated run is required for current acceptance; historical artifacts below keep their original verdicts.
+The current file/discovery definitions measure 261 tokens / 1,196 bytes; the complete current Windows fixture is 697 tokens / 3,408 bytes. The previously captured complete Windows provider surface measures 660 tokens / 3,219 bytes; the different fixture order is 661 tokens with identical bytes. The complete surface does not fit 400 and is not described as doing so. A fresh integrated run is required for current acceptance; historical artifacts below keep their original verdicts.
 
 ## Honest limits and retained results
 

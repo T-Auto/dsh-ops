@@ -35,7 +35,12 @@ integration({
 })
 ```
 
-`files`, `shell`, discovery, prompt guidance, and official replacement are independent choices.
+`files`, `residentTools`, `shell`, discovery, prompt guidance, official file replacement and host
+PowerShell hiding are independent choices. `residentNames` selects exact Native resident raw names
+(default `inspect_local_file`, `glob`, `grep`, `read_files`, `result`); it can be empty. Turn off
+`residentTools` to use on-demand file tools only. PTC uses its baseline plus `alwaysLoaded` instead
+of `residentNames`. `enabled: false` records an explicit disabled binding, withdraws capabilities
+and prevents the built-in default for the same id from taking over; diagnostics remain available.
 `alwaysLoaded` must be a subset of `allowedTools`; unknown keys and unavailable capabilities fail
 synchronously. The `shell` choice publishes `ops_bash` only where the host and authorization
 permit it. Bash is resident, not a discovery choice.
@@ -60,7 +65,8 @@ resident read/search/pager tools independently of this advanced list. External a
 `[]`; disabled wins over allowed, and startup names must be allowed and not disabled.
 `extraGuidance` is Native-only and is rejected in PTC, rather than silently ignored.
 PTC also rejects `denyCredentialReads` overrides (its credential boundary remains enforced).
-`bashPath` and `allowSystemShellFallback` require `shell: true`.
+`bashPath`, `allowSystemShellFallback` and explicit host-shell hiding intent are retained while
+`shell: false`; they become effective only when Shell is re-enabled.
 
 For only file tools, use `{ preset, discovery: false }`; for only Shell, use
 `{ preset, profile: 'shell' }`; for only external tools, use
@@ -96,9 +102,36 @@ returned Cordis fiber to withdraw tools, prompt sections, replacements, pending 
 callbacks. OPS checks binding, scope, presentation and current host authority at execution time; the
 provider remains responsible for its own code and authorization.
 
-Official tools are kept unless `replaceOfficial: true`, and a replacement is hidden only while its
-OPS counterpart is actually visible. A missing worker or failed publication therefore leaves the
-official tool available. Compatibility mode still lifts replacements without unloading OPS.
+Official file tools are kept unless `replaceOfficial: true`, and a replacement is hidden only while
+its OPS counterpart is actually visible. `hidePwsh` independently controls Windows host-shell
+hiding and defaults to the old `replaceOfficial && shell` behavior. Set it false to keep PowerShell.
+A missing worker or failed publication therefore leaves the official alternative available. There
+is no compatibility-mode component after the single-row migration.
+
+## Single-row custom presets
+
+The same options can be saved under the single `dsh-ops` row's `presets` map. The map key is the
+exact preset id; omit the `preset` field inside it. Configured ids appear as native Switch cards
+on the row page. An explicit binding overrides a built-in id in either mount order. Unknown,
+unlisted presets remain unchanged.
+
+```yaml
+presets:
+  acme-chat:
+    enabled: true
+    files: true
+    residentNames: [read_files, stat]
+    residentTools: true
+    discovery: false
+    shell: false
+    replaceOfficial: false
+    promptPolicy: true
+```
+
+Bundle gates also apply to these row-managed consumers; disabling dynamic discovery does not
+remove explicit startup selections. Standalone `integration()` belongs to its mounting plugin
+and does not depend on an unrelated OPS bundle row's settings. See [configuration](configuration-reference.md)
+and [internal architecture](internal-architecture.md).
 
 ## External advanced tools
 

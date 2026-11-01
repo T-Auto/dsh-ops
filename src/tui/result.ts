@@ -1,7 +1,7 @@
 /** Read only OPS outcome facts (presentation metadata or JSON envelopes), never shell stdout or arbitrary tool prose. */
 import { FILE_TOOLS, publicToolName } from '../policy.js'
 import { OUTCOME_META } from '../kernel/presentation-outcome.js'
-import { PTC_TOOLS } from '../ptc/contract.js'
+import { PTC_TOOLS } from '../projections/ptc/contract.js'
 const JSON_TOOLS = new Set([...FILE_TOOLS, ...PTC_TOOLS].map(publicToolName))
 const MAX_JSON_BYTES = 64 * 1024
 export const BUSINESS_OUTCOMES = Object.freeze(['completed', 'planned', 'rejected', 'error', 'partial', 'unknown', 'unconfirmed'] as const)

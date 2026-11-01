@@ -1,5 +1,5 @@
 # Component reference
-What each of the eight components publishes, with parameters and permission requirements.
+What the single `dsh-ops` row publishes for built-in and explicit consumers, with parameters and permission requirements.
 ---
 
 ## Components at a glance
@@ -10,20 +10,11 @@ diagnostics, while external Native plugins may use the [provider contract](exter
 
 | Row `name` | Description | Default | Published tools |
 | --- | --- | --- | --- |
-| `dsh-ops/mode-minimal` | Enhanced Minimal preset: dynamic loading and the Windows official shell replacement | On | `ops_bash`; no resident file tool |
-| `dsh-ops/mode-standard` | Enhanced Standard preset: resident file surface, official read/glob/grep and Windows shell replacement | On | `ops_read_files`, `ops_inspect_local_file`, `ops_glob`, `ops_grep`, `ops_result`, `ops_bash` |
-| `dsh-ops/mode-ptc` | Enhanced PTC preset: typed SDK and Windows shell replacement | On | PTC SDK APIs (the 18-API catalogue), `ops_bash`; no Native file replacement |
-| `dsh-ops/mode-cordis` | Enhanced Cordis preset: resident file surface, official read/glob/grep and Windows shell replacement | On | Same as Standard, with its own routing section |
-| `dsh-ops/discovery` | Advanced Native tools on demand | On | `ops_discover_tools` |
-| `dsh-ops/compat` | Compatibility mode: every official tool stays visible | Off | None; the OPS tools of enabled mode rows stay published |
-| `dsh-ops/panel` | Data capture, off at the switch: new conversations write `<cwd>/.dsh-ops/panel/<sessionId>.json` plus the viewer `panel.html` | Row off; capture defaults true | None; see the [configuration reference](configuration-reference.md) |
-| `dsh-ops/tui` | Read-only current-session OPS sidebar | Off | None; see [sidebar guide](tui-panel.md) |
+| `dsh-ops` | Single-row bundle: built-in Standard/Cordis Native tools, PTC typed APIs, Minimal dynamic surface, and optional custom consumers | On | Depends on the selected preset and presentation |
+| `dsh-ops/panel` | Legacy entry retained for old profiles; use `panel.enabled` in the merged row | Off | None; see the [configuration reference](configuration-reference.md) |
+| `dsh-ops/tui` | Legacy entry retained for old profiles; use `tui.enabled` in the merged row | Off | None; see the [sidebar guide](tui-panel.md) |
 
-The `dsh-ops/discovery` row owns `ops_discover_tools` and the advanced capabilities for every mode.
-A mode row publishes only for sessions composed from its built-in preset. It hides the official tools
-it replaces — `read`, `glob` and `grep` in Standard and Cordis, and the Windows official shell
-(`pwsh`/`pwsh_persistent` → `ops_bash`) in every mode — but only while the OPS counterpart is
-visible in the same scope. Compatibility mode keeps the official tools exposed instead. The former
+The `dsh-ops` row owns built-in and explicitly configured consumer plans. Native discovery and the PTC SDK loader are independent publication choices; file replacement and host-shell hiding are independent masks. Legacy entries remain only so old profiles can load; new configuration belongs to the single row. The former
 `dsh-ops/shell`, `dsh-ops/file`, `dsh-ops/ptc` and `dsh-ops/hide-official` modules remain as
 unsupported legacy exports for old profiles and are not part of the bundle.
 
@@ -257,27 +248,22 @@ All OPS calls keep their own session-cwd base, permission checks and output cont
 
 `write`, `edit`, and `str_replace_editor` are deliberately not replaced. OPS write/edit require an observed `expectedRevision` and CAS publication; host write and replace-all edit do not share that contract. A similarly named registration is not evidence of compatibility. Shells, `run_code`, delegation, jobs, media and third-party tools also remain visible without a warning list.
 
-The `dsh-ops/compat` row is **disabled by default** and accepts no configuration. Enabling it keeps
-every official tool exposed and callable while OPS tools stay published, and lifts the per-scope
-hiding without unloading any row; disabling it restores hiding. There is no per-tool `replaceTools`
-selection in this version — the removed `dsh-ops/hide-official` row is a legacy module outside the
-bundle, and a saved override for it must be deleted. Its old
-`strict`/`scope`/`additionalOfficialTools` values are validated only by that module and grant no
-hiding authority here.
+The `dsh-ops/compat` row is removed. Set `hideOfficialTools: false` for built-ins or
+`replaceOfficial: false` for explicit consumers, and `hidePwsh: false` independently, to retain
+the corresponding official tools. Removed `replaceTools` and other legacy hiding keys grant no replacement authority.
 
 Hiding is per agent scope and only applies while the OPS counterpart is registered and visible as an
 exact OPS-owned Native definition. A foreign registration with the same name or identical schema does
 not qualify, and a missing counterpart leaves the official tool exposed instead of blocking prompt
 assembly. Ownership changes are rechecked even when the schema bytes stay unchanged; Native shadows
-created by the OPS PTC adapter retain their tracked ownership. Disabling a mode row or enabling
-Compatibility mode restores the corresponding official tool.
+created by the OPS PTC adapter retain their tracked ownership. Disabling a consumer or its
+replacement switch restores the corresponding official tool.
 
 The resident `ops_read_files` is not the counterpart for `read`; Standard and Cordis publish
 `ops_inspect_local_file`, `ops_glob` and `ops_grep` as the reviewed counterparts.
 
-Mode rows export StandardSchemaV1 validation together with public JSON schema descriptors for the
-built-in host row forms. The browser settings page is mounted on the single row,
-migration; see [configuration](configuration-reference.md).
+The single row exports StandardSchemaV1 validation and public JSON schema descriptors. Its browser
+page uses native Switch controls; see [configuration](configuration-reference.md).
 
 
 ---

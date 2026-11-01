@@ -35,9 +35,9 @@ await test('the catalogue counts in the current docs match the registry', () => 
 })
 
 await test('the current token and byte budget matches the measured gate', () => {
-  assert.match(read('docs/discovery.md'), /242 tokens \/ 1101 bytes/u)
-  assert.match(read('docs/工具发现.md'), /242 tokens \/ 1101 字节/u)
-  assert.match(read('docs/benchmark-gates.md'), /242 tokens \/ 1,101 bytes/u)
+  assert.match(read('docs/discovery.md'), /261 tokens \/ 1196 bytes/u)
+  assert.match(read('docs/工具发现.md'), /261 tokens \/ 1196 字节/u)
+  assert.match(read('docs/benchmark-gates.md'), /261 tokens \/ 1,196 bytes/u)
   assert.doesNotMatch(read('docs/discovery.md'), /241 tokens/u)
 })
 

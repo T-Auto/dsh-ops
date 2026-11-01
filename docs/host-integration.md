@@ -8,11 +8,10 @@ an old conversation has been repaired.
 
 ## Source ownership
 
-`src/modes/` owns built-in preset policy only. Scoped Native publication and official-tool
-replacement controllers live in `src/publication/` and accept an explicit eligibility gate;
-Native result rendering/read evidence lives in `src/file/native/`, while typed PTC outcome
-projection lives in `src/ptc/projection/`. These are internal implementation paths, not public
-plugin-author import specifiers. Existing package component exports keep their semantics.
+`src/presets/` owns built-in preset defaults. `src/consumer/` assembles built-in and external
+consumers through one pipeline. Scoped publication lives in `src/publication/`, Native and typed
+PTC projections in `src/projections/`, and shared worker execution in `src/execution/`. These are
+internal paths, not public plugin-author imports. See [internal architecture](internal-architecture.md).
 
 ## A whitelist does not hide `ops_bash` (#380)
 
@@ -24,14 +23,12 @@ The fact that the same whitelist hides a globally registered file tool does not
 prove it also hides the session's shell. A read-only sandbox is also a filesystem
 permission mode, not a promise that every command tool is absent.
 
-To stop OPS Bash publication, set `publishBashTool: false` in the owning mode
-row. Merge this setting into the existing config, preserving other keys:
+To stop OPS Bash publication, set `bash: false` in the built-in section of the single `dsh-ops`
+row, or `shell: false` in an explicit consumer. Keep the other saved keys:
 
 ```yaml
-- id: dsh-ops-mode-standard
-  name: dsh-ops/mode-standard
-  config:
-    publishBashTool: false
+standard:
+  bash: false
 ```
 
 Check every enabled mode row in the effective configuration: another row can
@@ -85,9 +82,9 @@ dsh --profile ops-test --dump-config-schema
 
 Replace `@latest` with the intended version or packed checkout when testing an
 unpublished fix. Put `--profile` before `add` and package-manager arguments. The
-effective configuration should contain an enabled `dsh-ops-discovery` row named
-`dsh-ops/discovery`, with `enabled: true`. Inspect saved overrides and duplicate
-rows before adding another row. A stale profile missing discovery is a different
+effective configuration should contain the enabled single `dsh-ops` row, with global and
+matching preset dynamic switches on (or an explicit integration with discovery enabled). Inspect
+saved custom `presets`, overrides and duplicate bindings before adding another row. A stale profile missing discovery is a different
 case from an enabled row whose publication stalls.
 
 Presentation matters: ordinary Native scopes use `ops_discover_tools`; PTC scopes

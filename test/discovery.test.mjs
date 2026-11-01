@@ -32,7 +32,7 @@ await test('discovery-entry schema has a reproducible pinned token measurement, 
   const wire = JSON.stringify([{ name: publicToolName('discover_tools'), description: DISCOVERY_DESCRIPTION, parameters: DISCOVERY_PARAMETERS }])
   const tokens = getEncoding('cl100k_base').encode(wire).length
   console.log(`  discovery schema: ${tokens} cl100k_base tokens, ${Buffer.byteLength(wire)} UTF-8 bytes; js-tiktoken 1.0.21; compact JSON name/description/parameters; not provider billing or the whole OPS surface`)
-  assert.equal(tokens, 95)
+  assert.equal(tokens, 114)
 })
 await test('scoped file cancellation aborts active workers and disposal waits for their completion', () => withTempDir('discovery-cancel', async dir => {
   let spawned, complete

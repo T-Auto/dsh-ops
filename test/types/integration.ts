@@ -14,5 +14,5 @@ registerNativeCapability(ctx, { search: 'lookup', authorize: exec => Boolean(exe
   output: { schema: { type: 'object' }, render: () => [] }, execute: async () => ({ value: true }),
 } })
 const result = await diagnose(ctx, agent)
-const state: 'not-selected' | 'ready' | 'degraded' = result.state
+const state: 'not-selected' | 'disabled' | 'ready' | 'degraded' = result.state
 void state

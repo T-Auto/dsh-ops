@@ -22,8 +22,8 @@
 
 以提高token效率为目的，提供新增的ops系列工具并隐藏部分官方工具为方案的插件，低改动面，低侵入性，与其他插件广泛兼容。
 
-- （仅 Windows）启用与 dsh 原生 bash 行为一致的 ops_bash；启用模式行时用它替换官方 pwsh，兼容模式则保留官方工具
-- 四个预设模式行分别增强内置 Minimal/Standard/PTC/Cordis preset：Standard 与 Cordis 替换官方 read/glob/grep，PTC 提供类型化 SDK，Minimal 只替换 Windows shell；discovery 行启用时其会话始终获得动态加载入口；兼容模式（默认关闭）可保留全部官方工具
+- Bash 与宿主 Shell 隐藏独立配置；Windows 可用 ops_bash 替代 pwsh，也可保留官方 Shell。
+- Native/PTC 消费者预设发布共享的有界工具面；Bash 由单行开关控制，关闭替换时原版工具保持可用。
 - 启用 DSH 预留的 `tools_addition` 动态工具加载，并提供渐进式纰漏的工具，作为高级功能（如pdf、word读取、超多文件批量修改）的加载平台，大大减少常见特定场景的token消耗量，且不会导致系统提示词膨胀
 - 为 Native 模式提供返回紧凑、带行号和更好错误回馈的工具以遏制报错循环，减少调用轮次
 - 为 PTC 模式提供一些返回结构化 JSON 值的工具以降低 ai 在 ptc 模式下编写 TypeScript 代码的token总量和心智负担
@@ -95,7 +95,7 @@ npx --yes dsh-ops@latest uninstall --profile desktop
 
 旧版显式 provision 的 `<DSH_HOME>/dsh-ops/` 文件（provision 的 shell，以及早期版本可 provision 的 FastCtx 运行时）需单独清理：`npx --yes dsh-ops@latest uninstall --yes`。已移除的后台组件留下的 `~/.fastctx/` 状态默认不删；需要时显式加 `--purge-fastctx`。
 
-组件 bundle 现为八行：`mode-minimal`、`mode-standard`、`mode-ptc`、`mode-cordis`、`discovery`、`compat`、`panel`、`tui`。旧的 `shell`、`file`、`ptc`、`hide-official` 行已移除，请删除为它们保存的 profile 覆盖，并按需重设模式开关。
+组件 bundle 只插入一个 `dsh-ops` 行：其中按预设配置常驻、动态加载、Bash、文件替换与宿主 PowerShell 隐藏，并可通过 `presets` 显式接入自定义消费者。内置与外部预设共用装配流程。旧 `mode-*`、`discovery`、`compat`、`panel`、`tui` 及更早的 `shell`、`file`、`ptc`、`hide-official` 行覆盖须迁入单行；兼容开关已移除，改用各项隐藏开关。见[配置参考](docs/配置参考.md)。
 
 原 `dsh-ops/background` 组件（FastCtx 后台任务）已移除。仍保留该行的 profile 照常加载：该行不发布任何工具，只记录一条警告，可直接删除。
 

@@ -1,4 +1,4 @@
-import { ConfigError } from '../config.js'
+import { ConfigError } from '../config-error.js'
 import { DISCOVERY_TERMS } from '../capabilities/discovery.js'
 import { migrateRawNames } from '../compat/alias.js'
 

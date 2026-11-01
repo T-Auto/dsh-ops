@@ -76,10 +76,11 @@ rollback and registry persistence belong to DSH's package manager.
 
 | Change | Action after upgrade |
 | --- | --- |
-| The bundle now declares eight rows: four preset-mode rows (`mode-minimal`, `mode-standard`, `mode-ptc`, `mode-cordis`), `discovery`, `compat`, `panel` and `tui`. The `shell`, `file`, `ptc` and `hide-official` rows are gone. | Delete saved profile overrides for the removed rows; a leftover override has no target and produces a startup `patch: entry ... not found` warning. Re-set the mode row switches you want. |
-| An enabled mode row hides the official tools it replaces: `read`/`glob`/`grep` in Standard and Cordis, and the Windows official shell in every mode. | There is no per-tool selection any more. To keep official tools visible, enable the `dsh-ops/compat` switch; disable a mode row to stop publishing its OPS surface. |
-| Windows command execution now uses `ops_bash` instead of the official `pwsh` while a mode row is enabled and the OPS counterpart is visible. | Use `ops_bash` for commands and host `pwsh` only for Windows-native functionality; enable Compatibility mode if a workflow needs the official shell. |
-| Data inspection, the TUI sidebar and Compatibility mode remain opt-in. | Enable their rows when needed; they start disabled in a fresh profile. |
+| The bundle declares one `dsh-ops` row. Legacy `mode-*`, `discovery`, `compat`, `panel`, `tui`, `shell`, `file`, `ptc` and `hide-official` rows are not inserted. | Back up and move saved values into the single row, then remove obsolete overrides. OPS does not rewrite the profile automatically. |
+| Built-in and explicit consumers use one assembler. | Use `presets.<exact-id>` for custom profiles; unlisted presets remain untouched. An explicit disabled binding suppresses the built-in fallback. |
+| File replacement, Bash and host-shell hiding have independent switches; Compatibility is removed. | Set `hideOfficialTools`/`replaceOfficial` false for files and `hidePwsh` false for the host shell. Global switches preserve saved intent. |
+| Residency and dynamic loading are independent; Native discovery does not control the PTC loader. | Configure `residentTools`, per-preset dynamic switches and the global gate. PTC requires typed host presentation, not just a preset name. |
+| Panel and TUI remain opt-in. | Enable `panel.enabled` or `tui.enabled` on the single row only when needed. |
 
 ## Moving from 0.3.x to 0.4.x
 

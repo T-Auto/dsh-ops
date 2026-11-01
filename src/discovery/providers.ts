@@ -7,6 +7,8 @@ export interface NativeCapability {
   /** Provider authorization is mandatory and is rechecked immediately before execution. */
   authorize(context: Readonly<ToolExecution>): boolean | Promise<boolean>
   available?(agent: Agent): boolean
+  /** Synchronous, side-effect-free visibility: only true exposes; never authorizes execution. */
+  discoverable?(agent: Agent): boolean
   disclosure?: 'resident' | 'on-demand'
 }
 export interface Provider {
@@ -27,6 +29,25 @@ export function providers(ctx: Context, agent: Agent): Provider[] {
   }
   return [...result.values()]
 }
+/**
+ * Return directory visibility without invoking execution authorization.
+ *
+ * The hook is deliberately synchronous: only the literal boolean `true` exposes an
+ * entry. If an implementation accidentally returns a Promise, consume its outcome
+ * so a rejected result cannot become an unhandled rejection, but fail closed rather
+ * than treating asynchronous eligibility as supported.
+ */
+export function providerDiscoverable(provider: Provider, agent: Agent): boolean {
+  try {
+    if (provider.capability.discoverable === undefined) return true
+    const result: unknown = provider.capability.discoverable(agent)
+    if ((typeof result === 'object' && result !== null) || typeof result === 'function') {
+      void Promise.resolve(result).catch(() => {})
+    }
+    return result === true
+  } catch { return false }
+}
+
 export function onProvidersChange(ctx: Context, listener: () => void): () => void {
   const state = roots.get(ctx.root ?? ctx)
   if (!state) return () => {}
@@ -45,6 +66,7 @@ export async function registerNativeCapability(ctx: Context, capability: NativeC
   if (!definition || !/^[A-Za-z][A-Za-z0-9_.-]{0,127}$/u.test(definition.name) || definition.name.startsWith('ops_') || definition.name === 'run_code') throw new Error('External Native capability needs its own non-reserved tool name')
   if (!definition.description?.trim() || !definition.parameters || !definition.output?.schema || typeof definition.output.render !== 'function'
     || typeof definition.execute !== 'function' || typeof capability.authorize !== 'function' || typeof capability.search !== 'string' || !capability.search.trim()) throw new Error('Native capability requires description, parameters, result contract, search, execute and authorize')
+  if (capability.discoverable !== undefined && typeof capability.discoverable !== 'function') throw new Error('discoverable must be a side-effect-free function')
   if (capability.disclosure !== undefined && !['resident', 'on-demand'].includes(capability.disclosure)) throw new Error('disclosure must be resident or on-demand')
   await prepareProviders(ctx)
   const { scopeOf } = await loadScopes(), state = roots.get(ctx.root ?? ctx)!, scope = scopeOf(ctx)

@@ -5,7 +5,7 @@ import os from 'node:os'
 import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
 import { PACKAGE_ROOT, dshHome } from './paths.js'
-import { PLATFORMS } from './ptc/runtime.js'
+import { PLATFORMS } from './execution/runtime.js'
 
 /**
  * Architectures this fork will run its profile commands on.
@@ -13,7 +13,7 @@ import { PLATFORMS } from './ptc/runtime.js'
  * Upstream refused anything but `win32-x64`. The commands below only drive the
  * official DSH CLI and a package manager, both of which are platform neutral;
  * the native payloads are a separate question with their own gate in
- * `lib/ptc/runtime.js`.
+ * `lib/execution/runtime.js`.
  */
 const SUPPORTED_TARGETS: Readonly<Partial<Record<NodeJS.Platform, readonly string[]>>> = Object.freeze({ win32: ['x64'], linux: ['x64'], darwin: ['arm64', 'x64'] })
 

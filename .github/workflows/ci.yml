@@ -89,6 +89,21 @@ jobs:
       - name: Functional gate (skips, suite inventory, packed artifact)
         shell: bash
         run: node scripts/verify-gate.mjs --skip-install
+      # The published Linux x64 worker is a musl static-pie binary so it carries no
+      # GLIBC_* floor from the build runner. Build it here, stage it over the host
+      # worker, and keep the same shape the release job ships.
+      - name: Add the static Linux target
+        if: runner.os == 'Linux'
+        shell: bash
+        run: rustup target add x86_64-unknown-linux-musl
+      - name: Build and stage the static Linux worker
+        if: runner.os == 'Linux'
+        shell: bash
+        run: node bin/dsh-ops.mjs build-ptc --target x86_64-unknown-linux-musl
+      - name: Assert the Linux worker is statically linked
+        if: runner.os == 'Linux'
+        shell: bash
+        run: file runtime/linux-x64/dsh-ops-worker | grep -Eq 'statically linked|static-pie linked'
       - name: Verify native staged closure
         run: node bin/native-runtime.mjs check --platform ${{ matrix.target }}
       - name: Check shell payload platform filtering

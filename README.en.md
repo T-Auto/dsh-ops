@@ -29,26 +29,26 @@ Supported: Windows x64, Linux x64, and macOS 13+ on Apple Silicon or Intel
 (`darwin-arm64`, `darwin-x64`). See [macOS](docs/macos.md).
 
 > [!IMPORTANT]
-> This branch is the **0.5.0 candidate**, not a published release: the component roster moved to
-> preset-mode rows. Commands using `@latest` below select the published package; build and pack this
+> This branch is the **0.5.0 candidate**, not a published release: configuration now uses one
+> `dsh-ops` row. Commands using `@latest` below select the published package; build and pack this
 > checkout to evaluate the candidate. See the [changelog](docs/CHANGELOG.md).
 
-- The default profile enables the four preset-mode rows: Standard and Cordis publish the resident
-  OPS file tools, PTC publishes its typed SDK, and Minimal replaces only the Windows shell;
-  its sessions receive the `ops_discover_tools` entry whenever the discovery row is enabled. A mode row replaces the official
-  Windows shell with `ops_bash`. Advanced tools activate in the owning agent's next provider request.
+- The single row enables the four built-in preset consumers: Standard and Cordis publish resident
+  Native file tools, PTC publishes typed APIs, and Minimal has no resident file baseline. Native
+  discovery and typed SDK loading are independently configured. Advanced selections activate in
+  the owning agent's next provider request, never by executing a discovery action.
 - The PTC SDK catalogue has 18 APIs: 15 file/document tools, batch, result references and its loader.
   Only the configured resident or selected APIs are exposed. Native and PTC use separate outputs.
 - Discover bounded CSV/TSV, DOCX main-body paragraphs and a restricted PDF text layer. Binary DOC,
   OCR, general PDF rendering, web search and HTML crawling are not implemented. Read the
   [document-format limits](docs/native-kernel.md) before choosing a reader.
-- Eight independently toggled rows: the four mode rows and discovery start on; Compatibility,
-  panel and TUI start off. An enabled mode row hides the official tools it replaces (read/glob/grep
-  plus the Windows pwsh); Compatibility mode keeps the official tools visible. Saved overrides for
-  the removed `shell`/`file`/`ptc`/`hide-official` rows must be deleted.
-  [Settings](docs/configuration-reference.md) include validated built-in forms and optional browser
-  pages with an explicit offline carrier migration.
-- The mode rows are on by default on all three platforms: Windows uses the pinned Bash payload
+- One native-switch configuration page controls built-in and explicitly listed custom consumers.
+  Global switches gate per-preset choices without losing saved intent. Residency, dynamic loading,
+  Bash, file replacement and Windows host-PowerShell hiding are independently controlled; panel
+  capture and TUI start off. Custom presets use the same assembler as built-ins, while unlisted
+  presets remain unchanged. Move legacy row overrides into the single row; the Compatibility row
+  is removed. See [settings](docs/configuration-reference.md) and [architecture](docs/internal-architecture.md).
+- Built-in preset consumers are enabled by default: Windows uses the pinned Bash payload
   declared by the main package — `@dsh-ops/bash-win32-x64@0.2.1` in `optionalDependencies`, so npm
   installs the independent **bash 5.3.15** (PortableGit `v2.56.0.windows.2`) that ships with ops,
   and `bashPath` can point `ops_bash` at Git Bash instead; Linux/macOS use the distribution's own
@@ -122,7 +122,7 @@ The former `dsh-ops/background` component (FastCtx background jobs) has been rem
 
 ## Optional read-only OPS sidebar
 
-Enable the `dsh-ops/tui` row in dsh-TUI and restart to add the OPS sidebar without stealing focus or executing tools. Without `tuiPanels`, only that optional row stays pending. See [Sidebar guide](docs/tui-panel.md). While focused, use `f` to filter, `n`/`p` for local pages and `a` to acknowledge all-session alerts; only bounded retained metadata is browsed, never fetched result pages.
+Enable `tui.enabled` on the `dsh-ops` row in dsh-TUI and restart to add the OPS sidebar without stealing focus or executing tools. Without `tuiPanels`, only that optional row stays pending. See [Sidebar guide](docs/tui-panel.md). While focused, use `f` to filter, `n`/`p` for local pages and `a` to acknowledge all-session alerts; only bounded retained metadata is browsed, never fetched result pages.
 
 ## Documentation
 

@@ -1,6 +1,6 @@
 {
   "name": "dsh-ops",
-  "version": "0.5.0-alpha2",
+  "version": "0.5.0-alpha3",
   "publishConfig": {
     "access": "public"
   },
@@ -35,6 +35,10 @@
   "exports": {
     ".": {
       "default": "./lib/index.js"
+    },
+    "./prompt-injection": {
+      "types": "./lib/prompt-injection/index.d.ts",
+      "default": "./lib/prompt-injection/index.js"
     },
     "./policy": {
       "default": "./lib/policy.js"
@@ -116,12 +120,6 @@
     "./mode-cordis/package.json": "./lib/components/mode-cordis/package.json",
     "./mode-cordis/locale/*.json": "./lib/components/mode-cordis/locale/*.json",
     "./mode-cordis/icon": "./lib/components/mode-cordis/icon.png",
-    "./compat": {
-      "default": "./lib/components/compat/index.js"
-    },
-    "./compat/package.json": "./lib/components/compat/package.json",
-    "./compat/locale/*.json": "./lib/components/compat/locale/*.json",
-    "./compat/icon": "./lib/components/compat/icon.png",
     "./integration": {
       "types": "./lib/integration/index.d.ts",
       "default": "./lib/integration/index.js"

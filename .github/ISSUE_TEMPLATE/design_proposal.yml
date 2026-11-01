@@ -1,0 +1,33 @@
+name: 设计稿
+description: 实现前提交一份简短设计供维护者评审
+title: "[设计] "
+labels: [design]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请详细写出功能的设计稿。准备解决什么问题？用户如何使用这个功能/如何被影响？准备怎么实现？
+
+  - type: textarea
+    id: design
+    attributes:
+      label: 设计内容
+      description: 自由描述你的完整方案，可包含背景、用户流程、配置项、界面草图、提示词、组件边界等。
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 取舍与影响（可选）
+      description: 如有多个方案，请说明选择理由，以及对兼容性、性能、提示词成本或现有行为的影响。
+    validations:
+      required: false
+
+  - type: textarea
+    id: questions
+    attributes:
+      label: 希望维护者确认的问题（可选）
+      description: 列出你希望维护者先确认或决定的事项。
+    validations:
+      required: false

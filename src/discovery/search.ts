@@ -1,4 +1,5 @@
 import { DISCOVERY_TERMS } from '../capabilities/discovery.js'
+import { ranked } from './ranking.js'
 import { migrateRawName } from '../compat/alias.js'
 import { TOOL_PREFIX, publicToolName } from '../policy.js'
 import type { DiscoverableName } from './config.js'
@@ -21,11 +22,5 @@ export function search(query: string, pool: readonly DiscoverableName[], maximum
     const target = wanted.startsWith(TOOL_PREFIX) ? publicToolName(migrateRawName(wanted.slice(TOOL_PREFIX.length))) : wanted
     return pool.filter(name => publicToolName(name) === target).slice(0, maximum)
   }
-  const terms = [...new Set(query.match(/[a-z0-9_]+/g) ?? [])]
-  return pool.map((name, order) => {
-    const words = `${name} ${DISCOVERY_TERMS[name]}`.split(/[\s_]+/)
-    const score = terms.reduce((sum, term) => sum + (words.includes(term) ? 1 : 0), 0)
-    return { name, order, score }
-  }).filter(item => item.score > 0).sort((a, b) => b.score - a.score || a.order - b.order)
-    .slice(0, maximum).map(item => item.name)
+  return ranked(query, pool, name => publicToolName(name), name => DISCOVERY_TERMS[name], maximum)
 }

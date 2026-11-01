@@ -25,7 +25,7 @@ import {
   publicToolName,
   renderToolingPolicy,
 } from '../policy.js'
-import { resolveWorker } from '../ptc/runtime.js'
+import { resolveWorker } from '../execution/runtime.js'
 import { bashIpcReport, restrictedCompatibility } from '../bash-ipc.js'
 import type { BashIpcInventory } from '../bash-ipc.js'
 import { resolveShells } from '../shells.js'
