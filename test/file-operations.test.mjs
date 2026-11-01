@@ -27,7 +27,9 @@ await test('every new contract is strict, named consistently, and never marks wr
     assert.equal(tool.name, publicToolName(raw)); assert.equal(tool.parameters.additionalProperties, false)
     assert.equal(typeof tool.isConcurrencySafe === 'function', !FILE_MUTATIONS.includes(raw))
   }
-  for (const raw of ['write_file', 'edit_file', 'copy', 'move', 'remove']) assert.ok(PARAMETERS[raw].required.includes('expectedRevision'))
+  for (const raw of ['edit_file', 'copy', 'move', 'remove']) assert.ok(PARAMETERS[raw].required.includes('expectedRevision'))
+  // Only write_file has a create mode, so only its baseline may be omitted (#419).
+  assert.deepEqual(PARAMETERS.write_file.required, ['path', 'content'])
   assert.deepEqual(normalizeArguments('write_file', { path: 'a', content: '', expectedRevision: 'absent', dryRun: false }), { path: 'a', content: '', expectedRevision: 'absent', dryRun: false })
 })
 await test('inspect/stat share exact hashes and total line counts even for a partial read, empty or binary file', async () => {
@@ -63,6 +65,26 @@ await test('full writes create empty/Unicode files, refuse stale/absent overwrit
     assert.equal(empty.lineCount, 0); assert.equal(empty.bytes, 0)
     const noop = await call('write_file', { path: target, expectedRevision: rev(target), content: fs.readFileSync(target, 'utf8') }, root)
     assert.equal(noop.changed, 0)
+  })
+})
+await test('the raw worker still refuses an omitted or blank write_file baseline', async () => {
+  // This suite drives the shipped worker through the boundary request shape, deliberately
+  // bypassing the host bridge. Only the bridge (`capabilities/arguments.ts`) turns an omission
+  // into the create sentinel, so an omission here must stay a named argument error instead of
+  // becoming a create: the host lane in test/permissions.test.mjs owns the omitted-create
+  // behaviour end to end (#419).
+  await withTempDir('file-create-only', async root => {
+    const target = path.join(root, 'omitted.txt')
+    const missing = await call('write_file', { path: target, content: 'hello\n' }, root)
+    failed(missing, 'INVALID_ARGUMENT')
+    assert.match(missing.error.message, /expectedRevision/)
+    assert.equal(fs.existsSync(target), false)
+    // #422 kept the contract at every layer: a supplied blank or null stays an invalid argument.
+    for (const supplied of ['', '   ', null]) {
+      const rejected = path.join(root, 'rejected')
+      failed(await call('write_file', { path: rejected, content: 'bad', expectedRevision: supplied }, root), 'INVALID_ARGUMENT')
+      assert.equal(fs.existsSync(rejected), false, JSON.stringify(supplied))
+    }
   })
 })
 await test('precise edits use one original, preserve Unicode/CRLF/BOM and reject all ambiguous/overlapping hunks', async () => {

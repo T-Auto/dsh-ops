@@ -79,6 +79,35 @@ await test('the real worker behaves as the file-tool descriptions say (#44)', as
     } finally { await shutdown(ctx) }
   })
 })
+await test('an omitted write_file revision creates one file and never overwrites (#419)', async () => {
+  await withTempDir('file-create-only', async root => {
+    const {ctx}=await bootHost()
+    const agent={id:'create-only',session:{id:'create-only',header:{cwd:root}}}
+    const exec={agent,signal:new AbortController().signal}
+    try {
+      await ctx.plugin(Subprocess)
+      await ctx.plugin(inner=>inner.provide('sandboxPolicy',{resolve:()=>({mode:'workspace-write',workspaceRoot:root})}))
+      const call=args=>fileCall(ctx,worker,'write_file',args,exec,exec.signal)
+      const target=path.join(root,'omitted.txt')
+      // Omitting the baseline is the natural way to say "this file must not exist yet".
+      const created=await call({path:target,content:'hello\n'})
+      assert.equal(created.status,'completed',JSON.stringify(created))
+      assert.equal(created.items[0].metadata.created,true,JSON.stringify(created))
+      assert.equal(fs.readFileSync(target,'utf8'),'hello\n')
+      // The bridge still sends an explicit expectation, so an existing target is a conflict.
+      const again=await call({path:target,content:'overwrite'})
+      assert.equal(again.status,'error',JSON.stringify(again)); assert.equal(again.error.code,'REVISION_CONFLICT')
+      assert.equal(fs.readFileSync(target,'utf8'),'hello\n')
+      // A supplied blank or null is not an omission: it stays an argument error (#422).
+      for (const [index,supplied] of ['','   ',null].entries()) {
+        const rejected=path.join(root,`rejected-${index}`)
+        const value=await call({path:rejected,content:'bad',expectedRevision:supplied})
+        assert.equal(value.status,'error',JSON.stringify(value)); assert.equal(value.error.code,'INVALID_ARGUMENT')
+        assert.equal(fs.existsSync(rejected),false,JSON.stringify(supplied))
+      }
+    } finally { await shutdown(ctx) }
+  })
+})
 await test('preparation never runs in read-only or full-access', async () => {
   let calls = 0
   for (const mode of ['read-only','danger-full-access']) await prepareWorkspace({mode,workspaceRoot:'invalid'}, {platform:'win32',run(){ calls++ }})

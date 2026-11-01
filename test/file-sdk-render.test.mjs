@@ -24,6 +24,22 @@ await test('all registered file argument schemas remain discoverable without unk
   assert.match(PARAMETERS.copy.properties.expectedRevision.description, /absent is not accepted/)
 })
 
+// #419: `write_file` alone has a create mode, so its baseline is the one omission the
+// schema allows; every other mutation still has to name an observed revision (#422).
+await test('write_file alone makes the CAS baseline optional, in the schema and the generated SDK', () => {
+  assert.deepEqual(PARAMETERS.write_file.required, ['path', 'content'])
+  const writeSdk = jsonSchemaToTs(PARAMETERS.write_file)
+  assert.match(writeSdk, /expectedRevision\?:\s*string/, writeSdk)
+  for (const tool of ['edit_file', 'copy', 'move', 'remove']) {
+    assert.ok(PARAMETERS[tool].required.includes('expectedRevision'), tool)
+    assert.doesNotMatch(jsonSchemaToTs(PARAMETERS[tool]), /expectedRevision\?/, tool)
+  }
+  assert.match(PARAMETERS.write_file.properties.expectedRevision.description, /the literal "absent"/)
+  assert.match(DESCRIPTIONS.write_file, /omit it to create a new file/)
+  assert.match(DESCRIPTIONS.write_file, /the literal "absent"/)
+  assert.doesNotMatch(DESCRIPTIONS.write_file, /Required expectedRevision/)
+})
+
 const render = (tool, value, args = {}) => definition(tool, async () => value).output.render(args, value)[0].text
 await test('inspect prints one file heading and physical line labels without changing the PTC value', async () => {
   const path = `D:/${'long-directory/'.repeat(7)}source.txt`

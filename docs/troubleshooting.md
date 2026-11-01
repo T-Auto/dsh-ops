@@ -120,6 +120,8 @@ an empty false-success result is a separate problem (#374 and #373).
 
 Strict tool-call adapters that fill every schema field send `""`, `null` or `[]` for unused optional fields of `ops_inspect_local_file`, `ops_grep`, `ops_glob` and `ops_replace`. The plugin drops those placeholders for optional fields before the native worker runs, so they no longer trip `path`/`encoding`/`view` validation. Required fields, `replacement: ""`, `false` and `0` are forwarded unchanged, so genuinely invalid values still error.
 
+`ops_write_file`'s `expectedRevision` is the one omission that carries meaning: omitting it asks for create-only, and the plugin still sends the native worker the explicit `absent` CAS expectation, so a target that already exists stays a `REVISION_CONFLICT` instead of an overwrite. The literal `"absent"` is still accepted; an explicitly supplied `""` or `null` is not a placeholder and remains an invalid argument that writes nothing (#419, #422).
+
 ---
 
 ## Permissions and sandboxing
