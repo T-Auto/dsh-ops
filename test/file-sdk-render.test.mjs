@@ -21,7 +21,7 @@ await test('all registered file argument schemas remain discoverable without unk
   assert.match(PARAMETERS.edit_file.properties.edits.items.properties.oldText.description, /Nonempty/)
   assert.match(PARAMETERS.grep.properties.beforeContext.description, /0-32/)
   assert.match(PARAMETERS.inspect_local_file.properties.offset.description, /1-based/)
-  assert.match(PARAMETERS.copy.properties.expectedRevision.description, /absent is not accepted/)
+  assert.match(PARAMETERS.copy.properties.expectedRevision.description, /"absent" is not accepted/)
 })
 
 const render = (tool, value, args = {}) => definition(tool, async () => value).output.render(args, value)[0].text
@@ -100,6 +100,19 @@ await test('short mutation receipts preserve revisions, sizes and metadata witho
   const text = render('replace', { status: 'completed', complete: true, items: Array.from({ length: 1000 }, () => ({ path: '/a', revision: 'a'.repeat(64) })) })
   assert.match(text, /do not repeat the write/)
   assert.doesNotMatch(text, /Re-read the original range/)
+})
+
+await test('failed replacement displays completed and pending receipts without suggesting replay', () => {
+  const text = render('replace', { status: 'error', changed: 2, failed: 1, pending: 1,
+    error: { code: 'IO_ERROR', effectState: 'applied', nextAction: 'Inspect retained receipts; do not repeat the batch.' },
+    items: [{ path: '/a', status: 'completed', revision: 'old', revisionAfter: 'new', replacements: 2 },
+      { path: '/b', status: 'error', error: { code: 'IO_ERROR', effectState: 'none' } },
+      { path: '/c', status: 'pending', revisionAfter: 'planned' }] })
+  assert.match(text, /effectState=applied; retry=never/)
+  assert.match(text, /Partial receipts: changed=2; failed=1; pending=1/)
+  assert.match(text, /\/a: status=completed; revision=old; revisionAfter=new/)
+  assert.match(text, /\/b: status=error; error=.*IO_ERROR/)
+  assert.match(text, /\/c: status=pending; revisionAfter=planned/)
 })
 
 await test('error guidance respects effects before code and never encourages replaying uncertain writes', () => {

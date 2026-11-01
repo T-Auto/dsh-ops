@@ -274,7 +274,9 @@ fn replace(request: &Request) -> Result<Value> {
     if serde_json::to_vec(&items)?.len() > MAX_OUTPUT_BYTES / 2 { return Err(Failure::new("OUTPUT_LIMIT", "Replacement receipts exceed the bounded output budget; narrow path/glob. No files changed.")); }
     if args.dry_run { return Ok(json!({"status":"completed","phase":"observe","changed":0,"matched":total,"skipped":skipped,"failed":0,"complete":true,"omitted":0,"dryRun":true,"items":items,"skippedPaths":skipped_paths})); }
     for item in &items { publication::authorize_write(request, item["path"].as_str().unwrap_or(""))?; }
-    let mut changed=0usize; for item in &mut items {
+    for item in &mut items { item["status"] = json!("pending"); }
+    let mut changed=0usize; for index in 0..items.len() {
+        let item = &mut items[index];
         let applied = (|| -> Result<()> { let file=PathBuf::from(item["path"].as_str().unwrap_or(""));
         publication::authorize_write(request, file.to_str().unwrap_or(""))?;
         // Observation guards above remain owned until every publication settles.
@@ -288,9 +290,18 @@ fn replace(request: &Request) -> Result<Value> {
         if let Some((metadata,warnings))=atomic_write(&file,next.as_bytes())? { item["metadata"]=metadata; if !warnings.is_empty() { item["metadataWarnings"]=json!(warnings); } }
         Ok(()) })();
         if let Err(mut error) = applied {
-            if changed > 0 { error.effect_state = "applied".into(); error.next_action = "Earlier files were already replaced. Inspect postconditions; do not repeat the batch blindly.".into(); }
-            return Err(error);
+            // Retain the failing item's own effects before describing the whole call.
+            item["status"] = json!("error");
+            item["error"] = serde_json::to_value(&error)?;
+            if changed > 0 {
+                if error.effect_state.as_ref() != "unknown" { error.effect_state = "applied".into(); }
+                error.next_action = "Earlier files were already replaced. Inspect every retained receipt and postcondition; do not repeat the batch blindly.".into();
+            }
+            return Ok(json!({"status":"error","complete":false,"changed":changed,"failed":1,
+                "pending":items.len()-index-1,"effectState":error.effect_state,"error":error,
+                "items":items,"skipped":skipped,"skippedPaths":skipped_paths}));
         }
+        item["status"] = json!("completed");
         changed += item["replacements"].as_u64().unwrap_or(0) as usize; }
     let count = items.len();
     let mut output = result(request, items, count, 0, 0, total, walked.truncated);

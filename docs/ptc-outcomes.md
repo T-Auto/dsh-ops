@@ -6,6 +6,7 @@ In 0.4.0 the PTC component owns its file, batch and result SDK bindings independ
 of the Native file row. Every binding returns an `Outcome<T>` value. Native tools
 continue to render compact text; PTC receives canonical structured data in `data`.
 See [SDK loading](ptc-sdk-loading.md) for availability and next-turn activation.
+See [file mutation contracts](file-contracts.md) for exact revision fields, same-call read/edit examples and retained replacement receipts.
 
 | Status | Required fields | Caller action |
 | --- | --- | --- |

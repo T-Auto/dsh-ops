@@ -100,15 +100,15 @@ function failure(value: Row): string[] {
     `[Notice: effectState=${effect}; retry=${advice.retry}; ${facts(error, ['phase', 'reason'])}.]`]
   if (typeof error.nextAction === 'string') output.push(`Next: ${label(error.nextAction)}`)
   if (error.message) output.push(label(error.message))
-  if (rows(value.items).length) output.push('Partial receipts:', ...receiptItems(value))
+  if (rows(value.items).length) output.push(`Partial receipts: ${facts(value, ['changed', 'failed', 'pending'])}`, ...receiptItems(value))
   return output
 }
 
 const mutations = new Set<string>(FILE_MUTATIONS)
 function receiptItems(value: Row): string[] {
   return rows(value.items).map(item => `${label(item.path ?? '(path unavailable)')}: ${facts(item, [
-    'removed', 'changed', 'revision', 'revisionBefore', 'revisionAfter', 'bytes', 'bytesBefore', 'bytesAfter',
-    'lineCountBefore', 'lineCount', 'replacements', 'metadata', 'metadataWarnings',
+    'status', 'removed', 'changed', 'revision', 'revisionBefore', 'revisionAfter', 'bytes', 'bytesBefore', 'bytesAfter',
+    'lineCountBefore', 'lineCount', 'replacements', 'metadata', 'metadataWarnings', 'error',
   ])}`)
 }
 function receipts(tool: string, value: Row): string[] {
