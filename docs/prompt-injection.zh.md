@@ -42,3 +42,19 @@ removeSection()
 这是会写入 session 日志的历史，不是临时 request overlay、system-role 尾部、伪造的用户授权，也不是保证每次模型请求都运行的 hook。空 batch（包括纯工具续步与 turn-closing 探针）不会调用 provider，也不能借此唤醒 loop。空结果不创建消息。provider 拒绝会沿宿主正常错误路径中止 admission；admission signal 在提交前取消会阻止提交。provider 释放的范围更窄：它会取消等待中的计算，不等待不协作的 promise；已完成的贡献会在本 hook 把 batch 交还给宿主 pre-step 之前进行最后一次 active 检查，并且该检查与返回之间没有异步间隙。这就是快照交接（线性化）边界，不是直到 commit 都可撤回的保证。已安装宿主随后还会运行 `agent/request` 和 `prepareCall()`，才把接纳 batch 追加到 session 日志；这些阶段中的释放不会撤回已经交接的快照，也不会擦除已有历史。模型重试复用同一批已接纳消息，不会重复追加尾部。
 
 source kind 为 `dsh-ops:step-tail`，并携带 contributor、revision、turn、step 元数据以支持归属与回放。
+
+## 条件式任务等待指导
+
+启用 Shell 且 `promptPolicy: true` 的消费者观察成功完成、至少 20 秒的独立
+`sleep` / `Start-Sleep` 调用。如果当前 agent 可用 `job_output`，则通过
+`registerSystemSection` 注册一段系统指导：**等待已有宿主 job 时**使用
+`job_output({ wait: true })`，等待外部服务仍可合理使用延时。工具存在不代表 job 正在运行。
+
+指导在下一次提示词装配时可见，不能影响同一 PTC 程序中已经运行的后续工具调用。
+Native 与 PTC 共享执行后的观察点。不会拒绝、重复或改写 sleep，不改变工具结果或历史消息。
+循环、复合命令、动态时长、短延时、失败/取消及后台/已提升结果均不触发。
+
+首次符合条件的调用前，新增提示词字节为零。每个 agent/消费者生命周期只注册一段，
+后续 sleep 不追加副本；消费者失去归属或缺少 `job_output` 时文本为空，消费者或 agent
+释放时移除。`promptPolicy: false` 不安装观察器或提示段。不使用 batch tail、不伪造用户消息，
+也不承诺模型一定停止 sleep。重载消费者会开始新的观察生命周期。

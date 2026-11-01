@@ -42,3 +42,26 @@ Verified with the installed `0.2.0-rc.2` host's real AgentLoop and fake LLM capt
 This is logged session history, not an ephemeral request overlay, system-role tail, fake user authorization, or a hook guaranteed to run on every model request. Empty batches—including tool-only continuation and turn-closing probes—do not invoke providers and cannot be used to wake a loop. Empty provider results create no message. A provider rejection aborts admission through the host's normal error path; admission-signal cancellation before commit prevents commit. Provider disposal is narrower: it cancels pending evaluation without waiting for non-cooperative promises and filters completed contributions at the final active check, immediately before this hook returns its batch to host pre-step. There is no asynchronous gap between this check and return. This is the snapshot handoff (linearization) boundary, not a revocation guarantee until commit. The installed host then runs `agent/request` and `prepareCall()` before appending the accepted batch to the session log; disposal during those phases does not retract the handed-off snapshot or erase earlier history. Retries reuse the same admitted messages and do not duplicate tails.
 
 The source kind is `dsh-ops:step-tail`, with contributor, revision, turn, and step metadata for attribution and replay.
+
+## Conditional job-wait guidance
+
+A shell-enabled consumer with `promptPolicy: true` observes successful standalone
+`sleep` or `Start-Sleep` calls lasting at least 20 seconds. If `job_output` is
+available to that agent, it registers one system section through
+`registerSystemSection`. The text recommends `job_output({ wait: true })` **when
+waiting for an existing host job**; it explicitly allows external-service delays
+and does not infer that a job is running from tool availability.
+
+The hint becomes visible at the next prompt assembly. It cannot guide later tool
+calls already running inside the same PTC program. Native and PTC calls use the
+same post-execution observation. No sleep is denied, repeated or rewritten; tool
+results and logged messages remain unchanged. Loops, compound commands, dynamic
+durations, short delays, failed/cancelled calls and background/promoted results
+do not trigger it.
+
+Before the first qualifying call, added prompt bytes are zero. One section stays
+registered for that agent and consumer lifetime; subsequent sleeps add no copies.
+Its text is empty while consumer ownership is revoked or `job_output` is absent.
+Owner/agent disposal removes it. `promptPolicy: false` installs no observer or
+section. This does not use batch tails, invent user messages, or promise a model
+will stop using sleeps. Reloading the consumer starts a new observation lifetime.
