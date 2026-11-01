@@ -7,8 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-- Ship the PTC engine as typed source in `src/ptc/*.cts` instead of a tarball or a parallel tree: the shipped `.d.cts` declarations are kept as the external typed surface, `src/ptc/engine.ts` is the door, and the spawnable worker script moved to `runtime/ptc/agentbox.worker.cjs` (it is a runtime asset, not source). The ported `.cts` files are runtime-identical to 2.1.1 and carry `@ts-nocheck` until they are re-typed; that gap is the one piece of this change that is intentionally unfinished and is recorded here rather than hidden.
-- PTC 引擎以类型化源码形态入库 `src/ptc/*.cts`，不再走压缩包、也不再新建并行目录：随包的 `.d.cts` 声明文件作为对外类型面保留，`src/ptc/engine.ts` 是入口，可被 spawn 的 worker 脚本移到 `runtime/ptc/agentbox.worker.cjs`（它是运行期资源，不是源码）。移植的 `.cts` 与 2.1.1 运行时逐字节等价，并在重新标注类型前带 `@ts-nocheck`；这是本次改动中唯一有意留待后续的一环，记录在此而不是藏起来。
+- Ship the PTC engine as typed source in `src/ptc/*.cts` instead of a tarball or a parallel tree. All thirteen modules are typed by hand — no `@ts-nocheck`, no `any` at a public boundary — and the hand-kept `*.d.cts` declarations are gone, so the implementation is the single source of truth. The spawnable worker script stays at `runtime/ptc/agentbox.worker.cjs`: it is a runtime asset, not source.
+- PTC 引擎以类型化源码形态入库 `src/ptc/*.cts`，不再走压缩包、也不再新建并行目录。十三个模块全部手工标注类型——没有 `@ts-nocheck`，公开边界上没有 `any`——原来自带的手写 `*.d.cts` 声明已删除，实现本身成为唯一真相。可被 spawn 的 worker 脚本保留在 `runtime/ptc/agentbox.worker.cjs`：它是运行期资源，不是源码。
 
 
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
