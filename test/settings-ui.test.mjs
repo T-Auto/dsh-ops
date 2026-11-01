@@ -47,7 +47,7 @@ await test('the page saves only changed switches with the host revision, then re
   const fixture = await profileFixture('browser-switches', {
     Config: (await import('../lib/settings/merged.js')).Config,
     apply(_ctx, value) { observed = value; mounts++ },
-  }, {})
+  }, { standard: { hidePwsh: true } })
   let pending
   const form = {
     state: ready(fixture.snapshot().value, fixture.snapshot().revision),

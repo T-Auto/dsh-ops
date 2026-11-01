@@ -31,16 +31,18 @@ await test('the page matches the host descriptor, and the opt-in switches share 
   assert.equal(ROW_ID, 'dsh-ops')
 })
 
-await test('every switch defaults on, and only the opt-in three start off', () => {
+await test('Bash and PowerShell are both visible by default; hiding PowerShell is explicit intent', () => {
   const merged = resolveMergedConfig({})
   assert.deepEqual(merged.global, { bash: true, hidePwsh: true, hideOfficialTools: true, dynamicTools: true })
   for (const section of ['minimal', 'standard', 'ptc', 'cordis']) {
-    for (const [key, value] of Object.entries(merged[section].config)) {
-      if (['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools'].includes(key)) assert.equal(value, true, `${section}.${key}`)
-    }
+    assert.equal(merged[section].config.bash, true, `${section}.bash`)
+    assert.equal(merged[section].config.hidePwsh, false, `${section}.hidePwsh`)
+    assert.equal(merged[section].config.hideOfficialTools, true, `${section}.hideOfficialTools`)
+    assert.equal(merged[section].config.dynamicTools, true, `${section}.dynamicTools`)
   }
   const draft = readRowValues({})
   assert.equal(draft['standard.bash'], true)
+  assert.equal(draft['standard.hidePwsh'], false)
   assert.equal(draft['panel.enabled'], false)
   assert.equal(draft['tui.enabled'], false)
 })
@@ -106,6 +108,9 @@ await test('the companion linkage locks the host-shell hide switch off', () => {
   assert.equal(draftFor({ other: { pwsh7Link: false } }, { pwsh7Installed: true })['other.pwsh7Link'], false, 'an explicit off wins')
   const free = resolveMergedConfig({ standard: { hidePwsh: true } })
   assert.equal(effectiveMode(free.standard, free.global).hidePwsh, true)
+  assert.equal(resolveMergedConfig({ global: { hidePwsh: true }, standard: {} }).standard.config.hidePwsh, false)
+  assert.equal(effectiveMode(resolveMergedConfig({ global: { hidePwsh: false }, standard: { hidePwsh: true } }).standard,
+    resolveMergedConfig({ global: { hidePwsh: false } }).global).hidePwsh, false)
 })
 
 await test('custom preset switch paths preserve dotted identities and profile defaults', () => {

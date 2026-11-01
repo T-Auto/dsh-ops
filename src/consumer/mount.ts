@@ -8,7 +8,8 @@ import { mountReplacements } from '../publication/replacements.js'
 import { mountDiscovery } from '../discovery/controller.js'
 import { mountPtc } from '../publication/ptc.js'
 import { NATIVE_RESIDENT_RAW } from '../capabilities/profiles.js'
-import { BASH_TOOL, publicToolName, renderToolingPolicy, TOOLING_SECTION } from '../policy.js'
+import { BASH_TOOL, publicToolName } from '../policy.js'
+import { BASH_PROMPT_SECTION, renderBashGuidance } from '../shells/prompt.js'
 import type { ConsumerPlan } from './types.js'
 
 export function mountConsumer(ctx: Context, plan: ConsumerPlan): void {
@@ -17,12 +18,16 @@ export function mountConsumer(ctx: Context, plan: ConsumerPlan): void {
     if (process.platform === 'win32') mountWorkspacePreparation(ctx)
     const shells = resolveShells(core)
     ctx.inject(['tools'], inner => mountSessionBash(inner, core, shells, gate))
-    if (core.promptPolicy && (!plan.files || !plan.residentTools)) ctx.inject(['tools', 'systemPrompt'], inner => {
-      inner.effect(() => inner.systemPrompt.section({ name: `${TOOLING_SECTION}:consumer-shell-${plan.id}`, order: 3254, interpolate: false,
+    if (core.promptPolicy) ctx.inject(['tools', 'systemPrompt'], inner => {
+      inner.effect(() => inner.systemPrompt.section({ name: `${BASH_PROMPT_SECTION}:${plan.id}`, order: inner.systemPrompt.getSectionOrder('TOOL_BASH'), interpolate: false,
         text: context => {
           const agent = context.agent ?? context.scope as Parameters<typeof gate.allows>[0]
-          return agent && gate.allows(agent) ? renderToolingPolicy({ published: inner.get('tools')?.get(BASH_TOOL, agent) ? [BASH_TOOL] : [], extraGuidance: core.extraGuidance }) : ''
-        } }), 'dsh-ops: consumer shell guidance')
+          if (!agent || !gate.allows(agent)) return ''
+          const definition = inner.get('tools')?.get(BASH_TOOL, agent)
+          if (!definition) return ''
+          const background = Object.hasOwn(definition.parameters.properties ?? {}, 'run_in_background')
+          return [renderBashGuidance(background), core.extraGuidance.trim()].filter(Boolean).join('\n\n')
+        } }), 'dsh-ops: consumer Bash guidance')
     })
   }
   if (plan.presentation === 'native') {
