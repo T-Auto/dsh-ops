@@ -21,4 +21,10 @@ Selections belong to the exact live agent and persist until its component or age
 
 Read Outcome status before data. A partial result retains coverage and a continuation; failures retain code, effect state and retry policy. The loader performs no file work and grants no filesystem permission. No token benchmark or IO speedup is claimed here.
 
+## Live PTC directory
+
+The existing scoped OPS prompt section includes a compact task directory only when this row's actual `ops_load_sdk` is available. It derives exact raw names and task hints from the PTC capability metadata and the same allowed pool used by selection. Use resident/callable SDK APIs first; if they cover the task, do not load more. Otherwise inspect the hints, select 1–5 listed raw names, and wait for the next model step. There is no keyword-search SDK API: an absent match means only that this eligible pool has no matching hint, not that other tools exist.
+
+Already callable APIs are omitted because the host's typed SDK describes them. Empty pools, disabled dynamic loading or guidance, unavailable workers/services, non-owning rows and Native/both presentation advertise no directory. Read-only authority omits mutations and batch; result remains eligible for its read-only page action when resident APIs are disabled. This conservative preflight is shared by the loader and rechecked before committing queued selections. It does not infer path/action permission, run a worker probe or call Native providers. Actual calls still enforce authority. A sandbox event drops pending selections; already loaded schemas can remain visible, but their invocation never bypasses current authority. Configuration reload, scope ownership change, presentation withdrawal, disposal and agent retirement refresh or remove the directory through the existing PTC lifecycle.
+
 中文：[PTC SDK 按需加载](./PTC按需加载.md)。
