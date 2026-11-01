@@ -26,11 +26,17 @@ The JSON contains:
   the last ten comments. A comment match carries author, excerpt and URL. It does
   not prove ownership; other timeline cross-references are not collected.
 - The newest matching `pull_request` run for the exact head SHA and PR number,
-  its event, attempt, URL and up to 50 job conclusions. A push or manual run is
-  never substituted for PR validation.
+  its event, attempt, URL and up to 50 job conclusions. A run is linked to the PR
+  through GitHub's own `pull_requests` reference; a fork run that reports none is
+  accepted only when its head repository and head branch match the PR head, and
+  `association` names which check was used. A run linked to another PR is never
+  substituted, and a head-SHA match that cannot be tied to the PR stays unknown.
+  A push or manual run is never substituted for PR validation.
 - The current requested base SHA and its newest matching `push` run for the
   **same workflow**. This separates base evidence from PR evidence. It is not an
   aggregate verdict over other workflows, required checks or branch protection.
+- GitHub's own mergeability for the current head as `githubMerge`
+  (`mergeable`/`mergeStateStatus`), which needs no local commit objects.
 - A local merge result against that captured base SHA: `clean`, `conflicts` with
   paths, or `unknown` with a reason. It is a point-in-time probe, not merge approval.
 
@@ -39,9 +45,11 @@ The JSON contains:
 Reads are fresh on each invocation; identical reads only share a result within
 that invocation. The CLI never reuses an old passing CI result for a changed
 head. Run lookup examines at most 20 matching API results. Absent credentials,
-missing runs, invalid responses, missing local commit objects, process failures
-and timeouts remain explicit unknown evidence. Narrow file/issue/comment/job
-windows are not represented as complete inventories.
+missing runs, an unverifiable PR association, invalid responses, missing local
+commit objects, process failures and timeouts remain explicit unknown evidence.
+Merge evidence counts as missing when neither GitHub mergeability nor the local
+probe resolves a state. Narrow file/issue/comment/job windows are not represented
+as complete inventories.
 
 Each subprocess has a 20-second deadline and 512 KiB collection ceiling, with a
 120-second invocation signal. JSON output is capped at 64 KiB; if details exceed

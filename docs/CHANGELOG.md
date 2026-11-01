@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Resolve fork `pull_request` runs in `review snapshot` from the run's own head repository and branch when GitHub reports no `pull_requests` link, and report GitHub's `mergeable`/`mergeStateStatus` as `githubMerge`, so fork PRs no longer always show unknown CI and merge evidence (#495).
+- 当 GitHub 不为 fork PR 的 `pull_request` 运行返回 `pull_requests` 关联时，`review snapshot` 改用运行自身的 head 仓库与分支完成匹配，并以 `githubMerge` 输出 GitHub 原生 `mergeable`/`mergeStateStatus`；fork PR 的 CI 与合并证据不再恒为 unknown（#495）。
 - Keep Native file routing separate from the independent Bash prompt section, so resident Native + Shell consumers do not repeat Bash guidance or advertise host PowerShell routing. Keep deployment guidance single-owned across Bash, Native and discovery sections, including withdrawal and reload.
 - 将 Native 文件路由提示与独立 Bash 提示段分开，避免 Native + Shell 常驻消费者重复 Bash 指导或把 Bash 宣传为宿主 PowerShell 路由。部署指导在 Bash、Native 与发现提示段之间仅保留一份，并覆盖撤回与重载。
 - Update preset hints and rendered settings UI to describe default Bash/PowerShell coexistence; hiding host PowerShell remains an explicit choice.
