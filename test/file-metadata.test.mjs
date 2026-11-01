@@ -50,6 +50,31 @@ import { callTool, envelopeOf, requireWorker } from './lib/boundary.mjs'
 
 requireWorker('file-metadata')
 if (process.platform === 'win32') {
+  await test('Windows create-only publication inherits the same DACL as ordinary file creation', async () => {
+    await withTempDir('file-windows-create', async root => {
+      let directory=root
+      const ps = code => execFileSync('powershell.exe', ['-NoProfile','-NonInteractive','-Command',code],
+        {encoding:'utf8',env:{...process.env,PSModulePath:'',OPS_ACL_ROOT:directory}}).trim()
+      for (const name of ['normal','custom','token-default']) {
+        directory=path.join(root,name); fs.mkdirSync(directory)
+        if (name!=='normal') ps(`$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value;
+          $acl=Get-Acl -LiteralPath $env:OPS_ACL_ROOT;
+          $acl.SetSecurityDescriptorSddlForm("${name==='custom'?'D:P(D;OIIO;0x20;;;WD)(A;;FA;;;$sid)(A;OIIO;FA;;;CO)(A;OICI;FR;;;BU)':'D:P(A;;FA;;;$sid)'}",[System.Security.AccessControl.AccessControlSections]::Access);
+          Set-Acl -LiteralPath $env:OPS_ACL_ROOT -AclObject $acl;`)
+        const reference=path.join(directory,name+'-reference'), target=path.join(directory,name+'-ops')
+        fs.writeFileSync(reference,'normal')
+        const result=envelopeOf(await callTool('write_file',{path:target,content:'published',expectedRevision:'absent'},{root}),assert)
+        assert.equal(result.status,'completed',JSON.stringify(result))
+        const dacl=name=>ps(`(Get-Acl -LiteralPath (Join-Path $env:OPS_ACL_ROOT '${name}')).GetSecurityDescriptorSddlForm([System.Security.AccessControl.AccessControlSections]::Access)`)
+        // CreatePrivateObjectSecurityEx marks AI; CreateFile omits that provenance bit on
+        // some Windows runners. Keep protection (P) and every inherited/explicit ACE exact.
+        const comparable=value=>value.replace(/^D:AI/,'D:')
+        assert.equal(comparable(dacl(name+'-ops')),comparable(dacl(name+'-reference')))
+        assert.equal(fs.readFileSync(target,'utf8'),'published')
+        fs.unlinkSync(target); fs.unlinkSync(reference)
+      }
+    })
+  })
   await test('Windows overwrite/edit/replace/copy retain exact owner/group/DACL and timestamps', async () => {
     await withTempDir('file-windows-metadata', async root => {
       const source = path.join(root, 'source')
@@ -76,6 +101,26 @@ if (process.platform === 'win32') {
       assert.equal(acl(to), before)
       assert.equal(fs.statSync(to).mtimeMs, timestamp)
       assert.equal(fs.readFileSync(to, 'utf8'), 'DONE')
+    })
+  })
+  await test('Windows restricted workspace token can edit, rename and delete a newly published file', async () => {
+    const [{ default: Sandbox }, { bootHost, shutdown }, { prepareWorkspace }] = await Promise.all([
+      import('@deepseek-ai/dsh-sandbox-local'), import('./lib/host.mjs'), import('../lib/workspace-preparation.js')])
+    await withTempDir('file-windows-workspace-acl', async root => {
+      const {ctx}=await bootHost()
+      try {
+        await ctx.plugin(Sandbox)
+        const policy={mode:'workspace-write',workspaceRoot:root,sessionId:'new-file-acl'}
+        await prepareWorkspace(policy)
+        const sandbox=ctx.get('sandbox'), target=path.join(root,'new.txt')
+        // Establish the real workspace capability before the file inherits its parent ACL.
+        const script="const fs=require('fs'),p=process.argv[1];fs.appendFileSync(p,' edited');fs.renameSync(p,p+'.moved');fs.unlinkSync(p+'.moved');"
+        const confined=await sandbox.confine([process.execPath,'-e',script,target],policy)
+        const result=envelopeOf(await callTool('write_file',{path:target,content:'new',expectedRevision:'absent'},{root}),assert)
+        assert.equal(result.status,'completed',JSON.stringify(result))
+        execFileSync(confined.argv[0],confined.argv.slice(1),{timeout:20000,encoding:'utf8'})
+        assert.equal(fs.existsSync(target),false); assert.equal(fs.existsSync(target+'.moved'),false)
+      } finally { await shutdown(ctx) }
     })
   })
   report('file-metadata')

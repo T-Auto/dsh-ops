@@ -22,6 +22,16 @@ forbid unsafe Rust. Replacement keeps its observation locks until publication se
 batch execution persists the unknown state before filesystem effects. Read-only file calls do
 not create audit storage.
 
+Windows create-only writes keep their staging file private until all bytes are written. Before
+publication, Windows computes the new file's DACL from the held parent and current process token,
+including inherited denies, creator-owner mapping and token defaults. The computed DACL is applied
+and verified without adding a creator full-control exception; failure discards staging instead of
+publishing a guessed ACL. Overwrites and copies continue to restore the source descriptor, and
+private result-cache objects keep their separate protected ACL. This does not repair older files'
+permissions automatically; those require deliberate permission review.
+The held publication handle excludes write sharing until it closes, so expanding/restoring the
+final DACL cannot admit a competing writer between byte preparation and publication.
+
 Run `cargo test --workspace --locked --manifest-path native/Cargo.toml` to include the tests
 moved into the new crates. `npm run build:ptc` still produces the same worker path. Published
 packages include `native/crates/` and both metadata adapters so installed source builds work.
