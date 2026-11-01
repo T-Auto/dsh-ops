@@ -10,7 +10,9 @@ limits. Transport, model text and stored data are separate budgets.
 Reference storage uses a private temporary cache selected by trusted host metadata. Windows uses
 the actual sandbox provider's session temp directory and private-temp write capability. PTC still
 runs through host confinement; Native fixed file operations keep their policy-governed executor.
-Full-access cache preparation voluntarily uses a narrower workspace-write policy. If a cache
+Only a confined session prepares a grant: `workspace-write` prepares the cache through that
+capability, while `danger-full-access` writes a private directory beside the system temp root
+without preparing anything, so it neither narrows its own mode nor labels the workspace. If a cache
 cannot be prepared, file operations retain their bounded, explicit incomplete result; reference
 creation reports unavailable storage. There is no unconfined PTC fallback.
 

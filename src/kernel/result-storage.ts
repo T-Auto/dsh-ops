@@ -69,6 +69,24 @@ function posixCacheLocation(key: string, create: boolean): Location | undefined 
     || (process.getuid && info.uid !== process.getuid())) throw new Error('Result cache parent must be private and owned')
   return { root }
 }
+/**
+ * Where a full-access session keeps its cache: a private directory beside the canonical temp
+ * root, the Windows counterpart of `posixCacheLocation()`.
+ *
+ * Full access already holds every write the cache needs, so it must not ask the host for a
+ * narrower grant: that request is what narrows the mode and stamps the workspace with a standing
+ * Low integrity label, which later sessions inherit (#411).
+ */
+function windowsFullAccessCacheLocation(key: string): Location | undefined {
+  try {
+    const parent = fs.realpathSync(tmpdir()), root = path.join(parent, `dsh-ops-results-${key}`)
+    // One fresh leaf under the canonical temp root; EEXIST is this process's own earlier call.
+    try { fs.mkdirSync(root, { mode: 0o700 }) }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') return undefined }
+    const info = fs.lstatSync(root)
+    return info.isDirectory() && !info.isSymbolicLink() ? { root } : undefined
+  } catch { return undefined }
+}
 function currentTools(ctx: StorageHost, scope: unknown, tool: string): string[] {
   const tools = ctx.get('tools'), visible = new Set(tools?.schemas(scope).map(item => item.name) ?? [])
   return CAPABILITIES.filter(item => item.rawName === tool
@@ -117,21 +135,25 @@ export async function resultStorage(ctx: StorageHost, session: ResultSession, sc
   if (!cache) { cache = new Map(); locations.set(owner, cache) }
   let location = cache.get(key)
   if (process.platform === 'win32') {
+    // A grant-backed cache serves a narrowed session; a plain one cannot, so a session that was
+    // narrowed after using full access prepares again instead of writing outside its grant.
+    if (location && policy.mode === 'workspace-write' && location.windowsWriteSid === undefined) location = undefined
     if (!location && policy.mode !== 'read-only') {
       if (policy.sessionId !== session.id) return undefined
-      // Full access is voluntarily narrowed for cache preparation; file execution keeps its own path.
-      const cachePolicy = { ...policy, mode: 'workspace-write' as const }
-      if (!confined) {
+      if (!confined && policy.mode === 'workspace-write') {
         const sandbox = ctx.get('sandbox')
         if (!sandbox) return undefined
+        const cachePolicy = { ...policy, mode: 'workspace-write' as const }
         if (sandbox.prepareResultStorage) confined = await sandbox.prepareResultStorage([file], cachePolicy, signal)
         else { // Legacy hosts do not expose cache-only preparation.
           await prepareWorkspace(cachePolicy)
           confined = await sandbox.confine([file], cachePolicy, signal)
         }
       }
-      if (!['full', 'partial'].includes(confined.enforcement)) return undefined
-      location = windowsCacheLocation(confined.argv)
+      if (confined) {
+        if (!['full', 'partial'].includes(confined.enforcement)) return undefined
+        location = windowsCacheLocation(confined.argv)
+      } else location = windowsFullAccessCacheLocation(key)
     }
   } else location ??= posixCacheLocation(key, policy.mode !== 'read-only')
   if (!location) return undefined

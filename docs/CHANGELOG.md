@@ -19,6 +19,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 从安装本包的 profile 探测 `dsh-win-pwsh7` 联动，宿主进程没有 `DSH_PROFILE_DIR` 也能判定；保存其它开关不再把「跟随检测」写成显式值，而手动拨动联动开关一定落盘。
 - Name the row setting instead of the removed Compatibility mode when an official tool has an OPS replacement.
 - 官方工具被 OPS 替代时，拒绝信息改指行设置，不再提已删除的兼容模式。
+- Stop narrowing `danger-full-access` result-cache preparation to `workspace-write` on Windows: full access now writes a private directory beside the system temp root without preparing the workspace, so its sessions no longer stamp a standing Low integrity label that later sessions inherit; `workspace-write` and `read-only` keep their existing preparation and confinement (#411).
+- 修复 Windows 下 `danger-full-access` 准备结果缓存仍收窄为 `workspace-write` 的问题：完全访问模式改为在系统临时根目录旁写私有目录，不准备工作区，因此不再给目录写入会被后续会话继承的常驻 Low 完整性标签；`workspace-write` 与 `read-only` 的准备和沙箱行为保持不变（#411）。
 
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 
