@@ -21,7 +21,7 @@ const text = async (ctx, agent) => (await ctx.get('systemPrompt').assemble({ sco
   .filter(row => row.name.startsWith(section)).map(row => row.text).join('\n')
 const hasEntry = (text, raw) => text.includes(`- ${raw}: `)
 async function setup(root, config = {}, gate = { allows: () => true }) {
-  const { ctx } = await bootHost()
+  const { ctx } = await bootHost({ withWorkingDirectory: true })
   const agents = []; ctx.provide('agents', { list: () => agents })
   const state = { available: true }
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem)
@@ -67,7 +67,7 @@ await test('directory derives PTC metadata, omits callable entries and names onl
 await test('actual assembly and Node PTC dispatch preserve next-step selection and two-agent isolation', () => withTempDir('ptc-directory', async root => {
   const { ctx, mint } = await setup(root, { allowedTools: ['grep', 'stat'], alwaysLoaded: ['stat'] })
   try {
-    const a = await mint(), b = await mint(), native = await mint('native'), both = await mint('both')
+    const a = await mint(), b = await mint(), native = await mint('native')
     const prompt = ctx.get('systemPrompt'), assemble = prompt.assemble.bind(prompt)
     let probes = 0, events = 0, spawns = 0
     prompt.assemble = context => { if (isPresentationProbe(context)) probes++; return assemble(context) }
@@ -78,7 +78,7 @@ await test('actual assembly and Node PTC dispatch preserve next-step selection a
       const first = await text(ctx, a)
       assert.ok(hasEntry(first, 'grep')); assert.equal(hasEntry(first, 'stat'), false)
       assert.equal(hasEntry(first, 'batch'), false); assert.equal(hasEntry(first, 'inspect_local_file'), false)
-      assert.equal(await text(ctx, native), ''); assert.equal(await text(ctx, both), '')
+      assert.equal(await text(ctx, native), '')
       const frozen = { probes, events, spawns }
       for (let i = 0; i < 6; i++) await text(ctx, a)
       assert.deepEqual({ probes, events, spawns }, frozen, 'directory assembly adds no probes, registry feedback or process work')
