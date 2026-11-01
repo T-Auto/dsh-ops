@@ -119,13 +119,15 @@ export async function resultStorage(ctx: StorageHost, session: ResultSession, sc
   if (process.platform === 'win32') {
     if (!location && policy.mode !== 'read-only') {
       if (policy.sessionId !== session.id) return undefined
-      // Full access is voluntarily narrowed for cache preparation; file execution keeps its own path.
+      // A cache-only host capability may prepare private temp storage in full access.
+      // Legacy confinement also changes workspace ACLs, so it is never a cache fallback there.
       const cachePolicy = { ...policy, mode: 'workspace-write' as const }
       if (!confined) {
         const sandbox = ctx.get('sandbox')
         if (!sandbox) return undefined
         if (sandbox.prepareResultStorage) confined = await sandbox.prepareResultStorage([file], cachePolicy, signal)
         else { // Legacy hosts do not expose cache-only preparation.
+          if (policy.mode === 'danger-full-access') return undefined
           await prepareWorkspace(cachePolicy)
           confined = await sandbox.confine([file], cachePolicy, signal)
         }
