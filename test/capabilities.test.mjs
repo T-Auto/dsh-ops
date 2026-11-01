@@ -75,8 +75,10 @@ await test('create-only help names the required literal instead of suggesting an
   const schema = fileParameters.write_file
   assert.ok(schema.required.includes('expectedRevision'))
   assert.match(schema.properties.expectedRevision.description, /literal string "absent"/)
+  assert.match(schema.properties.expectedRevision.description, /64 lowercase hex SHA-256/)
   assert.match(fileDescriptions.write_file, /expectedRevision: "absent"/)
   assert.match(fileParameters.edit_file.properties.expectedRevision.description, /"absent" is not accepted/)
+  assert.match(fileParameters.edit_file.properties.expectedRevision.description, /64 lowercase hex SHA-256/)
 })
 
 await test('native registration consumes the catalogue while execute values stay unchanged', async () => {

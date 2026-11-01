@@ -11,8 +11,8 @@ const bounded = (properties: Record<string, JsonSchemaNode>, required: string[] 
 
 // The pinned host SDK supports a schema subset: express bounds in descriptions;
 // the native worker remains authoritative for validation, including raw PTC calls.
-const revision: JsonSchemaNode = { type: 'string', description: 'Required: observed lowercase SHA-256, or the literal string "absent" for create-only. Never omit or pass null/empty; never an overwrite wildcard.' }
-const existingRevision: JsonSchemaNode = { type: 'string', description: 'Required observed lowercase SHA-256 from inspect/stat; the literal "absent" is not accepted.' }
+const revision: JsonSchemaNode = { type: 'string', description: 'Required: observed 64 lowercase hex SHA-256, or the literal string "absent" for create-only. Never omit or pass null/empty; never an overwrite wildcard.' }
+const existingRevision: JsonSchemaNode = { type: 'string', description: 'Required observed 64 lowercase hex SHA-256 from inspect/stat; the literal "absent" is not accepted.' }
 const filePath: JsonSchemaNode = { ...string, description: 'File path; relative to session cwd.' }
 const searchPath: JsonSchemaNode = { ...string, description: 'Search root; relative to session cwd, default ".".' }
 const globFilter: JsonSchemaNode = { type: 'array', description: 'Relative glob ARRAY, e.g. ["**/*.ts","!vendor/**"]; omitted means all eligible files.', items: string }
