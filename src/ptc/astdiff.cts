@@ -22,17 +22,8 @@
 import { spawnSync } from 'node:child_process'
 
 import { napi } from './engine-load.cjs'
+import type { NapiApi, SgNode } from './sg.cjs'
 
-/** The slice of `@ast-grep/napi`'s node API this module actually calls. */
-interface SgRange { start: { index: number }, end: { index: number } }
-interface SgNode {
-  namedChildren(): SgNode[]
-  range(): SgRange
-  kind(): string
-  text(): string
-  findAll(options: { rule: { kind: string } }): SgNode[]
-}
-interface NapiApi { parse(lang: string, text: string): { root(): SgNode } }
 
 /** A language name accepted by `@ast-grep/napi`. Kept as `string`: the peer resolves it at runtime. */
 export type Lang = string
