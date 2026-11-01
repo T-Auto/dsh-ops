@@ -1,5 +1,9 @@
 # Optional WSL file reads
 
+On the tested DSH rc.2 host, Windows `Get-Acl` cannot prepare a WSL UNC workspace. In workspace-write mode, the unchanged PTC runtime therefore refuses to start, and legacy cache preparation can be unavailable. Inline Native reads still work; a byte-clipped read falls back to exactly the original Windows result, including its incomplete-output flags. OPS does not change permission mode or bypass this host refusal. A separate full-access fixture verifies shared PTC file bindings and protected Windows reference paging; this is validation scope, not a recommendation to widen user authority.
+
+Run `node scripts/verify-wsl-readonly.mjs Ubuntu workspace-write` for the actual UNC authority case, and `node scripts/verify-wsl-readonly.mjs Ubuntu danger-full-access` for the separate cross-root fixture. Both require the exact branch-built Windows/Linux runtime receipts. The script asserts existing host limitations explicitly, checks revocation races, and observes Linux worker PID plus start time before cancellation and absence afterward.
+
 Apply the environment setting to the DSH daemon/desktop process, then restart that process. Changing it in an unrelated terminal does not affect an already running DSH process. Existing WSL cursors fail explicitly while the opt-in is disabled.
 
 中文：[WSL 只读文件操作](WSL只读文件操作.md).
