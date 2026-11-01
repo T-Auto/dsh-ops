@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Add `symbol_map` to the file catalogue: a Tree-sitter outline answered in-process without spawning the worker. It is the first member of `NO_WORKER_FILE_TOOLS`, so it publishes on both surfaces (it needs no binary), stays out of `OBSERVED_READ_TOOLS` (an outline must never satisfy read-before-edit), pages over symbols with `offset`/`nextOffset`, and renders one position line per symbol. The canonical output schema declares `symbols` as strings, so the legacy object form is rejected at the envelope. The three `tree-sitter` packages are optional dependencies: when they are absent the tool refuses with `EXECUTOR_UNAVAILABLE` and names the install command instead of returning an empty outline.
+- 文件目录新增 `symbol_map`：Tree-sitter 大纲，在进程内应答、不启动 worker。它是 `NO_WORKER_FILE_TOOLS` 的首个成员，因此在两种呈现下都发布（不需要二进制）；不进入 `OBSERVED_READ_TOOLS`（大纲永远不能满足 read-before-edit）；按符号分页（`offset`/`nextOffset`）；每个符号渲染一行位置。规范输出 schema 把 `symbols` 声明为字符串数组，旧对象形态在信封层即被拒绝。三个 `tree-sitter` 包为可选依赖：缺失时以 `EXECUTOR_UNAVAILABLE` 拒绝并给出安装命令，绝不返回空大纲。
 - Detect the `dsh-win-pwsh7` companion from the profile that installed this package, so the row's link also resolves in the host process, which gets no `DSH_PROFILE_DIR`; a save no longer freezes a detected link into an explicit value, while a flipped link is always written.
 - 从安装本包的 profile 探测 `dsh-win-pwsh7` 联动，宿主进程没有 `DSH_PROFILE_DIR` 也能判定；保存其它开关不再把「跟随检测」写成显式值，而手动拨动联动开关一定落盘。
 - Name the row setting instead of the removed Compatibility mode when an official tool has an OPS replacement.
