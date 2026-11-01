@@ -8,6 +8,8 @@ import { execFileSync, spawn as spawnChild } from 'node:child_process'
 if (process.platform !== 'win32') throw new Error('Run this acceptance check on Windows with an installed Linux x64 WSL distribution')
 const distro = process.argv[2] ?? 'Ubuntu'
 if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(distro)) throw new Error('Unsupported fixture distribution name')
+const startingMode = process.argv[3] ?? 'workspace-write'
+if (!['workspace-write', 'danger-full-access'].includes(startingMode)) throw new Error('Unsupported fixture policy')
 const local = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'dsh-ops-wsl-accept-'))
 process.env.DSH_HOME = local
 delete process.env.DSH_OPS_WORKER_BIN
@@ -32,12 +34,13 @@ const { default: Subprocess } = await import('@deepseek-ai/dsh-subprocess-local'
 const { default: FileSystem } = await import('@deepseek-ai/dsh-fs-local')
 const { default: Sandbox } = await import('@deepseek-ai/dsh-sandbox-local')
 const { invoke } = await import('../lib/execution/files.js')
+const { invoke: invokeResult } = await import('../lib/execution/jobs.js')
 const { resolveWorker } = await import('../lib/execution/runtime.js')
 const { wslPath } = await import('../lib/execution/wsl-paths.js')
 const { definition } = await import('../lib/file/contract.js')
 const { expireResultSession } = await import('../lib/kernel/result-lifecycle.js')
 const { ctx } = await bootHost(), file = resolveWorker()
-let mode = 'workspace-write', hook = () => {}, afterWorker = false, afterWorkerRevoke = false
+let mode = startingMode, hook = () => {}, afterWorker = false, afterWorkerRevoke = false
 const session = { id: 'wsl-acceptance', header: { cwd: unc }, append() {}, read() { return [] } }, exec = { agent: { session } }
 const seen = [], observed = []
 let checks = 0
@@ -46,7 +49,7 @@ try {
   await ctx.plugin(Subprocess); await ctx.plugin(FileSystem); await ctx.plugin(Sandbox)
   await ctx.plugin({ inject: ['tools'], apply(inner) {
     inner.provide('sandboxPolicy', { resolve: () => {
-      const value = { mode, workspaceRoot: local, sessionId: session.id }
+      const value = { mode, workspaceRoot: startingMode === 'workspace-write' ? unc : local, sessionId: session.id }
       if (afterWorker && afterWorkerRevoke) { afterWorkerRevoke = false; queueMicrotask(() => { mode = 'read-only' }) }
       return value
     } })
@@ -89,7 +92,7 @@ try {
     fs.writeFileSync(path.join(unc, 'scan', 'changed.txt'), 'needle changed\n')
     assert.equal((await call('glob', { ...scan, continuation: first.continuation })).error.code, 'SEARCH_STALE')
   })
-  await check('real Windows Node PTC file bindings consume the same WSL cursor and read contract', async () => {
+  await check('real Windows Node PTC preserves its authority boundary and shared file contract', async () => {
     const { default: NodePtc } = await import('@deepseek-ai/dsh-ptc-runtime-node')
     const { createScope } = await import('@deepseek-ai/dsh-scope')
     const { mountPtc } = await import('../lib/publication/ptc.js')
@@ -101,9 +104,16 @@ try {
     await ctx.serial('agent/created', { agent: exec.agent })
     await ctx.get('systemPrompt').assemble({ scope: exec.agent })
     const fresh = await call('glob', scan)
+    seen.length = 0
     const result = await ctx.get('tools').execute({ name: 'run_code', callId: 'wsl-ptc', agent: exec.agent,
       signal: new AbortController().signal, arguments: { description: 'Verify shared WSL readonly file bindings',
         code: `return {page:await tools.ops_glob(${JSON.stringify({ ...scan, continuation: fresh.continuation })}),read:await tools.ops_read_files({files:[{path:'small.txt',limit:1}]})};` } })
+    if (startingMode === 'workspace-write' && result.isError) {
+      assert.match(result.error.message, /workspace preparation failed[\s\S]*Get-Acl/)
+      assert.equal(seen.some(item => item.envelope?.request.windows_paths), false)
+      console.log('Verified existing Windows host refusal: UNC workspace Get-Acl prevents PTC startup; no WSL file worker ran')
+      return
+    }
     assert.equal(result.isError, false, JSON.stringify(result))
     assert.equal(result.value.result.page.data.matchedTotal, 501, JSON.stringify(result.value.result))
     assert.equal(result.value.result.read.data.items[0].items[0].text, 'literal /var/tmp/source text')
@@ -125,17 +135,29 @@ try {
     assert.equal(reserved.scanComplete, false); assert.equal(reserved.skipReasons['invalid-path'], 1)
     assert.equal(reserved.matchedTotal, undefined)
   })
-  await check('byte-clipped read falls back to Windows private storage and pages its reference', async () => {
+  await check('byte-clipped read retains the original Windows storage contract', async () => {
     seen.length = 0
     const value = await call('read_files', { files: [{ path: 'large.txt' }] })
-    assert.ok(value.reference?.refId, JSON.stringify({ ...value, items: [] }))
-    assert.equal(wslPath(value.referenceRoot)?.file, fixture)
     const calls = seen.filter(item => item.envelope)
     assert.equal(calls.length, 2); assert.equal(calls[0].envelope.request.windows_paths, true)
-    assert.equal(Object.hasOwn(calls[0].envelope, 'storage'), false); assert.ok(calls[1].envelope.storage)
+    assert.equal(Object.hasOwn(calls[0].envelope, 'storage'), false)
     assert.ok(calls[1].envelope.budget.timeoutMs < calls[0].envelope.budget.timeoutMs)
-    const page = await call('result', { action: 'page', id: value.reference.refId, limit: 5 })
-    assert.equal(page.status, 'completed', JSON.stringify(page))
+    if (startingMode === 'workspace-write' && !value.reference) {
+      assert.equal(calls[1].envelope.storage, undefined)
+      delete process.env.DSH_OPS_WSL_READS
+      const baseline = await call('read_files', { files: [{ path: 'large.txt' }] })
+      process.env.DSH_OPS_WSL_READS = '1'
+      assert.deepEqual(value, baseline)
+      assert.equal(value.complete, false); assert.equal(value.truncated, true)
+      console.log('Verified existing UNC cache-preparation limitation: byte-clipped fallback exactly matches opt-out Windows result')
+      return
+    }
+    assert.ok(value.reference?.refId, JSON.stringify({ ...value, items: [] })); assert.ok(calls[1].envelope.storage)
+    assert.equal(wslPath(value.referenceRoot)?.file, fixture)
+    const page = await invokeResult(ctx, file, 'result', { action: 'page', root: value.referenceRoot, id: value.reference.refId, limit: 5 }, exec, new AbortController().signal)
+    assert.equal(page.error, undefined, JSON.stringify({ ...page, items: [] }))
+    assert.equal(page.reference.refId, value.reference.refId); assert.equal(page.source.captureComplete, true)
+    assert.equal(page.items.length, 5); assert.equal(page.nextOffset, 5)
   })
   await check('disabled opt-in cannot downgrade an existing WSL cursor', async () => {
     delete process.env.DSH_OPS_WSL_READS; seen.length = 0
@@ -146,14 +168,14 @@ try {
   await check('authority loss after first probe prevents subsequent probes and workers', async () => {
     seen.length = 0
     hook = entry => { if (entry.argv.includes('/usr/bin/wslpath')) mode = 'read-only' }
-    const value = await call('glob', scan); hook = () => {}; mode = 'workspace-write'
+    const value = await call('glob', scan); hook = () => {}; mode = startingMode
     assert.equal(value.error.code, 'AUTHORITY_CHANGED'); assert.equal(seen.length, 1)
   })
   await check('authority loss after accepted worker result cannot publish read observations', async () => {
     observed.length = 0; afterWorker = false; afterWorkerRevoke = true
     const value = await call('read_files', { files: [{ path: 'small.txt' }] })
     assert.equal(value.error.code, 'AUTHORITY_CHANGED'); assert.equal(observed.length, 0)
-    afterWorkerRevoke = false; mode = 'workspace-write'
+    afterWorkerRevoke = false; mode = startingMode
   })
   await check('an expired preparation budget never starts a worker or a Windows fallback', async () => {
     seen.length = 0
@@ -163,6 +185,8 @@ try {
   await check('caller cancellation stops the actual Linux worker and never replays on Windows', async () => {
     seen.length = 0; const controller = new AbortController()
     const payload = wsl(['/usr/bin/wslpath', '-u', path.resolve('runtime/linux-x64/dsh-ops-worker')])
+    const existing = wsl(['/usr/bin/python3', '-c', 'import pathlib,os,sys\nfound=[]\nfor p in pathlib.Path("/proc").iterdir():\n try:\n  if p.name.isdigit() and os.readlink(p/"exe")==sys.argv[1]: found.append(p.name)\n except OSError: pass\nprint(",".join(found))', payload])
+    assert.equal(existing, '', 'cancellation fixture requires no pre-existing matching payload process')
     const observerCode = `import os,pathlib,sys,time
 deadline=time.monotonic()+20
 print("ready",flush=True)
@@ -170,7 +194,9 @@ while time.monotonic()<deadline:
  for p in pathlib.Path('/proc').iterdir():
   if not p.name.isdigit(): continue
   try:
-   if os.readlink(p/'exe')==sys.argv[1]: print(p.name,flush=True);sys.exit(0)
+   if os.readlink(p/'exe')==sys.argv[1]:
+    start=(p/'stat').read_text().rsplit(') ',1)[1].split()[19]
+    print(p.name+':'+start,flush=True);sys.exit(0)
   except (OSError,PermissionError): pass
  time.sleep(.001)
 sys.exit(2)`
@@ -182,24 +208,24 @@ sys.exit(2)`
       output += chunk.toString('utf8')
       const lines = output.trim().split(/\r?\n/)
       if (lines.includes('ready')) ready()
-      const pid = lines.find(line => /^[1-9][0-9]*$/.test(line))
-      if (pid) { found(Number(pid)); controller.abort() }
+      const identity = lines.find(line => /^[1-9][0-9]*:[0-9]+$/.test(line))
+      if (identity) { const [pid, start] = identity.split(':'); found({ pid: Number(pid), start }); controller.abort() }
     })
     watcher.on('error', error => { rejectReady(error); rejectFound(error) })
     watcher.on('close', code => { if (code !== 0) { const error = new Error(`Linux worker observer exited ${code}`); rejectReady(error); rejectFound(error) } })
     try {
       await started
       const pending = call('grep', { path: 'scan', pattern: 'needle', limit: 5 }, controller.signal)
-      const [value, pid] = await Promise.all([pending, observedPid])
+      const [value, identity] = await Promise.all([pending, observedPid])
       assert.equal(value.error.code, 'CANCELLED'); assert.equal(seen.filter(item => item.envelope).length, 1)
-      const gone = wsl(['/usr/bin/python3', '-c', 'import os,sys,signal;p=int(sys.argv[1]);alive=False\ntry: alive=os.readlink(f"/proc/{p}/exe")==sys.argv[2]\nexcept OSError: pass\nprint("alive" if alive else "gone");os.kill(p,signal.SIGTERM) if alive else None', String(pid), payload])
-      assert.equal(gone, 'gone', `owned Linux worker ${pid} survived launcher cancellation`)
-      console.log(`Linux worker PID ${pid} observed before cancellation and absent afterward`)
+      const gone = wsl(['/usr/bin/python3', '-c', 'import os,pathlib,sys,signal;p=int(sys.argv[1]);alive=False\ntry: alive=os.readlink(f"/proc/{p}/exe")==sys.argv[2] and pathlib.Path(f"/proc/{p}/stat").read_text().rsplit(") ",1)[1].split()[19]==sys.argv[3]\nexcept OSError: pass\nprint("alive" if alive else "gone");os.kill(p,signal.SIGTERM) if alive else None', String(identity.pid), payload, identity.start])
+      assert.equal(gone, 'gone', `owned Linux worker ${identity.pid} survived launcher cancellation`)
+      console.log(`Linux worker PID ${identity.pid}, starttime ${identity.start}, observed before cancellation and absent afterward`)
     } finally { watcher.kill() }
   })
-  console.log(`WSL acceptance: ${checks} passed, 0 skipped/failed`)
+  console.log(`WSL acceptance (${startingMode}): ${checks} passed, 0 skipped/failed`)
 } finally {
-  hook = () => {}; mode = 'workspace-write'
+  hook = () => {}; mode = startingMode
   await expireResultSession(ctx, session)
   await shutdown(ctx)
   wsl(['/usr/bin/python3', '-c', 'import pathlib,shutil,sys;p=pathlib.Path(sys.argv[1]);assert p.parent==pathlib.Path("/var/tmp") and p.name.startswith("dsh-ops-wsl-accept-");shutil.rmtree(p)', fixture])

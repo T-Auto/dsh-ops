@@ -1,5 +1,9 @@
 # 可选 WSL 只读文件操作
 
+实测 DSH rc.2 宿主无法通过 Windows `Get-Acl` 准备 WSL UNC 工作区。因此 workspace-write 下原有 PTC 运行时会拒绝启动，旧版缓存准备也可能不可用。内联 Native 读取仍可运行；字节裁剪的请求回退后与原 Windows 结果完全一致，包括输出不完整标志。OPS 不修改权限模式，也不绕过宿主拒绝。独立 full-access 夹具验证共享 PTC 文件绑定和受保护 Windows 引用分页；这是测试范围说明，不是扩大用户权限的建议。
+
+实际 UNC 授权测试运行 `node scripts/verify-wsl-readonly.mjs Ubuntu workspace-write`；独立跨根夹具运行 `node scripts/verify-wsl-readonly.mjs Ubuntu danger-full-access`。两者均要求该分支构建且凭据一致的 Windows/Linux worker。脚本明确断言已知宿主限制，检查撤权竞争窗口，并在取消前记录 Linux worker PID 和启动时间、取消后确认该进程已消失。
+
 环境变量须设置到 DSH daemon/桌面进程，并重启该进程。在无关终端修改环境变量不会改变已运行的 DSH。关闭开关后，已有 WSL 游标会明确失败。
 
 English: [Optional WSL file reads](wsl-readonly.md).
