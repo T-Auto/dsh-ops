@@ -63,3 +63,18 @@ filesystem/cache state and antivirus activity can dominate a small allocation re
 CI asserts functional contracts and profiler isolation, not wall-clock thresholds.
 
 See [search coverage](search-coverage.md) for the unchanged completeness and cursor rules.
+
+## First investigation (#474)
+
+The 2026-11-02 Windows run used a local client corpus of 7,120 files / 91,205,771 bytes,
+content identity `a484ae33324917c2791c019449ed62b557036fb113e757ba6f0acc79b8bffaf5`.
+One complete baseline exact-query sample took 7,450 ms overall: protected path validation/opening
+accounted for 4,918 ms, relative metadata for 933 ms, absolute metadata for 765 ms and glob filtering
+for 45 ms. This motivates measuring safely reusable path context separately; preparing globs once
+does not remove the dominant filesystem work.
+
+The machine also ran other validation work. The same-binary control itself produced differing
+partial results when miss queries reached the 30-second deadline. Preserve these failures rather
+than comparing unequal work as a speedup. First-touch and warm samples, worker hashes and the
+old/new comparison are attached to the resolving PR linked from [issue #474](https://github.com/T-Auto/dsh-ops/issues/474).
+This corpus differs from the reporter's older 3,155-file corpus. No overall speedup is established.
