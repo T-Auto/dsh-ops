@@ -9,7 +9,7 @@ import { nativeProviders, registerNativeProviderAtScope, claimNativeSelection, p
 import { loadScopes } from '../adapter/dsh/host.js'
 import { onToolChange } from '../publication/changes.js'
 import { ownScopes } from '../publication/ownership.js'
-import { isNativePresentation, isPresentationProbe } from '../publication/presentation.js'
+import { inPresentationProbe, isNativePresentation, isPresentationProbe } from '../publication/presentation.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
 import { failure, resolveWorker } from '../execution/files.js'
 import { capability, DISCOVERY_TOOL_NAME } from '../capabilities/registry.js'
@@ -74,6 +74,48 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
     let ownership: Awaited<ReturnType<typeof ownScopes>> | undefined
     let stopped = false, mutating = false
     const work = scopedReconciliation<Agent>(() => ctx.logger.warn('dsh-ops: discovery publication unavailable; tools remain withdrawn.'))
+    // A change our own assembly caused is not news. Applying it inline is what
+    // turns one external notification into a storm of reassemblies: the probe
+    // assembly notifies us, we probe again, and the next assembly notifies us
+    // again. Probes are attributed by depth (assembly handlers may nest one),
+    // and each external activation may spend at most one trailing reconcile.
+    let deferred = 0, settleBudget = 1, warnedFeedback = false
+    function notified(): boolean {
+      if (!inPresentationProbe()) return false
+      ++deferred
+      return true
+    }
+    // Synchronous on purpose: an awaited assembly must observe that the previous
+    // reconciliation was superseded before it can read a stale publication.
+    function revalidate(): void {
+      for (const entry of entries.values()) invalidate(entry)
+      void reconcile()
+    }
+    function settle(): void {
+      if (!deferred || stopped || inPresentationProbe()) return
+      deferred = 0
+      if (settleBudget <= 0) {
+        if (!warnedFeedback) {
+          warnedFeedback = true
+          ctx.logger.warn('dsh-ops: a component changed the tool or prompt registry during prompt assembly; that change was ignored to stop a feedback loop.')
+        }
+        return
+      }
+      --settleBudget
+      revalidate()
+    }
+    // A genuine external change re-arms the budget and drops any attribution
+    // left over from a probe that never returned to this controller.
+    function external(): void {
+      deferred = 0
+      settleBudget = 1
+    }
+    function refresh(): void {
+      if (stopped) return
+      if (notified()) return
+      external()
+      revalidate()
+    }
     const cancelEntry = (entry: Entry, reason: string) => {
       entry.calls.cancel(reason)
       entry.runtime.cancel(reason)
@@ -138,7 +180,10 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
       if (!fresh && ptcSurfaceClaimed(ctx, agent)) return false
       const current = inputs(agent), revision = entry.revision
       if (entry.presentation && same(entry.presentation.inputs, current)) return entry.presentation.native
-      const result = await isNativePresentation(prompt, agent, signal)
+      let result: boolean
+      try {
+        result = await isNativePresentation(prompt, agent, signal)
+      } finally { settle() }
       if (!stopped && !signal?.aborted && entries.get(agent) === entry && revision === entry.revision && same(current, inputs(agent))) {
         entry.presentation = { inputs: current, native: result }
       }
@@ -297,11 +342,6 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
       try { clear(entry); entry.releaseSelection?.() } finally { mutating = false }
       await Promise.allSettled([entry.runtime.stop(), retireExternal(entry)]); await entry.fiber?.dispose(); await reconcile(affected)
     })
-    const refresh = () => {
-      if (stopped) return
-      for (const entry of entries.values()) invalidate(entry)
-      void reconcile()
-    }
     // A prompt-driven change can move any scope's presentation, but paying one
     // synchronous assembly per live session is what made session creation scale
     // with the live count. Probe a single representative — the conservative
@@ -312,6 +352,8 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
     // `refresh`, which must visit every entry to withdraw stale registrations.
     const staleAll = () => {
       if (stopped) return
+      if (notified()) return
+      external()
       const representative = [...entries].find(([agent, entry]) => coordinable(agent, entry))
       if (!representative) {
         // Nothing here can be probed, so `reconcile` would walk every entry only to skip
@@ -348,8 +390,9 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
       }), 'dsh-ops: external provider lifecycle')
     }
     onToolChange(ctx, (scopes, origin) => {
-      if (mutating || ownership?.publishing()) return
+      if (mutating || ownership?.publishing() || notified()) return
       if (!scopes?.length) { staleAll(); return }
+      external()
       const affected = new Set<Agent>()
       for (const [agent, entry] of entries) if (scopes.some(scope => scopeChainOf(agent).includes(scope))) { invalidate(entry); affected.add(agent) }
       if (!affected.size) {
