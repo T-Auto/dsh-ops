@@ -318,7 +318,7 @@ await test('ladder --json has a stable shape and lists exactly the rungs the ren
     assert.deepEqual(Object.keys(parsed.shells), ['bash', 'pwsh'])
     for (const kind of ['bash', 'pwsh']) {
       assert.deepEqual(Object.keys(parsed.shells[kind]),
-        ['available', 'executable', 'source', 'detail', ...(kind === 'bash' ? ['restricted'] : [])])
+        ['available', 'executable', 'source', 'detail', ...(kind === 'bash' ? ['restricted', 'integrity'] : [])])
       assert.equal(
         parsed.shells[kind].executable === null,
         parsed.shells[kind].available === false,
@@ -418,7 +418,7 @@ await test('a shell the deployment does not have is reported as missing, with th
 
     const resolved = resolveShells(resolveConfig(config), { env })
     for (const kind of ['bash', 'pwsh']) {
-      const { restricted, ...rung } = parsed.shells[kind]
+      const { restricted, integrity, ...rung } = parsed.shells[kind]
       assert.deepEqual(rung, {
         available: resolved[kind].available,
         executable: resolved[kind].file ?? null,
@@ -426,6 +426,7 @@ await test('a shell the deployment does not have is reported as missing, with th
         detail: resolved[kind].detail,
       }, `the report and the resolver disagree about ${kind}`)
       if (kind === 'bash') assert.equal(restricted === null, !resolved.bash.available, 'restricted is reported exactly for a resolved bash')
+      if (kind === 'bash') assert.ok(['complete', 'partial', 'not-applicable'].includes(integrity.status))
       if (resolved[kind].source === 'missing') {
         assert.equal(parsed.shells[kind].executable, null)
         assert.match(human.stdout, /executable: missing/u)

@@ -132,6 +132,14 @@ Enable `tui.enabled` on the `dsh-ops` row in dsh-TUI and restart to add the OPS 
 - [Native PTC](docs/native-ptc.md) · [Manual validation](docs/manual-validation.md)
 - [Contributing](docs/CONTRIBUTING.md) · [Roadmap](docs/roadmap.md) · [Changelog](docs/CHANGELOG.md) · [Provenance](docs/PROVENANCE.md)
 
+## Windows Bash diagnostics
+
+Windows Bash diagnostics: `dsh-ops ladder` reports image and ancestor integrity
+labels separately from static MSYS hash compatibility. A Low-labelled executable
+can start a Low child even in full access, preventing writes to existing
+Medium/unlabeled files. Unreadable labels remain unknown. See
+[integrity inspection](docs/troubleshooting.md#windows-bash-integrity-labels).
+
 ## License
 
 The current dsh-ops source is distributed under the **MIT License**; see [LICENSE](LICENSE). Versions before 0.3.2 bundled Apache-2.0-licensed FastCtx source; that source was removed together with the background component, and no FastCtx code or binary is part of the current distribution. FastCtx's license text and upstream notice are retained in `licenses/fastctx/`, and its historical attribution is preserved in [NOTICE](NOTICE).

@@ -262,3 +262,33 @@ effect without a restart.
 - [Usage](usage.md) — the complete install flow and CLI
 - [Configuration reference](configuration-reference.md) — keys and owning components
 - [Component reference](component-reference.md) — tools and permissions
+
+## Windows Bash integrity labels
+
+`dsh-ops ladder --json` now includes `shells.bash.integrity`, separate from
+`restricted.compatible`. It reads the resolved image, its physical path, the
+PortableGit `usr/bin/bash.exe` when present, and ancestor directories. A Low or
+lower image label produces a warning: full access does not remove that label,
+and a Low child cannot write existing Medium/unlabeled files. A Low ancestor is
+reported as an inheritance risk; it does not establish the current image's label
+or retroactively change old files.
+
+`entries` identify each path as `image` or `ancestor`. A successful label query
+with no label is `unlabeled` (Windows treats such objects as Medium); an unreadable
+path, unsupported descriptor or blocked query remains `unknown`, with report
+status `partial`. `complete` means the requested labels were read, not that Bash
+can start or write every target. Other platforms and unavailable Bash report
+`not-applicable`.
+
+The CLI runs one hidden PowerShell helper with a 10-second timeout. It requests
+only `LABEL_SECURITY_INFORMATION` through `GetNamedSecurityInfoW`, which requires
+`READ_CONTROL`, not the privilege needed to read audit SACLs. ConstrainedLanguage,
+policy refusal, missing PowerShell and timeout produce unknown results. It never
+enables privileges, changes execution policy or labels, starts the candidate
+Bash, or adds per-command/plugin-startup work. No automatic relocation or repair
+is performed. Keep host runtime diagnostics and the exact failed command when
+reporting a startup failure; compatible hashes and clean labels cannot prove
+runtime health.
+
+References: [Windows security information](https://learn.microsoft.com/en-us/windows/win32/secauthz/security-information)
+and [Mandatory Integrity Control](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control).

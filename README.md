@@ -111,6 +111,13 @@ npx --yes dsh-ops@latest uninstall --profile desktop
 - [PTC 设计与使用](docs/native-ptc.md) · [手动验证](docs/手动验收.md)
 - [贡献指南](docs/贡献指南.md) · [路线图](docs/路线图.md) · [变更日志](docs/CHANGELOG.md) · [溯源记录](docs/PROVENANCE.md)
 
+## Windows Bash 自检
+
+Windows Bash 自检：`dsh-ops ladder` 分别报告映像/祖先路径完整性标签与静态 MSYS
+哈希兼容性。Low 标签的可执行文件在 full-access 下仍可能产生 Low 子进程，无法修改
+既有 Medium/无标签文件；不可读标签明确为 unknown。详见
+[完整性检查](docs/常见问题.md#windows-bash-完整性标签)。
+
 ## 许可证
 
 当前 `dsh-ops` 源码以 **MIT** 许可分发，见 [LICENSE](LICENSE)。`0.3.2` 之前的版本曾内置以 Apache-2.0 许可的 FastCtx 源码；该源码随后台组件一并移除，当前发行版不再包含任何 FastCtx 代码或二进制。FastCtx 的许可文本与上游声明保留在 `licenses/fastctx/`，历史归属见 [NOTICE](NOTICE)。

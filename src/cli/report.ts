@@ -29,10 +29,12 @@ import { resolveWorker } from '../execution/runtime.js'
 import { bashIpcReport, restrictedCompatibility } from '../bash-ipc.js'
 import type { BashIpcInventory } from '../bash-ipc.js'
 import { resolveShells } from '../shells.js'
+import { bashIntegrityReport } from './integrity.js'
+import type { IntegrityReport } from './integrity.js'
 
 type WorkerReport = { resolved: true; executable: string; source: string; error: null }
   | { resolved: false; executable: null; source: null; error: string }
-interface ShellReport { available: boolean; executable: string | null; source: string; detail: string; restricted?: { compatible: boolean; reason: string } | null }
+interface ShellReport { available: boolean; executable: string | null; source: string; detail: string; restricted?: { compatible: boolean; reason: string } | null; integrity?: IntegrityReport }
 interface LadderReport { worker: WorkerReport; shells: Record<'bash' | 'pwsh', ShellReport>; bashIpc: BashIpcInventory; policy: string }
 
 /**
@@ -126,8 +128,9 @@ export function shellReport(resolution: ShellResolution): ShellReport {
 }
 
 /**
- * Whether read-only / workspace-write sessions can run the resolved bash: they
+ * Static payload compatibility only: read-only / workspace-write sessions
  * accept only the pinned MSYS the IPC proxies were verified against (#42).
+ * This does not establish image integrity or successful runtime startup.
  * @param {import('../shells.js').ShellResolution} resolution - the bash rung.
  * @returns {{compatible: boolean, reason: string}|null} null when there is no bash to check.
  */
@@ -204,6 +207,11 @@ export function printLadder(report: LadderReport) {
     if (rung.restricted) {
       console.log(`    restricted: ${rung.restricted.compatible ? 'yes' : 'no'} (${rung.restricted.reason})`)
     }
+    if (rung.integrity && rung.integrity.status !== 'not-applicable') {
+      console.log(`    integrity:  ${rung.integrity.status} (read-only labels, not runtime health)`)
+      for (const entry of rung.integrity.entries) console.log(`      ${entry.role}: ${entry.path} = ${entry.label}${entry.reason ? ` (${entry.reason})` : ''}`)
+      for (const warning of rung.integrity.warnings) console.log(`    WARNING: ${warning}`)
+    }
   }
 
   const megabytes = (bytes: number) => (bytes / 1048576).toFixed(0)
@@ -221,7 +229,8 @@ export function printLadder(report: LadderReport) {
   console.log(report.policy || '(no file tools resolved)')
   console.log('\nResolution only: command visibility requires a live host session and sandboxPolicy.')
   console.log('Resolved candidates only; bash also needs the host subprocess service. Full access runs the executable directly;')
-  console.log('read-only / workspace-write additionally require the pinned MSYS (see "restricted"), so a custom bashPath works only in full access. Nothing is spawned.')
+  console.log('read-only / workspace-write additionally require the pinned MSYS (see "restricted"), so a custom bashPath works only in full access.')
+  console.log('Static compatibility is not runtime health. Windows label inspection uses one read-only PowerShell helper; no candidate shell is executed or relabeled.')
 }
 
 /**
@@ -229,7 +238,7 @@ export function printLadder(report: LadderReport) {
  * actually told it can reach — the three questions a missing bundled shell
  * would otherwise need a fresh session to answer.
  *
- * Nothing is spawned. Missing rungs are the report,
+ * Only the bounded, read-only Windows label helper is spawned. Missing rungs are the report,
  * not a failure, so the exit code is 0 whenever a report was produced and 1 only
  * for a config this command cannot honour.
  * @param {object} options - ladder inputs.
@@ -251,7 +260,7 @@ export function commandLadder({ json, configFile }: { json: boolean; configFile?
   const levels = ladderFor({ worker, shells, config })
   const report = {
     worker,
-    shells: { bash: { ...shellReport(shells.bash), restricted: restrictedReport(shells.bash) }, pwsh: shellReport(shells.pwsh) },
+    shells: { bash: { ...shellReport(shells.bash), restricted: restrictedReport(shells.bash), integrity: bashIntegrityReport(shells.bash.file) }, pwsh: shellReport(shells.pwsh) },
     bashIpc: bashIpcReport(shells.bash.available ? shells.bash.file : undefined),
     levels,
     rungs: [],
