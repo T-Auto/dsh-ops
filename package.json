@@ -148,6 +148,7 @@
   },
   "files": [
     "lib",
+    "engine",
     "bin",
     "cordis.patch.yml",
     "dsh-plugin.json",
