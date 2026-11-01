@@ -71,6 +71,8 @@ pub fn read_bytes(path: &Path) -> Result<Vec<u8>> {
 mod output;
 #[path = "file_many.rs"]
 mod many;
+#[path = "file_prefetch.rs"]
+mod prefetch;
 
 /// Reserve space for metadata added by search callers after this shared builder.
 pub fn result(request: &Request, items: Vec<Value>, total: usize, offset: usize, next_base: usize, matched: usize, truncated: bool) -> Value {
@@ -84,9 +86,19 @@ fn inspect(request: &Request) -> Result<Value> {
 fn inspect_args(args: InspectArgs, budget: usize, include_path: bool, capture: Option<(&ops_protocol::capture::OutputSink, bool)>) -> Result<Value> {
     if args.limit == 0 || args.limit > 10_000 { return Err(Failure::new("INVALID_ARGUMENT", "inspect limit is 1-10000")); }
     if !args.encoding.eq_ignore_ascii_case("utf-8") { return Err(Failure::new("ERR_INVALID_ENCODING", "Text inspection supports UTF-8 only")); }
-    let path = target(&args.path, false)?;
+    let prepared = load_inspection(&args.path)?;
+    inspect_prepared(args, prepared, budget, include_path, capture)
+}
+struct PreparedInspection { path: PathBuf, bytes: Vec<u8> }
+fn load_inspection(raw: &str) -> Result<PreparedInspection> {
+    let path = target(raw, false)?;
     if !path.is_file() { return Err(Failure::new("INVALID_ARGUMENT", "path is a directory; use ops_glob or ops_grep")); }
     let bytes = read_bytes(&path)?;
+    Ok(PreparedInspection { path, bytes })
+}
+fn inspect_prepared(args: InspectArgs, prepared: PreparedInspection, budget: usize, include_path: bool,
+    capture: Option<(&ops_protocol::capture::OutputSink, bool)>) -> Result<Value> {
+    let PreparedInspection { path, bytes } = prepared;
     let mut facts = content_facts(&bytes);
     if include_path { facts["path"] = json!(path); }
     if bytes.len() as u64 > MAX_FILE_BYTES { return Err(Failure::new("OUTPUT_LIMIT", "file exceeds the inspect size budget")); }
