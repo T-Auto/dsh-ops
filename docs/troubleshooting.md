@@ -113,6 +113,23 @@ permissions and sandbox modes are unchanged. Update to a build containing this
 fix and restart DSH after stopping its jobs. A DLL-not-found startup failure or
 an empty false-success result is a separate problem (#374 and #373).
 
+### `ops_bash` reports `EXECUTOR_UNAVAILABLE` for exit code 3221225794 with no output
+
+An exit code of `3221225794` (signed `-1073741502`, i.e. `0xC0000142` `STATUS_DLL_INIT_FAILED`)
+means the shell process died while loading its own DLLs, before it could run the command: stdout and
+stderr are both empty and the command text never executed. `ops_bash` names that condition instead of
+reporting an ordinary `EXIT_CODE` with "correct the command and retry" advice, which cannot help.
+
+What to do:
+
+- Nothing about the command or its arguments is wrong, and re-running it in the same mode cannot
+  change the outcome. Do not retry it.
+- In a `read-only` or `workspace-write` session this is the confined-token condition described in the
+  section above (#417, #480): the restricted token cannot initialise the process. Check which bash
+  resolved with `node "<profile>\node_modules\dsh-ops\bin\dsh-ops.mjs" ladder --config <file>`.
+- If the same code also appears under `danger-full-access`, the payload itself cannot start: reinstall
+  it with `npx --yes dsh-ops@latest provision-shells --bash`, or point `bashPath` at a working MSYS.
+
 ### Bash approval is rejected or unavailable
 
 `ops_bash` uses host approval for a strictly wider `sandbox_permissions` mode. Supply a non-empty `justification` for that exact command. A rejection or missing approval service prevents execution; do not retry through another shell. Approval does not repair an incompatible restricted Bash runtime.

@@ -258,6 +258,28 @@ await test('only an ordinary nonzero exit permits a corrected command after inpu
   assert.equal(normal.failure.effectState, 'unknown')
 })
 
+await test('a child that dies in DLL initialisation is named, not reported as a command exit', async () => {
+  const f = fixture({ exitCode: 3221225794 })
+  const value = await f.definition.execute({ command: 'echo hi', description: 'Probe DLL initialisation' }, f.exec)
+  assert.equal(value.status, 'failed'); assert.equal(value.exitCode, 3221225794)
+  assert.equal(value.failure.code, 'EXECUTOR_UNAVAILABLE')
+  assert.equal(value.failure.retry, 'never')
+  assert.match(value.failure.message, /STATUS_DLL_INIT_FAILED/)
+  assert.match(value.failure.message, /0xC0000142/)
+  assert.doesNotMatch(value.failure.message, /Command exited with/)
+  const text = f.definition.output.render({}, value)[0].text
+  assert.match(text, /EXECUTOR_UNAVAILABLE/)
+  assert.match(text, /editing the command or its arguments cannot change it/)
+  assert.doesNotMatch(text, /correct the command or its inputs before retrying/)
+  assert.doesNotMatch(text, /Prior side effects may remain/)
+  assert.deepEqual(validateJsonSchemaValue(f.definition.output.schema, value, 'value'), [])
+  // The signed 32-bit spelling of the same NTSTATUS is the same failure, not an ordinary exit.
+  const signed = hostForeground({ exitCode: -1073741502, signal: null, timedOut: false, timeoutMs: 1000,
+    stdout: { text: '', truncated: false }, stderr: { text: '', truncated: false } })
+  assert.equal(signed.failure.code, 'EXECUTOR_UNAVAILABLE'); assert.equal(signed.failure.retry, 'never')
+  assert.match(signed.failure.message, /exit code -1073741502 = 0xC0000142/)
+})
+
 await test('job cancellation before asynchronous preparation prevents the starter from running', async () => {
   const jobs = jobRegistry(), f = fixture()
   let starts = 0

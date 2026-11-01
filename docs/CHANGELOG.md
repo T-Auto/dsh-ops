@@ -19,6 +19,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 从安装本包的 profile 探测 `dsh-win-pwsh7` 联动，宿主进程没有 `DSH_PROFILE_DIR` 也能判定；保存其它开关不再把「跟随检测」写成显式值，而手动拨动联动开关一定落盘。
 - Name the row setting instead of the removed Compatibility mode when an official tool has an OPS replacement.
 - 官方工具被 OPS 替代时，拒绝信息改指行设置，不再提已删除的兼容模式。
+- Name a shell that dies in DLL initialisation (`0xC0000142` `STATUS_DLL_INIT_FAILED`, exit code 3221225794 or the signed -1073741502) as `EXECUTOR_UNAVAILABLE` with no-retry advice, instead of reporting it as an ordinary `EXIT_CODE` and telling the caller to correct the command.
+- 把在 DLL 初始化阶段就退出的 shell（`0xC0000142` `STATUS_DLL_INIT_FAILED`，退出码 3221225794 或对应的有符号写法 -1073741502）命名为 `EXECUTOR_UNAVAILABLE` 并明确不要重试，不再报成普通 `EXIT_CODE` 并让调用方改正命令。
 
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 
