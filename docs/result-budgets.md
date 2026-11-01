@@ -10,9 +10,14 @@ limits. Transport, model text and stored data are separate budgets.
 Reference storage uses a private temporary cache selected by trusted host metadata. Windows uses
 the actual sandbox provider's session temp directory and private-temp write capability. PTC still
 runs through host confinement; Native fixed file operations keep their policy-governed executor.
-Full-access cache preparation voluntarily uses a narrower workspace-write policy. If a cache
-cannot be prepared, file operations retain their bounded, explicit incomplete result; reference
-creation reports unavailable storage. There is no unconfined PTC fallback.
+Full-access sessions use cache-only preparation when the host exposes it, without preparing the
+workspace or requesting workspace confinement. On older Windows hosts without that capability,
+optional cache creation is unavailable in full-access mode; switching a session to full access
+does not repair workspace ACLs or create new workspace grants. An already prepared session cache
+can still be reused under its current authority binding. Workspace-write sessions retain the
+legacy confinement path. If a cache cannot be prepared, file operations retain their bounded,
+explicit incomplete result; reference creation reports unavailable storage.
+There is no unconfined PTC fallback.
 
 Each reference binds the live session, current authority, credential fence, operation root and
 producer tool. Only currently published/executable producers and the admitted tool are allowed.
