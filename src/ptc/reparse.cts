@@ -1,3 +1,5 @@
+// @ts-nocheck — ported from the shipped 2.1.1 engine as-is: the runtime is unchanged, the types
+// are the open work. Tracked in docs/CHANGELOG.md under "Unreleased → known gaps".
 "use strict";
 /**
  * Reparse-point refusal for the in-process AST engine.

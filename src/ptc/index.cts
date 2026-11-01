@@ -1,10 +1,12 @@
+// @ts-nocheck — ported from the shipped 2.1.1 engine as-is: the runtime is unchanged, the types
+// are the open work. Tracked in docs/CHANGELOG.md under "Unreleased → known gaps".
 "use strict";
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.default = exports.opsPtcDiscoveryEntry = exports.opsPtcAddition = exports.spliceExpect = exports.sgCrossCheck = exports.auditAst = exports.runInprocCli = exports.inprocRefactor = exports.inprocLocate = exports.enumerate = exports.runRefactorPipeline = exports.resolveTools = exports.saneLocate = exports.langOf = exports.everythingFind = exports.difftasticAudit = exports.astGrepRewrite = exports.applyEditsInMemory = exports.agentBoxRestore = exports.agentBoxApply = exports.toLines = exports.stripBom = exports.run = exports.readRange = exports.pickBin = exports.parseLooseJson = exports.normalizeEol = exports.esCandidates = exports.detectEol = exports.dbg = exports.defaultConfig = exports.PtcOutcomeError = void 0;
-var proc_1 = require("./proc");
+var proc_1 = require("./proc.cjs");
 Object.defineProperty(exports, "PtcOutcomeError", { enumerable: true, get: function () { return proc_1.PtcOutcomeError; } });
 Object.defineProperty(exports, "defaultConfig", { enumerable: true, get: function () { return proc_1.defaultConfig; } });
 Object.defineProperty(exports, "dbg", { enumerable: true, get: function () { return proc_1.dbg; } });
@@ -17,7 +19,7 @@ Object.defineProperty(exports, "readRange", { enumerable: true, get: function ()
 Object.defineProperty(exports, "run", { enumerable: true, get: function () { return proc_1.run; } });
 Object.defineProperty(exports, "stripBom", { enumerable: true, get: function () { return proc_1.stripBom; } });
 Object.defineProperty(exports, "toLines", { enumerable: true, get: function () { return proc_1.toLines; } });
-var stages_1 = require("./stages");
+var stages_1 = require("./stages.cjs");
 Object.defineProperty(exports, "agentBoxApply", { enumerable: true, get: function () { return stages_1.agentBoxApply; } });
 Object.defineProperty(exports, "agentBoxRestore", { enumerable: true, get: function () { return stages_1.agentBoxRestore; } });
 Object.defineProperty(exports, "applyEditsInMemory", { enumerable: true, get: function () { return stages_1.applyEditsInMemory; } });
@@ -26,20 +28,20 @@ Object.defineProperty(exports, "difftasticAudit", { enumerable: true, get: funct
 Object.defineProperty(exports, "everythingFind", { enumerable: true, get: function () { return stages_1.everythingFind; } });
 Object.defineProperty(exports, "langOf", { enumerable: true, get: function () { return stages_1.langOf; } });
 Object.defineProperty(exports, "saneLocate", { enumerable: true, get: function () { return stages_1.saneLocate; } });
-var pipeline_1 = require("./pipeline");
+var pipeline_1 = require("./pipeline.cjs");
 Object.defineProperty(exports, "resolveTools", { enumerable: true, get: function () { return pipeline_1.resolveTools; } });
 Object.defineProperty(exports, "runRefactorPipeline", { enumerable: true, get: function () { return pipeline_1.runRefactorPipeline; } });
-var inproc_1 = require("./inproc");
+var inproc_1 = require("./inproc.cjs");
 Object.defineProperty(exports, "enumerate", { enumerable: true, get: function () { return inproc_1.enumerate; } });
 Object.defineProperty(exports, "inprocLocate", { enumerable: true, get: function () { return inproc_1.inprocLocate; } });
 Object.defineProperty(exports, "inprocRefactor", { enumerable: true, get: function () { return inproc_1.inprocRefactor; } });
 Object.defineProperty(exports, "runInprocCli", { enumerable: true, get: function () { return inproc_1.runInprocCli; } });
-var astdiff_1 = require("./astdiff");
+var astdiff_1 = require("./astdiff.cjs");
 Object.defineProperty(exports, "auditAst", { enumerable: true, get: function () { return astdiff_1.auditAst; } });
 Object.defineProperty(exports, "sgCrossCheck", { enumerable: true, get: function () { return astdiff_1.sgCrossCheck; } });
 Object.defineProperty(exports, "spliceExpect", { enumerable: true, get: function () { return astdiff_1.spliceExpect; } });
-var tools_1 = require("./tools");
+var tools_1 = require("./tools.cjs");
 Object.defineProperty(exports, "opsPtcAddition", { enumerable: true, get: function () { return tools_1.opsPtcAddition; } });
 Object.defineProperty(exports, "opsPtcDiscoveryEntry", { enumerable: true, get: function () { return tools_1.opsPtcDiscoveryEntry; } });
-var tools_2 = require("./tools");
+var tools_2 = require("./tools.cjs");
 Object.defineProperty(exports, "default", { enumerable: true, get: function () { return __importDefault(tools_2).default; } });

@@ -1,5 +1,0 @@
-{
-  "private": true,
-  "type": "commonjs",
-  "description": "Not a package: pins the module format for the shipped engine sources under engine/. The published tree carries it at <pkg>/engine, so lib/ can reach these CommonJS files from ESM."
-}

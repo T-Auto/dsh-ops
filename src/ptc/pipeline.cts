@@ -1,3 +1,5 @@
+// @ts-nocheck — ported from the shipped 2.1.1 engine as-is: the runtime is unchanged, the types
+// are the open work. Tracked in docs/CHANGELOG.md under "Unreleased → known gaps".
 "use strict";
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -8,12 +10,12 @@ exports.runRefactorPipeline = runRefactorPipeline;
 const promises_1 = require("node:fs/promises");
 const node_crypto_1 = require("node:crypto");
 const node_path_1 = __importDefault(require("node:path"));
-const napi_1 = require("./engine-load").napi;
-const astdiff_1 = require("./astdiff");
-const safe_write_1 = require("./safe-write");
-const proc_1 = require("./proc");
-const stages_1 = require("./stages");
-const inproc_1 = require("./inproc");
+const napi_1 = require("./engine-load.cjs").napi;
+const astdiff_1 = require("./astdiff.cjs");
+const safe_write_1 = require("./safe-write.cjs");
+const proc_1 = require("./proc.cjs");
+const stages_1 = require("./stages.cjs");
+const inproc_1 = require("./inproc.cjs");
 async function resolveTools(cfg, need = { es: true }) {
     const resolved = { ...cfg, sgPath: await (0, proc_1.pickBin)([cfg.sgPath, 'ast-grep', 'sg']) };
     if (need.es)

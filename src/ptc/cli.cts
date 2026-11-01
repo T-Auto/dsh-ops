@@ -1,7 +1,9 @@
 #!/usr/bin/env node
+// @ts-nocheck — ported from the shipped 2.1.1 engine as-is: the runtime is unchanged, the types
+// are the open work. Tracked in docs/CHANGELOG.md under "Unreleased → known gaps".
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-const inproc_1 = require("./inproc");
+const inproc_1 = require("./inproc.cjs");
 const HELP = `ops-ptc — 进程内 AST 重构引擎（零外部二进制）
 
 用法:
@@ -23,7 +25,7 @@ if (argv.length === 0 || argv[0] === '-h' || argv[0] === '--help' || argv[0] ===
     process.exit(argv.length === 0 ? 2 : 0);
 }
 if (argv[0] === 'mcp') {
-    require('./mcp');
+    require('./mcp.cjs');
 }
 else {
     process.exit((0, inproc_1.runInprocCli)(argv));

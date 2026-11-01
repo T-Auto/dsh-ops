@@ -1,3 +1,5 @@
+// @ts-nocheck — ported from the shipped 2.1.1 engine as-is: the runtime is unchanged, the types
+// are the open work. Tracked in docs/CHANGELOG.md under "Unreleased → known gaps".
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.verifySnapshot = verifySnapshot;

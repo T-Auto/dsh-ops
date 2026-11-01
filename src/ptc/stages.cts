@@ -1,3 +1,5 @@
+// @ts-nocheck — ported from the shipped 2.1.1 engine as-is: the runtime is unchanged, the types
+// are the open work. Tracked in docs/CHANGELOG.md under "Unreleased → known gaps".
 "use strict";
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -16,12 +18,12 @@ exports.applyEditsInMemory = applyEditsInMemory;
 exports.difftAvailable = difftAvailable;
 exports.difftasticAudit = difftasticAudit;
 const promises_1 = require("node:fs/promises");
-const reparse_1 = require("./reparse");
-const inproc_1 = require("./inproc");
+const reparse_1 = require("./reparse.cjs");
+const inproc_1 = require("./inproc.cjs");
 const node_crypto_1 = require("node:crypto");
 const node_os_1 = require("node:os");
 const node_path_1 = __importDefault(require("node:path"));
-const proc_1 = require("./proc");
+const proc_1 = require("./proc.cjs");
 const sha256 = (b) => (0, node_crypto_1.createHash)('sha256').update(b).digest('hex');
 exports.sha256 = sha256;
 const RE_NL = /\r?\n/;

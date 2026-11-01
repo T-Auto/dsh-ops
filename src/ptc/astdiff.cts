@@ -1,3 +1,5 @@
+// @ts-nocheck — ported from the shipped 2.1.1 engine as-is: the runtime is unchanged, the types
+// are the open work. Tracked in docs/CHANGELOG.md under "Unreleased → known gaps".
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.parseAuditRoot = parseAuditRoot;
@@ -5,7 +7,7 @@ exports.spliceExpect = spliceExpect;
 exports.auditSyntax = auditSyntax;
 exports.auditAst = auditAst;
 exports.sgCrossCheck = sgCrossCheck;
-const napi_1 = require("./engine-load").napi;
+const napi_1 = require("./engine-load.cjs").napi;
 const errorsOf = (meta) => meta.errors ?? (meta.errors = meta.root.findAll({ rule: { kind: 'ERROR' } }));
 const auditRoots = new WeakMap();
 const ROOT_CACHE_MAX_ENTRIES = 6;

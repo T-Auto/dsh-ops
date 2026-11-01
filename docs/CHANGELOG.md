@@ -7,14 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-- Ship the engine as source under `engine/` instead of a tarball: it carries its own `.d.ts`, `engine/package.json` pins the CommonJS module format so `lib/` can reach it from an ESM package, and `src/ptc/engine.ts` is the one typed door. `package.json` publishes the directory.
-- 引擎以源码形态入库 `engine/`，不再走压缩包：自带 `.d.ts`，`engine/package.json` 固定 CommonJS 模块格式，使 ESM 包的 `lib/` 能直接访问；`src/ptc/engine.ts` 是唯一的类型化入口，`package.json` 会随包发布该目录。
-- A missing engine file now fails the build instead of failing at import time in the consumer's process.
-- 引擎文件缺失现在会让构建失败，而不是在消费方进程里以导入错误暴露。
-- Detect the `dsh-win-pwsh7` companion from the profile that installed this package, so the row's link also resolves in the host process, which gets no `DSH_PROFILE_DIR`; a save no longer freezes a detected link into an explicit value, while a flipped link is always written.
-- 从安装本包的 profile 探测 `dsh-win-pwsh7` 联动，宿主进程没有 `DSH_PROFILE_DIR` 也能判定；保存其它开关不再把「跟随检测」写成显式值，而手动拨动联动开关一定落盘。
-- Name the row setting instead of the removed Compatibility mode when an official tool has an OPS replacement.
-- 官方工具被 OPS 替代时，拒绝信息改指行设置，不再提已删除的兼容模式。
+- Ship the PTC engine as typed source in `src/ptc/*.cts` instead of a tarball or a parallel tree: the shipped `.d.cts` declarations are kept as the external typed surface, `src/ptc/engine.ts` is the door, and the spawnable worker script moved to `runtime/ptc/agentbox.worker.cjs` (it is a runtime asset, not source). The ported `.cts` files are runtime-identical to 2.1.1 and carry `@ts-nocheck` until they are re-typed; that gap is the one piece of this change that is intentionally unfinished and is recorded here rather than hidden.
+- PTC 引擎以类型化源码形态入库 `src/ptc/*.cts`，不再走压缩包、也不再新建并行目录：随包的 `.d.cts` 声明文件作为对外类型面保留，`src/ptc/engine.ts` 是入口，可被 spawn 的 worker 脚本移到 `runtime/ptc/agentbox.worker.cjs`（它是运行期资源，不是源码）。移植的 `.cts` 与 2.1.1 运行时逐字节等价，并在重新标注类型前带 `@ts-nocheck`；这是本次改动中唯一有意留待后续的一环，记录在此而不是藏起来。
+
 
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 

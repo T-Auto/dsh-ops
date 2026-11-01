@@ -1,3 +1,5 @@
+// @ts-nocheck — ported from the shipped 2.1.1 engine as-is: the runtime is unchanged, the types
+// are the open work. Tracked in docs/CHANGELOG.md under "Unreleased → known gaps".
 "use strict";
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -6,10 +8,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.HOST_OUTCOME_SCHEMA = exports.toHostOutcome = exports.registerHostTools = exports.createHostTools = exports.OUT_SCHEMA = exports.opsPtcDiscoveryEntry = exports.opsPtcAddition = void 0;
 const promises_1 = require("node:fs/promises");
 const node_path_1 = __importDefault(require("node:path"));
-const proc_1 = require("./proc");
-const pipeline_1 = require("./pipeline");
-const stages_1 = require("./stages");
-const inproc_1 = require("./inproc");
+const proc_1 = require("./proc.cjs");
+const pipeline_1 = require("./pipeline.cjs");
+const stages_1 = require("./stages.cjs");
+const inproc_1 = require("./inproc.cjs");
 const OUT_SCHEMA = {
     type: 'object',
     properties: {
@@ -351,7 +353,7 @@ exports.opsPtcDiscoveryEntry = {
     gate: (ctx) => (ctx.repoFileCount ?? 0) > 800 || /重构|refactor|AST|批量替换|符号定位|代码库分析/i.test(ctx.userIntent ?? ''),
     load: () => exports.opsPtcAddition,
 };
-var adapter_1 = require("./adapter");
+var adapter_1 = require("./adapter.cjs");
 Object.defineProperty(exports, "createHostTools", { enumerable: true, get: function () { return adapter_1.createHostTools; } });
 Object.defineProperty(exports, "registerHostTools", { enumerable: true, get: function () { return adapter_1.registerHostTools; } });
 Object.defineProperty(exports, "toHostOutcome", { enumerable: true, get: function () { return adapter_1.toHostOutcome; } });

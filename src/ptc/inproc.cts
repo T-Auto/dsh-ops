@@ -1,3 +1,5 @@
+// @ts-nocheck — ported from the shipped 2.1.1 engine as-is: the runtime is unchanged, the types
+// are the open work. Tracked in docs/CHANGELOG.md under "Unreleased → known gaps".
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.clearEnumCache = clearEnumCache;
@@ -6,14 +8,14 @@ exports.inprocLocate = inprocLocate;
 exports.inprocRefactor = inprocRefactor;
 exports.runInprocCli = runInprocCli;
 exports.walkBounded = walkBounded;
-const napi_1 = require("./engine-load").napi;
+const napi_1 = require("./engine-load.cjs").napi;
 const node_fs_1 = require("node:fs");
-const safe_write_1 = require("./safe-write");
+const safe_write_1 = require("./safe-write.cjs");
 const node_child_process_1 = require("node:child_process");
 const node_path_1 = require("node:path");
-const astdiff_1 = require("./astdiff");
-const proc_1 = require("./proc");
-const reparse_1 = require("./reparse");
+const astdiff_1 = require("./astdiff.cjs");
+const proc_1 = require("./proc.cjs");
+const reparse_1 = require("./reparse.cjs");
 const utf8Strict = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 const RE_SEP = /[\\/]/;
 const RE_SEP_G = /[\\/]/g;

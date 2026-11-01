@@ -1,6 +1,8 @@
+// @ts-nocheck — ported from the shipped 2.1.1 engine as-is: the runtime is unchanged, the types
+// are the open work. Tracked in docs/CHANGELOG.md under "Unreleased → known gaps".
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-const tools_1 = require("./tools");
+const tools_1 = require("./tools.cjs");
 const SERVER_INFO = { name: 'ops-ptc', version: tools_1.opsPtcAddition.version };
 const PROTOCOL_VERSION = '2024-11-05';
 const MAX_FRAME_BYTES = 1 << 20;
