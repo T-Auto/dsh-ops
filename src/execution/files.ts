@@ -204,15 +204,15 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
       return latest.mode === policy.mode && latest.workspaceRoot === policy.workspaceRoot
     }, config)
     let transportInput = input
+    if (signal.aborted) return failure('CANCELLED', 'The file call was cancelled before backend admission or result publication.')
+    const latest = policyService.resolve({ session })
+    if (latest.mode !== policy.mode || latest.workspaceRoot !== policy.workspaceRoot) {
+      if (!['read-only', 'workspace-write', 'danger-full-access'].includes(latest?.mode) || !path.isAbsolute(latest?.workspaceRoot ?? '')) return failure('EXECUTOR_UNAVAILABLE', 'Invalid authoritative DSH policy after WSL preparation.')
+      const required = mutates ? requiredMode(latest) : undefined
+      if (mutates && (latest.mode === 'read-only' || (latest.mode === 'workspace-write' && required === 'danger-full-access'))) return denied(latest, tool, required, 'Authority changed during preparation; no files were changed.')
+      return authorityChanged(latest, tool)
+    }
     if (!delegated.handled) {
-      signal.throwIfAborted()
-      const latest = policyService.resolve({ session })
-      if (latest.mode !== policy.mode || latest.workspaceRoot !== policy.workspaceRoot) {
-        if (!['read-only', 'workspace-write', 'danger-full-access'].includes(latest?.mode) || !path.isAbsolute(latest?.workspaceRoot ?? '')) return failure('EXECUTOR_UNAVAILABLE', 'Invalid authoritative DSH policy after WSL preparation.')
-        const required = mutates ? requiredMode(latest) : undefined
-        if (mutates && (latest.mode === 'read-only' || (latest.mode === 'workspace-write' && required === 'danger-full-access'))) return denied(latest, tool, required, 'Authority changed during preparation; no files were changed.')
-        return authorityChanged(latest, tool)
-      }
       if (signal.aborted || delegated.remainingMs < 1) return failure('TIMEOUT', 'The original call budget expired during WSL preparation; no replay was attempted.')
       transportInput = JSON.stringify({ ...envelope, budget: { ...envelope.budget, timeoutMs: delegated.remainingMs } })
     }

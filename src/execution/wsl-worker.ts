@@ -1,5 +1,6 @@
 /** Optional data-only WSL reads. No shell, cache writer, runtime download or arbitrary program. */
 import path from 'node:path'
+import { performance } from 'node:perf_hooks'
 import type { SubprocessRuntime } from '../adapter/dsh/types.js'
 import type { WorkerInvokeConfig } from './boundary.js'
 import { record } from './boundary.js'
@@ -43,8 +44,8 @@ export async function tryWslRead(subprocess: SubprocessRuntime, file: string, en
   const writes = Array.isArray(request.write_roots) ? request.write_roots : undefined
   const paths = [payload, ...denyRoots, ...(writes ?? [])]
   if (paths.some(value => typeof value !== 'string' || (!windowsDrive(value) && wslPath(value)?.distro.toLowerCase() !== root.distro.toLowerCase()))) return fallback()
-  const deadline = Date.now() + envelope.budget.timeoutMs
-  const remaining = () => Math.max(0, deadline - Date.now())
+  const deadline = performance.now() + envelope.budget.timeoutMs
+  const remaining = () => Math.max(0, Math.ceil(deadline - performance.now()))
   const controller = new AbortController(), combined = AbortSignal.any([signal, controller.signal])
   const timer = setTimeout(() => controller.abort(), remaining()); timer.unref?.()
   const executable = path.join(env.SystemRoot ?? 'C:\\Windows', 'System32', 'wsl.exe')
@@ -85,8 +86,10 @@ export async function tryWslRead(subprocess: SubprocessRuntime, file: string, en
         ...(writes ? { write_roots: writes.map(value => convert(String(value))) } : {}) } }
     // Cache ownership stays with the Windows worker. A speculative read never receives storage.
     delete delegated.storage
+    const input = JSON.stringify(delegated)
+    guard()
     const result = await exchange(subprocess, { argv: [...prefix, worker], cwd,
-      stdio: { stdin: { data: JSON.stringify(delegated) }, stdout: { maxBytes: envelope.budget.maxBytes }, stderr: { maxBytes: 4096 } }, graceMs: 1000, signal: combined })
+      stdio: { stdin: { data: input }, stdout: { maxBytes: envelope.budget.maxBytes }, stderr: { maxBytes: 4096 } }, graceMs: 1000, signal: combined })
     if (combined.aborted || remaining() === 0 || result.exitCode === 124) return fail(signal.aborted ? 'CANCELLED' : 'TIMEOUT', 'The WSL read was cancelled or exceeded the original call budget; it was not replayed.')
     if (result.interrupted) return fail('RESULT_UNKNOWN', 'The WSL read was interrupted; it was not replayed.')
     if (!sameAuthority()) return fail('AUTHORITY_CHANGED', 'Host authority changed during the WSL read; no result was published.')

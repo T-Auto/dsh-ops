@@ -12,8 +12,11 @@ impl Cursor {
         if let Some(fields) = query.as_object_mut() { fields.remove("offset"); fields.remove("continuation"); }
         let root = file_path::checked(&request.root)?;
         let identity = root.parent.symlink_metadata(&root.name)?;
-        let binding = digest(&serde_json::to_vec(&json!([request.tool, query, request.scope, request.root,
-            identity.dev(), identity.ino(), request.read_only, request.write_roots, request.deny_roots, request.deny_credential_names, request.windows_paths]))?);
+        let mut authority = json!([request.tool, query, request.scope, request.root,
+            identity.dev(), identity.ino(), request.read_only, request.write_roots, request.deny_roots, request.deny_credential_names]);
+        // Preserve the existing s1 domain exactly unless delegated Windows checks are active.
+        if request.windows_paths { authority.as_array_mut().unwrap().push(json!("wsl-windows-paths-v1")); }
+        let binding = digest(&serde_json::to_vec(&authority)?);
         let mut cursor = Self { offset, binding, snapshot: None };
         if let Some(token) = token {
             let parts: Vec<_> = token.split(':').collect();
@@ -124,6 +127,11 @@ mod tests {
         fs::create_dir(&root).unwrap();
         let mut request: Request = serde_json::from_value(json!({"root":root,"scope":"wsl-cursor","tool":"glob","args":{"path":root,"pattern":["**"]}})).unwrap();
         let original = Cursor::new(&request, 0, None).unwrap().token(&"a".repeat(64), 5);
+        let target = file_path::checked(root.to_str().unwrap()).unwrap();
+        let metadata = target.parent.symlink_metadata(&target.name).unwrap();
+        let legacy = digest(&serde_json::to_vec(&json!(["glob", request.args, "wsl-cursor", root,
+            metadata.dev(), metadata.ino(), false, null, [], false])).unwrap());
+        assert!(original.starts_with(&format!("s1:{legacy}:")), "ordinary s1 bindings must remain byte-compatible");
         assert!(Cursor::new(&request, 0, Some(&original)).is_ok());
         request.windows_paths = true;
         assert!(Cursor::new(&request, 0, Some(&original)).is_err());
