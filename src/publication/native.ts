@@ -147,10 +147,11 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
           if (!entry || entry.owned.size === 0) return ''
           const visible = new Set(visibleNames(tools, agent))
           const published = [...entry.owned].filter(name => visible.has(name))
-          // The Windows shell replacement is published by the shared shell row;
-          // name it here when it is visible so routing text stays complete.
-          if (visible.has(BASH_TOOL)) published.push(BASH_TOOL)
-          return renderToolingPolicy({ published, shellComponent: true, extraGuidance: config.extraGuidance })
+          // Bash owns its own prompt section. Keep Native routing focused on the
+          // file/discovery surface so a resident Native + Shell consumer does not
+          // publish the same command guidance twice.
+          return renderToolingPolicy({ published, shellComponent: false,
+            extraGuidance: visible.has(BASH_TOOL) ? '' : config.extraGuidance })
         },
       }), `dsh-ops: ${mode} tooling guidance`)
     }

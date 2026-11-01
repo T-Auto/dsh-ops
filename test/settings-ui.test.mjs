@@ -87,6 +87,20 @@ await test('the page saves only changed switches with the host revision, then re
   } finally { await view.close(); await shutdown(fixture.ctx) }
 })
 
+await test('rendered preset hints describe Bash coexistence and explicit PowerShell hiding', async () => {
+  const form = { state: ready({}), mutate: async () => true }
+  const view = await mount(RowForm, { form, Switch: TestSwitch })
+  try {
+    for (const label of [en.featureMinimal, en.featureStandard, en.featurePtc, en.featureCordis]) {
+      await expand(view.container, label)
+      const text = group(view.container, label).textContent
+      assert.match(text, /Publishes Bash independently; PowerShell remains available by default on Windows\.|独立发布 Bash；Windows 默认保留 PowerShell。/)
+      assert.doesNotMatch(text, /Replaces pwsh with bash|将 pwsh 替换为 bash/)
+      await expand(view.container, label)
+    }
+  } finally { await view.close() }
+})
+
 await test('only non-minimal presets expose adjacent independent resident and dynamic switches', async () => {
   const writes = []
   const form = { state: ready({}), mutate: async ops => { writes.push(ops); return true } }
