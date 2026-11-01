@@ -110,10 +110,14 @@ produce a loadable dsh-ops package. `.gitignore` excludes `lib/` and
 staging it (`npm run build:ptc`) needs cargo and the full toolchain. Adding a
 `prepare` hook would compile `lib/` for every git install and still leave
 `runtime/` empty, so the file tools would publish nothing after an install that
-looks successful. This package therefore declares no `prepare` or `postinstall`
-hook, and `scripts/validate-manifest.mjs` fails if one appears. Install the
-published registry target (`add dsh-ops`), or build and `npm pack` a checkout
-yourself; see [contributing](CONTRIBUTING.md#building-the-plugin-and-installing-from-source).
+looks successful. This package therefore declares no install-time lifecycle hook:
+nothing matching `(pre|post)?(prepare|install)` — `prepare`, `preprepare`,
+`postprepare`, `install`, `preinstall` and `postinstall` — and
+`scripts/validate-manifest.mjs` fails on any of them, including a hook unrelated to
+the build, because the gate cannot tell an innocent hook from one that tries to
+repair the unsupported channel. Install the published registry target
+(`add dsh-ops`), or build and `npm pack` a checkout yourself; see
+[contributing](CONTRIBUTING.md#building-the-plugin-and-installing-from-source).
 
 ## Moving from 0.4.x to 0.5.x
 

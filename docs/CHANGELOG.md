@@ -10,12 +10,16 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Document the `ERR_PNPM_UNKNOWN` / `UNKNOWN: unknown error, open '<path>'` failure as a
   local pnpm-store or volume condition rather than a dsh-ops install error, and state that the
   `git+https`/source channel cannot produce a loadable plugin because `lib/` and the staged
-  `runtime/` are not in Git. The manifest gate now fails if `package.json` declares
-  `prepare` or `postinstall`, so "fix the Git channel with `prepare`" cannot land silently (#524).
+  `runtime/` are not in Git. The manifest gate now fails if `package.json` declares any
+  install-time lifecycle hook — `prepare`, `preprepare`, `postprepare`, `install`, `preinstall`
+  or `postinstall` — and names the gate's rule truthfully, so "fix the Git channel with `prepare`"
+  cannot land silently (#524).
 - 把 `ERR_PNPM_UNKNOWN` / `UNKNOWN: unknown error, open '<path>'` 记录为 pnpm store 或所在卷的
   本机条件，而不是 dsh-ops 的安装错误；同时明确 `git+https`/源码通道装不出可加载的插件，因为
-  `lib/` 与已 stage 的 `runtime/` 不在 Git 里。清单门禁现在会在 `package.json` 声明
-  `prepare` 或 `postinstall` 时失败，使「用 prepare 修 Git 通道」无法静默落地（#524）。
+  `lib/` 与已 stage 的 `runtime/` 不在 Git 里。清单门禁现在会在 `package.json` 声明任何
+  安装期生命周期钩子时失败——`prepare`、`preprepare`、`postprepare`、`install`、
+  `preinstall`、`postinstall`——并按实际行为描述该规则，使「用 prepare 修 Git 通道」
+  无法静默落地（#524）。
 
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 

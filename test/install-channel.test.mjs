@@ -60,7 +60,7 @@ await test('a prepare hook fails the gate, whatever else the tree looks like', (
     withScripts(root, { prepare: 'node scripts/build.mjs' })
     const result = validate(root)
     assert.equal(result.status, 1, result.output)
-    assert.match(result.output, /declares no prepare\/postinstall hook/u)
+    assert.match(result.output, /declares no install-time lifecycle hook/u)
     // The failure has to say which hook it found, or the author cannot tell what to remove.
     assert.match(result.output, /found prepare/u)
   }))
@@ -72,6 +72,20 @@ await test('a postinstall hook fails the same check', () =>
     const result = validate(root)
     assert.equal(result.status, 1, result.output)
     assert.match(result.output, /found postinstall/u)
+  }))
+
+// The check label and the docs say "install-time lifecycle hook", not "prepare or
+// postinstall": the rule matches the whole `(pre|post)?(prepare|install)` family. An
+// unrelated hook is the case that proves the broader wording — it neither compiles
+// `lib/` nor downloads a payload, and is still refused.
+await test('an unrelated install-time hook is refused by the same rule', () =>
+  withTempDir('install-channel-preinstall', root => {
+    fixture(root)
+    withScripts(root, { preinstall: 'node scripts/check-toolchain.mjs' })
+    const result = validate(root)
+    assert.equal(result.status, 1, result.output)
+    assert.match(result.output, /declares no install-time lifecycle hook/u)
+    assert.match(result.output, /found preinstall/u)
   }))
 
 report('install-channel')

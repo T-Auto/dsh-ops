@@ -81,16 +81,20 @@ npm pack
 On Windows the pinned Bash payload is installed by `npm ci`; if it is missing (for example a checkout installed with `--omit=optional`), run `node bin/dsh-ops.mjs bash-runtime install`, then `npm run build:bash-ipc` before packing. For an offline build, set `DSH_OPS_TEST_BASH` to the absolute pinned `bin/bash.exe`; the build/test helper verifies its digest. The gate acquires its own temporary fixture unless this variable is provided. Install the resulting
 `dsh-ops-<version>.tgz` with the DSH CLI for your target profile (see the README). `npm pack` runs
 the build through `prepack`, unless lifecycle scripts are disabled. An unbuilt Git checkout has
-no `lib/` and is not ready to load; there is no `prepare` hook. Keep development dependencies
-installed while building, since they include the compiler. The published tarball contains
-compiled `lib/` and its assets, excludes `src/`, and does not require consumers to compile the
-plugin.
+no `lib/` and is not ready to load; there is no install-time lifecycle hook. Keep development
+dependencies installed while building, since they include the compiler. The published tarball
+contains compiled `lib/` and its assets, excludes `src/`, and does not require consumers to
+compile the plugin.
 
 `prepack` compiles `lib/` but does not stage the native worker, so a Git installation can
 never ship `runtime/` on its own — see [installing from Git](upgrading.md#installing-from-git-is-not-a-supported-channel).
 Adding a `prepare` hook would not repair that channel: it would compile `lib/` on every Git
 install and still leave the worker unstaged, because staging needs cargo. The manifest gate in
-`scripts/validate-manifest.mjs` fails if `prepare` or `postinstall` appears in `package.json`.
+`scripts/validate-manifest.mjs` fails if any install-time lifecycle hook appears in
+`package.json` — `(pre|post)?(prepare|install)`, so `prepare`, `preprepare`,
+`postprepare`, `install`, `preinstall` and `postinstall`. A hook unrelated to the build,
+such as a `preinstall` for tooling, is refused too: the gate reads the package manifest, not
+the author's intent.
 
 ## Building the native worker
 

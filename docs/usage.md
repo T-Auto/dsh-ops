@@ -130,8 +130,9 @@ of the repository, and the native worker is staged by `npm run build:ptc`, which
 and the full toolchain. `npm ci && npm run build && npm run build:ptc && npm pack` produces a
 tarball you can install; `git+https://…` on its own produces a package that loads without
 tools, because the file tools stay unpublished while no worker resolves. `package.json`
-therefore declares `prepack` and no `prepare` or `postinstall` hook, and the manifest gate
-fails if one appears. See
+therefore declares `prepack` and no install-time lifecycle hook — `prepare`,
+`preprepare`, `postprepare`, `install`, `preinstall` and `postinstall` are all
+refused — and the manifest gate fails if one appears. See
 [installing from Git is not a supported channel](upgrading.md#installing-from-git-is-not-a-supported-channel).
 
 ### Host compatibility and display metadata

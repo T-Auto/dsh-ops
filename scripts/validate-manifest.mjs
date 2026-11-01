@@ -554,20 +554,25 @@ check(
   `got: ${unpublishable.join(', ')}`,
 )
 
-// The `git+https` channel is not a supported install channel, and no lifecycle hook
-// may pretend otherwise (#524). `^prepare$` runs for a git-hosted dependency after
-// pnpm unpacks it, so adding one would "fix" the missing `lib/` — but the native
-// worker is staged by `npm run build:ptc`, which needs cargo, and `prepack` never
-// stages it. A git install would still resolve no worker and silently publish no
-// file tools, while every install would take on a full TypeScript build.
-// `postinstall` is refused for the same reason `bin/check-release.mjs` refuses it:
-// the payload arrives as a declared optional dependency, never from a download hook.
+// The `git+https` channel is not a supported install channel, and no install-time
+// lifecycle hook may pretend otherwise (#524). `prepare` runs for a git-hosted
+// dependency after pnpm unpacks it, so adding one would "fix" the missing `lib/` —
+// but the native worker is staged by `npm run build:ptc`, which needs cargo, and
+// `prepack` never stages it. A git install would still resolve no worker and
+// silently publish no file tools, while every install would take on a full
+// TypeScript build. The other `*install` hooks are refused for the reason
+// `bin/check-release.mjs` refuses `postinstall`: the payload arrives as a declared
+// optional dependency, never from a download or build hook.
+// The rule matches the whole install-time family — `install`, `preinstall`,
+// `postinstall`, `prepare`, `preprepare`, `postprepare` — including hooks that
+// have nothing to do with building this package. Intent is not something a gate can
+// read, and an unrelated `preinstall` still runs code on every consumer's machine.
 const LIFECYCLE_HOOKS = /^(?:pre|post)?(?:prepare|install)$/u
 const lifecycleHooks = Object.keys(pkg.scripts ?? {}).filter((name) => LIFECYCLE_HOOKS.test(name))
 check(
   lifecycleHooks.length === 0,
-  'package.json declares no prepare/postinstall hook: the git channel cannot be fixed with one',
-  `found ${lifecycleHooks.join(', ')}; docs/upgrading.md explains why (S4 in the #524 plan) and which channel is supported`,
+  'package.json declares no install-time lifecycle hook: the git channel cannot be fixed with one',
+  `found ${lifecycleHooks.join(', ')}; docs/upgrading.md explains why no install-time hook can fix the git channel and which channel is supported`,
 )
 
 check(
