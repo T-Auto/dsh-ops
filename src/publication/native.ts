@@ -83,7 +83,7 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
     const cover = (agent: Agent): boolean => gate.allows(agent) && ownership.owns(agent)
     const attach = (agent: Agent): void => {
       if (stopped || entries.has(agent) || !agent?.ctx) return
-      const entry: Entry = { agent, runtime: new NativeFileTools({ ctx, config: { workerPath: worker, required: config.required, denyCredentialReads: config.denyCredentialReads, fileReader: config.fileReader } }),
+      const entry: Entry = { agent, runtime: new NativeFileTools({ ctx, config: { workerPath: worker, required: config.required, denyCredentialReads: config.denyCredentialReads } }),
         owned: new Set(), disposers: [], ready: Promise.resolve() }
       entries.set(agent, entry)
       entry.fiber = agent.ctx.plugin({ inject: ['tools'], apply(scoped) { entry.ctx = scoped } })

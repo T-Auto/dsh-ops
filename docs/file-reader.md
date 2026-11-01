@@ -1,44 +1,34 @@
-# Choosing the `read_files` reader: `fileReader`
+# `read_files` is answered in-process
 
-`fileReader` decides which implementation answers `read_files`. It is an explicit switch, not a
-silent upgrade, because the two readers differ in something a default must not decide for you.
+`read_files` no longer has a native worker arm: `native/crates/ops-files/src/file_many.rs` is gone
+and `src/execution/files.ts` answers the tool from `engine/parallel-read/` in its own process. There
+is no switch — one reader, one behaviour.
 
-| Value | Reader | Emits host `fs/observed` | Cost |
-| --- | --- | --- | --- |
-| `native` (default) | `dsh-ops-worker` (Rust, spawned per call) | **yes** | ~20–40 ms per call |
-| `inproc` | `engine/parallel-read` (in-process) | **no** | 0.3–1.6 ms per call |
+## Why the arm was removed
 
-```yaml
-dsh-ops:
-  fileReader: inproc   # omit for native
-```
+The worker's cost was process creation. At 1 MiB the worker spent ~18 ms before it touched a byte,
+against 0.3 ms for the same read in-process; across 24 small files it was 35 ms against 1.6 ms. The
+arm existed to read files, and reading files does not need a sandbox process.
 
-## Why `native` is the default
+## What the worker used to do that still has to happen
 
-The native read is what writes the host's read-before-edit table. With `inproc`, a model can edit a
-file it only "read" through a path the host never recorded. That is a correctness change, so it is
-opt-in.
+The native read had two side effects, both now done on the host side:
 
-## What `inproc` buys
+| Side effect | Where it lives now |
+| --- | --- |
+| Credential fence on every requested path | unchanged, `src/execution/files.ts` before the read |
+| `fs/observed` recorded for read-before-edit | `emitObserved` after each successful read |
 
-Measured on this package's benchmark (`bench/read-path-comparison.mjs`, median of three):
+The observation half is not optional: without it a model could edit a file it never "read". The
+in-process branch emits the same `fs/observed` event the worker's read used to produce.
 
-| Request | `native` | `inproc` | Speed-up |
-| --- | --- | --- | --- |
-| 24 files × 30 lines (34 KiB) | 35.0 ms | 1.6 ms | 21× |
-| 8 files × 800 lines (317 KiB) | 22.4 ms | 1.1 ms | 20× |
-| 1 file × 20 000 lines (1 MiB) | 18.4 ms | 0.3 ms | 53× |
+## Cost
 
-The token cost is the same: both apply the schema default of 200 lines per file, and both stop at
-the worker output budget, so the same request returns the same bytes.
+| Request | before (worker) | now (in-process) |
+| --- | --- | --- |
+| 24 files × 30 lines | 35.0 ms | 1.6 ms |
+| 8 files × 800 lines | 22.4 ms | 1.1 ms |
+| 1 file × 20 000 lines | 18.4 ms | 0.3 ms |
 
-## Failure handling
-
-`fileReader` is validated: an unknown value is a configuration error naming the accepted values,
-never a silent fall back to `native`.
-
-## Where to set it
-
-Set `fileReader` in your **profile** configuration (or through the plugin's settings page). Do not add
-it to the shipped `cordis.patch.yml`: the manifest validator rejects row keys the plugin does not
-declare there, and the code default (`native`) is what that file is supposed to agree with.
+Bytes are unchanged: the schema default of 200 lines per file and the 96 KiB page budget both match
+what the worker returned, so the same request returns the same text.

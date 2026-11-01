@@ -3,8 +3,6 @@ export interface WorkerInvokeConfig {
   binaryPath?: string
   required?: boolean
   denyCredentialReads?: boolean
-  /** Which reader answers `read_files`; see `src/config.ts`. */
-  fileReader?: 'native' | 'inproc'
   toolCallTimeoutMs?: number
 }
 export function record(value: unknown): value is Record<string, unknown> {

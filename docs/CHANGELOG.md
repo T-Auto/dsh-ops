@@ -7,14 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-- Ship the parallel reader as source under `engine/parallel-read/` instead of a tarball: it carries its own `.d.ts`, `engine/package.json` pins the CommonJS module format so `lib/` can reach it from an ESM package, and `src/file/parallel-read.ts` is the one typed door. `package.json` publishes the directory, and a missing engine file now fails the build instead of failing at import time in the consumer's process.
-- 并行读取器以源码形态入库 `engine/parallel-read/`，不再走压缩包：自带 `.d.ts`，`engine/package.json` 固定 CommonJS 模块格式使 ESM 包的 `lib/` 能直接访问，`src/file/parallel-read.ts` 是唯一的类型化入口。`package.json` 会随包发布该目录；引擎文件缺失现在让构建失败，而不是在消费方进程里以导入错误暴露。
-- Add the `fileReader` switch: `read_files` is answered by the native worker by default, or by the shipped in-process reader when set to `inproc`. The in-process branch runs after the credential fence and deliberately does not emit host `fs/observed`, so the default stays `native`; `docs/file-reader.md` records both the trade-off and the measured 20–53× speed-up.
-- 新增 `fileReader` 开关：`read_files` 默认由原生 worker 应答，设为 `inproc` 时改由随包发布的进程内读取器应答。进程内分支运行在凭据闸门之后，且刻意不写宿主 `fs/observed`，因此默认保持 `native`；取舍与实测 20–53× 加速记录在 `docs/file-reader.md`。
-- Detect the `dsh-win-pwsh7` companion from the profile that installed this package, so the row's link also resolves in the host process, which gets no `DSH_PROFILE_DIR`; a save no longer freezes a detected link into an explicit value, while a flipped link is always written.
-- 从安装本包的 profile 探测 `dsh-win-pwsh7` 联动，宿主进程没有 `DSH_PROFILE_DIR` 也能判定；保存其它开关不再把「跟随检测」写成显式值，而手动拨动联动开关一定落盘。
-- Name the row setting instead of the removed Compatibility mode when an official tool has an OPS replacement.
-- 官方工具被 OPS 替代时，拒绝信息改指行设置，不再提已删除的兼容模式。
+- Answer `read_files` in-process and delete the native many-file arm: `native/crates/ops-files/src/file_many.rs` and its dispatch are gone, `src/execution/files.ts` reads through `engine/parallel-read/`, and the `fs/observed` event the worker's read used to produce is now emitted by the host after each successful read, so read-before-edit keeps working. 20–53× faster on the same request with identical bytes; there is no switch, one reader and one behaviour.
+- `read_files` 改为进程内应答并删除原生多文件臂：`native/crates/ops-files/src/file_many.rs` 与其分派已删除，`src/execution/files.ts` 经 `engine/parallel-read/` 读取；worker 读取原本产生的 `fs/observed` 事件改由宿主在每次读成功后发出，read-before-edit 因此继续有效。同一请求快 20–53×、字节完全一致；没有开关，一个读取器一种行为。
+
 
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 

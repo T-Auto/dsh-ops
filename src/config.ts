@@ -21,23 +21,12 @@
 export const LEGACY_FASTCTX_KEYS = Object.freeze(['serverName', 'enableShellTools', 'toolCallTimeoutMs'])
 export const CORE_CONFIG_KEYS = Object.freeze([
   ...LEGACY_FASTCTX_KEYS, 'binaryPath', 'required', 'shellPolicy', 'deniedHostTools', 'promptPolicy',
-  'extraGuidance', 'bashPath', 'publishBashTool', 'allowSystemShellFallback', 'denyCredentialReads', 'fileReader', 'configUpdateVersion',
+  'extraGuidance', 'bashPath', 'publishBashTool', 'allowSystemShellFallback', 'denyCredentialReads', 'configUpdateVersion',
 ])
 
 /** Upper bound accepted for the legacy `toolCallTimeoutMs`, matching the loader's timer ceiling. */
 const MAX_TOOL_CALL_TIMEOUT_MS = 2_147_483_647
 
-/** `read_files` reader selection; anything else is a configuration error, not a fallback. */
-const FILE_READERS = ['native', 'inproc'] as const
-export type FileReader = typeof FILE_READERS[number]
-function fileReaderOf(raw: Record<string, unknown>): FileReader {
-  const value = raw.fileReader
-  if (value === undefined || value === null) return 'native'
-  if (typeof value !== 'string' || !(FILE_READERS as readonly string[]).includes(value)) {
-    throw new ConfigError(`fileReader must be one of ${FILE_READERS.map(name => JSON.stringify(name)).join(', ')}; got ${JSON.stringify(value)}`)
-  }
-  return value as FileReader
-}
 
 /** How the plugin treats the host's own shell tools. */
 export const SHELL_POLICIES = ['advise', 'deny-host-shell']
@@ -117,7 +106,6 @@ export interface ResolvedConfig {
   binaryPath: string | undefined
   required: boolean
   denyCredentialReads: boolean
-  fileReader: 'native' | 'inproc'
   shellPolicy: 'advise' | 'deny-host-shell'
   deniedHostTools: string[]
   promptPolicy: boolean
@@ -184,7 +172,7 @@ export function resolveConfig(rawConfig?: unknown): ResolvedConfig {
     // needs one of them can turn the fence off for this row; the environment
     // variable only ever widens the list, so a model cannot open it.
     denyCredentialReads: optionalBoolean(raw, 'denyCredentialReads', true),
-    fileReader: fileReaderOf(raw),
+
   }
 }
 

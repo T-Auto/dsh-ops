@@ -130,18 +130,25 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
       }
     }
   }
-  // `fileReader: 'inproc'` answers read_files without spawning the worker. The credential fence above
-  // has already run on every requested path, so this branch reads nothing the native branch would
-  // have refused. It does NOT emit host `fs/observed` — the native read is what the host's
-  // read-before-edit table records — which is why the default stays `native`.
-  if (tool === 'read_files' && config?.fileReader === 'inproc') {
+  // read_files is answered here, not by the worker: the native many-file arm is gone. The credential
+  // fence above already ran on every requested path. Each successful read emits `fs/observed`, which
+  // is what the host's read-before-edit table records — the observation used to be a side effect of
+  // the worker's read, so it has to be re-established here or the fence silently weakens.
+  if (tool === 'read_files') {
     const readings = reads?.files ?? []
-    return await readFilesCompat(readings.map(item => {
+    const value = await readFilesCompat(readings.map(item => {
       const range: { path: string, offset?: number, limit?: number } = { path: String(item.path) }
       if (Number.isSafeInteger(item.offset)) range.offset = Number(item.offset)
       if (Number.isSafeInteger(item.limit)) range.limit = Number(item.limit)
       return range
-    })) as unknown as Record<string, unknown>
+    })) as unknown as { status?: string, items?: { path?: string, items?: unknown[] }[] }
+    const readerFs = hostFs(ctx)
+    for (const item of value.items ?? []) {
+      if (typeof item.path !== 'string') continue
+      const observed = await hostObservation(readerFs, item.path, cwd, signal)
+      if (observed?.info?.type === 'file') emitObserved(ctx, observed, exec)
+    }
+    return value as unknown as Record<string, unknown>
   }
   const destination = ['copy', 'move'].includes(tool) ? absoluteTarget(args?.to, cwd) : undefined
   if (['copy', 'move'].includes(tool) && !destination) return failure('INVALID_ARGUMENT', 'to must be a non-empty path.')
