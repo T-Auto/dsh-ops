@@ -17,7 +17,9 @@ import { DISCOVERY_DESCRIPTION, DISCOVERY_PARAMETERS, DISCOVERY_OUTPUT } from '.
 import { publicToolName, renderToolingPolicy } from '../policy.js'
 import { DISCOVERABLE_TOOLS } from './config.js'
 import type { DiscoverableName } from './config.js'
-import { prepareProviders, providers, onProvidersChange, type Provider } from './providers.js'
+import { prepareProviders, providers, onProvidersChange, providerDiscoverable, type Provider } from './providers.js'
+import { nativeCatalog } from './catalog.js'
+import { renderNativeDirectory } from './prompt.js'
 import { searchCapabilities } from './candidates.js'
 import { parseRequest } from './search.js'
 import { InvocationLifetime, InvocationNotStarted } from '../lifecycle/invocations.js'
@@ -26,6 +28,8 @@ import { scopedReconciliation, scopeFamilies } from '../publication/reconciliati
 
 export interface DiscoveryGate {
   allows(agent: Agent): boolean; watch?(notify: () => void): () => void; guidance?: boolean; extraGuidance?: string
+  /** True only when this agent's assembled prompt has another live section owning this guidance. */
+  extraGuidanceOwner?(agent: Agent): boolean
   residentTools?(agent: Agent): ReadonlySet<string> | readonly string[]
   external?: { allowed: readonly string[]; alwaysLoaded: readonly string[]; disabled: readonly string[] }
 }
@@ -104,6 +108,10 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
     const externalAvailable = (provider: Provider, agent: Agent): boolean => {
       try { return provider.active && provider.capability.available?.(agent) !== false } catch { return false }
     }
+    const externalDiscoverable = (agent: Agent): Provider[] => externalPool(agent)
+      .filter(provider => externalAvailable(provider, agent) && providerDiscoverable(provider, agent))
+    const catalog = (agent: Agent, callable: ReadonlySet<string>) => nativeCatalog(
+      config.allowedTools.filter(tool => selectable(agent, tool)), externalDiscoverable(agent), callable)
     const ptcOnly = (assembly: PromptAssembly): boolean => assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
     const invalidate = (entry: Entry) => { ++entry.revision; entry.presentation = undefined }
     // A session this component can actually coordinate: it has a scope context, this
@@ -200,7 +208,7 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
                 if (typeof request === 'string') return failure('INVALID_ARGUMENT', request)
                 const maximum = Math.min(request.maxResults, config.maxResults)
                 const candidates = searchCapabilities(request.query, config.allowedTools.filter(tool => selectable(agent, tool)),
-                  externalPool(agent).filter(provider => externalAvailable(provider, agent)), maximum)
+                  externalDiscoverable(agent), maximum)
                 const matches = candidates.builtins, externalMatches = candidates.providers
                 const activated = matches.filter(tool => !entry.selected.has(tool) && !config.alwaysLoaded.includes(tool))
                 const externalActivated = externalMatches.filter(provider => !entry.owned.has(provider.capability.definition.name))
@@ -274,7 +282,7 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
       if (entry && ownership?.owns(payload.agent) && !payload.signal.aborted && await native(payload.agent, true, payload.signal).catch(() => false)
         && !payload.signal.aborted && entries.get(payload.agent) === entry && ownership?.owns(payload.agent)) {
         for (const tool of entry.pending) if (permitted(payload.agent, tool)) entry.selected.add(tool)
-        for (const provider of externalPool(payload.agent)) if (entry.externalPending.has(provider.token) && externalAvailable(provider, payload.agent)) entry.externalSelected.add(provider.token)
+        for (const provider of externalDiscoverable(payload.agent)) if (entry.externalPending.has(provider.token)) entry.externalSelected.add(provider.token)
         entry.externalPending.clear(); entry.pending.clear()
         await reconcile([payload.agent])
       }
@@ -414,7 +422,7 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
       if (event.type === 'step/end') {
         const affected = new Set<Agent>()
         for (const [agent, entry] of entries) if (agent.session === session && ownership?.owns(agent) && (entry.pending.size || entry.externalPending.size)) {
-          for (const provider of externalPool(agent)) if (entry.externalPending.has(provider.token) && externalAvailable(provider, agent)) entry.externalSelected.add(provider.token)
+          for (const provider of externalDiscoverable(agent)) if (entry.externalPending.has(provider.token)) entry.externalSelected.add(provider.token)
           entry.externalPending.clear()
           for (const tool of entry.pending) if (permitted(agent, tool)) entry.selected.add(tool)
           entry.pending.clear(); affected.add(agent)
@@ -448,8 +456,16 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
     ctx.effect(() => prompt.section({
       name: ownership.sectionName('dsh-ops:discovery-tools'), order: 3253, interpolate: false,
       text: context => {
-        const entry = entries.get(context.scope as Agent)
-        return gate.guidance !== false && entry ? renderToolingPolicy({ published: entry.owned, shellComponent: false, extraGuidance: gate.extraGuidance }) : ''
+        const agent = context.scope as Agent, entry = entries.get(agent)
+        if (gate.guidance === false || context.signal?.aborted || !entry || !ownership?.owns(agent) || !gate.allows(agent)) return ''
+        // Read only: no registrations, prompt assembly, worker probes or authorization
+        // from a text provider. The assembly hook below withdraws Native text in PTC-only mode.
+        const callable = new Set(tools.schemas(agent).map(tool => tool.name))
+        const directory = config.enabled && entry.owned.has(DISCOVER) && callable.has(DISCOVER)
+          ? renderNativeDirectory(catalog(agent, callable)) : ''
+        const policy = renderToolingPolicy({ published: [...entry.owned].filter(name => callable.has(name)), shellComponent: false,
+          extraGuidance: gate.extraGuidanceOwner?.(agent) ? '' : gate.extraGuidance })
+        return [policy, directory].filter(Boolean).join('\n\n')
       },
     }), 'dsh-ops: discovered capability guidance')
     ctx.effect(() => async () => {

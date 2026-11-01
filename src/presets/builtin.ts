@@ -10,7 +10,7 @@ import { integrationFor } from '../consumer/registry.js'
 import { joinMode, onModesChange } from './registry.js'
 import type { ModeId } from './types.js'
 
-export function replacementTargets(mode: ModeId, platform: string = process.platform, hidePwsh = true): ReadonlyMap<string, string> {
+export function replacementTargets(mode: ModeId, platform: string = process.platform, hidePwsh = false): ReadonlyMap<string, string> {
   return consumerTargets(MODE_PLANS[mode].nativeFiles, MODE_PLANS[mode].shell && hidePwsh, platform as NodeJS.Platform)
 }
 export function applyMode(root: Context, rawConfig: unknown, mode: ModeId): void {

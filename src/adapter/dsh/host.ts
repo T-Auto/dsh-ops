@@ -6,6 +6,12 @@ import type { AtomicApi, BootApi, Context } from './types.js'
 
 export interface CarrierHost { boot: BootApi; yaml: typeof import('yaml'); atomic: AtomicApi }
 
+/** Resolve a DSH message constructor only when an admitted message is created. */
+export async function loadUserMessage(): Promise<typeof import('@deepseek-ai/dsh-llm').createUserMessage> {
+  const llm = await import('@deepseek-ai/dsh-llm')
+  return llm.createUserMessage
+}
+
 export function service<T>(ctx: Pick<Context, 'get'>, name: string): T | undefined {
   try {
     const value = ctx.get(name as never)

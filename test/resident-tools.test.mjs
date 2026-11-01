@@ -4,9 +4,10 @@ import path from 'node:path'
 import { getEncoding } from 'js-tiktoken'
 import { startupAssessment } from '../bench/gates/integrity.mjs'
 import * as fileModule from '../lib/components/file/index.js'
-import { FILE_TOOLS, publicToolName } from '../lib/policy.js'
+import { publicToolName } from '../lib/policy.js'
 import { NativeFileTools } from '../lib/file/runtime.js'
 import { NATIVE_FILE_TOOLS } from '../lib/capabilities/registry.js'
+import { DISCOVERABLE_TOOLS } from '../lib/discovery/config.js'
 import { bashToolDefinition } from '../lib/shells/tool.js'
 import { hostBashDefinition } from '../lib/shells/host-tool.js'
 import { assert, test, report, withTempDir, waitFor } from './lib/harness.mjs'
@@ -16,6 +17,30 @@ import { legacyComponent } from './lib/legacy-component.mjs'
 const file = legacyComponent(fileModule)
 
 const READ = publicToolName('read_files'), DISCOVER = publicToolName('discover_tools')
+const DIRECTORY = '# On-demand Native tool directory'
+function assertDeferredDirectory(ctx, agent, assembly, eligible) {
+  const directories = assembly.sections.filter(section => section.text.includes(DIRECTORY))
+  assert.equal(directories.length, eligible.length ? 1 : 0)
+  const directory = directories[0]?.text.split(DIRECTORY)[1] ?? ''
+  const guidance = assembly.sections.map(section => section.text.split(DIRECTORY)[0]).join('\n')
+  const listed = [...directory.matchAll(/^- (ops_\w+): /gm)].map(match => match[1])
+  assert.deepEqual(listed.sort(), eligible.map(publicToolName).sort(), 'only the eligible deferred pool is advertised')
+  for (const raw of DISCOVERABLE_TOOLS) {
+    const name = publicToolName(raw)
+    assert.equal(assembly.tools.some(tool => tool.name === name), false, `${name} is not in the callable schema`)
+    assert.equal(scopedToolNames(ctx, agent).includes(name), false, `${name} is not callable`)
+    assert.equal(guidance.includes(name), false, `${name} is not action guidance`)
+  }
+  if (eligible.length) {
+    assert.match(directory, /resident\/callable tools first/)
+    assert.ok(directory.includes(DISCOVER))
+    assert.match(directory, /select:exact_tool_name/)
+    assert.match(directory, /NOT callable or authorized/)
+    assert.match(directory, /Selection executes no action/)
+    assert.match(directory, /next model step, after their schema appears/)
+    assert.match(directory, /Execution authorization is checked on invocation/)
+  }
+}
 const measure = tools => {
   const wire = JSON.stringify(tools.map(({ name, description, parameters }) => ({ name, description, parameters })))
   return { tokens: getEncoding('cl100k_base').encode(wire).length, bytes: Buffer.byteLength(wire) }
@@ -65,15 +90,29 @@ await test('gate the approved file/discovery budget and separately retain full s
     assert.equal(assessed.gatedMeasurement.tokens, core.tokens)
     assert.equal(assessed.measurement.tokens, withShell.tokens)
     assert.equal(startupAssessment(assembly.tools, 'win32').status, 'blocked', 'missing Bash cannot pass a narrower budget')
-    const text = assembly.sections.map(section => section.text).join('\n')
-    for (const raw of FILE_TOOLS.filter(raw => raw !== 'read_files')) assert.equal(text.includes(publicToolName(raw)), false)
-    assert.ok(text.includes(DISCOVER))
+    assertDeferredDirectory(ctx, agent, assembly, DISCOVERABLE_TOOLS)
     const selected = await callTool(ctx, DISCOVER, { query: 'select:ops_stat' }, undefined, agent)
     assert.deepEqual(selected.value.activated, [publicToolName('stat')])
     assert.equal(scopedToolNames(ctx, agent).includes(publicToolName('stat')), false)
     await discoveryNextStep(ctx, agent)
     const active = await ctx.get('systemPrompt').assemble({ scope: agent })
-    assert.ok(active.sections.some(section => section.text.includes(publicToolName('stat'))))
+    assert.ok(active.tools.some(tool => tool.name === publicToolName('stat')))
+    assert.ok(active.sections.some(section => section.text.split(DIRECTORY)[0].includes(publicToolName('stat'))))
+    assert.equal(active.sections.some(section => section.text.split(DIRECTORY)[1]?.includes(publicToolName('stat'))), false)
+  } finally { await shutdown(ctx) }
+}))
+await test('the assembled directory excludes disallowed, unavailable and read-only mutation capabilities', () => withTempDir('resident-directory', async dir => {
+  const { ctx } = await mount({ allowedTools: ['stat', 'write_file'] })
+  try {
+    const writer = await mintDiscoveryAgent(ctx, 'directory-writer', dir)
+    assertDeferredDirectory(ctx, writer, await ctx.get('systemPrompt').assemble({ scope: writer }), ['stat', 'write_file'])
+    const reader = await mintDiscoveryAgent(ctx, 'directory-reader', dir, undefined, 'read-only')
+    assertDeferredDirectory(ctx, reader, await ctx.get('systemPrompt').assemble({ scope: reader }), ['stat'])
+    reader.session.mode = 'unavailable'
+    await ctx.serial('session/event', reader.session, { type: 'sandbox/mode' })
+    const unavailable = await ctx.get('systemPrompt').assemble({ scope: reader })
+    assertDeferredDirectory(ctx, reader, unavailable, [])
+    assert.equal(unavailable.tools.some(tool => tool.name === DISCOVER), false)
   } finally { await shutdown(ctx) }
 }))
 await test('always-loaded choices explicitly expand the initial budget and survive file-row unload', () => withTempDir('resident', async dir => {

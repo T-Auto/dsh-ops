@@ -63,10 +63,12 @@ await test('resident-only routing omits unavailable operation hints and includes
 })
 await test('shell routing prefers bash and leaves PowerShell ownership with the host', () => {
   const text = renderToolingPolicy({ published: [BASH_TOOL, 'pwsh'] })
-  assert.match(text, new RegExp(`^# Shell routing: ${BASH_TOOL} → host PowerShell`))
+  assert.match(text, new RegExp(`^# Bash command execution: ${BASH_TOOL}`))
   assert.match(text, /pwsh \(host PowerShell\)/)
-  assert.equal(text.includes('bundled'), false)
-  assert.match(text, new RegExp(`fix ${BASH_TOOL} errors in ${BASH_TOOL}, do not switch shells`))
+  const bashOnly = renderToolingPolicy({ published: [BASH_TOOL] })
+  assert.match(bashOnly, /No host pwsh tool is visible/)
+  assert.doesNotMatch(bashOnly, /host PowerShell|pwsh \(/)
+  assert.match(text, /Fix ops_bash errors in ops_bash; do not mix shell syntax/i)
   assert.match(text, /longer than about 1 KB.*script_path/)
   assert.equal(renderToolingPolicy({ published: ['pwsh'] }).includes('bundled PowerShell'), false)
   assert.equal(renderToolingPolicy({ published: ['pwsh'], shellComponent: false }), '')
@@ -77,9 +79,8 @@ await test('shell routing prefers bash and leaves PowerShell ownership with the 
 // word character — so a match here is a bare name the registry never publishes.
 await test('the tooling policy never names a shell the registry does not publish', () => {
   const text = renderToolingPolicy({ published: [BASH_TOOL, 'pwsh'], extraGuidance: '' })
-  assert.match(text, new RegExp(`fix ${BASH_TOOL} errors in ${BASH_TOOL}, do not switch shells`))
-  const advertising = text.split('\n').filter((line) => /\bbash\b/i.test(line))
-  assert.deepEqual(advertising, [], `prompt names a bare bash: ${advertising.join(' | ')}`)
+  assert.match(text, /Fix ops_bash errors in ops_bash; do not mix shell syntax/i)
+  assert.doesNotMatch(text, /\|\s*bash\s*\|/i, 'prompt must name the published ops_bash tool, not a bare tool name')
   // Without the shell published, nothing names a shell at all.
   const fileOnly = renderToolingPolicy({ published: files, shellComponent: false })
   assert.equal(/\bbash\b/i.test(fileOnly), false)

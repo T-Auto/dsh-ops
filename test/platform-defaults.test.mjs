@@ -16,6 +16,10 @@ await test('one merged row and manifest agree on every platform', () => {
   assert.equal(rows[0].disabled ?? false, false)
   const resolved = resolveMergedConfig(rows[0].config)
   for (const feature of [...MODES, 'discovery']) assert.equal(resolved[feature].enabled, true, feature)
+  for (const mode of MODES) {
+    assert.equal(resolved[mode].config.hidePwsh, false, `${mode} keeps host PowerShell by default`)
+    assert.equal(resolved[mode].config.bash, true, `${mode} independently enables Bash`)
+  }
   for (const feature of ['panel', 'tui', 'other']) assert.equal(resolved[feature].enabled, false, feature)
   assert.deepEqual(resolved.global, { bash: true, hidePwsh: true, hideOfficialTools: true, dynamicTools: true })
   for (const platform of ['win32', 'linux', 'darwin']) assert.equal(platformSurface(platform).shellDefaultEnabled, true)

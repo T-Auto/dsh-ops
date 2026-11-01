@@ -8,7 +8,7 @@ import { loadScopes } from '../adapter/dsh/host.js'
 import { inspectPresentation, isPresentationProbe } from './presentation.js'
 import { InvocationLifetime, InvocationNotStarted } from '../lifecycle/invocations.js'
 import { WORKER_TIMEOUT_MS } from '../execution/protocol.js'
-import { FILE_TOOLS, PTC_TOOLS } from '../capabilities/registry.js'
+import { FILE_TOOLS, PTC_TOOLS, capability } from '../capabilities/registry.js'
 import { PTC_SECTION, definition } from '../projections/ptc/contract.js'
 import { publicToolName } from '../policy.js'
 import { resolveWorker, failure } from '../execution/jobs.js'
@@ -19,8 +19,9 @@ import { resolvePtcConfig } from '../config.js'
 import { PTC_RESIDENT_TOOLS } from '../ptc/config.js'
 import type { ApiName } from '../ptc/config.js'
 import { sdkDefinition, requestedApis } from '../projections/ptc/loader.js'
+import { renderSdkDirectory } from '../projections/ptc/directory.js'
 import { ownPtcScopes } from '../ptc/ownership.js'
-import { surfaceOf as toolSurface } from './surface.js'
+import { surfaceOf as toolSurface, visibleNames } from './surface.js'
 import { onToolChange, withToolChange } from './changes.js'
 import { monitoredInvoke } from '../execution/monitored.js'
 import { scopedReconciliation, scopeFamilies } from './reconciliation.js'
@@ -76,7 +77,9 @@ export function apply(root: Context, rawConfig: unknown, gate: PtcGate = { allow
 /** Mount the owned service for an explicit preset integration. */
 export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { allows: () => true }): void {
   const config = resolvePtcConfig(rawConfig)
-  const loadable = gate.resident === false ? [...new Set([...config.allowedTools, ...PTC_RESIDENT_TOOLS])] : config.allowedTools
+  // Residency-off selection honors configuration; only result stays eligible
+  // outside allowedTools, whose parser excludes the resident-only APIs.
+  const loadable: ApiName[] = gate.resident === false ? [...config.allowedTools, 'result'] : config.allowedTools
   mountWorkspacePreparation(root)
   let file: string
   try { file = resolveWorker(config) } catch (error) {
@@ -113,6 +116,16 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       entries.get(agent)?.calls.cancel(reason)
     }
     let ownership: Awaited<ReturnType<typeof ownPtcScopes>> | undefined
+    // Visibility is a conservative preflight, not path/action authorization. Reuse
+    // this pool for the loader contract, selection and directory; never probe a worker.
+    const allowedApis = (agent: Agent): ApiName[] => {
+      if (gate.dynamic === false || !gate.allows(agent) || !ctx.get('ptcRuntime') || !ctx.get('subprocess')?.spawn) return []
+      try {
+        const policy = ctx.get('sandboxPolicy')?.resolve({ session: agent.session })
+        if (!policy || !['read-only', 'workspace-write', 'danger-full-access'].includes(policy.mode)) return []
+        return loadable.filter(tool => policy.mode !== 'read-only' || tool === 'result' || !capability(tool)?.mutates)
+      } catch { return [] }
+    }
     const execute = (agent: Agent, entry: Entry, tool: ApiName | 'load_sdk', publication = entry.published): ToolDefinition['execute'] => async (args, exec) => {
       await reconciliation.drain(agent)
       const version = entry.published, revision = entry.revision
@@ -121,7 +134,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         return failure('POLICY_DENIED', 'The calling scope must own this API in authoritative PTC-only presentation.')
       }
       if (tool === 'load_sdk') {
-        const requested = requestedApis(args, gate.dynamic === false ? [] : loadable)
+        const requested = requestedApis(args, allowedApis(agent))
         if (typeof requested === 'string') return failure('INVALID_ARGUMENT', requested)
         for (const name of requested) entry.pending.add(name)
         return { status: 'completed', tools: requested, nextTurn: true }
@@ -213,7 +226,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
             try {
               const wanted = new Set([...(gate.resident === false ? [] : [...PTC_RESIDENT_TOOLS, ...config.alwaysLoaded]), ...entry.selected])
               const definitions = [...wanted].map(tool => definition(tool, execute(agent, entry, tool)))
-              if (gate.dynamic !== false) definitions.push(sdkDefinition(loadable, execute(agent, entry, 'load_sdk')))
+              if (gate.dynamic !== false) definitions.push(sdkDefinition(allowedApis(agent), execute(agent, entry, 'load_sdk')))
               for (const def of definitions) { ptcDefinitions.add(def); entry.disposers.push(withToolChange([agent], () => entry.ctx!.tools.register(def))); entry.owned.set(def.name, def) }
               entry.disposers.push(releaseNative)
             } catch (error) { releaseNative(); throw error }
@@ -279,7 +292,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         const presentationPtc = await ptcOnly(agent, signal).catch(() => false)
         if (signal.aborted || entries.get(agent) !== entry || !ownership?.owns(agent)) return next()
         if (presentationPtc) {
-          for (const tool of entry.pending) entry.selected.add(tool)
+          for (const tool of entry.pending) if (allowedApis(agent).includes(tool)) entry.selected.add(tool)
         }
         const changed = entry.pending.size > 0
         entry.pending.clear()
@@ -387,7 +400,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         let changed = false
         const affected = new Set<Agent>()
         for (const [agent, entry] of entries) if (agent.session === session && ownership?.owns(agent) && entry.pending.size) {
-          for (const tool of entry.pending) if (entry.ptc) entry.selected.add(tool)
+          for (const tool of entry.pending) if (entry.ptc && allowedApis(agent).includes(tool)) entry.selected.add(tool)
           entry.pending.clear(); entry.surface = undefined; affected.add(agent); changed = true
         }
         if (changed) void reconcile(true, affected)
@@ -412,8 +425,13 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     }, gate.allows)
     ctx.effect(() => prompt.section({ name: ownership.sectionName(PTC_SECTION), order: 3252, interpolate: false, text: context => {
       const entry = entries.get(context.scope as Agent)
-      return gate.guidance !== false && entry?.ptc && entry.owned.size > 0
-        ? 'OPS APIs return typed Outcome values. Inspect status before data; preserve partial coverage and continuation. ' + (gate.dynamic !== false ? 'Use ' + publicToolName('load_sdk') + ' to request advanced APIs by raw name; they become callable on the next model step. ' : '') + 'Process results locally in run_code and return only needed summaries. References do not grant authority.' : ''
+      if (gate.guidance === false || !entry?.ptc || entry.owned.size === 0 || !gate.allows(entry.agent) || !ownership?.owns(entry.agent)) return ''
+      const guidance = 'OPS APIs return typed Outcome values. Inspect status before data; preserve partial coverage and continuation. Process results locally in run_code and return only needed summaries. References do not grant authority.'
+      const loaderName = publicToolName('load_sdk')
+      const loader = ctx.get('tools')?.get(loaderName, entry.agent)
+      const directory = gate.allows(entry.agent) && ownership?.owns(entry.agent) && loader === entry.owned.get(loaderName) && loader !== undefined
+        ? renderSdkDirectory(allowedApis(entry.agent), new Set(visibleNames(tools, entry.agent))) : ''
+      return guidance + (directory ? '\n\n' + directory : '')
     } }), 'dsh-ops: progressive PTC guidance')
     ctx.effect(() => async () => {
       stopped = true; mutating = true

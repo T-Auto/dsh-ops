@@ -27,6 +27,10 @@ File replacement and Windows host-PowerShell hiding are independent.
 
 Bundle switches apply an AND gate and preserve each consumer's saved intent. Companion linkage
 forces every row-managed `hidePwsh` off, keeping the host shell available to `dsh-win-pwsh7`.
+An unsaved linkage means untouched: saving another switch never turns detection into a stored
+value, while flipping the link itself is always written (on or off). Detection reads the profile
+that installed this package, so it also answers in the host process, where no `DSH_PROFILE_DIR` is
+set.
 These are publication choices, not filesystem permissions. No switch bypasses host authorization.
 
 Saves use exact nested paths and the revision read by the page. Unchanged fields are not written;

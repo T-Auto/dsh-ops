@@ -17,7 +17,7 @@ export interface ModeConfig extends ResolvedConfig {
   alwaysLoaded: PtcConfig['alwaysLoaded']
   /** Publish Bash for this preset's sessions. */
   bash: boolean
-  /** Hide the official Windows shell once Bash replaces it. */
+  /** Opt in to hiding the official Windows shell while Bash is available. */
   hidePwsh: boolean
   /** Hide the official file tools this mode replaces (gated by the bundle switch). */
   hideOfficialTools: boolean
@@ -70,7 +70,7 @@ export function resolveModeConfig(rawConfig?: unknown, mode?: ModeId): ModeConfi
   const resolved = resolveConfig({ ...core, publishBashTool: bash })
   const api = parsePtcConfig(ptc)
   return { ...resolved, allowedTools: api.allowedTools, alwaysLoaded: api.alwaysLoaded,
-    bash, hidePwsh: sw('hidePwsh', true),
+    bash, hidePwsh: sw('hidePwsh', false),
     hideOfficialTools: sw('hideOfficialTools', true), dynamicTools: sw('dynamicTools', true),
     residentTools: mode !== 'minimal' && sw('residentTools', true) }
 }
@@ -86,7 +86,7 @@ export function modeFields(mode: ModeId): Record<string, Field> {
   return {
     ...(mode === 'minimal' ? {} : { residentTools: editable('boolean', 'Publish baseline file tools independently of dynamic loading.') }),
     bash: editable('boolean', 'Publish Bash for authorized sessions.'),
-    hidePwsh: editable('boolean', 'Hide the official Windows shell once Bash replaces it.'),
+    hidePwsh: editable('boolean', 'Opt in to hiding the official Windows shell while Bash is available.'),
     hideOfficialTools: editable('boolean', 'Hide the official file tools this mode replaces.'),
     dynamicTools: editable('boolean', 'Publish the discovery entry to this mode.'),
   }
