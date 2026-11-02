@@ -1,6 +1,6 @@
 {
   "name": "dsh-ops",
-  "version": "0.5.0-alpha3",
+  "version": "0.5.0-alpha4",
   "publishConfig": {
     "access": "public"
   },
