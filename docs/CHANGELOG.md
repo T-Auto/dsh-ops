@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Give an Electron self-runner Node mode instead of refusing every confined Bash call: a confined Windows sandbox runs the Desktop executable itself as the Node runner, so `ops_bash` could answer every command in `read-only` and `workspace-write` with `EXECUTOR_UNAVAILABLE`. Only a self-runner (a prepared argv whose first element is the Desktop executable) gains `ELECTRON_RUN_AS_NODE=1`; sandbox, policy and command are unchanged (#574).
+- 让 Electron 自跑 runner 进入 Node 模式，而不是拒绝所有受限档位的 Bash 调用：Windows 受限沙箱会把 Desktop 可执行文件自身当作 Node runner，导致 `read-only` 与 `workspace-write` 下 `ops_bash` 对任何命令都回答 `EXECUTOR_UNAVAILABLE`。现在只有自跑 runner（准备阶段 argv 的第一个元素即 Desktop 可执行文件）会补上 `ELECTRON_RUN_AS_NODE=1`，沙箱、策略与命令本身不变（#574）。
 - Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
 - 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。
 - Report PowerShell ConstrainedLanguage before workspace ACL preparation and preserve a named diagnostic without changing security policy (#458). / 工作区 ACL 准备前明确报告 PowerShell ConstrainedLanguage，并保留具名诊断，不改变安全策略（#458）。
