@@ -22,6 +22,7 @@ export const LEGACY_FASTCTX_KEYS = Object.freeze(['serverName', 'enableShellTool
 export const CORE_CONFIG_KEYS = Object.freeze([
   ...LEGACY_FASTCTX_KEYS, 'binaryPath', 'required', 'shellPolicy', 'deniedHostTools', 'promptPolicy',
   'extraGuidance', 'bashPath', 'publishBashTool', 'allowSystemShellFallback', 'denyCredentialReads', 'configUpdateVersion',
+  'downloadGuard',
 ])
 
 /** Upper bound accepted for the legacy `toolCallTimeoutMs`, matching the loader's timer ceiling. */
@@ -99,6 +100,56 @@ function optionalStringList(raw: Record<string, unknown>, key: string, fallback:
   return [...value]
 }
 
+/**
+ * Validate the `downloadGuard` block.
+ *
+ * A malformed block fails loud and names the offending key, matching the rest
+ * of this file. An absent block is the normal state and resolves to "no
+ * forwarder configured", which leaves every download command alone.
+ *
+ * @param rawConfig - the raw `downloadGuard` value, or undefined.
+ * @returns the resolved configuration.
+ */
+function resolveDownloadGuard(rawConfig: unknown): DownloadGuardConfig {
+  if (rawConfig === undefined || rawConfig === null) return { template: '' }
+  if (typeof rawConfig !== 'object' || Array.isArray(rawConfig)) {
+    throw new ConfigError(`downloadGuard must be an object, got ${JSON.stringify(rawConfig)}`)
+  }
+  const raw = rawConfig as Record<string, unknown>
+  rejectUnknownKeys(raw, ['template', 'shell'])
+  // An empty string is how the shipped patch row spells "not set", so it must
+  // resolve to the same inert state as an absent key rather than failing the
+  // load of an install that never configured anything.
+  const value = raw.template
+  if (value !== undefined && value !== null && typeof value !== 'string') {
+    throw new ConfigError(`downloadGuard.template must be a string, got ${JSON.stringify(value)}`)
+  }
+  const template = typeof value === 'string' ? value.trim() : ''
+  if (template.trim() !== '' && !template.includes('{url}')) {
+    throw new ConfigError(
+      `downloadGuard.template must contain {url} so the suggested command can identify what to fetch, `
+      + `got ${JSON.stringify(template)}`,
+    )
+  }
+  for (const token of template.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? []) {
+    if (/\{(?:url|file)\}/.test(token) && token !== '{url}' && token !== '{file}') {
+      throw new ConfigError('downloadGuard.template placeholders must be standalone unquoted arguments; the guard quotes literal values')
+    }
+  }
+  let quote = ''
+  for (let index = 0; index < template.length; index++) {
+    const char = template[index]
+    if (char === '\\' && quote !== "'") { index++; continue }
+    if (char === quote) quote = ''
+    else if (!quote && (char === '"' || char === "'")) quote = char
+    if (quote && /^\{(?:url|file)\}/.test(template.slice(index))) throw new ConfigError('downloadGuard.template placeholders must be unquoted')
+  }
+  if (quote) throw new ConfigError('downloadGuard.template must use balanced quotes')
+  const shell = raw.shell
+  if (shell !== undefined && shell !== 'bash' && shell !== 'pwsh') throw new ConfigError('downloadGuard.shell must be bash or pwsh')
+  return { template, ...(shell === undefined ? {} : { shell }) }
+}
+
 /** The resolved configuration, with every default applied. */
 export interface ResolvedConfig {
   configUpdateVersion: number
@@ -112,6 +163,20 @@ export interface ResolvedConfig {
   bashPath: string | undefined
   publishBashTool: boolean
   allowSystemShellFallback: boolean
+  downloadGuard: DownloadGuardConfig
+}
+
+/**
+ * Operator configuration for the download guard.
+ *
+ * Empty by default: an unconfigured install must behave exactly as it did
+ * before this feature existed. The guard only refuses a call once the operator
+ * has named a downloader that is strictly better than the one the model picked.
+ */
+export interface DownloadGuardConfig {
+  /** Command template with `{url}` (required to act) and optional `{file}`. */
+  template: string
+  shell?: 'bash' | 'pwsh'
 }
 
 /**
@@ -171,6 +236,7 @@ export function resolveConfig(rawConfig?: unknown): ResolvedConfig {
     // needs one of them can turn the fence off for this row; the environment
     // variable only ever widens the list, so a model cannot open it.
     denyCredentialReads: optionalBoolean(raw, 'denyCredentialReads', true),
+    downloadGuard: resolveDownloadGuard(raw.downloadGuard),
   }
 }
 

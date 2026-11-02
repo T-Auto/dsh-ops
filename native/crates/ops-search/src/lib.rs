@@ -3,6 +3,8 @@
 mod scan;
 mod paging;
 mod search;
+mod profile;
+mod patterns;
 use ops_protocol::{Failure, Request, Result};
 use ops_files::{file_path, target, relative_display, read_bytes, result, lock_and_read_for_update, atomic_write, MAX_OUTPUT_BYTES, MAX_FILE_BYTES};
 use ops_files as publication;
@@ -184,14 +186,6 @@ fn unc_display(display: &Path) -> bool {
     )
 }
 
-fn positive_patterns(patterns: &[String]) -> impl Iterator<Item = &String> { patterns.iter().filter(|p| !p.starts_with('!')) }
-fn matches_any(root: &Path, file: &Path, patterns: &[String]) -> bool {
-    let name = relative_display(root, file);
-    let positives: Vec<_> = positive_patterns(patterns).collect();
-    let included = positives.is_empty() || positives.iter().any(|p| glob_match(p, &name));
-    let excluded = patterns.iter().filter_map(|p| p.strip_prefix('!')).any(|p| glob_match(p, &name));
-    included && !excluded
-}
 fn files_for(path: &str, patterns: &[String], request: &Request) -> Result<WalkResult> {
     let root = target(path, false)?;
     request.authorize_path(&root)?;
@@ -199,17 +193,13 @@ fn files_for(path: &str, patterns: &[String], request: &Request) -> Result<WalkR
         return Ok(WalkResult { files: vec![root.clone()], truncated: false });
     }
     let walked = walk(&root, request)?;
+    let patterns = patterns::Patterns::new(patterns);
     Ok(WalkResult {
         files: walked.files.into_iter()
-            .filter(|f| matches_any(&root, f, patterns))
+            .filter(|f| patterns.matches(&root, f))
             .collect(),
         truncated: walked.truncated,
     })
-}
-fn glob_match(pattern: &str, value: &str) -> bool {
-    let p: Vec<_> = pattern.trim_start_matches("./").split('/').collect();
-    let v: Vec<_> = value.split('/').collect();
-    glob_segments(&p, &v)
 }
 fn glob_segments(p: &[&str], v: &[&str]) -> bool {
     if p.is_empty() { return v.is_empty(); }
@@ -274,7 +264,9 @@ fn replace(request: &Request) -> Result<Value> {
     if serde_json::to_vec(&items)?.len() > MAX_OUTPUT_BYTES / 2 { return Err(Failure::new("OUTPUT_LIMIT", "Replacement receipts exceed the bounded output budget; narrow path/glob. No files changed.")); }
     if args.dry_run { return Ok(json!({"status":"completed","phase":"observe","changed":0,"matched":total,"skipped":skipped,"failed":0,"complete":true,"omitted":0,"dryRun":true,"items":items,"skippedPaths":skipped_paths})); }
     for item in &items { publication::authorize_write(request, item["path"].as_str().unwrap_or(""))?; }
-    let mut changed=0usize; for item in &mut items {
+    for item in &mut items { item["status"] = json!("pending"); }
+    let mut changed=0usize; for index in 0..items.len() {
+        let item = &mut items[index];
         let applied = (|| -> Result<()> { let file=PathBuf::from(item["path"].as_str().unwrap_or(""));
         publication::authorize_write(request, file.to_str().unwrap_or(""))?;
         // Observation guards above remain owned until every publication settles.
@@ -288,9 +280,18 @@ fn replace(request: &Request) -> Result<Value> {
         if let Some((metadata,warnings))=atomic_write(&file,next.as_bytes())? { item["metadata"]=metadata; if !warnings.is_empty() { item["metadataWarnings"]=json!(warnings); } }
         Ok(()) })();
         if let Err(mut error) = applied {
-            if changed > 0 { error.effect_state = "applied".into(); error.next_action = "Earlier files were already replaced. Inspect postconditions; do not repeat the batch blindly.".into(); }
-            return Err(error);
+            // Retain the failing item's own effects before describing the whole call.
+            item["status"] = json!("error");
+            item["error"] = serde_json::to_value(&error)?;
+            if changed > 0 {
+                if error.effect_state.as_ref() != "unknown" { error.effect_state = "applied".into(); }
+                error.next_action = "Earlier files were already replaced. Inspect every retained receipt and postcondition; do not repeat the batch blindly.".into();
+            }
+            return Ok(json!({"status":"error","complete":false,"changed":changed,"failed":1,
+                "pending":items.len()-index-1,"effectState":error.effect_state,"error":error,
+                "items":items,"skipped":skipped,"skippedPaths":skipped_paths}));
         }
+        item["status"] = json!("completed");
         changed += item["replacements"].as_u64().unwrap_or(0) as usize; }
     let count = items.len();
     let mut output = result(request, items, count, 0, 0, total, walked.truncated);

@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { pinnedBashExecutable } from '../lib/shells/pinned.js'
 import { patchMsys, proxyDefinition } from '../lib/bash-pe.js'
+import { bashIpcBuildBatch } from './lib/bash-ipc-command.mjs'
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')
 if(process.platform!=='win32'||process.arch!=='x64')throw Error('Build the Bash IPC proxies on Windows x64')
 const bash=pinnedBashExecutable({file:process.env.DSH_OPS_TEST_BASH})
@@ -21,14 +22,15 @@ const discovered=fs.existsSync(vswhere) ? spawnSync(vswhere,['-latest','-product
 const vcvars=process.env.DSH_OPS_VCVARS64 ?? (discovered ? path.join(discovered,'VC/Auxiliary/Build/vcvars64.bat') : '')
 if(!fs.existsSync(vcvars))throw Error('Set DSH_OPS_VCVARS64 to the installed vcvars64.bat')
 try {
- const commands=[`@echo off`,`call "${vcvars}" >nul`,`if errorlevel 1 exit /b 1`,`cd /d "${scratch}"`]
+ const targets=[]
  for(const [dll,names] of Object.entries(exports)){
   const name=dll==='kernel32.dll'?'opsipc':'opsnt'
   fs.writeFileSync(path.join(scratch,name+'.def'),proxyDefinition(names,dll))
-  commands.push(`cl /nologo /LD /O2 /MT /std:c++20 /EHsc "${path.join(root,'native/bash-ipc',name+'.cpp')}" /link /DEF:${name}.def /OUT:${name}.dll advapi32.lib normaliz.lib ntdll.lib`,`if errorlevel 1 exit /b 1`)
+  targets.push(name)
  }
- const file=path.join(scratch,'build.cmd');fs.writeFileSync(file,commands.join('\r\n')+'\r\n')
- const build=spawnSync('cmd.exe',['/d','/c',file],{stdio:'inherit',windowsHide:true})
+ const batch=bashIpcBuildBatch({vcvars,scratch,sourceDirectory:path.join(root,'native/bash-ipc'),names:targets})
+ const file=path.join(scratch,'build.cmd');fs.writeFileSync(file,batch.text,'ascii')
+ const build=spawnSync('cmd.exe',['/d','/c',file],{stdio:'inherit',windowsHide:true,env:{...process.env,...batch.env}})
  if(build.status!==0)throw Error(`IPC proxy build failed: ${build.status}`)
  fs.mkdirSync(destination,{recursive:true})
  const sha256=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex')

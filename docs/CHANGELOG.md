@@ -7,18 +7,111 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
+- 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。
+- Report PowerShell ConstrainedLanguage before workspace ACL preparation and preserve a named diagnostic without changing security policy (#458). / 工作区 ACL 准备前明确报告 PowerShell ConstrainedLanguage，并保留具名诊断，不改变安全策略（#458）。
+
+- Classify a confined Windows Bash preparation failure by the stage that failed (`bash-staging-failed`, `bash-generation-quarantine-failed`, `bash-lifecycle-lock-busy`, `bash-runtime-missing`, `bash-ipc-mismatch`), keep the actionable reason, and stop answering a recoverable staging interruption with the blanket "Do not retry" paragraph (#512).
+- 按失败阶段对 Windows 受限 Bash 准备失败分类（`bash-staging-failed`、`bash-generation-quarantine-failed`、`bash-lifecycle-lock-busy`、`bash-runtime-missing`、`bash-ipc-mismatch`），保留可操作原因，不再用"不要重试"的笼统文案回答本可恢复的 staging 中断（#512）。
+- Reclaim interrupted `stage-*` copies in the private Bash runtime cache after one hour, count them in the reported reclaimable bytes, and remove them together with a confirmed `bash-runtime clean-cache` (#512).
+- 一小时后回收私有 Bash 运行时缓存中被中断的 `stage-*` 副本，计入可回收字节，并在确认后的 `bash-runtime clean-cache` 中一并清除（#512）。
+- Document how to diagnose and recover an interrupted restricted-Bash staging or lifecycle lock.
+- 文档补充受限 Bash staging 中断与生命周期锁的诊断与恢复方法。
+- Document how to identify the failing dependency in `ERR_PNPM_UNKNOWN` / `UNKNOWN: unknown error, open '<path>'` reports without inferring an unverified filesystem or security-software cause, and state that the
+  `git+https`/source channel cannot produce a loadable plugin because `lib/` and the staged
+  `runtime/` are not in Git. The manifest gate now fails if `package.json` declares any
+  install-time lifecycle hook — `prepare`, `preprepare`, `postprepare`, `install`, `preinstall`
+  or `postinstall` — and names the gate's rule truthfully, so "fix the Git channel with `prepare`"
+  cannot land silently (#524).
+- 说明如何从 `ERR_PNPM_UNKNOWN` / `UNKNOWN: unknown error, open '<path>'` 报告确定失败依赖，而不推断未经验证的文件系统或安全软件根因；同时明确直接 `git+https`/未构建源码通道无法提供完整发行物，因为
+  `lib/` 与已 stage 的 `runtime/` 不在 Git 里。清单门禁现在会在 `package.json` 声明任何
+  安装期生命周期钩子时失败——`prepare`、`preprepare`、`postprepare`、`install`、
+  `preinstall`、`postinstall`——并按实际行为描述该规则，使「用 prepare 修 Git 通道」
+  无法静默落地（#524）。
+- Preserve completed, failed and pending per-file receipts when multi-file replacement stops after a publication failure; retain uncertain effects and never offer a write replay cursor. Clarify the required literal `expectedRevision: "absent"`, document read/edit/write/replace contracts, and verify same-call PTC read-to-edit CAS and stale reads (#419, #421, #422).
+- 多文件替换在发布失败后保留已完成、失败和待处理文件的回执，保留未知副作用且不提供重放写入游标。明确必填字面量 `expectedRevision: "absent"`，补充读取、编辑、写入、替换契约，并用真实 PTC 同轮读改与过期读取回归验证 CAS（#419、#421、#422）。
+
+- Keep one build serving both ends of the supported range. The whole suite now passes on the locked `0.2.0-rc.2` graph and on the `0.2.1-rc.5` graph over the same source, and the compatibility assertion names rc.5 alongside the earlier ones. The precheck case that needed the removed `both` mode now pins the seam instead: a registry mode the precheck cannot answer from the scope chain still owes a probe.
+- 同一份构建同时服务受支持范围的两端：整套测试在锁定的 `0.2.0-rc.2` 依赖图与 `0.2.1-rc.5` 依赖图上分别全绿，兼容性断言也把 rc.5 与更早版本并列。原先需要已删除的 `both` 模式的预检用例改为锁住接缝：作用域链解析不出的注册表模式仍要付一次探针。
+- Track the official 0.2.1-rc.5 line: `@deepseek-ai/dsh-*` moves to `0.2.1-rc.5` and Cordis to `4.0.5`. `ToolPresentationMode` no longer carries `both`, so every presentation list, loader description and doc sentence names only `native` and `ptc`; `ConfigFormSnapshot` no longer carries `mode`, so a Client form is editable when it is ready and writable; and `run_code` now asks the host for the directory it executes in, which the test hosts provide only where a suite really runs code. Test fixtures follow rc.5 as well: `invoke` names its `PeerScope`, a user message carries its `source`, and the gateway client is resolved through its condition exports.
+- 跟进官方 0.2.1-rc.5 线：`@deepseek-ai/dsh-*` 升到 `0.2.1-rc.5`，Cordis 升到 `4.0.5`。`ToolPresentationMode` 不再有 `both`，因此所有展示模式清单、加载器描述与文档句子只写 `native` 与 `ptc`；`ConfigFormSnapshot` 不再有 `mode`，Client 表单改为「就绪且可写即可编辑」；`run_code` 现在会向宿主索取执行目录，测试宿主只在真正运行代码的套件里提供。测试夹具同样跟进 rc.5：`invoke` 必须指明 `PeerScope`，用户消息必须携带 `source`，gateway 客户端按其条件导出解析。
+- Retire the last `both` traces rc.5 invalidated: the presentation-mismatch diagnostic no longer offers a mode that does not exist, the docs name only `native` and `ptc`, test scopes request a real presentation instead of the removed one, and the discovery-incremental case that needed a mixed scope retires with it. A ready Host document that refuses writes is now asserted to stay uneditable.
+- 清理 rc.5 使 `both` 失效后残留的痕迹：展示不匹配诊断不再建议一个已不存在的模式，文档只写 `native` 与 `ptc`，测试作用域改为申请真实存在的展示模式，需要混合模式的 discovery-incremental 用例随该模式一起退役；并补上「就绪但拒绝写入的宿主文档不可编辑」的断言。
+
+- Bound an unattributed `tools/change` to one representative probe: the registry notification may name the affected scope, and when the host names none only one session is re-probed synchronously while the rest stay stale until their next `agent/pre-step` or tool execution, both of which check freshly regardless of cached state. `system-prompt/change` takes the same lazy path, a scope the host names but no session knows falls back to the conservative path, and the representative probe no longer cascades into its own scope family. This removes the one-full-assembly-per-live-session cost that made session creation scale with the live count (198 live sessions: 23,143ms and 1,393 assemblies before, 7,097ms and 400 after with only the discovery path bounded; zero live sessions are unchanged at 103-129ms).
+- 未点名作用域的 `tools/change` 收敛为只同步重探一个代表会话：宿主点名时只失效该作用域及其后代；未点名时其余条目保持过期，在各自下一个 `agent/pre-step` 或工具执行时重新观测——这两处无论缓存状态如何都会做新鲜检查。`system-prompt/change` 走同一条惰性路径；宿主点名但无任何会话认识的作用域改走保守路径；代表会话的探测不再连带重探它自己的作用域族。这去掉了「每个存活会话一次完整装配」的成本（198 存活会话：修复前 23,143ms / 1,393 次装配，仅收敛 discovery 路径后 7,097ms / 400 次；零存活会话时两者一致，103-129ms）。
+- Reduce the first Native-to-PTC switch from seven prompt assemblies to four in the 150-tool host fixture. Keep full host presentation probes and their Native withdrawal, but do not rebuild a private probe after withdrawal; rebuild a public assembly only when its PTC publication generation is stale, so next-step SDK declarations still arrive exactly at request two (#490).
+- 在 150 工具宿主夹具中，首次 Native→PTC 切换的提示词装配从 7 次降到 4 次。保留完整宿主展示探针及其 Native 撤回，但私有探针撤回后不再重建；公共装配仅在 PTC 发布代次过期时重建，下一请求的 SDK 声明仍恰好在第二次请求出现（#490）。
+- Stop spending a presentation probe per session on an unattributed `tools/change`. A registration the host reports without naming a scope cannot move a presentation mode — only `presentAs` does — so the publish still runs, but the verdict is deferred and the next real probe confirms it at pre-step. A `system-prompt/change` since the last re-derivation is the evidence that a mode may have flipped, and only then does the next change owe that probe.
+- 未点名作用域的 `tools/change` 不再逐会话花一次展示探针。宿主报告但没有点名作用域的注册不可能移动展示模式——只有 `presentAs` 会——所以发布照常进行，但判定被延后，由下一次真实探针在 pre-step 确认。自上次重推导以来出现过 `system-prompt/change` 才是「模式可能已翻转」的证据，只有那时下一次变化才欠这次探针。
+- Answer a probe whose scope resolves to a non-`ptc` registry mode from the scope chain instead of assembling: `modeFor` is the same source the collapsed section reads, so an assembly for such a scope can only return the verdict already held. A mixed-native deployment still probes, because only `ptc` renders the collapsed section.
+- 作用域链解析出的注册表模式不是 `ptc` 时，直接由链上答案回答而不装配：`modeFor` 正是折叠段落读取的同一来源，对它做装配只能得到已经持有的判定。混合 Native 部署仍照常探测，因为只有 `ptc` 会渲染折叠段落。
+- Scan a scope's Native providers against one registry view: the scan asked the registry once per provider whether that scope resolves the provider's own definition, and `tools.get(name, scope)` rebuilds the entire scope view on every call, so a publish that touches every live scope rebuilt the view once per provider per scope — 82,365 rebuilds for one unattributed `tools/change` over 198 live sessions. Reading the view once and looking the names up in the map it returns removes that whole factor: one unattributed change over 198 sessions drops from 3,970 assemblies' worth of rebuilds and 8,580ms to 1 assembly and 218ms, and `create-ptc` from 1,194 to 6.5 assemblies. A host that serves no view still resolves through `get()`, as `surfaceOf` already does.
+- 作用域的 Native provider 扫描改为只读一次注册表视图：原先对每个 provider 都要问一次该作用域是否解析到它自己那份定义，而 `tools.get(name, scope)` 每次调用都会重建整个作用域视图，于是「一次触及所有存活作用域的发布」的重建次数是「provider 数 × 作用域数」——198 个存活会话上的单次未点名 `tools/change` 就重建了 82,365 次。改为读一次视图、在它返回的 Map 里逐个查名，整个因子消失：198 会话上单次未点名变化从相当于 3,970 次装配的重建量、8,580ms 降到 1 次装配、218ms，`create-ptc` 从 1,194 次装配降到 6.5 次。宿主不提供视图时仍走 `get()` 解析，与 `surfaceOf` 的既有做法一致。
+- Reject an unadapted Electron self-runner before it can report empty Bash success; preserve legitimate empty output and explicitly prepared host runners (#484).
+- 在未适配的 Electron 自身 runner 启动前拒绝执行，避免 Bash 空输出假成功；保留合法空输出与宿主显式准备的 runner（#484）。
+- Name Windows `STATUS_DLL_INIT_FAILED` exit values without claiming that commands had no effects or that the host startup failure was repaired (#417).
+- 为 Windows `STATUS_DLL_INIT_FAILED` 退出值提供明确诊断，不将命令效果误报为无，也不宣称宿主启动失败已修复（#417）。
+- Stop optional Windows result caching from invoking workspace ACL preparation or confinement in full-access sessions on legacy hosts. Cache-only hosts retain spill, paging and cleanup; legacy hosts return explicit bounded output when storage is unavailable (#411).
+- 修复旧版 Windows 宿主的完全访问会话仅为可选结果缓存而准备工作区 ACL 或请求沙箱的问题。支持专用缓存准备的宿主仍可溢出、分页和清理；旧宿主缓存不可用时返回明确有界的结果（#411）。
+
+- Transfer the owned Bash registration when an agent changes preset, before the new consumer publishes. PTC-to-Standard/Minimal switches no longer lose `ops_bash` to a same-layer registration collision; the retired consumer cannot remove its successor or execute a retained callback. Foreign same-name providers remain untouched.
+- 切换预设时，在新消费者发布前交接所属 Bash 注册。PTC 切到 Standard/Minimal 不再因同层同名冲突丢失 `ops_bash`；已退役消费者不能移除接任者或继续执行保留的回调，也不会撤销其它插件的同名工具。
+- Let Windows compute and verify ordinary parent DACL inheritance for create-only files after private staging is complete, preserving inherited denies and creator-owner rules so restricted workspace processes can edit, rename and remove newly written files. Existing overwrite/copy and private-cache ACL contracts remain separate (#420).
+- 仅新建文件完成私有暂存后，由 Windows 计算并验证普通父目录 DACL 继承，保留继承拒绝与创建者规则，使受限工作区进程可编辑、重命名和删除新文件；覆盖、复制与私有缓存的 ACL 契约保持独立（#420）。
+- Overlap at most two bounded native reads inside `ops_read_files`, retaining request order, duplicate ranges, full revisions, per-file errors, credential/no-follow checks and ordered aggregate capture. Single-file reads avoid thread setup; the worker deadline remains authoritative (#477).
+- `ops_read_files` 内部最多重叠两个有界原生读取，保留输入顺序、重复范围、完整 revision、逐文件错误、凭证/no-follow 检查和有序总预算捕获；单文件不启动线程，仍以 worker 截止为准（#477）。
+- Record the evidence and go/no-go decisions for revision/anchor editing, symbol maps, and review tooling; retain current production contracts while defining the conditions for reconsideration (#424, #459, #534).
+- 记录 revision/anchor 编辑、符号地图与审阅工具的证据和推进决策；保留现有生产契约并明确重新评估条件（#424、#459、#534）。
+- Prepare search glob segments once per request and add opt-in, content-free worker stage timing with a same-corpus comparison runner; retain security checks, scan budgets and completeness semantics (#474).
+- 搜索 glob 路径段改为每请求准备一次，增加不含正文的可选 worker 阶段计时及同语料对比 runner；保留安全检查、扫描预算与完整性语义（#474）。
+- Accept npm 12 package-keyed pack reports alongside earlier arrays through one strict release/source-closure parser, preserving post-repair tar hashes and provenance (#560).
+- 发布打包与源码闭包检查共用严格解析器，同时支持 npm 12 按包名组织的打包报告与此前数组格式，保留 tar 修复后的摘要和 provenance 校验（#560）。
+- Add an opt-in WSL readonly file route for same-distribution UNC workspaces, preserving Windows credential/path restrictions, backend-bound search cursors and Windows-owned result storage; see [WSL file reads](wsl-readonly.md) (#498).
+- 为同发行版 UNC 工作目录增加可选 WSL 只读文件路由，保留 Windows 凭据和路径限制、后端绑定搜索游标及 Windows 结果存储所有权；见 [WSL 只读文件操作](WSL只读文件操作.md)（#498）。
+- Verify WSL fallback against the original Windows bounded result when a legacy host has no cache-only capability; keep reference paging mandatory when that capability exists (#411, #498).
+- 旧宿主缺少仅缓存准备能力时，将 WSL 回退结果与原 Windows 有界结果对比；宿主提供该能力时，仍必须验证引用分页（#411、#498）。
+
+- Complete the manifest namespace inventory with PTC batch/SDK-loading and Native discovery controls; validate exact capability coverage without changing scoped publication or model schemas (#484).
+- 补齐清单命名空间中的 PTC batch/SDK 加载与 Native 发现控制入口，并校验能力目录完整性；不改变作用域发布或模型 schema（#484）。
 - Keep Native file routing separate from the independent Bash prompt section, so resident Native + Shell consumers do not repeat Bash guidance or advertise host PowerShell routing. Keep deployment guidance single-owned across Bash, Native and discovery sections, including withdrawal and reload.
 - 将 Native 文件路由提示与独立 Bash 提示段分开，避免 Native + Shell 常驻消费者重复 Bash 指导或把 Bash 宣传为宿主 PowerShell 路由。部署指导在 Bash、Native 与发现提示段之间仅保留一份，并覆盖撤回与重载。
 - Update preset hints and rendered settings UI to describe default Bash/PowerShell coexistence; hiding host PowerShell remains an explicit choice.
 - 更新预设提示和渲染后的设置界面，说明 Bash 与 PowerShell 默认共存；隐藏宿主 PowerShell 仍需显式选择。
+- Document the limits of Windows payload checks and read-only evidence for Low-integrity images, mixed MSYS startup, antivirus correlation, heredoc and approval reports; do not present missing reproductions as fixes (#446, #439, #425, #426).
+- 补充 Windows 载荷检查边界，以及 Low 程序标签、混合 MSYS 启动、杀软相关性、heredoc 和审批反馈的只读取证；缺少复现不能标为已修复（#446、#439、#425、#426）。
 - Clarify step-tail snapshot handoff: disposal withdraws pending contributions only before the batch returns from `agent/pre-step`; an already handed-off batch may still be admitted and logged, while replacements wait for a later nonempty batch.
 - 明确步骤尾部快照交接：释放只会在 batch 从 `agent/pre-step` 返回前撤回等待中的贡献；已经交接的 batch 仍可能被接纳并写入日志，替代注册等待后续非空 batch。
+- Add scoped job-wait guidance after a successful standalone long sleep, with zero added prompt bytes before the trigger, Native/PTC coverage and live consumer/prompt-policy withdrawal (#507).
+- 成功完成独立长延时后，按作用域提示使用宿主 job 等待；触发前不增加提示词字节，覆盖 Native/PTC 并跟随消费者/提示策略撤回（#507）。
 - Honor configured PTC `allowedTools` when resident APIs are disabled; only `result` remains an implicit selection exception, with the directory and loader sharing the same pool.
 - 关闭常驻 API 时遵守 PTC 的 `allowedTools` 配置，仅保留 `result` 隐式选择例外，目录与加载器共用同一允许池。
+- Build Windows Bash IPC proxies from non-ASCII checkout/tool/temp paths using ASCII batch instructions and Unicode environment values; reproducible linker metadata keeps identical sources byte-identical across checkout paths (#553).
+- Windows Bash IPC 构建以 ASCII 批处理与 Unicode 环境变量支持非 ASCII 检出/工具/临时路径，并使用可复现链接元数据，使相同源码跨检出路径生成相同字节（#553）。
 - Detect the `dsh-win-pwsh7` companion from the profile that installed this package, so the row's link also resolves in the host process, which gets no `DSH_PROFILE_DIR`; a save no longer freezes a detected link into an explicit value, while a flipped link is always written.
 - 从安装本包的 profile 探测 `dsh-win-pwsh7` 联动，宿主进程没有 `DSH_PROFILE_DIR` 也能判定；保存其它开关不再把「跟随检测」写成显式值，而手动拨动联动开关一定落盘。
 - Name the row setting instead of the removed Compatibility mode when an official tool has an OPS replacement.
 - 官方工具被 OPS 替代时，拒绝信息改指行设置，不再提已删除的兼容模式。
+- Stop the discovery refresh/reconcile feedback loop (#526). A tool or prompt
+  registry change made while this plugin's own presentation probe is assembling
+  is now attributed to that probe instead of being applied inline, and each
+  external activation may spend at most one trailing reconciliation; a component
+  that keeps mutating the registry during assembly gets a single warning and its
+  change is dropped. One external `tools/change` now costs one reconcile (two
+  with a one-off in-assembly change) instead of an unbounded boot-time storm.
+- 修复 discovery 的 refresh/reconcile 自激回路（#526）。本插件自身展示探针装配期间发生的
+  工具或 prompt 注册表变更，现在归属到该探针而不再内联应用；每次外部触发最多追加一次尾随
+  收敛；在装配期间持续修改注册表的组件只告警一次，其变更被丢弃。一次外部 `tools/change`
+  现在只产生一次收敛（装配内有一次性变更时为两次），不再是无界的启动期风暴。
+- Bound a presentation withdrawal to one rebuild per request: `claimPresentationRebuild` in `src/publication/presentation.ts` lets the first hook that retires tools re-assemble, and every later hook in the same request keeps the assembly it already holds. Two hooks that each withdrew in one request used to re-assemble in turns, which is the spin behind an idle Host burning a core.
+- 将展示撤回限制为每个请求最多重建一次：`src/publication/presentation.ts` 的 `claimPresentationRebuild` 只允许第一个撤回工具的发钩重建，同一请求中后续钩子保留已有装配。此前两个钩子在同一请求里交替重建，正是空闲宿主吃满单核的自旋。
+- Stop the session shell hook from waiting on reconciles scheduled after its own assembly started, and let it answer an inspection instead of waiting for a publication an inspection cannot change.
+- 会话 shell 钩子不再等待自身装配开始之后才排队的 reconcile；探测（inspection）不再等待它无法改变的发布。
+
+- Add an opt-in download guard with operator-owned Bash/PowerShell alternatives, conservative literal-command detection and actual Native/PTC dispatch coverage. Unconfigured, ambiguous and streaming calls stay unchanged; replacements are never executed automatically (#506).
+- 新增可选下载约束，由用户配置 Bash/PowerShell 替代下载命令，保守识别字面命令并覆盖真实 Native/PTC 派发。未配置、含歧义或流式输出的调用保持原状，绝不自动执行替代命令（#506）。
+- Inspect Windows Bash image and ancestor integrity labels in `ladder`, warn about Low labels, and keep unreadable labels and runtime health distinct from static payload compatibility (#446).
+- `ladder` 只读检查 Windows Bash 映像与祖先路径的完整性标签，告警 Low 标签，并区分不可读标签、运行时健康和静态载荷兼容性（#446）。
 
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 
@@ -34,6 +127,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - Preserve Unix worker executable modes in Windows-built release tarballs and reject invalid runtime TAR members before publishing checksum records.
 - 修复 Windows 构建发布包丢失 Unix worker 执行位，并在生成校验记录前拒绝异常运行时 TAR 成员。
+
+- Add the real-corpus `calls` comparison: host-dispatched official `grep`/`glob` versus OPS, or two OPS builds in one process, with a declared corpus shape, a content identity and coverage recorded per arm. Timings stay manual evidence and never gate CI.
+- 新增真实语料 `calls` 对比：真实 host 派发的官方 `grep`/`glob` 对 OPS，或同进程内两套 OPS 构建；语料 shape、内容身份与覆盖率按臂记录。耗时仍为人工证据，不进入 CI 门禁。
 
 ## [0.5.0-alpha2] — 2026-10-30 — Unstable development prerelease
 

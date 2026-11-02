@@ -7,6 +7,10 @@
 
 对象是 `.github/workflows/release.yml`（workflow 名 `Release`）。发布目标只有一个：**GitHub Release**（tag + 自动 notes + 一个可安装主包 tarball + `SHA256SUMS`）。npm publish 不在这条流水线里，理由见下。
 
+打包报告兼容 npm 11 及此前的单项数组，以及 npm 12 按包名组织的对象。真实打包、发布目录清单与源码闭包检查共用严格解析器，核对包名、版本、id、tarball 文件名和非空安全相对路径清单；tar 权限修复后仍重新计算字节摘要与 provenance，不采用 npm 修复前的哈希。
+
+Pack reports support the single-entry array from npm 11 and earlier and the package-keyed object from npm 12. Actual packing, publish-directory listing and source-closure validation share one strict parser that checks package name, version, id, tarball filename and a nonempty list of safe relative file paths. Tar mode repair still precedes hashing and provenance recording; npm's pre-repair hashes are not substituted.
+
 ## 历史状态记录：`disabled_manually`
 
 ```

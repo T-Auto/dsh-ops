@@ -31,6 +31,12 @@ assembler for built-in and explicit preset consumers. `presets/builtin.ts` trans
 built-in defaults and saved switches into that plan; `integration/index.ts` translates public
 options into the same plan. A configured preset id does not change host presentation or authority.
 
+`dsh-plugin.json` inventories every owned capability in `contributes.x-tool-namespaces`, including
+PTC `batch`/`load_sdk` and Native discovery's `discover_tools`. This static metadata describes possible
+bindings; it neither registers tools nor makes them resident. The capability catalogue and live
+scoped publication still decide presentation, selection and execution authority. Manifest validation
+requires each catalogue name exactly once, while keeping the Native file namespace separate.
+
 ## Execution is shared; projection is not
 
 Native file tools and typed PTC file APIs call `execution/files.ts`, then the same Rust kernel.

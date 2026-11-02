@@ -90,6 +90,16 @@ Repeat `--switch` to set candidate components. Values default to `true`. Support
 
 Real setup verifies composed configuration and runs one bounded headless readiness turn, which may call the configured model. Missing successful completion, host errors and `READINESS_BLOCKED` fail setup with the #207 diagnostic before a sweep starts. This does not substitute for Desktop validation. Summaries and sealed `arms.cand.switches` retain effective configuration; report headers and the panel show it. Comparisons reject different candidate switch sets with exit 2, while the baseline's empty set is expected. Unevaluated configuration and historical missing metadata remain unknown, without implying publication readiness. Switch combinations are selected explicitly and are outside the CI gate.
 
+## 无模型工具调用与版本对比 / Model-free call and version comparison
+
+`node bench/cli.mjs calls` 比较官方 `grep/glob` 与 OPS；传入 `--baseline-plugin-root <当前构建>` 和 `--plugin-root <候选构建>` 后，两套 OPS 在同一进程、同一语料上逐轮交替。各臂加载自己的 JS、工具命名策略和 worker，报告保留版本与构建哈希。上游与 fork 共用这一套实现，不维护独立的性能测试分支。
+
+语料由操作者按配方准备（见下节链接），`calls --baseline <旧报告>` 仅校验语料身份，不将历史耗时配成本轮对照。耗时必须和错误、覆盖率、截断一起读，不作 CI 性能门禁。
+
+The `calls` command compares official tools with OPS, or alternates two OPS builds in one process using `--baseline-plugin-root` / `--plugin-root`. Each arm keeps its own code and worker; the corpus and host version are shared. The operator prepares the corpus from the documented recipe, and `--baseline <report>` checks its identity only. Timings are human evidence, never a CI performance verdict.
+
+参数、语料固定规则与隔离输出示例见 [工具调用基准](../docs/工具调用基准.md) / [English](../docs/benchmark-calls.md)。这些命令不调用模型，不需要配置 sweep 的两个 profile。
+
 ## 任务一览
 
 六个任务各自压一种能力，`ops_*` 工具名来自 `publicToolName()`。每个任务的期望值都由夹具生成器现算（`derive*`），判卷在 `bench/lib/verify.mjs`。

@@ -47,7 +47,7 @@ export async function diagnose(ctx: Context, agent: Agent): Promise<Diagnostic> 
       const ptc = assembly.tools.length === 1 && assembly.tools[0]?.name === 'run_code'
         && assembly.sections.some(section => section.name === 'tools:ptc-only' && section.text.trim())
       if (config.presentation === 'ptc' && (!ptc || !ctx.get('ptcRuntime'))) issue('PRESENTATION_MISMATCH', 'PTC requires an available runtime and authoritative run_code-only presentation; a preset name or recommendation is insufficient.')
-      if (config.presentation === 'native' && ptc) issue('PRESENTATION_MISMATCH', 'Native tools are withdrawn in PTC-only presentation. Choose the typed PTC integration or restore Native/both presentation.')
+      if (config.presentation === 'native' && ptc) issue('PRESENTATION_MISMATCH', 'Native tools are withdrawn in PTC-only presentation. Choose the typed PTC integration or restore Native presentation.')
     } catch { issue('PRESENTATION_UNAVAILABLE', 'The host could not assemble this scope. Check the host presentation/runtime configuration.') }
     if (config) {
       const expected = [

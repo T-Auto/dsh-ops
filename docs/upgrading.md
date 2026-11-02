@@ -72,6 +72,57 @@ removed the dependency or payload. Verify the final profile manifest, bundle
 selection and installed package state through the official manager. Transaction
 rollback and registry persistence belong to DSH's package manager.
 
+## An unmapped Windows error while pnpm fetches or unpacks
+
+`ERR_PNPM_UNKNOWN` with `UNKNOWN: unknown error, open '<path>'` identifies an
+installation failure, but that text alone does not identify the root cause.
+Read the package URL and exact path in the operation log. In #524 the failing
+archive is `yujunzhixue/dsh-purge`, and the failing member is in that package's
+`skills/redteam/` directory. That excerpt does not show dsh-ops code running or
+establish that changing dsh-ops would repair the installation.
+
+1. Preserve the host operation log and record the versions, requested package,
+   archive URL, failing member, and store location. Redact credentials and user paths.
+2. Inspect protection/quarantine history and filesystem diagnostics for that
+   exact path. An absent record is not proof either way; do not disable protection
+   or add broad profile/store exclusions to force installation.
+3. If a comparison is needed, use a disposable empty directory and an alternate
+   store, for example `pnpm --store-dir D:/pnpm-store add <the same spec> --ignore-scripts`.
+   This changes only the diagnostic fixture. Success narrows the investigation but
+   does not prove which filesystem, cache, permission or security condition differed.
+4. Send the sanitized evidence to the owner of the failing package or installer.
+   A new failure naming dsh-ops itself should be reported separately with its log.
+
+Keep `minimumReleaseAge`, integrity checks and registry policy enabled. Do not
+remove user lockfiles or change an installed profile as a diagnostic shortcut.
+
+## Duplicate YAML mapping keys during installation
+
+`duplicated mapping key (12:3)` means a YAML parser encountered the same key twice
+in one mapping. The excerpt in #479 does not name the input file, so it cannot
+identify the plugin bundle, host profile, pnpm configuration or lockfile as the cause.
+Keep the operation log and obtain the parser's filename plus a sanitized surrounding
+mapping. Back up the identified file before correcting that mapping; do not delete
+the entire profile or lockfile. OPS's manifest gate parses its shipped bundle, but
+a passing bundle check does not validate a user's other YAML inputs.
+
+## Installing from Git is not a supported channel
+
+Direct installation of `git+https://github.com/T-Auto/dsh-ops.git` or an unbuilt
+source checkout is unsupported. `.gitignore` excludes `lib/` and
+`runtime/`; `prepack` compiles `lib/` but never stages the native worker, and
+staging it (`npm run build:ptc`) needs cargo and the full toolchain. Adding a
+`prepare` hook would compile `lib/` for every git install and still leave
+`runtime/` empty, so the file tools would publish nothing after an install that
+looks successful. This package therefore declares no install-time lifecycle hook:
+nothing matching `(pre|post)?(prepare|install)` — `prepare`, `preprepare`,
+`postprepare`, `install`, `preinstall` and `postinstall` — and
+`scripts/validate-manifest.mjs` fails on any of them, including a hook unrelated to
+the build, because the gate cannot tell an innocent hook from one that tries to
+repair the unsupported channel. Install the published registry target
+(`add dsh-ops`), or build and `npm pack` a checkout yourself; see
+[contributing](CONTRIBUTING.md#building-the-plugin-and-installing-from-source).
+
 ## Moving from 0.4.x to 0.5.x
 
 | Change | Action after upgrade |

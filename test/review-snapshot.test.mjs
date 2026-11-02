@@ -7,7 +7,7 @@ import { assert, test, report, withTempDir, PACKAGE_ROOT } from './lib/harness.m
 
 const BASE = '1'.repeat(40), HEAD = '2'.repeat(40)
 const pr = () => ({ number: 12, title: 'Review fixture', url: 'https://github.com/example/project/pull/12', state: 'OPEN',
-  isDraft: false, reviewDecision: 'REVIEW_REQUIRED', additions: 3, deletions: 1, changedFiles: 2,
+  isDraft: false, reviewDecision: 'REVIEW_REQUIRED', mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN', additions: 3, deletions: 1, changedFiles: 2,
   headRefOid: HEAD, baseRefOid: BASE, baseRefName: 'main', headRepository: { nameWithOwner: 'contributor/project' },
   maintainerCanModify: false, author: { login: 'contributor' },
   files: { nodes: [{ path: '.github/workflows/ci.yml' }, { path: 'package-lock.json' }], pageInfo: { hasNextPage: false } },
@@ -16,7 +16,7 @@ const pr = () => ({ number: 12, title: 'Review fixture', url: 'https://github.co
       { author: { login: 'contributor' }, body: 'I am taking this issue; scoped fix follows.', url: 'https://github.com/example/project/issues/4#comment' },
     ] } }] } })
 
-function github({ metadata = pr(), missingRun = false, failure = false, jobCount = 1 } = {}) {
+function github({ metadata = pr(), missingRun = false, failure = false, jobCount = 1, associations = [{ number: 12 }], conclusion = 'success', runStatus = 'completed' } = {}) {
   const calls = []
   const runner = async (file, args) => {
     calls.push([file, ...args])
@@ -37,10 +37,10 @@ function github({ metadata = pr(), missingRun = false, failure = false, jobCount
       value = { workflow_runs: [
         { id: 99, event: 'workflow_dispatch', head_sha: commit, created_at: '2026-10-25', conclusion: 'success', pull_requests: [{ number: 12 }] },
         { id: 98, event, head_sha: '3'.repeat(40), created_at: '2026-10-24', conclusion: 'success', pull_requests: [{ number: 12 }] },
-        ...missingRun ? [] : [{ id: event === 'push' ? 10 : 20, event, head_sha: commit, status: 'completed',
-          conclusion: event === 'push' ? 'failure' : 'success', name: 'Cross-platform validation',
+        ...missingRun ? [] : [{ id: event === 'push' ? 10 : 20, event, head_sha: commit, status: runStatus,
+          conclusion: event === 'push' ? 'failure' : conclusion, name: 'Cross-platform validation',
           html_url: `https://github.com/example/project/actions/runs/${event === 'push' ? 10 : 20}`,
-          run_attempt: 2, created_at: '2026-10-23', pull_requests: [{ number: 12 }] }],
+          run_attempt: 2, created_at: '2026-10-23', pull_requests: associations }],
       ] }
     } else if (endpoint.includes('/jobs?')) value = { total_count: jobCount, jobs: Array.from({ length: Math.min(jobCount, 50) }, () => ({ name: 'linux', status: 'completed', conclusion: endpoint.includes('/10/') ? 'failure' : 'success' })) }
     else throw new Error(`Unexpected endpoint ${endpoint}`)
@@ -81,6 +81,48 @@ await test('missing runs, bounded evidence and API failures stay partial or unkn
   const failed = await reviewSnapshot({ repo: 'example/project', prs: [12] }, github({ failure: true }).runner)
   assert.equal(failed.status, 'partial'); assert.equal(failed.prs[0].status, 'unknown')
   assert.match(failed.prs[0].reason, /authentication/)
+})
+
+await test('fork runs with empty associations retain exact-head CI and GitHub conflict evidence', async () => {
+  const metadata = { ...pr(), mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' }
+  const { runner, calls } = github({ metadata, associations: [] })
+  const snapshot = await reviewSnapshot({ repo: 'example/project', prs: [12] }, runner)
+  assert.equal(snapshot.status, 'completed')
+  const row = snapshot.prs[0]
+  assert.equal(row.ci.conclusion, 'success'); assert.equal(row.ci.headSha, HEAD)
+  assert.equal(row.ci.prAssociation, 'exact-head-only')
+  assert.equal(row.githubMerge.mergeable, false)
+  assert.equal(row.githubMerge.mergeStateStatus, 'DIRTY')
+  assert.equal(row.githubMerge.baseSha, BASE); assert.equal(row.githubMerge.matchesRequestedBase, true)
+  assert.equal(row.merge.status, 'unknown', 'the optional local probe remains independent')
+  const query = calls.find(call => call.includes('graphql')).find(arg => arg.startsWith('query='))
+  assert.match(query, /\bmergeable\b/); assert.match(query, /\bmergeStateStatus\b/)
+})
+
+await test('fork approval state survives and explicit contradictory PR associations are refused', async () => {
+  const approval = await reviewSnapshot({ repo: 'example/project', prs: [12] }, github({ associations: [], conclusion: 'action_required' }).runner)
+  assert.equal(approval.prs[0].ci.status, 'completed')
+  assert.equal(approval.prs[0].ci.conclusion, 'action_required')
+  const wrongPr = await reviewSnapshot({ repo: 'example/project', prs: [12] }, github({ associations: [{ number: 99 }] }).runner)
+  assert.equal(wrongPr.status, 'partial'); assert.equal(wrongPr.prs[0].ci.status, 'unknown')
+  assert.match(wrongPr.prs[0].ci.reason, /association/)
+  const malformed = await reviewSnapshot({ repo: 'example/project', prs: [12] }, github({ associations: null }).runner)
+  assert.equal(malformed.prs[0].ci.status, 'unknown', 'missing associations are not verified empty lists')
+  for (const runStatus of ['queued', 'in_progress']) {
+    const pending = await reviewSnapshot({ repo: 'example/project', prs: [12] }, github({ associations: [], conclusion: null, runStatus }).runner)
+    assert.equal(pending.prs[0].ci.status, runStatus); assert.equal(pending.prs[0].ci.conclusion, null)
+  }
+})
+
+await test('GitHub mergeability identifies its base and preserves unknown or policy-blocked states', async () => {
+  const blocked = await reviewSnapshot({ repo: 'example/project', prs: [12] }, github({ metadata: { ...pr(), mergeStateStatus: 'BLOCKED' } }).runner)
+  assert.equal(blocked.prs[0].githubMerge.mergeable, true, 'conflict-free does not imply policy approval')
+  assert.equal(blocked.prs[0].githubMerge.mergeStateStatus, 'BLOCKED')
+  const unknown = await reviewSnapshot({ repo: 'example/project', prs: [12] }, github({ metadata: { ...pr(), mergeable: 'UNKNOWN' } }).runner)
+  assert.equal(unknown.prs[0].githubMerge.mergeable, null); assert.equal(unknown.status, 'partial')
+  const otherBase = await reviewSnapshot({ repo: 'example/project', prs: [12] }, github({ metadata: { ...pr(), baseRefOid: '4'.repeat(40), baseRefName: 'release' } }).runner)
+  assert.equal(otherBase.prs[0].githubMerge.matchesRequestedBase, false)
+  assert.equal(otherBase.prs[0].githubMerge.baseRef, 'release'); assert.equal(otherBase.status, 'partial')
 })
 
 await test('invalid input is refused before subprocesses and oversized rendering retains recovery guidance', async () => {

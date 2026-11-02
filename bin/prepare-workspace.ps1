@@ -1,6 +1,9 @@
 # Trusted bootstrap for DSH workspace-write. Never accepts model-selected roots.
 param([Parameter(Mandatory=$true)][string]$Workspace, [Parameter(Mandatory=$true)][string]$BackupDir)
 $ErrorActionPreference = 'Stop'
+if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') {
+    throw 'DSH_OPS_CONSTRAINED_LANGUAGE: workspace ACL preparation requires PowerShell FullLanguage; no ACL preparation was completed. Keep the host security policy enabled and ask its administrator for a supported preparation path.'
+}
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 $item = Get-Item -LiteralPath $Workspace -Force

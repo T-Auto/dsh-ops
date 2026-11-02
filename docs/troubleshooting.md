@@ -1,6 +1,13 @@
 # Troubleshooting
 
+## PowerShell ConstrainedLanguage blocks workspace preparation
+
+On a Windows host with ConstrainedLanguage enforced, the trusted workspace preparation script cannot use the identity and DACL APIs it needs. OPS now reports `DSH_OPS_CONSTRAINED_LANGUAGE` before those calls, and classifies older PowerShell language-mode errors by the same cause. No ACL preparation was completed; restricted commands remain blocked at that prerequisite. This diagnostic does not change the language policy, session permissions, or confinement. Ask the host administrator for a supported preparation path; `-ExecutionPolicy Bypass` does not remove ConstrainedLanguage restrictions. Ordinary file reads that do not require this preparation keep their existing policy path.
+
 Start here when installation fails, an error is unclear, or behaviour is unexpected.
+
+For Windows Low-integrity, MSYS startup, antivirus, heredoc or approval reports,
+collect [runtime evidence](windows-runtime-evidence.md) before assigning a cause.
 
 ---
 
@@ -102,6 +109,19 @@ What to do:
 - Or switch the session to `danger-full-access`, where `bashPath` runs directly.
 - Check with the profile's own copy: `node "<profile>\node_modules\dsh-ops\bin\dsh-ops.mjs" ladder --config <file>` reports `restricted: yes/no` for the resolved bash.
 
+### Restricted Bash is still preparing, or its last preparation was interrupted
+
+Symptom, in a read-only or workspace-write session: an `EXECUTOR_UNAVAILABLE` whose second segment names a stage, for example `EXECUTOR_UNAVAILABLE: bash-staging-failed: …`, `bash-generation-quarantine-failed: …` or `bash-lifecycle-lock-busy: …`.
+
+Restricted calls run the pinned Bash from a private, verified copy under `<DSH_HOME>/dsh-ops/bash-ipc/<identity>`. The first confined call stages it (about 10 seconds for the 412 MB payload); later calls reuse it. The stage name says whether another call can help:
+
+- `bash-staging-failed` — the copy did not finish (an interrupted host, antivirus holding the freshly written tree, a full disk). The next call stages a fresh copy, so retry once; if it repeats, stop every confined shell and run `dsh-ops bash-runtime clean-cache --yes --all-hosts-stopped`, then retry.
+- `bash-generation-quarantine-failed` — an unverifiable generation is still in use. Stop the confined shells that may own it, then retry; the retry quarantines it and stages a fresh copy.
+- `bash-lifecycle-lock-busy (<pid>)` — a host died while holding `<DSH_HOME>/dsh-ops/bash-ipc/.ops-lifecycle-lock`. The lock is never stolen from an owner that may still be alive. Stop every OPS host and confined shell, run `dsh-ops bash-runtime clean-cache --yes --all-hosts-stopped`, then retry.
+- `bash-runtime-missing` / `bash-ipc-mismatch` — the pinned payload or the IPC compatibility receipt is absent or changed. Restore the profile dependencies or run `dsh-ops provision-shells --bash`; a retry cannot repair these.
+
+An interrupted staging leaves a `stage-*` directory in the cache. Confined calls reclaim copies older than one hour automatically (the reported reclaimable bytes include them), `clean-cache --yes --all-hosts-stopped` removes all of them, and deleting them by hand while no confined shell is running is equally safe.
+
 ### A second restricted Bash fails while another Bash is still running
 
 The `CreateFileMapping S-<user SID>.<version>, Win32 error 5` failure in #363 came
@@ -116,6 +136,30 @@ an empty false-success result is a separate problem (#374 and #373).
 ### Bash approval is rejected or unavailable
 
 `ops_bash` uses host approval for a strictly wider `sandbox_permissions` mode. Supply a non-empty `justification` for that exact command. A rejection or missing approval service prevents execution; do not retry through another shell. Approval does not repair an incompatible restricted Bash runtime.
+
+### Desktop returns an empty successful Bash result
+
+An Electron host can return its Desktop executable as the Node sandbox runner.
+Without an explicit Node-mode environment, this launches the application again;
+the single-instance handler may exit 0 without running Bash (#484). OPS now stops
+this argv shape before spawning and reports `EXECUTOR_UNAVAILABLE`, with no command
+effects. The host must provide a supported runner or explicitly prepared Electron
+Node mode. OPS does not guess private Desktop entry points or enable Node mode on
+the host's behalf. This guard diagnoses the integration error; it does not repair
+the host runner. A legitimate command that exits 0 with no output remains successful.
+
+### Windows reports exit code 3221225794 or -1073741502
+
+Both values represent `STATUS_DLL_INIT_FAILED` (`0xC0000142`). OPS names this
+status and retains unknown command effects (#417). It may originate in the host
+runner, MSYS initialization, or a child process; an application can also forward
+the same exit value. The number alone cannot establish the failing layer. Inspect
+existing effects without repeating the command, and collect the host/OPS versions,
+sandbox mode, resolved executable and runner paths, and complete stderr. If the
+host's own PowerShell has the same failure, include that evidence in the host
+report. Keep sandbox and system protections enabled. This diagnostic does not
+repair token construction, DLL initialization, or a foreign MSYS shared object's ACL.
+
 ### Empty placeholder arguments on file tools
 
 Strict tool-call adapters that fill every schema field send `""`, `null` or `[]` for unused optional fields of `ops_inspect_local_file`, `ops_grep`, `ops_glob` and `ops_replace`. The plugin drops those placeholders for optional fields before the native worker runs, so they no longer trip `path`/`encoding`/`view` validation. Required fields, `replacement: ""`, `false` and `0` are forwarded unchanged, so genuinely invalid values still error.
@@ -262,3 +306,33 @@ effect without a restart.
 - [Usage](usage.md) — the complete install flow and CLI
 - [Configuration reference](configuration-reference.md) — keys and owning components
 - [Component reference](component-reference.md) — tools and permissions
+
+## Windows Bash integrity labels
+
+`dsh-ops ladder --json` now includes `shells.bash.integrity`, separate from
+`restricted.compatible`. It reads the resolved image, its physical path, the
+PortableGit `usr/bin/bash.exe` when present, and ancestor directories. A Low or
+lower image label produces a warning: full access does not remove that label,
+and a Low child cannot write existing Medium/unlabeled files. A Low ancestor is
+reported as an inheritance risk; it does not establish the current image's label
+or retroactively change old files.
+
+`entries` identify each path as `image` or `ancestor`. A successful label query
+with no label is `unlabeled` (Windows treats such objects as Medium); an unreadable
+path, unsupported descriptor or blocked query remains `unknown`, with report
+status `partial`. `complete` means the requested labels were read, not that Bash
+can start or write every target. Other platforms and unavailable Bash report
+`not-applicable`.
+
+The CLI runs one hidden PowerShell helper with a 10-second timeout. It requests
+only `LABEL_SECURITY_INFORMATION` through `GetNamedSecurityInfoW`, which requires
+`READ_CONTROL`, not the privilege needed to read audit SACLs. ConstrainedLanguage,
+policy refusal, missing PowerShell and timeout produce unknown results. It never
+enables privileges, changes execution policy or labels, starts the candidate
+Bash, or adds per-command/plugin-startup work. No automatic relocation or repair
+is performed. Keep host runtime diagnostics and the exact failed command when
+reporting a startup failure; compatible hashes and clean labels cannot prove
+runtime health.
+
+References: [Windows security information](https://learn.microsoft.com/en-us/windows/win32/secauthz/security-information)
+and [Mandatory Integrity Control](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control).

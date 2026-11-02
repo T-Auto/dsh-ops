@@ -108,4 +108,52 @@ if (process.platform === 'win32') await test('legacy host retains its normal con
     } finally { await shutdown(ctx) }
   })
 })
+if (process.platform === 'win32') await test('full-access legacy hosts never prepare workspace confinement for optional cache', async () => {
+  await withTempDir('cache-full-access-legacy', async root => {
+    fs.writeFileSync(path.join(root, 'small.txt'), 'needle\n'); fs.writeFileSync(path.join(root, 'large.txt'), 'x'.repeat(180000))
+    const {ctx} = await bootHost(), session = {id:'cache-full-access-legacy',header:{cwd:root}}, agent = {session}
+    try {
+      await ctx.plugin(Subprocess); await ctx.plugin(CacheSandbox)
+      const sandbox = ctx.get('sandbox'); sandbox.prepareResultStorage = undefined
+      // Any confinement request is already a regression; never grant ACLs to hide it.
+      sandbox.confine = async () => { sandbox.confines++; throw new Error('full-access must not request confinement') }
+      const policy = {mode:'danger-full-access', workspaceRoot:root, sessionId:session.id}
+      await ctx.plugin(inner => inner.provide('sandboxPolicy', {resolve:()=>policy}))
+      const call = (tool,args) => fileCall(ctx,WORKER,tool,args,{agent},undefined,{denyCredentialReads:false})
+      assert.equal((await call('inspect_local_file',{path:'small.txt'})).status,'completed')
+      assert.equal(sandbox.confines,0)
+      const large = await call('inspect_local_file',{path:'large.txt'})
+      assert.equal(large.complete,false); assert.equal(large.reference,undefined)
+      assert.equal(large.items[0].truncatedInLine,true)
+      const put = await ptcCall(ctx,WORKER,'result',{action:'put',items:[{n:1}]},{agent},undefined,{denyCredentialReads:false})
+      assert.equal(put.error.code,'EXECUTOR_UNAVAILABLE')
+      assert.equal(sandbox.confines,0); assert.equal(sandbox.prepares,0)
+    } finally { await shutdown(ctx) }
+  })
+})
+if (process.platform === 'win32') await test('full-access hosts with cache-only preparation retain spill, paging and cleanup', async () => {
+  await withTempDir('cache-full-access', async root => {
+    fs.writeFileSync(path.join(root, 'large.txt'), 'x'.repeat(180000))
+    const {ctx} = await bootHost(), session = {id:'cache-full-access',header:{cwd:root}}, agent = {session}
+    try {
+      await ctx.plugin(Subprocess); await ctx.plugin(CacheSandbox)
+      const sandbox = ctx.get('sandbox'), policy = {mode:'danger-full-access',workspaceRoot:root,sessionId:session.id}
+      await ctx.plugin(inner=>inner.provide('sandboxPolicy',{resolve:()=>policy}))
+      await ctx.plugin(inner=>{ inner.inject(['tools'],scoped=>{
+        scoped.tools.register(fileDefinition('inspect_local_file',async()=>({})))
+        scoped.tools.register(ptcDefinition('result',async()=>({})))
+      }) })
+      const large = await fileCall(ctx,WORKER,'inspect_local_file',{path:'large.txt'},{agent},undefined,{denyCredentialReads:false})
+      assert.ok(large.reference?.refId,JSON.stringify(large.storageError))
+      const page = await ptcCall(ctx,WORKER,'result',{action:'page',id:large.reference.refId},{agent},undefined,{denyCredentialReads:false})
+      assert.equal(page.error,undefined); assert.ok(page.items.length)
+      assert.equal(sandbox.prepares,1); assert.equal(sandbox.confines,0)
+      const cap=[...sandbox.tempCapabilities.values()][0]
+      const cache=path.join(cap.dir,`s-${createHash('sha256').update(session.id).digest('hex')}`)
+      await expireResultSession(ctx,session)
+      assert.equal(sandbox.confines,0)
+      assert.equal(fs.readdirSync(cache).filter(name=>name.endsWith('.json')).length,0)
+    } finally { await shutdown(ctx) }
+  })
+})
 report('result-storage-cache-prep')

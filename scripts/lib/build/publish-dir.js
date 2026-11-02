@@ -10,7 +10,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { packDirectory, writeReleaseRecords } from './pack.js'
-import { REPO_ROOT, copyEntry, log, mainManifest, npm, parseNpmJson, run, size, writeJson } from './util.js'
+import { REPO_ROOT, copyEntry, log, mainManifest, npm, parseNpmPackReport, run, size, writeJson } from './util.js'
 
 /**
  * The `optionalDependencies` a publish would inject.
@@ -68,9 +68,8 @@ export async function stepPublishDir(context, assembled) {
   // re-implemented here (globs, always-included files, and ignore rules all
   // come from npm alone).
   const dryRun = npm(['pack', '--dry-run', '--json'], { cwd: REPO_ROOT })
-  const [report] = parseNpmJson(dryRun.stdout, 'npm pack --dry-run')
-  const listed = (report.files ?? []).map((entry) => entry.path).sort()
-  if (listed.length === 0) throw new Error('npm pack --dry-run listed no files')
+  const report = parseNpmPackReport(dryRun.stdout, 'npm pack --dry-run', manifest)
+  const listed = report.files.map((entry) => entry.path).sort()
   for (const entry of listed) copyEntry(path.join(REPO_ROOT, entry), path.join(directory, entry))
 
   const whitelist = manifest.files ?? []

@@ -81,10 +81,20 @@ npm pack
 On Windows the pinned Bash payload is installed by `npm ci`; if it is missing (for example a checkout installed with `--omit=optional`), run `node bin/dsh-ops.mjs bash-runtime install`, then `npm run build:bash-ipc` before packing. For an offline build, set `DSH_OPS_TEST_BASH` to the absolute pinned `bin/bash.exe`; the build/test helper verifies its digest. The gate acquires its own temporary fixture unless this variable is provided. Install the resulting
 `dsh-ops-<version>.tgz` with the DSH CLI for your target profile (see the README). `npm pack` runs
 the build through `prepack`, unless lifecycle scripts are disabled. An unbuilt Git checkout has
-no `lib/` and is not ready to load; there is no `prepare` hook. Keep development dependencies
-installed while building, since they include the compiler. The published tarball contains
-compiled `lib/` and its assets, excludes `src/`, and does not require consumers to compile the
-plugin.
+no `lib/` and is not ready to load; there is no install-time lifecycle hook. Keep development
+dependencies installed while building, since they include the compiler. The published tarball
+contains compiled `lib/` and its assets, excludes `src/`, and does not require consumers to
+compile the plugin.
+
+`prepack` compiles `lib/` but does not stage the native worker, so a Git installation can
+never ship `runtime/` on its own — see [installing from Git](upgrading.md#installing-from-git-is-not-a-supported-channel).
+Adding a `prepare` hook would not repair that channel: it would compile `lib/` on every Git
+install and still leave the worker unstaged, because staging needs cargo. The manifest gate in
+`scripts/validate-manifest.mjs` fails if any install-time lifecycle hook appears in
+`package.json` — `(pre|post)?(prepare|install)`, so `prepare`, `preprepare`,
+`postprepare`, `install`, `preinstall` and `postinstall`. A hook unrelated to the build,
+such as a `preinstall` for tooling, is refused too: the gate reads the package manifest, not
+the author's intent.
 
 ## Building the native worker
 
@@ -258,3 +268,19 @@ restart against temporary installed profiles. `settings-client` covers exact com
 backups and atomic rollback; it never migrates a developer profile.
 
 `src/panel/collect.ts` uses typed filesystem seams and validates persisted event fields before folding. Valid capture documents keep their text, counters and archive behavior. Invalid persisted text/usage/timestamp fields are counted as malformed and mark the result degraded, with incomplete usage totals; they cannot be silently coerced. Stopping still cancels queued work, waits for issued I/O and retains the append log; explicit sealing remains separate. Run `node test/run.mjs ops-panel-collect panel-records panel-stop kernel-types` for recovery, bounded data, physical-stop and type checks.
+
+## Windows IPC build paths
+
+`npm run build:bash-ipc` supports non-ASCII checkout, Visual Studio and temporary
+paths without changing the machine's console code page. Its generated batch file
+contains only ASCII commands; absolute paths travel through Unicode process
+environment values. Delayed expansion is disabled so `!` in a path stays literal.
+The helper ships under `bin/lib`, alongside the build entry.
+
+The linker uses `/Brepro` so identical source/toolchain inputs produce the same
+DLL bytes in ASCII and non-ASCII checkouts, including PE build metadata. This is
+not a promise that different MSVC versions produce identical binaries. The normal
+provenance receipt records the actual output hashes; no generated runtime is
+committed. `node test/run.mjs bash-ipc-build` covers the pure batch builder and a
+real `cmd.exe` round trip under code page 936. POSIX explicitly reports that the
+Windows round-trip fixture is unavailable and does not count it as passing.

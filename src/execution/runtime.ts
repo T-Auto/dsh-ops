@@ -31,6 +31,16 @@ function readJson(file: string, what: string, shown: string): Record<string, unk
     throw new Error(`Native worker ${what} at ${shown} is not valid JSON (${(error as Error)?.name ?? 'unknown'})`)
   }
 }
+/** Shared receipt check for locally executed and delegated packaged payloads. */
+export function verifyPackagedWorker(file: string, packageRoot: string, platform: string, arch: string): string {
+  const receipt = readJson(path.join(path.dirname(file), 'provenance.json'), 'provenance receipt',
+    path.posix.join('runtime', `${platform}-${arch}`, 'provenance.json'))
+  const version = readJson(path.join(packageRoot, 'package.json'), 'package manifest', 'package.json').version
+  const digest = createHash('sha256').update(fs.readFileSync(file)).digest('hex')
+  if (!fs.statSync(file).isFile() || receipt.target !== `${platform}-${arch}` || receipt.version !== version
+    || receipt.executable !== workerName(platform) || receipt.sha256 !== digest) throw new Error('Native worker provenance mismatch.')
+  return digest
+}
 /**
  * Resolve the worker without throwing, for a caller that has to *report* an
  * unresolvable host rather than fail on it — a test suite, whose convention for
@@ -102,11 +112,7 @@ export function resolveWorker(config: WorkerSelection = {}, { packageRoot = PACK
     //   · the selection test is "is this the candidate we derived", not a substring of a
     //     path: `includes('\runtime\')` let any absolute path opt itself in (or out).
     if (same(path.resolve(file), fromPackage)) {
-      const receipt = readJson(path.join(path.dirname(file), 'provenance.json'), 'provenance receipt',
-        path.posix.join('runtime', `${platform}-${arch}`, 'provenance.json'))
-      const version = readJson(path.join(packageRoot, 'package.json'), 'package manifest', 'package.json').version
-      if (receipt.target !== `${platform}-${arch}` || receipt.version !== version || receipt.executable !== workerName(platform)
-        || receipt.sha256 !== createHash('sha256').update(fs.readFileSync(file)).digest('hex')) throw new Error('Native worker provenance mismatch.')
+      verifyPackagedWorker(file, packageRoot, platform, arch)
     } else {
       // Not silent: an unverified worker binary is a fact the operator should see.
       console.warn(`dsh-ops: native worker selected without provenance verification — ${note}: ${file}`)

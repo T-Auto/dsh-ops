@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { assert, test, report, PACKAGE_ROOT } from './lib/harness.mjs'
+import { parseNpmPackReport } from '../scripts/lib/build/util.js'
 
 await test('npm pack includes compiled host code and native sources, never host sources or build caches', () => {
   const started = performance.now()
@@ -12,7 +13,17 @@ await test('npm pack includes compiled host code and native sources, never host 
   assert.equal(result.status, 0, JSON.stringify({ elapsedMs: Math.round(performance.now() - started),
     signal: result.signal, error: result.error && { code: result.error.code, message: result.error.message },
     stderr: result.stderr, stdoutTail: result.stdout?.slice(-2000) }, null, 2))
-  const files = JSON.parse(result.stdout)[0].files.map(file => file.path)
+  const manifest = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'package.json'), 'utf8'))
+  const entry = parseNpmPackReport(result.stdout, 'source-closure dry run', manifest)
+  // Replay the actual report through both npm envelopes, including lifecycle log noise.
+  for (const shape of [[entry], { [manifest.name]: entry }]) {
+    assert.deepEqual(parseNpmPackReport(`prepack output\n${JSON.stringify(shape)}\n`, 'pack format compatibility', manifest), entry)
+  }
+  for (const changed of [{ ...entry, name: 'another-package' }, { ...entry, filename: '../outside.tgz' },
+    { ...entry, files: [{ path: 'C:outside' }] }, { ...entry, files: [] }]) {
+    assert.throws(() => parseNpmPackReport(JSON.stringify([changed]), 'invalid pack metadata', manifest), /invalid npm pack report/u)
+  }
+  const files = entry.files.map(file => file.path)
   const required = ['lib/ptc/sdk.d.ts', 'lib/index.js', 'lib/policy.js', 'lib/components/panel/index.js',
     'lib/components/panel/package.json', 'lib/components/panel/icon.png', 'lib/panel/panel.html',
     'lib/components/tui/dsh-plugin.json',

@@ -2,6 +2,8 @@
 
 中文版：[搜索覆盖范围.md](搜索覆盖范围.md).
 
+Developer timing and equal-work comparisons: [search performance diagnostics](search-performance.md).
+
 `glob` and `grep` return an additive `SearchExecutionReport` alongside their existing items.
 A settled legacy `status: completed` means the worker returned a result; callers must still
 inspect `scanComplete`, `pageComplete` and `complete` before treating it as exhaustive.

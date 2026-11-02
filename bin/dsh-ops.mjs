@@ -52,7 +52,7 @@ Usage:
                                   ~/.fastctx state from the removed background component
   dsh-ops ladder [--json] [--config <file>]
                                   Report the native worker, both shells, and the rungs the
-                                  prompt ladder actually renders; nothing is spawned
+                                  prompt ladder renders; Windows labels are inspected read-only
   dsh-ops panel [--serve] [dir] [--port <n>]
                                   Serve the panel viewer and capture reports over loopback
                                   (default: ./.dsh-ops/panel, latest session preselected)

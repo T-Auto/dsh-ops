@@ -15,6 +15,10 @@ const physicalLine = object({ path: string, line: integer, text: string, view: s
 const receipt = object({ path: string, to: string, revision: string, revisionBefore: string,
   bytes: integer, bytesBefore: integer, bytesAfter: integer, lineCount: integer, removed: boolean,
   metadataWarnings: array(string) })
+const replacementReceipt = object({ path: string, revision: string, revisionAfter: string,
+  replacements: integer, bytesBefore: integer, bytesAfter: integer, lineCountBefore: integer, lineCount: integer,
+  status: { type: 'string', enum: ['pending', 'completed', 'error'] },
+  error: { type: 'object' }, metadataWarnings: array(string) })
 const facts = { revision: string, bytes: integer, lineCount: { oneOf: [integer, { type: 'null' }] } satisfies JsonSchemaNode }
 const cache = { reference: STORAGE_REFERENCE, referenceRoot: string,
   storageError: object({ code: string, message: string, effectState: { type: 'string', enum: ['none', 'applied', 'partial', 'unknown'] } }) }
@@ -38,6 +42,7 @@ export function canonicalOutput(tool: FileToolName | PtcToolName): JsonSchemaNod
     hunk: object({ startLine: integer, removed: integer, added: integer }), items: array(object({ kind: string, line: integer, text: string })) })
   else if (tool === 'result') properties.source = object({ ...range, ...coverage, ...DOCUMENT_FACTS, root: string,
     itemEncoding: string, capturedItems: integer, captureComplete: boolean })
+  else if (tool === 'replace') Object.assign(properties, { pending: integer, items: array(replacementReceipt) })
   else if (tool !== 'batch') properties.items = array(receipt)
   return { ...entry.output, properties }
 }

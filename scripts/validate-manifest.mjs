@@ -10,7 +10,8 @@
  * prompt section the manifest advertises actually being registered by name, and
  * the display metadata the Plugin Manager reads without activating the plugin
  * (icon and locale documents) being real, package-relative, and published by the
- * `files` whitelist.
+ * `files` whitelist, and no `prepare`/`postinstall` lifecycle hook shipping a
+ * channel this package cannot satisfy.
  *
  * @module dsh-ops/validate-manifest
  */
@@ -28,7 +29,7 @@ import {
   publicToolName,
   renderToolingPolicy,
 } from '../lib/policy.js'
-import { NATIVE_FILE_TOOLS } from '../lib/capabilities/registry.js'
+import { CAPABILITIES, NATIVE_FILE_TOOLS } from '../lib/capabilities/registry.js'
 import { resolvePtcConfig } from '../lib/ptc/index.js'
 import { resolveTuiConfig } from '../lib/components/tui/index.js'
 import { resolvePanelConfig } from '../lib/components/panel/index.js'
@@ -295,9 +296,8 @@ const equippedPolicy = renderToolingPolicy({
   levels: { files: true, bash: true, pwsh: true },
 })
 
-// Every namespace after the first describes tools this plugin registers itself,
-// so those names are checked against `IN_PROCESS_TOOLS` and against the policy
-// text that has to name them. Written against whatever the manifest declares.
+// Shell routing names the owned shell surface. PTC/discovery controls have their
+// own scoped guidance; the static inventory must not make them resident.
 check(
   IN_PROCESS_TOOLS.every((toolName) => equippedPolicy.includes(publicToolName(toolName))),
   'the tools this plugin registers itself are named by the tooling policy',
@@ -306,14 +306,21 @@ check(
 for (const [index, entry] of namespaces.slice(1).entries()) {
   const declared = Array.isArray(entry?.tools) ? entry.tools : []
   const identified = declared.filter((toolName) => typeof toolName === 'string'
-    && IN_PROCESS_TOOLS.includes(toolName)
-    && equippedPolicy.includes(publicToolName(toolName)))
+    && CAPABILITIES.some(capability => capability.rawName === toolName))
   check(
-    declared.length > 0 && identified.length === declared.length,
+    declared.length > 0 && identified.length === declared.length
+      && entry.serverName === 'dsh-ops' && entry.transport === 'in-process' && entry.publicPrefix === TOOL_PREFIX,
     `every tool of the namespace at index ${index + 1} is published under ${TOOL_PREFIX} by this plugin itself`,
-    `declared ${JSON.stringify(entry?.tools)} vs in-process ${IN_PROCESS_TOOLS.map(publicToolName).join(', ') || '(none)'}`,
+    `declared ${JSON.stringify(entry?.tools)} vs catalogue ${CAPABILITIES.map(entry => entry.rawName).join(', ')}`,
   )
 }
+const namespaceTools = namespaces.flatMap(entry => Array.isArray(entry?.tools) ? entry.tools : []).sort()
+const catalogueTools = CAPABILITIES.map(entry => entry.rawName).sort()
+check(
+  JSON.stringify(namespaceTools) === JSON.stringify(catalogueTools),
+  'the namespace inventory covers every owned capability exactly once',
+  `manifest ${namespaceTools.join(',')} vs catalogue ${catalogueTools.join(',')}`,
+)
 
 const sections = manifestRaw.contributes?.['x-prompt-sections'] ?? []
 const sectionNames = sections.map((section) => section.name)
@@ -553,11 +560,32 @@ check(
   `got: ${unpublishable.join(', ')}`,
 )
 
+// The `git+https` channel is not a supported install channel, and no install-time
+// lifecycle hook may pretend otherwise (#524). `prepare` runs for a git-hosted
+// dependency after pnpm unpacks it, so adding one would "fix" the missing `lib/` —
+// but the native worker is staged by `npm run build:ptc`, which needs cargo, and
+// `prepack` never stages it. A git install would still resolve no worker and
+// silently publish no file tools, while every install would take on a full
+// TypeScript build. The other `*install` hooks are refused for the reason
+// `bin/check-release.mjs` refuses `postinstall`: the payload arrives as a declared
+// optional dependency, never from a download or build hook.
+// The rule matches the whole install-time family — `install`, `preinstall`,
+// `postinstall`, `prepare`, `preprepare`, `postprepare` — including hooks that
+// have nothing to do with building this package. Intent is not something a gate can
+// read, and an unrelated `preinstall` still runs code on every consumer's machine.
+const LIFECYCLE_HOOKS = /^(?:pre|post)?(?:prepare|install)$/u
+const lifecycleHooks = Object.keys(pkg.scripts ?? {}).filter((name) => LIFECYCLE_HOOKS.test(name))
+check(
+  lifecycleHooks.length === 0,
+  'package.json declares no install-time lifecycle hook: the git channel cannot be fixed with one',
+  `found ${lifecycleHooks.join(', ')}; docs/upgrading.md explains why no install-time hook can fix the git channel and which channel is supported`,
+)
+
 check(
   typeof pkg.engines?.dsh === 'string' && pkg.engines.dsh === pkg.peerDependencies?.['@deepseek-ai/dsh'],
   'engines.dsh and the legacy DSH peer declare the same compatibility range',
 )
-for (const version of ['0.2.0-rc.2', '0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.4', '0.2.1']) {
+for (const version of ['0.2.0-rc.2', '0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.4', '0.2.1-rc.5', '0.2.1']) {
   check(evaluatePluginCompatibility(pkg, {}, version) === undefined, `the declared range accepts DSH ${version}`)
 }
 for (const version of ['0.2.0-rc.1', '0.2.2-rc.1', '0.3.0']) {

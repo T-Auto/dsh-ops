@@ -3,6 +3,7 @@ pub mod capture;
 pub mod envelope;
 pub mod search;
 pub mod storage;
+pub mod windows_paths;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -129,7 +130,7 @@ impl Request {
         let normalize = |value: &std::path::Path| {
             let text = value.to_string_lossy().replace('\\', "/");
             let text = text.strip_prefix("//?/").unwrap_or(&text).to_owned();
-            if cfg!(windows) { text.to_lowercase() } else { text }
+            if cfg!(windows) || self.windows_paths { text.to_lowercase() } else { text }
         };
         let target = normalize(path);
         if self.deny_roots.iter().any(|root| {
@@ -142,6 +143,13 @@ impl Request {
     }
     pub fn authorize_path(&self, path: &std::path::Path) -> Result<()> {
         if self.denies_path(path) { return Err(Failure::new("CREDENTIAL_DENIED", "Credential location refused by the operator's file policy")); }
+        if self.windows_paths {
+            for component in path.components() {
+                if let std::path::Component::Normal(name) = component {
+                    windows_paths::validate_name(name.to_str().ok_or_else(|| Failure::new("INVALID_ARGUMENT", "Non-UTF8 path"))?)?;
+                }
+            }
+        }
         Ok(())
     }
     /// The denied roots as paths, in the lexical form the traversal compares
@@ -165,6 +173,9 @@ pub struct Request {
     pub root: String,
     #[serde(default)]
     pub read_only: bool,
+    /// Delegation can strengthen POSIX checks to the originating Windows path semantics.
+    #[serde(default)]
+    pub windows_paths: bool,
     #[serde(default)]
     pub write_roots: Option<Vec<String>>,
     /// Absolute roots the traversal must not descend into or report. The host
@@ -211,6 +222,20 @@ pub struct ResultArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delegated_windows_paths_retain_case_insensitive_denials_and_reserved_names() {
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "root":"/project", "scope":"wsl-test", "tool":"read_files", "args":{},
+            "windows_paths":true, "deny_roots":["/project/Private"], "deny_credential_names":true
+        })).unwrap();
+        assert!(request.denies_path(std::path::Path::new("/project/private/token")));
+        for name in ["CON.txt", "name.", "name ", "file:stream", "LPT1"] {
+            assert!(request.authorize_path(std::path::Path::new(&format!("/project/{name}"))).is_err(), "{name}");
+        }
+        assert!(windows_paths::validate_name("bad\\name").is_err());
+        assert!(request.authorize_path(std::path::Path::new("/project/valid.txt")).is_ok());
+    }
 
     #[test]
     fn selector_reasons_are_optional_and_backward_compatible() {

@@ -170,9 +170,9 @@ export function apply(root: Context, raw?: unknown): void {
       // official tool still throws, while a run_code scope owns no mask and no error.
       // A host that transforms the presentation here attaches the tool array only after
       // this waterfall, so the wire proves nothing then. The host also publishes the
-      // `tools:ptc-only` section for a real program presentation, renders it empty for a
-      // mixed one, and the section survives the deferred array — judge the scope by it
-      // rather than by the configuration view, which answers for `both` as well.
+      // `tools:ptc-only` section for a real program presentation and renders it empty
+      // otherwise, and the section survives the deferred array — judge the scope by it
+      // rather than by the configuration view, which answers for the declaration alone.
       const ptcOnly = Array.isArray(result?.sections)
         && result.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
       const collapsed = Array.isArray(result?.tools)

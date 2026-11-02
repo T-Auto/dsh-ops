@@ -100,6 +100,27 @@
           "bash"
         ],
         "shellPermission": "Mode row enabled with the matching preset AND publishBashTool AND authoritative per-session DSH policy; restricted modes require host confinement"
+      },
+      {
+        "serverName": "dsh-ops",
+        "transport": "in-process",
+        "source": "PTC SDK selection and native Rust batch worker",
+        "publicPrefix": "ops_",
+        "tools": [
+          "batch",
+          "load_sdk"
+        ],
+        "shellPermission": "PTC-only scoped bindings: load_sdk selects permitted APIs for the next model step; batch requires configured or selected publication and per-call DSH policy, with host confinement in restricted modes"
+      },
+      {
+        "serverName": "dsh-ops",
+        "transport": "in-process",
+        "source": "scoped Native discovery controller",
+        "publicPrefix": "ops_",
+        "tools": [
+          "discover_tools"
+        ],
+        "shellPermission": "Scoped Native discovery selection only; selecting a capability does not execute it or authorize its later calls"
       }
     ],
     "x-components": [

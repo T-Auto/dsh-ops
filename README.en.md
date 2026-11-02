@@ -99,6 +99,10 @@ dsh plugin --profile dsh-tui add dsh-ops
 
 A regular DSH CLI cannot manage the reserved `desktop` profile; do not confuse it with the desktop app's own entry point.
 
+Install the published registry package or a fully built and packed source tarball.
+Direct `git+https` installation and unbuilt source checkouts lack the complete runtime; see
+[installing from Git is not a supported channel](docs/upgrading.md#installing-from-git-is-not-a-supported-channel).
+
 #### Update
 
 Host compatibility is declared for DSH **0.2.0-rc.2 and 0.2.1-rc.2**. See
@@ -129,8 +133,17 @@ Enable `tui.enabled` on the `dsh-ops` row in dsh-TUI and restart to add the OPS 
 - [Third-party preset integration API](docs/integration-api.md) · [External Native providers](docs/external-provider.md) · [Scoped diagnostics](docs/diagnostics.md)
 
 - [Usage](docs/usage.md) · [Troubleshooting](docs/troubleshooting.md) · [Component reference](docs/component-reference.md) · [Configuration reference](docs/configuration-reference.md)
+- [Windows runtime evidence](docs/windows-runtime-evidence.md): payload compatibility, Low integrity, MSYS startup and antivirus/approval diagnostics.
 - [Native PTC](docs/native-ptc.md) · [Manual validation](docs/manual-validation.md)
 - [Contributing](docs/CONTRIBUTING.md) · [Roadmap](docs/roadmap.md) · [Changelog](docs/CHANGELOG.md) · [Provenance](docs/PROVENANCE.md)
+
+## Windows Bash diagnostics
+
+Windows Bash diagnostics: `dsh-ops ladder` reports image and ancestor integrity
+labels separately from static MSYS hash compatibility. A Low-labelled executable
+can start a Low child even in full access, preventing writes to existing
+Medium/unlabeled files. Unreadable labels remain unknown. See
+[integrity inspection](docs/troubleshooting.md#windows-bash-integrity-labels).
 
 ## License
 

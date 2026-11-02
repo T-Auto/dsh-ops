@@ -9,6 +9,7 @@ import * as slots from '@deepseek-ai/dsh-client-ui-slots'
 import Registry from '@deepseek-ai/dsh-typert-registry'
 import Gateway from '@deepseek-ai/dsh-api-gateway'
 import { RuntimeActions } from '../lib/settings/runtime-actions.js'
+import { ownerPeer } from './lib/peer.mjs'
 import { RUNTIME_DESCRIPTORS } from '../lib/settings/runtime-contract.js'
 import { bundleClient } from '../scripts/lib/build/client.mjs'
 import { assert, test, report, PACKAGE_ROOT, TEST_HOME, withTempDir } from './lib/harness.mjs'
@@ -21,6 +22,19 @@ function capture(file) {
   globalThis.window = { __ModuleLoader__: { load: value => { definition = value } } }
   vm.runInThisContext(fs.readFileSync(file, 'utf8'), { filename: file })
   assert.ok(definition); return definition
+}
+/**
+ * Resolve one package's `./client` condition to the file a Client row loads.
+ * rc.5 splits these entries into node and browser builds, so the file name is a
+ * resolution detail, never a literal the suite may guess.
+ * @param {string} name - the package whose Client entry is wanted.
+ * @param {string} [variant] - condition to prefer over `default`.
+ * @returns {string} absolute path of the entry file.
+ */
+const clientEntry = (name, variant) => {
+  const exported = require(`${name}/package.json`).exports['./client']
+  const file = typeof exported === 'string' ? exported : (variant && exported[variant]) || exported.default
+  return path.join(PACKAGE_ROOT, 'node_modules', name, file)
 }
 // The Host answers this module name itself (it is not a package on disk); the stub
 // only has to exist so the shipped bundle resolves, because this suite never renders.
@@ -36,14 +50,20 @@ await test('shipped browser entry stays lazy and binds the one row page plus one
   assert.deepEqual(imports, [])
   const plugin = definition.factory(name => { imports.push(name); return external(name) })
   assert.deepEqual([...new Set(imports)].sort(), ['@deepseek-ai/dsh-client-ui-primitives', 'react', 'react/jsx-runtime'])
-  const Renderer = capture(path.join(PACKAGE_ROOT, 'node_modules/@deepseek-ai/dsh-client-ui-renderer/lib/client.js')).factory(external)
+  const Renderer = capture(clientEntry('@deepseek-ai/dsh-client-ui-renderer')).factory(external)
   const ctx = new Cordis.Context(); ctx.logger.level = 0
   let dictionaries, disposed = false, calls = 0, markStarted
   const started = new Promise(resolve => { markStarted = resolve })
   try {
     await ctx.plugin(Renderer.SlotRegistry)
+    // rc.5 loads the gateway only once `remoteAccess` is present: the Host's own
+    // policy hook is what admits or refuses every non-owner Remote call. This
+    // fixture drives owner-level calls, so the hook always allows.
+    ctx.provide('remoteAccess', { decide: () => ({ kind: 'allow' }) })
     await ctx.plugin(Registry); await ctx.plugin(Gateway, {})
-    const ClientGateway = capture(path.join(PACKAGE_ROOT, 'node_modules/@deepseek-ai/dsh-api-gateway/lib/client.js')).factory(external)
+    // rc.5 splits the gateway client into node and browser conditionals; the
+    // browser build is the one a Client row loads, whichever file name carries it.
+    const ClientGateway = capture(clientEntry('@deepseek-ai/dsh-api-gateway', 'browser')).factory(external)
     await ctx.plugin({ inject: ['typert'], apply(inner) {
       const service = new RuntimeActions({ env: { DSH_HOME: path.join(TEST_HOME, 'client-runtime') }, platform: 'win32', arch: 'x64', run: async (_argv, signal) => {
         calls++; markStarted(); await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }))
@@ -57,7 +77,10 @@ await test('shipped browser entry stays lazy and binds the one row page plus one
         async call(prefix, endpoint, payload, signal) {
           assert.equal(prefix, '/api')
           const [namespace, method] = endpoint.split('/')
-          return { ok: true, value: await ctx.typertGateway.invoke({ namespace, method, args: payload.args, signal }) }
+          // rc.5 requires the Peer each call speaks for; a Client row call is an
+          // owner-level call from the in-process bus, not a live remote stream.
+          const peer = ownerPeer(ctx, new AbortController().signal)
+          return { ok: true, value: await ctx.typertGateway.invoke({ namespace, method, args: payload.args, signal, peer }) }
         },
       } })
     } })

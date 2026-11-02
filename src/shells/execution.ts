@@ -1,11 +1,25 @@
 /** Live Bash command over the host subprocess service; no service registration. */
 import { Buffer } from 'node:buffer'
+import path from 'node:path'
 import type { SubprocessHandle, SubprocessOutputReader, SubprocessOutputRead } from '../adapter/dsh/types.js'
 import type { ShellExecutorOptions, ShellExecutionSpec, ShellCall, ShellExecution, ShellResult, ShellStream } from './types.js'
 import { DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_SPILL_BYTES, shellEnvOverrides } from './constants.js'
 import { formatBashSpawnError } from './spawn-error.js'
 
 const emptyRead = (): SubprocessOutputRead => ({ text: '', nextOffset: 0, lossy: false })
+
+class UnadaptedElectronRunner extends Error {}
+
+/** The host must adapt its Node runner before returning argv to an Electron caller. */
+function checkElectronRunner(argv: string[], env: NodeJS.ProcessEnv): void {
+  if (!globalThis.process.versions.electron || !argv[0]) return
+  const normalize = (file: string) => globalThis.process.platform === 'win32' ? path.resolve(file).toLowerCase() : path.resolve(file)
+  if (normalize(argv[0]) !== normalize(globalThis.process.execPath)) return
+  const nodeFlags = Object.entries(env).filter(([key]) => globalThis.process.platform === 'win32'
+    ? key.toUpperCase() === 'ELECTRON_RUN_AS_NODE' : key === 'ELECTRON_RUN_AS_NODE')
+  if (nodeFlags.length === 1 && nodeFlags[0][1] === '1') return
+  throw new UnadaptedElectronRunner('EXECUTOR_UNAVAILABLE: the host returned an unadapted Electron runner. Launching the Desktop application can exit successfully without running Bash. No command was started. The host must supply a supported Node runner or explicitly prepare Electron Node mode; do not bypass confinement or retry through another shell.')
+}
 
 /** Read the retained stream after settlement, preserving honest truncation facts. */
 export function settledStream(reader: SubprocessOutputReader | undefined, includeMetadata = false): ShellStream {
@@ -83,6 +97,8 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
       }
       controller.signal.throwIfAborted()
       if (!subprocess) throw new Error('Host subprocess service is unavailable')
+      const childEnv = shellEnvOverrides(globalThis.process.env, env)
+      if (prepareArgv) checkElectronRunner(preparedArgv, childEnv)
       handle = subprocess.spawn({
         argv: preparedArgv,
         // Legacy direct executor callers can omit cwd; scoped host calls resolve it before this seam.
@@ -95,7 +111,7 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
         },
         graceMs: spec.graceMs,
         signal: controller.signal,
-        env: shellEnvOverrides(globalThis.process.env, env),
+        env: childEnv,
       })
       const outcome = await handle.done
       value = {
@@ -107,7 +123,7 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
       }
     } catch (error) {
       value = {
-        error: formatBashSpawnError(error, file, source, spec.workdir),
+        error: error instanceof UnadaptedElectronRunner ? error.message : formatBashSpawnError(error, file, source, spec.workdir),
         ...flags(),
         stdout: settledStream(handle?.collected?.stdout, spec.includeDiagnostics),
         stderr: settledStream(handle?.collected?.stderr, spec.includeDiagnostics),

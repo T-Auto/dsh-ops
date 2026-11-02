@@ -76,6 +76,9 @@ dsh plugin --profile dsh-tui add dsh-ops
 
 普通 DSH CLI 不能管理保留的 `desktop` profile；不要把它与桌面自带入口混淆。
 
+请安装 registry 发行包，或已完整构建并打包的源码 tarball。直接 `git+https` 安装与未构建的
+源码检出缺少完整运行时；见[不支持通过 Git 通道安装](docs/升级与卸载.md#不支持通过-git-通道安装)。
+
 #### 更新方法
 
 宿主兼容范围明确声明为 DSH **0.2.0-rc.2 与 0.2.1-rc.2**。
@@ -108,8 +111,16 @@ npx --yes dsh-ops@latest uninstall --profile desktop
 - [第三方预设集成接口](docs/集成接口.md) · [外部 Native 提供者](docs/外部工具提供者.md) · [作用域诊断](docs/集成诊断.md)
 
 - [使用指南](docs/使用指南.md) · [常见问题](docs/常见问题.md) · [组件参考](docs/组件参考.md) · [配置参考](docs/配置参考.md)
+- [Windows 运行时证据](docs/windows-runtime-evidence.zh.md)：载荷兼容、Low 完整性、MSYS 启动及杀软/审批排查。
 - [PTC 设计与使用](docs/native-ptc.md) · [手动验证](docs/手动验收.md)
 - [贡献指南](docs/贡献指南.md) · [路线图](docs/路线图.md) · [变更日志](docs/CHANGELOG.md) · [溯源记录](docs/PROVENANCE.md)
+
+## Windows Bash 自检
+
+Windows Bash 自检：`dsh-ops ladder` 分别报告映像/祖先路径完整性标签与静态 MSYS
+哈希兼容性。Low 标签的可执行文件在 full-access 下仍可能产生 Low 子进程，无法修改
+既有 Medium/无标签文件；不可读标签明确为 unknown。详见
+[完整性检查](docs/常见问题.md#windows-bash-完整性标签)。
 
 ## 许可证
 

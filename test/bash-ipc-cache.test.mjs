@@ -33,7 +33,9 @@ await test('the report names every cache entry exactly once and separates reclai
     })
     fs.writeFileSync(path.join(root, 'ignore-me.txt'), 'not a directory')
 
-    const report = bashIpcInventory({ home, current })
+    // `now` is pinned so the staging tree's age is a fact of the fixture, not of the wall clock
+    // (a CI runner and a developer machine may run this years apart) (#512).
+    const report = bashIpcInventory({ home, current, now: () => Date.UTC(2026, 0, 10) })
     assert.equal(report.root, root)
     assert.equal(report.current, current)
     assert.equal(report.generations, 3)
@@ -42,8 +44,9 @@ await test('the report names every cache entry exactly once and separates reclai
     assert.deepEqual(report.entries.filter((entry) => entry.current).map((entry) => entry.name), [current])
     assert.equal(report.entries.every((entry) => entry.files === 2), true)
     assert.equal(report.totalBytes, 11 + 13 + 17 + 19 + 23 + entries.length * 14)
-    // One previous generation is retained; only the older one is scheduled for reclamation.
-    assert.equal(report.reclaimableBytes, 17 + 14)
+    // One previous generation is retained; only the older one, plus the interrupted staging copy
+    // (older than the one-hour TTL by the pinned clock), is scheduled for reclamation.
+    assert.equal(report.reclaimableBytes, 17 + 14 + 23 + 14)
     assert.equal(report.entries.some((entry) => entry.name === 'ignore-me.txt'), false)
   })
 })
@@ -70,6 +73,39 @@ await test('a sweep keeps the current and one previous generation, and removes t
     assert.equal(logged.length, 2)
     for (const name of names.slice(0, 2)) assert.equal(fs.existsSync(path.join(root, name)), false, name)
     for (const name of [names[2], names[3], quarantine, staging]) assert.equal(fs.existsSync(path.join(root, name)), true, name)
+  })
+})
+
+await test('an interrupted staging copy is reclaimed by age, a fresh one is kept, and offline cleanup removes both (#512)', async () => {
+  await withTempDir('bash-ipc-staging-sweep', (home) => {
+    const root = bashIpcRoot(home)
+    const current = generation('a')
+    seed(path.join(root, current), 1)
+    // Two hours old: the host that was copying it was killed before it could publish or clean up.
+    const interrupted = 'stage-interrupted'
+    seed(path.join(root, interrupted), 7)
+    const when = new Date(Date.now() - 2 * 60 * 60 * 1000)
+    fs.utimesSync(path.join(root, interrupted), when, when)
+    // Just created: a cooperating staging process holds the lifecycle lock, so a sweep never runs
+    // beside it; the TTL is the second guard for a sibling that is still crashing its way out.
+    const live = 'stage-being-written'
+    seed(path.join(root, live), 9)
+
+    const now = () => Date.now()
+    const preview = reclaimBashGenerations(root, current, { now, dryRun: true })
+    assert.deepEqual(preview.removed, [interrupted], 'the preview names the stale copy')
+    assert.equal(fs.existsSync(path.join(root, interrupted)), true, 'a preview removes nothing')
+
+    const result = reclaimBashGenerations(root, current, { now })
+    assert.deepEqual(result.removed, [interrupted])
+    assert.equal(fs.existsSync(path.join(root, interrupted)), false, 'the interrupted copy is gone')
+    assert.equal(fs.existsSync(path.join(root, live)), true, 'a fresh copy is left for its stager')
+
+    // clean-cache runs only after an operator confirms every host and shell stopped, so it does not
+    // need the age bound: stagingTtlMs: 0 removes an interrupted tree of any age.
+    const forced = reclaimBashGenerations(root, current, { now, stagingTtlMs: 0 })
+    assert.deepEqual(forced.removed, [live])
+    assert.equal(fs.existsSync(path.join(root, live)), false)
   })
 })
 
