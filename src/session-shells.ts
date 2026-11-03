@@ -149,6 +149,46 @@ export interface BashGate {
   watch?(notify: () => void): () => void
 }
 
+/**
+ * The error's message, or a fixed line when even reading it throws (#579).
+ *
+ * A host error whose `message` is a throwing getter must degrade like any other unclassified
+ * failure: the classifier, the warning and the pass must not raise a second exception out of a
+ * catch block.
+ * @param {unknown} error - the failure `ctx.tools.register` (or a disposer) raised.
+ * @returns {string} the message, or a line saying it could not be read.
+ */
+function safeMessage(error: unknown) {
+  try { return errorMessage(error) } catch { return 'error message unavailable' }
+}
+
+/**
+ * Whether the host refused a registry write because it would reenter its own append window.
+ *
+ * The message belongs to the host, not to this package, so the wording lives in exactly one
+ * place: a future host change has one call site to converge (#579). A refusal of this kind is
+ * transient — the window closes when the host finishes publishing — while every other register
+ * failure is not, which is why only this class changes the retry policy.
+ *
+ * Deliberate false negatives: only a top-level message matches. A `cause`-nested text or a
+ * capitalised variant stays unclassified (the host's reported failure was `new Error(<literal>)`);
+ * walking `cause` recursively would widen the match to unrelated errors.
+ * @param {unknown} error - the failure `ctx.tools.register` raised.
+ * @returns {boolean} whether one deferred pass should retry instead.
+ */
+function isAppendReentry(error: unknown) {
+  return safeMessage(error).includes('cannot reenter while another append is being published')
+}
+
+/**
+ * Cooldown steps after a classified refusal (#579).
+ *
+ * A refusal closes the pass and arms the next one; the delay grows to a cap, so a window that
+ * stays locked costs a fixed trickle of attempts instead of one burst per host append. The cap
+ * also bounds how long a session can go unpublished once the window closes.
+ */
+const APPEND_REENTRY_BACKOFF_MS = Object.freeze([25, 100, 400, 1000])
+
 export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'publishBashTool'>, shells: { bash: ShellResolution }, gate: BashGate = { allows: () => true }) {
   if (!config.publishBashTool) return
   const bash = shells.bash
@@ -168,6 +208,13 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
   // Bound once by the jobs injection below; the host's registry is a tracked service, so every
   // `ctx.get('jobs')` hands out a fresh traceable proxy and cannot be compared by identity.
   let jobs: ShellJobs | undefined
+  // A classified append refusal closes the pass and arms a cooldown (#579). While the cooldown
+  // runs, a pass must not touch the registry at all — not even to withdraw a layer.
+  let reentryAttempt = 0
+  let reentryTimer: ReturnType<typeof setTimeout> | undefined
+  let reentryNoted = false
+  let coolUntil = 0
+  let reentryOwed = false
   const allowed = (agent: Agent) => {
     if (!ready || stopped || !agent?.session) return false
     if (!gate.allows(agent)) return false
@@ -177,21 +224,29 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
     }
     catch { return false }
   }
-  const clear = (entry: Entry) => {
+  /** Withdraw one layer; returns true when the host refused it and nothing may be touched yet. */
+  const clear = (entry: Entry): boolean => {
     // Keep cleanup isolated: one failed layer must not strand other sessions.
     try {
       withToolChange([entry.agent], () => entry.dispose?.())
     } catch (error) {
-      ctx.logger?.warn?.(`dsh-ops: bash tool teardown failed; continuing with the remaining sessions: ${errorMessage(error)}`)
-    } finally {
-      if (bashOwners.get(entry.agent)?.entry === entry) bashOwners.delete(entry.agent)
-      entry.dispose = undefined
-      entry.published = undefined
-      entry.generation = undefined
+      if (isAppendReentry(error)) {
+        // A withdrawal appends its own host event, so the same window can refuse it too. Keep the
+        // handle: the layer may still be live, and dropping it here would leave the session with a
+        // registration no later pass could withdraw (#579).
+        return true
+      }
+      ctx.logger?.warn?.(`dsh-ops: bash tool teardown failed; continuing with the remaining sessions: ${safeMessage(error)}`)
     }
+    if (bashOwners.get(entry.agent)?.entry === entry) bashOwners.delete(entry.agent)
+    entry.dispose = undefined
+    entry.published = undefined
+    entry.generation = undefined
+    return false
   }
-  const publish = (entry: Entry, definition: HostShellDefinition) => {
-    if (!entry.ctx) return
+  /** Publish one layer; returns true when a classified refusal asks for a later pass (#579). */
+  const publish = (entry: Entry, definition: HostShellDefinition): boolean => {
+    if (!entry.ctx) return false
     const previous = bashOwners.get(entry.agent)
     if (previous && previous.entry !== entry && !previous.allowed()) previous.clear()
     // A failed publication must leave the session with the definition that last worked rather than
@@ -201,17 +256,28 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
       entry.dispose = withToolChange([entry.agent], () => entry.ctx!.tools.register(definition))
       entry.definition = definition
       bashOwners.set(entry.agent, { entry, allowed: () => allowed(entry.agent), clear: () => clear(entry) })
+      return false
     } catch (error) {
-      ctx.logger?.warn?.(`dsh-ops: bash publication failed: ${errorMessage(error)}`)
-      if (entry.definition === undefined) return
+      // Never retry this class here: the host still holds the append it is publishing, so a second
+      // register in this microtask hits the same lock and multiplies with every tracked session.
+      // Keep the last good definition and let one bounded, deferred pass try again (#579).
+      if (isAppendReentry(error)) { entry.published = false; return true }
+      ctx.logger?.warn?.(`dsh-ops: bash publication failed: ${safeMessage(error)}`)
+      if (entry.definition === undefined) return false
       try {
         entry.dispose = withToolChange([entry.agent], () => entry.ctx!.tools.register(entry.definition!))
         bashOwners.set(entry.agent, { entry, allowed: () => allowed(entry.agent), clear: () => clear(entry) })
       }
-      catch (restoreError) { ctx.logger?.warn?.(`dsh-ops: bash restoration failed: ${errorMessage(restoreError)}`) }
+      catch (restoreError) { ctx.logger?.warn?.(`dsh-ops: bash restoration failed: ${safeMessage(restoreError)}`) }
+      return false
     }
   }
-  const reconcile = (refreshDefinitions = false) => {
+  const reconcile = (refreshDefinitions = false): boolean => {
+    // `reconcile` must not touch the registry during a cooldown: the host is still publishing the
+    // append that refused the last attempt, so any register or dispose from a pass would be another
+    // refusal (#579). `detach` still withdraws its own layer — that removal is owed to a session
+    // that is already gone, not a republication. The debt is remembered and one pass runs at expiry.
+    if (Date.now() < coolUntil) { reentryOwed = true; return false }
     if (refreshDefinitions) ++generation
     // Resolve live authority cheaply, but never withdraw an unrelated, unchanged layer.
     // Publish ancestors before adding masks, so a newly available parent is also hidden
@@ -221,7 +287,7 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
       if (!entry.ctx) continue
       const publishable = permitted.get(agent) === true
       if (entry.dispose && entry.published === publishable && (!publishable || entry.generation === generation)) continue
-      clear(entry)
+      if (clear(entry)) return false
       if (!publishable) continue
       const base = bashToolDefinition({ file: bash.file, source: bash.source, subprocess: ctx.get('subprocess') })
       const definition = hostBashDefinition(ctx, base,
@@ -231,16 +297,22 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
             const basis = await resolveSessionDirectory(ctx, exec.agent, exec.signal)
             return { workdir: sessionWorkdir(args, { header: { cwd: basis.cwd } }), basis }
           }, jobs)
-      publish(entry, definition)
+      // Stop this pass at the first classified refusal: every remaining agent would hit the same
+      // host window and add another refusal to the burst (#579).
+      if (publish(entry, definition)) return false
       if (entry.dispose) { entry.published = true; entry.generation = generation }
     }
     for (const [agent, entry] of entries) {
       if (!entry.ctx || permitted.get(agent) || stopped || entry.dispose) continue
       if (ctx.get('tools')?.get(BASH_TOOL, agent)) {
         try { entry.dispose = withToolChange([agent], () => entry.ctx!.tools.restrict({ deny: [BASH_TOOL] })); entry.published = false }
-        catch (error) { ctx.logger?.warn?.(`dsh-ops: inherited bash restriction failed: ${errorMessage(error)}`) }
+        catch (error) {
+          if (isAppendReentry(error)) return false
+          ctx.logger?.warn?.(`dsh-ops: inherited bash restriction failed: ${safeMessage(error)}`)
+        }
       }
     }
+    return true
   }
   // Session events are delivered while the host is publishing an append. Both
   // register and dispose may append their own events, so leave that window first.
@@ -254,10 +326,44 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
       scheduled = undefined
       const pass = pending, done = settle; settle = undefined
       const refresh = refreshPending; refreshPending = false
-      try { if (!stopped) reconcile(refresh) }
+      let completed = false
+      try { if (!stopped) completed = reconcile(refresh) }
       finally { if (pending === pass) pending = undefined; done?.() }
+      if (completed) resetReentry()
+      else armCooldown()
     })
     return pending
+  }
+  /** A completed pass means the window closed: the next refusal starts from the first step again. */
+  const resetReentry = () => {
+    reentryAttempt = 0
+    reentryNoted = false
+    coolUntil = 0
+    reentryOwed = false
+  }
+  /**
+   * Close the current pass and arm the next one after a bounded cooldown (#579).
+   *
+   * Until the cooldown expires, `reconcile` returns without touching the registry, so a host that
+   * keeps appending costs one attempt per step instead of a burst per session. The window is
+   * reported once; a later completed pass re-arms the first step.
+   */
+  const armCooldown = () => {
+    if (stopped || reentryTimer !== undefined) return
+    if (!reentryNoted) {
+      reentryNoted = true
+      ctx.logger?.warn?.('dsh-ops: the host is publishing an append; bash publication was deferred and will retry after a cooldown.')
+    }
+    const delay = APPEND_REENTRY_BACKOFF_MS[Math.min(reentryAttempt, APPEND_REENTRY_BACKOFF_MS.length - 1)]
+    reentryAttempt += 1
+    coolUntil = Date.now() + delay
+    reentryOwed = true
+    reentryTimer = setTimeout(() => {
+      reentryTimer = undefined
+      if (!reentryOwed) return
+      void scheduleReconcile()
+    }, delay)
+    reentryTimer.unref?.()
   }
   const attach = (agent: Agent) => {
     if (stopped || !agent?.ctx || entries.has(agent)) return
@@ -290,6 +396,7 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
     stopped = true
     if (scheduled) clearImmediate(scheduled)
     scheduled = undefined
+    if (reentryTimer !== undefined) { clearTimeout(reentryTimer); reentryTimer = undefined }
     settle?.(); settle = undefined; pending = undefined
     // allSettled: one failing detach must not leave the remaining sessions' bash layers published.
     await Promise.allSettled([...entries.keys()].map(detach))
