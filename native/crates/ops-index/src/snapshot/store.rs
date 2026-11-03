@@ -329,16 +329,32 @@ impl SnapshotStore {
 /// without relying on a full disk.
 fn fill_temporary(file: &mut File, image: &[u8]) -> io::Result<()> {
     #[cfg(test)]
-    if FAIL_AFTER_CREATE.swap(false, Ordering::Relaxed) {
-        file.write_all(&image[..image.len() / 2])?;
-        return Err(io::Error::other("injected write failure"));
+    {
+        // The injection belongs to the test thread that armed it. A process-wide
+        // flag is consumed by whichever save runs first: the parallel harness then
+        // fails an unrelated test (observed on Windows) and lets the intended one
+        // succeed.
+        let injected = FAIL_AFTER_CREATE.with(|flag| flag.replace(false));
+        if injected {
+            file.write_all(&image[..image.len() / 2])?;
+            return Err(io::Error::other("injected write failure"));
+        }
     }
     file.write_all(image)?;
     file.sync_all()
 }
 
 #[cfg(test)]
-static FAIL_AFTER_CREATE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+thread_local! {
+    /// Arms a short write on the calling test thread only.
+    static FAIL_AFTER_CREATE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Arm the next save on this test thread to fail after a partial write.
+#[cfg(test)]
+pub(super) fn inject_write_failure() {
+    FAIL_AFTER_CREATE.with(|flag| flag.set(true));
+}
 
 /// Best-effort directory sync after a rename.
 ///
