@@ -82,7 +82,7 @@ fn scan_path(
 
 /// Finishes a single page, so the JSON a caller receives is comparable too.
 fn report(files: &[PathBuf], scan: Scan, request: &Request, offset: usize, limit: usize) -> Value {
-    let cursor = Cursor::new(request, offset, None).unwrap();
+    let cursor = Cursor::new_for(request, scan.source, offset, None).unwrap();
     let mut page = Page::new(offset, limit, None);
     for (ordinal, file) in files.iter().enumerate() {
         page.push(json!(file), ordinal).unwrap();
@@ -361,5 +361,87 @@ fn walk_continuations_keep_the_existing_cursor_shape() {
         "walk tokens keep their existing spelling"
     );
     assert!(Cursor::new(&request, 2, Some(&token)).is_ok());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_denied_root_is_never_enumerated() {
+    let (root, mut request) = fixture();
+    request.deny_roots = vec![root.to_string_lossy().into_owned()];
+    let patterns: Vec<String> = vec!["*".into()];
+    let counting = CountingSource::new(source(&root, &["a", "b", "c"]));
+    let mut scan = Scan::new();
+    let error = scan
+        .walk_indexed(&root, &counting, &patterns, &request, |_, _, _| Ok(()))
+        .unwrap_err();
+    assert_eq!(
+        error.code, "CREDENTIAL_DENIED",
+        "authorization must precede enumeration"
+    );
+    assert_eq!(
+        counting.states.get(),
+        0,
+        "a denied root must never reach the source state"
+    );
+    assert_eq!(
+        counting.enumerates.get(),
+        0,
+        "a denied root must never be enumerated"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn snapshot_domains_differ_even_when_the_answers_match() {
+    let (root, request) = fixture();
+    let patterns: Vec<String> = vec!["*".into()];
+    let source = source(&root, &["a", "b", "c"]);
+    let (walked, walk_scan) = scan_path(&root, &request, &patterns, None);
+    let (indexed, index_scan) = scan_path(&root, &request, &patterns, Some(&source));
+    assert_eq!(walked, indexed);
+    assert_eq!(walk_scan.scanned, index_scan.scanned);
+    let walk_snapshot = format!("{:x}", walk_scan.hash.clone().finalize());
+    let index_snapshot = format!("{:x}", index_scan.hash.clone().finalize());
+    assert_ne!(
+        walk_snapshot, index_snapshot,
+        "the walk stamps the root and directories; the index path stamps only candidate files"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn finish_rejects_a_cursor_from_another_source_kind() {
+    let (root, request) = fixture();
+    let patterns: Vec<String> = vec!["*".into()];
+    let source = source(&root, &["a", "b", "c"]);
+    let (files, scan) = scan_path(&root, &request, &patterns, Some(&source));
+    let cursor = Cursor::new_for(&request, scan.source, 0, None).unwrap();
+    let mut page = Page::new(0, 2, None);
+    for (ordinal, file) in files.iter().enumerate() {
+        page.push(json!(file), ordinal).unwrap();
+    }
+    let first = finish(scan, cursor, page, files.len(), files.len(), json!({})).unwrap();
+    let token = first["continuation"]
+        .as_str()
+        .expect("indexed continuation")
+        .to_owned();
+
+    // Page two parses the indexed cursor, but the source is gone, so the page
+    // is produced by the walk: the two snapshot domains must not be mixed.
+    let cursor = Cursor::new_for(&request, SourceKind::Index, 2, Some(&token)).unwrap();
+    let mut scan = Scan::new();
+    scan.walk_indexed(&root, &NullSource, &patterns, &request, |_, _, _| Ok(()))
+        .unwrap();
+    assert_eq!(scan.source, SourceKind::Walk);
+    let error = finish(
+        scan,
+        cursor,
+        Page::new(2, 2, None),
+        files.len(),
+        files.len(),
+        json!({}),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "SEARCH_STALE");
     fs::remove_dir_all(root).unwrap();
 }
