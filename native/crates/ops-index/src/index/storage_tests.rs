@@ -1,5 +1,8 @@
 use super::*;
 use crate::ids::{EntryId, NameId, RecordId};
+use crate::index::invariants_tests::{
+    name_chains_match_rebuild, name_order_matches_rebuild, name_refcounts_match_chains,
+};
 use crate::index::record_map::RecordMap;
 use crate::usn::{FILE_ATTRIBUTE_DIRECTORY, ParsedUsnRecord, USN_REASON_FILE_CREATE};
 
@@ -49,7 +52,7 @@ fn a_new_volume_starts_with_a_root_and_lost_and_found() {
     assert_eq!(index.lost_found(), EntryId::new(1));
     assert_eq!(index.len(), 2);
     assert!(!index.has_orphans());
-    assert!(index.name_order_matches_rebuild());
+    assert!(name_order_matches_rebuild(&index));
 }
 
 #[test]
@@ -64,7 +67,7 @@ fn optimize_storage_builds_a_sorted_ranked_order() {
     assert!(folded.contains(&b"alpha".to_vec()));
     assert!(folded.contains(&b"beta".to_vec()));
     assert!(folded.contains(&b"zeta".to_vec()));
-    assert!(index.name_order_matches_rebuild());
+    assert!(name_order_matches_rebuild(&index));
 }
 
 #[test]
@@ -75,7 +78,7 @@ fn new_names_wait_unranked_then_merge_into_the_order() {
     index.insert_enum(&create(201, ROOT, b"zzz", false));
 
     assert_eq!(index.name_order_stats().1, 2);
-    assert!(index.name_order_matches_rebuild());
+    assert!(name_order_matches_rebuild(&index));
 
     let aaa = index
         .names()
@@ -97,7 +100,7 @@ fn new_names_wait_unranked_then_merge_into_the_order() {
 
     index.force_name_merge();
     assert_eq!(index.name_order_stats().1, 0);
-    assert!(index.name_order_matches_rebuild());
+    assert!(name_order_matches_rebuild(&index));
     let keys = ranked_keys(&index);
     let folded: Vec<Vec<u8>> = keys.iter().map(|(_, name)| name.clone()).collect();
     assert!(folded.windows(2).all(|pair| pair[0] <= pair[1]));
@@ -132,7 +135,7 @@ fn dead_names_do_not_rank_and_a_merge_drops_them() {
     }]);
     assert!(!index.names().is_live(drop));
     index.force_name_merge();
-    assert!(index.name_order_matches_rebuild());
+    assert!(name_order_matches_rebuild(&index));
     assert!(!index.name_is_ranked(drop));
 }
 
@@ -189,9 +192,9 @@ fn compaction_remaps_entries_and_the_name_order() {
         assert!(index.head_of(RecordId::new(record)).is_some());
         assert!(!index.head_of(RecordId::new(record)).unwrap().is_nil());
     }
-    assert!(index.name_order_matches_rebuild());
-    assert!(index.name_chains_match_rebuild());
-    assert!(index.name_refcounts_match_chains());
+    assert!(name_order_matches_rebuild(&index));
+    assert!(name_chains_match_rebuild(&index));
+    assert!(name_refcounts_match_chains(&index));
     assert!(index.plan_compaction().is_none());
 }
 
@@ -237,7 +240,7 @@ fn rank_keys_are_stable_across_compaction() {
         index.apply_compaction(plan);
     }
     index.optimize_storage();
-    assert!(index.name_order_matches_rebuild());
+    assert!(name_order_matches_rebuild(&index));
     let ids: Vec<NameId> = index.names().name_ids().collect();
     assert!(!ids.is_empty());
 }

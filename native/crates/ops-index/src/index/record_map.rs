@@ -149,3 +149,7 @@ impl RecordMap {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "record_map_tests.rs"]
+mod record_map_tests;

@@ -89,41 +89,6 @@ impl VolumeIndex {
             current: self.entries.first_child(root),
         }
     }
-
-    /// Test-only invariant: the maintained map equals one rebuilt from the live
-    /// entries.
-    #[cfg(test)]
-    pub fn dir_index_matches_rebuild(&self) -> bool {
-        use std::collections::HashMap;
-        let mut expected: HashMap<(EntryId, u64), Vec<EntryId>> = HashMap::new();
-        for entry in self.entries.live_entries() {
-            let flags = self.entries.flags(entry);
-            if !flags.contains(EntryFlags::DIR)
-                || flags.contains(EntryFlags::PLACEHOLDER)
-                || entry == self.root
-                || entry == self.lost_found
-            {
-                continue;
-            }
-            let key = (
-                self.entries.parent(entry),
-                scope_key_hash(self.folded_name(entry)),
-            );
-            expected.entry(key).or_default().push(entry);
-        }
-        if expected.len() != self.dir_children.len() {
-            return false;
-        }
-        expected.iter().all(|(key, want)| {
-            self.dir_children.get(key).is_some_and(|got| {
-                let mut want = want.clone();
-                let mut got = got.clone();
-                want.sort_unstable();
-                got.sort_unstable();
-                want == got
-            })
-        })
-    }
 }
 
 /// Depth-first iterator over a directory's live descendants.

@@ -1,4 +1,5 @@
 use crate::ids::RecordId;
+use crate::index::invariants_tests::dir_index_matches_rebuild;
 use crate::index::record_map::RecordMap;
 use crate::index::volume::VolumeIndex;
 use crate::usn::{FILE_ATTRIBUTE_DIRECTORY, ParsedUsnRecord, USN_REASON_FILE_CREATE};
@@ -65,7 +66,7 @@ fn rename_moves_the_scope_key() {
     index.insert_enum(&create(100, ROOT, b"renamed", true));
     assert_eq!(index.child_dir(index.root(), b"a"), None);
     assert_eq!(index.child_dir(index.root(), b"renamed"), Some(directory));
-    assert!(index.dir_index_matches_rebuild());
+    assert!(dir_index_matches_rebuild(&index));
 }
 
 #[test]
@@ -84,7 +85,7 @@ fn deleting_a_directory_removes_its_scope_key() {
         name_lossy: false,
     }]);
     assert_eq!(index.child_dir(index.root(), b"a"), None);
-    assert!(index.dir_index_matches_rebuild());
+    assert!(dir_index_matches_rebuild(&index));
 }
 
 #[test]
@@ -117,5 +118,5 @@ fn duplicate_sibling_names_are_kept_as_candidates_and_compared_exactly() {
         .child_dir(index.root(), b"same")
         .expect("one of the two folded-equal directories");
     assert!(found == head(&index, 200) || found == head(&index, 201));
-    assert!(index.dir_index_matches_rebuild());
+    assert!(dir_index_matches_rebuild(&index));
 }

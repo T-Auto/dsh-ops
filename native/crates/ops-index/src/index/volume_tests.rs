@@ -1,6 +1,10 @@
 use super::*;
 use crate::ids::{EntryId, RecordId};
 use crate::index::entry::EntryFlags;
+use crate::index::invariants_tests::{
+    child_chains_match_rebuild, dir_index_matches_rebuild, name_chains_match_rebuild,
+    name_refcounts_match_chains,
+};
 use crate::index::path::PathStatus;
 use crate::layout::{FILE_ATTRIBUTE_DIRECTORY, LayoutFile, LayoutName};
 use crate::usn::{
@@ -89,10 +93,10 @@ fn builds_simple_tree_and_reconstructs_paths() {
         ]
     );
     assert!(!index.has_orphans());
-    assert!(index.child_chains_match_rebuild());
-    assert!(index.name_chains_match_rebuild());
-    assert!(index.name_refcounts_match_chains());
-    assert!(index.dir_index_matches_rebuild());
+    assert!(child_chains_match_rebuild(&index));
+    assert!(name_chains_match_rebuild(&index));
+    assert!(name_refcounts_match_chains(&index));
+    assert!(dir_index_matches_rebuild(&index));
 }
 
 #[test]
@@ -123,8 +127,8 @@ fn directory_rename_touches_exactly_one_entry() {
     assert!(paths.contains(&"RENAMED/f00000.txt".to_string()));
     assert!(paths.contains(&"RENAMED/f02999.txt".to_string()));
     assert!(!paths.iter().any(|path| path.starts_with("old/")));
-    assert!(index.child_chains_match_rebuild());
-    assert!(index.name_chains_match_rebuild());
+    assert!(child_chains_match_rebuild(&index));
+    assert!(name_chains_match_rebuild(&index));
 }
 
 #[test]
@@ -202,7 +206,7 @@ fn parent_slot_reuse_never_leaks_the_stale_chain() {
         PathStatus::Stale,
         "a severed child must not resolve through the reused slot"
     );
-    assert!(index.child_chains_match_rebuild());
+    assert!(child_chains_match_rebuild(&index));
 }
 
 #[test]
@@ -255,7 +259,7 @@ fn created_and_deleted_in_same_batch_nets_to_nothing() {
     assert!(sorted_paths(&index).is_empty());
     assert_eq!(index.len(), 2);
     assert_eq!(index.allocated(), 3);
-    assert!(index.child_chains_match_rebuild());
+    assert!(child_chains_match_rebuild(&index));
 }
 
 #[test]
@@ -311,7 +315,7 @@ fn insert_layout_builds_every_path_from_the_roots_record_and_hard_links() {
     let view = index.entry(file).expect("live");
     assert_eq!(view.size(), Some(4096));
     assert_eq!(view.mtime(), Some(1234));
-    assert!(index.child_chains_match_rebuild());
+    assert!(child_chains_match_rebuild(&index));
 }
 
 #[test]
@@ -359,7 +363,7 @@ fn enrich_builds_hard_link_chain_findable_under_every_name() {
         current = index.entries().next_link(current);
     }
     assert_eq!(links, 2);
-    assert!(index.name_chains_match_rebuild());
+    assert!(name_chains_match_rebuild(&index));
 }
 
 #[test]
@@ -395,7 +399,7 @@ fn file_delete_removes_the_whole_link_chain() {
         vec!["dirA".to_string(), "dirB".to_string()]
     );
     assert!(index.head_of(RecordId::new(200)).is_none());
-    assert!(index.child_chains_match_rebuild());
+    assert!(child_chains_match_rebuild(&index));
 }
 
 #[test]
@@ -438,7 +442,7 @@ fn reconcile_links_adds_and_removes_individual_links() {
             "dirB".to_string()
         ]
     );
-    assert!(index.name_chains_match_rebuild());
+    assert!(name_chains_match_rebuild(&index));
 }
 
 #[test]
@@ -492,7 +496,7 @@ fn enrich_with_renamed_directory_never_orphans_children() {
     );
     let directory = index.head_of(RecordId::new(100)).expect("dir survives");
     assert_eq!(index.entry(directory).expect("live").mtime(), Some(555));
-    assert!(index.child_chains_match_rebuild());
+    assert!(child_chains_match_rebuild(&index));
 }
 
 #[test]

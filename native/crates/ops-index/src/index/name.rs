@@ -248,7 +248,10 @@ impl NameStore {
     /// # Panics
     ///
     /// Panics when `bytes` contains NUL (no file system allows it and the arena
-    /// format depends on it) or when one arena would exceed 2 GiB.
+    /// format depends on it), when the raw bytes or their folded form are
+    /// longer than 65535 bytes (a [`NameRef`] length is 16 bits; one-to-one
+    /// lowercase can lengthen a name, so the raw bound alone is not enough), or
+    /// when one arena would exceed 2 GiB.
     pub fn intern(&mut self, bytes: &[u8]) -> NameId {
         debug_assert!(!bytes.contains(&0), "names cannot contain NUL");
         assert!(
@@ -260,6 +263,10 @@ impl NameStore {
             return id;
         }
         let folded = fold(bytes);
+        assert!(
+            folded.len() <= usize::from(u16::MAX),
+            "folded name is longer than 65535 bytes"
+        );
         let folded_off = Self::append(&mut self.folded, &folded);
         let raw = if folded == bytes {
             NameRef::shared(folded_off, bytes.len() as u16)
@@ -561,7 +568,10 @@ impl NameStore {
             }
             let old = table.name_id(entry);
             let new = remap[old.index()];
-            debug_assert_ne!(new, DEAD, "live entry points at a released name");
+            assert_ne!(
+                new, DEAD,
+                "live entry points at a released name id during compaction"
+            );
             table.set_name(entry, NameId::new(new));
         }
     }
@@ -731,3 +741,7 @@ impl CompactPlan {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "name_tests.rs"]
+mod name_tests;

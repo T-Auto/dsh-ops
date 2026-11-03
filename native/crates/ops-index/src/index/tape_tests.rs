@@ -2,6 +2,10 @@
 
 use super::*;
 use crate::ids::RecordId;
+use crate::index::invariants_tests::{
+    child_chains_match_rebuild, dir_index_matches_rebuild, name_chains_match_rebuild,
+    name_order_matches_rebuild, name_refcounts_match_chains,
+};
 use crate::index::record_map::RecordMap;
 use crate::layout::{FILE_ATTRIBUTE_DIRECTORY, LayoutFile, LayoutName};
 use crate::usn::{
@@ -224,11 +228,11 @@ proptest! {
             let record = action.as_record(&model);
             index.apply_batch(&[record]);
             action.apply_to_model(&mut model);
-            prop_assert!(index.child_chains_match_rebuild());
-            prop_assert!(index.name_chains_match_rebuild());
-            prop_assert!(index.name_refcounts_match_chains());
-            prop_assert!(index.dir_index_matches_rebuild());
-            prop_assert!(index.name_order_matches_rebuild());
+            prop_assert!(child_chains_match_rebuild(&index));
+            prop_assert!(name_chains_match_rebuild(&index));
+            prop_assert!(name_refcounts_match_chains(&index));
+            prop_assert!(dir_index_matches_rebuild(&index));
+            prop_assert!(name_order_matches_rebuild(&index));
         }
         prop_assert_eq!(actual_paths(&index), expected_paths(&model));
 
@@ -281,8 +285,8 @@ proptest! {
         }
 
         prop_assert_eq!(actual_paths(&index), expected_paths(&model));
-        prop_assert!(index.child_chains_match_rebuild());
-        prop_assert!(index.name_chains_match_rebuild());
-        prop_assert!(index.name_order_matches_rebuild());
+        prop_assert!(child_chains_match_rebuild(&index));
+        prop_assert!(name_chains_match_rebuild(&index));
+        prop_assert!(name_order_matches_rebuild(&index));
     }
 }

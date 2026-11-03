@@ -230,59 +230,6 @@ impl NameOrder {
         self.rank_of.resize(names.slot_count(), UNRANKED);
         self.rerank(names);
     }
-
-    /// The order invariant: the live part is sorted by `(folded, id)`, every
-    /// live id appears exactly once, and each rank is its group's first
-    /// position.
-    #[cfg(test)]
-    pub fn matches_rebuild(&self, names: &NameStore) -> bool {
-        let key = |id: NameId| (names.folded_bytes(id), id);
-        let live: Vec<NameId> = self
-            .order
-            .iter()
-            .copied()
-            .filter(|&id| names.is_live(id))
-            .collect();
-        if !live.windows(2).all(|pair| key(pair[0]) < key(pair[1])) {
-            return false;
-        }
-        let mut seen: Vec<NameId> = live
-            .iter()
-            .copied()
-            .chain(
-                self.unranked
-                    .iter()
-                    .copied()
-                    .filter(|&id| names.is_live(id)),
-            )
-            .collect();
-        let count = seen.len();
-        seen.sort_unstable();
-        seen.dedup();
-        if seen.len() != count {
-            return false;
-        }
-        let want: Vec<NameId> = names.name_ids().filter(|&id| names.is_live(id)).collect();
-        if seen != want {
-            return false;
-        }
-        let mut group_start = 0usize;
-        let mut previous: Option<&[u8]> = None;
-        for (position, &id) in self.order.iter().enumerate() {
-            if !names.is_live(id) {
-                continue;
-            }
-            let folded = names.folded_bytes(id);
-            if previous != Some(folded) {
-                group_start = position;
-                previous = Some(folded);
-            }
-            if self.rank(id) as usize != group_start {
-                return false;
-            }
-        }
-        self.unranked.iter().all(|&id| !self.is_ranked(id))
-    }
 }
 
 impl VolumeIndex {
@@ -345,12 +292,6 @@ impl VolumeIndex {
     #[cfg(test)]
     pub fn record_map_kind(&self) -> &'static str {
         self.by_record.kind()
-    }
-
-    /// Test-only invariant: the name order equals a rebuild.
-    #[cfg(test)]
-    pub fn name_order_matches_rebuild(&self) -> bool {
-        self.order.matches_rebuild(&self.names)
     }
 }
 

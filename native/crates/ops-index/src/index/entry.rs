@@ -99,7 +99,7 @@ impl std::fmt::Debug for EntryFlags {
 /// Read-only snapshot of one live entry's scalar columns.
 ///
 /// A value, not a borrow: the query layer keeps hit ids and re-reads views per
-/// page without holding the table borrowed, and a 32-byte copy is cheaper than
+/// page without holding the table borrowed, and a 56-byte copy is cheaper than
 /// a lifetime on every candidate.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct EntryView {
@@ -452,3 +452,7 @@ impl EntryTable {
         self.prev_child[entry.index()] = prev;
     }
 }
+
+#[cfg(test)]
+#[path = "entry_tests.rs"]
+mod entry_tests;

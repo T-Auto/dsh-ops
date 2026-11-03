@@ -1,7 +1,7 @@
 use super::*;
 use crate::ids::{EntryId, RecordId};
 use crate::index::entry::EntryFlags;
-use crate::index::path::{MAX_PATH_HOPS, PathStatus};
+use crate::index::path::PathStatus;
 use crate::index::record_map::RecordMap;
 use crate::usn::{FILE_ATTRIBUTE_DIRECTORY, ParsedUsnRecord, USN_REASON_FILE_CREATE};
 
@@ -62,14 +62,13 @@ fn a_parent_cycle_is_detected_not_looped() {
     let mut index = tree();
     let docs = index.head_of(RecordId::new(100)).expect("docs");
     let sub = index.head_of(RecordId::new(200)).expect("sub");
-    index.force_parent(docs, sub);
+    index.entries_mut().set_parent(docs, sub);
     let mut out = Vec::new();
     assert_eq!(
         index.path_of(index.head_of(RecordId::new(100)).unwrap(), &mut out),
         PathStatus::CycleDetected
     );
     assert!(out.is_empty());
-    let _ = MAX_PATH_HOPS;
 }
 
 #[test]
@@ -92,7 +91,6 @@ fn a_tombstoned_parent_makes_the_path_stale() {
     let mut out = Vec::new();
     assert_eq!(index.path_of(file, &mut out), PathStatus::Stale);
     assert!(out.is_empty());
-    let _ = EntryId::NIL;
 }
 
 #[test]

@@ -46,5 +46,9 @@ pub use volume::{
 };
 
 #[cfg(test)]
+#[path = "invariants_tests.rs"]
+pub(crate) mod invariants_tests;
+
+#[cfg(test)]
 #[path = "mod_tests.rs"]
 mod mod_tests;

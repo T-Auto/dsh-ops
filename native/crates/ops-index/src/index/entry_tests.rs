@@ -2,12 +2,7 @@ use super::*;
 use crate::ids::{EntryId, NameId, RecordId};
 
 fn alloc(table: &mut EntryTable, record: u64, name: NameId) -> EntryId {
-    table.alloc(
-        RecordId::new(record),
-        EntryId::NIL,
-        name,
-        EntryFlags::EMPTY,
-    )
+    table.alloc(RecordId::new(record), EntryId::NIL, name, EntryFlags::EMPTY)
 }
 
 #[test]
@@ -45,12 +40,7 @@ fn table_costs_57_bytes_per_slot() {
 fn alloc_writes_every_field() {
     let mut table = EntryTable::new();
     let record = RecordId::from_parts(7, 3);
-    let entry = table.alloc(
-        record,
-        EntryId::new(0),
-        NameId::new(4),
-        EntryFlags::DIR,
-    );
+    let entry = table.alloc(record, EntryId::new(0), NameId::new(4), EntryFlags::DIR);
 
     assert_eq!(entry, EntryId::new(0));
     assert_eq!(table.len(), 1);
