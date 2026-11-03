@@ -63,14 +63,14 @@ async function boot({ jitter = false, failure = new Error(HOST_REFUSAL) } = {}) 
     inner.provide('sandboxPolicy', { resolve: ({ session } = {}) => ({ mode: 'workspace-write', workspaceRoot: HOME, sessionId: session?.id }) })
     inner.provide('ptcRuntime', { language: 'typescript' })
   })
-  const state = { open: false, attempts: 0, register: 0, dispose: 0, successWhileOpen: 0 }
+  const state = { open: false, attempts: 0, refused: 0, register: 0, dispose: 0, successWhileOpen: 0 }
   const originalRegister = tools.register
   tools.register = function counted(definition) {
     state.register += 1
     if (state.open) {
       state.attempts += 1
       const refused = jitter ? state.attempts % 5 < 2 : true
-      if (refused) throw failure
+      if (refused) { state.refused += 1; throw failure }
       state.successWhileOpen += 1
     }
     const dispose = originalRegister.call(this, definition)
@@ -166,6 +166,36 @@ await test('the retry costs one touch per cooldown step, independent of the sess
   assert.deepEqual(six.published, [5, 5, 5, 5, 5, 5], 'six sessions all recover')
   assert.notEqual(three.recoveryMs, null)
   assert.notEqual(six.recoveryMs, null)
+})
+
+await test('a jittery window does not amplify: twenty sessions stay at their arithmetic floor', async () => {
+  const fixture = await boot({ jitter: true })
+  try {
+    fixture.state.open = true
+    for (let index = 0; index < 20; index += 1) await fixture.mint()
+    await flush()
+    await fixture.events(1000)
+    const during = { touches: fixture.state.register + fixture.state.dispose, attempts: fixture.state.attempts,
+      refused: fixture.state.refused, warns: fixture.warns.length }
+    const recoveryMs = await fixture.recover()
+    // A publication registers five resident definitions, so one session's floor is
+    // "1 refused first publish + 5 definitions" = 6 registry calls; bash's floor is 2 (one
+    // definition) and PTC's is 3 (two), which is why the shared observability table shows
+    // 40 / 60 / 120 for the same twenty sessions. What must never grow is the *churn*: the
+    // number of attempts inside the window, which the ladder bounds to one per step.
+    assert.ok(during.attempts <= 26,
+      `attempts inside the window are bounded by the sessions plus the ladder, measured ${JSON.stringify(during)}`)
+    assert.ok(during.touches <= 40,
+      `window churn must stay at or under two touches per session, measured ${JSON.stringify(during)}`)
+    assert.ok(during.warns <= 2, `the window is aggregated: ${during.warns} warning(s)`)
+    assert.deepEqual(fixture.published(), new Array(20).fill(5), 'every session recovers after the window')
+    assert.notEqual(recoveryMs, null, 'recovery must not be lost to the jitter')
+    assert.ok(recoveryMs < 3000, `recovery stays bounded (${recoveryMs} ms)`)
+    assert.equal(fixture.failureWarns(), 0, 'no unclassified failure was reported for the window')
+    // The total stays at the floor: five definitions per session plus the window churn.
+    assert.ok(fixture.state.register <= 20 * 5 + 40,
+      `total registrations stay at the floor, measured ${fixture.state.register}`)
+  } finally { await fixture.dispose() }
 })
 
 await test('an unclassified publication failure keeps its single warning and is not retried', async () => {

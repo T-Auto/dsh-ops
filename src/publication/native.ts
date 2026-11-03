@@ -94,6 +94,8 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
       for (const definition of definitions) entry.owned.add(definition.name)
     }
     const cover = (agent: Agent): boolean => gate.allows(agent) && ownership.owns(agent)
+    /** What one attempt settled to; the pass above decides whether to keep going. */
+    type AttemptOutcome = 'published' | 'refused' | 'deferred' | 'failed' | 'skipped'
     /**
      * Try to publish one session's resident tools.
      *
@@ -103,38 +105,45 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
      * transient by construction. Never rejects.
      * @param agent - the session's agent scope.
      * @param entry - its publication entry.
-     * @returns resolves once this attempt settled.
+     * @returns what this attempt settled to.
      */
-    const attempt = async (agent: Agent, entry: Entry): Promise<void> => {
-      if (stopped || entries.get(agent) !== entry || !entry.ctx || entry.owned.size > 0) return
-      if (!cover(agent)) return
+    const attempt = async (agent: Agent, entry: Entry): Promise<AttemptOutcome> => {
+      if (stopped || entries.get(agent) !== entry || !entry.ctx || entry.owned.size > 0) return 'skipped'
+      if (!cover(agent)) return 'skipped'
       // Inside the cooldown the registry must not be touched at all — but the publication is
       // still owed, so a session that arrives during the cooldown is queued instead of dropped.
-      if (cooling.cooled()) { entry.owed = true; return }
-      if (native.get(agent) === false) return
-      if (!await isNativePresentation(prompt, agent).catch(() => false)) return
-      if (stopped || entries.get(agent) !== entry || entry.owned.size > 0 || !cover(agent)) return
-      if (cooling.cooled()) { entry.owed = true; return }
+      if (cooling.cooled()) { entry.owed = true; return 'deferred' }
+      if (native.get(agent) === false) return 'skipped'
+      if (!await isNativePresentation(prompt, agent).catch(() => false)) return 'skipped'
+      if (stopped || entries.get(agent) !== entry || entry.owned.size > 0 || !cover(agent)) return 'skipped'
+      if (cooling.cooled()) { entry.owed = true; return 'deferred' }
       try {
         publish(agent, entry)
         entry.owed = false
-        cooling.succeeded()
+        return 'published'
       } catch (error) {
         if (!cooling.classify(error)) {
           entry.owed = false
           ctx.logger.warn(`dsh-ops: ${mode} mode publication failed: ${safeMessage(error)}`)
-          return
+          return 'failed'
         }
+        // Only the session whose own attempt was refused stays owed; the pass ends here because
+        // the host's reentry lock is process-global, not per session.
         entry.owed = true
         cooling.failed(error)
+        return 'refused'
       }
+    }
+    /** Reset the ladder once nothing is owed anymore; a partial pass must keep escalating. */
+    const settle = (): void => {
+      if (![...entries.values()].some(entry => entry.owed)) cooling.succeeded()
     }
     /**
      * One deferred pass over the sessions that still owe a publication.
      *
      * Serial on purpose: the refusal is process-global, so the first one ends the pass and the
      * cost of a locked window stays one touch per cooldown step instead of one per session.
-     * @returns resolves when the pass ended (also when a cooldown stopped it).
+     * @returns resolves when the pass ended (also when a refusal stopped it).
      */
     let resuming = false
     const resumeOwed = async (): Promise<void> => {
@@ -144,9 +153,17 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
         for (const [agent, entry] of entries) {
           if (stopped || cooling.cooled()) return
           if (!entry.owed || !cover(agent)) continue
-          await attempt(agent, entry)
+          if (await attempt(agent, entry) === 'refused') return
         }
+        settle()
       } finally { resuming = false }
+    }
+    /** Coalesced resume for a cover flip; the cooldown timer stays the primary driver. */
+    let queued = false
+    const queueResume = (): void => {
+      if (queued) return
+      queued = true
+      setImmediate(() => { queued = false; void resumeOwed() })
     }
     const attach = (agent: Agent): void => {
       if (stopped || entries.has(agent) || !agent?.ctx) return
@@ -158,6 +175,7 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
         if (stopped || entries.get(agent) !== entry || !entry.ctx) return
         await entry.runtime.start([])
         await attempt(agent, entry)
+        settle()
       }).catch(error => {
         // The startup chain itself failed (fiber or worker start). A refusal is still an owed
         // publication; anything else keeps its single line and no retry.
@@ -179,9 +197,10 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
         for (const [agent, entry] of entries) if (!cover(agent)) detach(agent)
         for (const agent of ctx.get('agents')?.list?.() ?? []) if (cover(agent)) attach(agent)
       } finally { mutating = false }
-      // Ownership or preset changes may have restored cover for a session that still owes its
-      // publication; the cooldown still gates every registry touch.
-      if ([...entries.values()].some(entry => entry.owed) && !cooling.cooled()) void resumeOwed()
+      // Owed publications are driven by the shared cooldown timer. The only extra trigger is a
+      // cover flip (a preset/ownership change restored an owed session): one coalesced pass, and
+      // never while the cooldown is running.
+      if (!cooling.cooled() && [...entries.values()].some(entry => entry.owed)) queueResume()
     }
     ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
       if (isPresentationProbe(context)) return next()
