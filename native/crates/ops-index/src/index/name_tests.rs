@@ -3,12 +3,7 @@ use crate::ids::{EntryId, NameId, RecordId};
 use crate::index::entry::{EntryFlags, EntryTable, NO_NAME};
 
 fn entry(table: &mut EntryTable, name: NameId, record: u64) -> EntryId {
-    table.alloc(
-        RecordId::new(record),
-        EntryId::NIL,
-        name,
-        EntryFlags::EMPTY,
-    )
+    table.alloc(RecordId::new(record), EntryId::NIL, name, EntryFlags::EMPTY)
 }
 
 #[test]
@@ -71,7 +66,7 @@ fn identical_raw_and_folded_bytes_are_stored_once() {
     let id = store.intern(b"plain");
 
     assert!(store.pair(id).raw().in_folded());
-    assert!(store.pair(id).folded().in_folded());
+    assert_eq!(store.folded_bytes(id), b"plain");
     assert!(store.raw_arena().is_empty());
     assert_eq!(store.folded(), b"plain\0");
 
@@ -275,10 +270,7 @@ fn folded_spans_ascend_and_map_hits_back_to_names() {
     assert_eq!(store.span_bytes(beta_folded), b"beta");
 
     assert_eq!(store.folded_name_at(alpha_folded.offset()), Some(alpha));
-    assert_eq!(
-        store.folded_name_at(beta_folded.offset() + 2),
-        Some(beta)
-    );
+    assert_eq!(store.folded_name_at(beta_folded.offset() + 2), Some(beta));
     assert_eq!(
         store.folded_name_at(beta_folded.offset() + beta_folded.len()),
         None
@@ -316,10 +308,7 @@ fn name_ids_walk_every_slot_in_order() {
     store.intern(b"two");
     store.intern(b"three");
     let ids: Vec<NameId> = store.name_ids().collect();
-    assert_eq!(
-        ids,
-        vec![NameId::new(0), NameId::new(1), NameId::new(2)]
-    );
+    assert_eq!(ids, vec![NameId::new(0), NameId::new(1), NameId::new(2)]);
 }
 
 #[test]
@@ -390,13 +379,18 @@ fn dedup_table_reuses_tombstones_without_losing_live_names() {
     }
     assert_eq!(store.live_names(), 0);
     assert_eq!(store.table.len, 0);
-    let grown_slots = store.table.control.len();
+    let slots_with_tombstones = store.table.control.len();
+    assert_eq!(slots_with_tombstones, 16);
 
     for index in 0..300u32 {
         store.intern(format!("permanent-{index:03}").as_bytes());
     }
-    assert_eq!(store.table.control.len(), grown_slots);
+    // Tombstones are reused: 300 live names fit in the same 512-slot table a
+    // fresh store would grow to, instead of a table carrying one dead slot per
+    // released name.
+    assert_eq!(store.table.len, 300);
     assert_eq!(store.slot_count(), 600);
+    assert_eq!(store.table.control.len(), 512);
 
     for index in 0..300u32 {
         let name = format!("permanent-{index:03}");
@@ -405,4 +399,54 @@ fn dedup_table_reuses_tombstones_without_losing_live_names() {
         assert_eq!(store.refcount(id), 2);
     }
     assert_eq!(store.live_names(), 300);
+}
+
+#[test]
+fn a_fold_that_stays_the_same_length_at_the_size_limit_is_accepted() {
+    let mut store = NameStore::new();
+    let name = "é".repeat(30_000);
+    let id = store.intern(name.as_bytes());
+    assert_eq!(store.raw_bytes(id).len(), 60_000);
+    assert_eq!(store.folded_bytes(id), name.as_bytes());
+}
+
+#[test]
+#[should_panic(expected = "folded name is longer than 65535 bytes")]
+fn a_fold_that_outgrows_the_16_bit_reference_panics_instead_of_truncating() {
+    // U+0130 lowercases to two code points (i + U+0307) and does not compose
+    // back, so 22_000 copies are 44_000 raw bytes but 66_000 folded bytes.
+    let mut store = NameStore::new();
+    store.intern("İ".repeat(22_000).as_bytes());
+}
+
+#[test]
+fn compaction_rebuilds_independent_raw_bytes_and_shared_references() {
+    let mut store = NameStore::new();
+    let mut table = EntryTable::new();
+    let alpha = store.intern(b"Alpha");
+    let beta = store.intern(b"BETA");
+    let shared = store.intern(b"plain");
+    assert_eq!(store.raw_arena(), b"Alpha\0BETA\0");
+
+    let plan = store.plan_compact();
+    assert_eq!(plan.compacted_names(), 3);
+    assert_eq!(plan.raw_arena(), b"Alpha\0BETA\0");
+    assert_eq!(plan.folded_arena(), b"alpha\0beta\0plain\0");
+    assert_eq!(plan.remap(alpha), Some(NameId::new(0)));
+    assert_eq!(plan.remap(beta), Some(NameId::new(1)));
+    assert_eq!(plan.remap(shared), Some(NameId::new(2)));
+
+    let entry = entry(&mut table, alpha, 1);
+    store.install_compacted(plan, &mut table);
+
+    assert_eq!(store.raw_bytes(NameId::new(0)), b"Alpha");
+    assert_eq!(store.raw_bytes(NameId::new(1)), b"BETA");
+    assert_eq!(store.raw_bytes(NameId::new(2)), b"plain");
+    assert_eq!(store.folded_bytes(NameId::new(0)), b"alpha");
+    assert_eq!(store.folded_bytes(NameId::new(1)), b"beta");
+    assert!(!store.pair(NameId::new(0)).raw().in_folded());
+    assert!(!store.pair(NameId::new(1)).raw().in_folded());
+    assert!(store.pair(NameId::new(2)).raw().in_folded());
+    assert_eq!(store.raw_arena(), b"Alpha\0BETA\0");
+    assert_eq!(table.name_id(entry), NameId::new(0));
 }
