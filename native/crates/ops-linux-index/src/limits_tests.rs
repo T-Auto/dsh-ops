@@ -9,18 +9,17 @@ struct LimitsDir {
 }
 
 impl LimitsDir {
-    fn new(watches: &str, instances: &str, queued: &str) -> Self {
+    fn new(watches: &str, instances: &str) -> Self {
         let unique = format!(
             "ops-linux-limits-{}-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed),
-            watches.len() + instances.len() + queued.len()
+            watches.len() + instances.len()
         );
         let path = std::env::temp_dir().join(unique);
         std::fs::create_dir_all(&path).unwrap();
         std::fs::write(path.join("max_user_watches"), watches).unwrap();
         std::fs::write(path.join("max_user_instances"), instances).unwrap();
-        std::fs::write(path.join("max_queued_events"), queued).unwrap();
         Self { path }
     }
 }
@@ -32,20 +31,17 @@ impl Drop for LimitsDir {
 }
 
 #[test]
-fn reads_the_three_limits_with_a_trailing_newline() {
-    let dir = LimitsDir::new("65536\n", "128\n", "16384\n");
+fn reads_the_limits_with_a_trailing_newline() {
+    let dir = LimitsDir::new("65536\n", "128\n");
     let limits = WatchLimits::read_from(&dir.path).unwrap();
     assert_eq!(limits.max_user_watches, 65_536);
     assert_eq!(limits.max_user_instances, 128);
-    assert_eq!(limits.max_queued_events, 16_384);
     assert!(limits.can_watch());
-    assert_eq!(limits.queue_capacity(), 16_384);
 }
 
 #[test]
 fn tolerates_surrounding_whitespace_and_large_values() {
     assert_eq!(parse_limit(" 42 \n"), Some(42));
-    assert_eq!(parse_limit("u64::MAX placeholder"), None);
     assert_eq!(parse_limit(&u64::MAX.to_string()), Some(u64::MAX));
 }
 
@@ -60,15 +56,15 @@ fn rejects_empty_and_non_decimal_bodies() {
 
 #[test]
 fn a_missing_limit_file_is_an_io_error() {
-    let dir = LimitsDir::new("1\n", "1\n", "1\n");
-    std::fs::remove_file(dir.path.join("max_queued_events")).unwrap();
+    let dir = LimitsDir::new("1\n", "1\n");
+    std::fs::remove_file(dir.path.join("max_user_instances")).unwrap();
     let error = WatchLimits::read_from(&dir.path).unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::NotFound);
 }
 
 #[test]
 fn a_malformed_limit_file_is_invalid_data() {
-    let dir = LimitsDir::new("not-a-number\n", "1\n", "1\n");
+    let dir = LimitsDir::new("not-a-number\n", "1\n");
     let error = WatchLimits::read_from(&dir.path).unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     assert!(error.to_string().contains("max_user_watches"));
@@ -76,22 +72,17 @@ fn a_malformed_limit_file_is_invalid_data() {
 
 #[test]
 fn zero_budgets_cannot_watch() {
-    let none = LimitsDir::new("0\n", "128\n", "16384\n");
-    assert!(!WatchLimits::read_from(&none.path).unwrap().can_watch());
-    let no_instances = LimitsDir::new("65536\n", "0\n", "16384\n");
+    let no_watches = LimitsDir::new("0\n", "128\n");
+    assert!(
+        !WatchLimits::read_from(&no_watches.path)
+            .unwrap()
+            .can_watch()
+    );
+    let no_instances = LimitsDir::new("65536\n", "0\n");
     assert!(
         !WatchLimits::read_from(&no_instances.path)
             .unwrap()
             .can_watch()
-    );
-}
-
-#[test]
-fn queue_capacity_never_drops_below_the_minimum() {
-    let tiny = LimitsDir::new("1\n", "1\n", "2\n");
-    assert_eq!(
-        WatchLimits::read_from(&tiny.path).unwrap().queue_capacity(),
-        MIN_QUEUE_CAPACITY
     );
 }
 

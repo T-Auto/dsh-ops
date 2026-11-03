@@ -8,9 +8,14 @@
 //!
 //! The rule behind invalidation is attribution: an inotify watch belongs to an
 //! inode. Once a tracked directory (or one of its ancestors) is removed or
-//! moved, or a directory is moved into the tree, later event paths can no
-//! longer be matched to the snapshot's paths. Replaying them would silently
-//! corrupt the index, so the state reports that a rescan is required instead.
+//! moved, a directory appears, or the file system cannot even classify the
+//! event, later event paths can no longer be matched to the snapshot's paths.
+//! Replaying them would silently corrupt the index, so the state reports that a
+//! rescan is required instead.
+//!
+//! Until the caller adopts the snapshot's directories the baseline is not
+//! ready, and every structural event conservatively requires a rescan: without
+//! the directory set nothing can be attributed.
 
 use ops_index::ChangeAction;
 use std::collections::HashSet;
@@ -32,8 +37,9 @@ pub enum WatchMode {
 pub enum InvalidationReason {
     /// The kernel reported a queue overflow: notifications were dropped.
     QueueOverflow,
-    /// A tracked directory (or one of its ancestors) was removed or moved, or a
-    /// directory was moved into the tree.
+    /// The tracked directory tree changed in a way events cannot describe:
+    /// a tracked directory (or an ancestor) was removed or moved, a directory
+    /// appeared, or a rename could not be classified.
     WatchedTreeMoved,
     /// The native watcher failed and the session degraded to polling; events
     /// between the failure and the polling baseline may be missing.
@@ -79,7 +85,10 @@ pub struct WatchUpdate {
 /// Backend-independent decision state.
 pub(crate) struct SessionCore {
     root: PathBuf,
-    known_dirs: HashSet<PathBuf>,
+    /// Every tracked directory **and all of its ancestors**, plus the root.
+    /// Closed under `parent()`, so one `contains` decides attribution.
+    tracked_prefixes: HashSet<PathBuf>,
+    baseline_ready: bool,
     mode: WatchMode,
     invalidated: Option<InvalidationReason>,
 }
@@ -88,28 +97,30 @@ impl SessionCore {
     pub(crate) fn new(root: PathBuf) -> Self {
         Self {
             root,
-            known_dirs: HashSet::new(),
+            tracked_prefixes: HashSet::new(),
+            baseline_ready: false,
             mode: WatchMode::Native,
             invalidated: None,
         }
     }
 
     pub(crate) fn adopt_directories(&mut self, dirs: impl IntoIterator<Item = PathBuf>) {
-        self.known_dirs.extend(dirs);
+        self.rebuild_prefixes(dirs);
+        self.baseline_ready = true;
     }
 
     pub(crate) fn resync_baseline(&mut self, dirs: impl IntoIterator<Item = PathBuf>) {
-        self.known_dirs.clear();
-        self.known_dirs.extend(dirs);
+        self.rebuild_prefixes(dirs);
+        self.baseline_ready = true;
         self.invalidated = None;
-    }
-
-    pub(crate) fn set_mode(&mut self, mode: WatchMode) {
-        self.mode = mode;
     }
 
     pub(crate) fn mode(&self) -> WatchMode {
         self.mode
+    }
+
+    pub(crate) fn set_mode(&mut self, mode: WatchMode) {
+        self.mode = mode;
     }
 
     pub(crate) fn invalidated(&self) -> Option<InvalidationReason> {
@@ -120,24 +131,15 @@ impl SessionCore {
         &self.root
     }
 
-    /// The channel closed: no backend can deliver events any more.
-    pub(crate) fn on_backend_disconnected(&mut self) {
-        self.invalidate(InvalidationReason::BackendLost);
-    }
-
     /// Turns an unbounded event gap into a rescan requirement.
     pub(crate) fn note_queue_overflow(&mut self) {
         self.invalidate(InvalidationReason::QueueOverflow);
     }
 
-    /// A tracked directory or one of its ancestors disappeared.
-    pub(crate) fn note_tracked_tree_moved(&mut self) {
-        self.invalidate(InvalidationReason::WatchedTreeMoved);
-    }
-
-    /// A directory was moved into the tree: its existing children emitted no
-    /// creation events, so the snapshot is incomplete.
-    pub(crate) fn note_directory_moved_in(&mut self) {
+    /// A structural change events cannot be replayed against the snapshot:
+    /// a tracked directory (or ancestor) removed/moved, a directory appeared,
+    /// or an event the file system could not classify.
+    pub(crate) fn note_structure_changed(&mut self) {
         self.invalidate(InvalidationReason::WatchedTreeMoved);
     }
 
@@ -156,9 +158,36 @@ impl SessionCore {
         }
     }
 
-    /// Whether `rel` is a tracked directory or an ancestor of one.
+    /// The channel closed: no backend can deliver events any more.
+    pub(crate) fn on_backend_disconnected(&mut self) {
+        self.invalidate(InvalidationReason::BackendLost);
+    }
+
+    /// Whether `rel` is the root, a tracked directory, or an ancestor of one.
+    ///
+    /// Before the baseline is adopted nothing is attributable, so every path
+    /// conservatively reports tracked.
     pub(crate) fn tracks(&self, rel: &Path) -> bool {
-        self.known_dirs.contains(rel) || self.known_dirs.iter().any(|dir| dir.starts_with(rel))
+        !self.baseline_ready || self.tracked_prefixes.contains(rel)
+    }
+
+    /// Replaces the tracked set with the directories and all their ancestors.
+    fn rebuild_prefixes(&mut self, dirs: impl IntoIterator<Item = PathBuf>) {
+        self.tracked_prefixes.clear();
+        // The root itself is always attributed; `Path::new("")` is the empty
+        // relative path the mapping uses for it.
+        self.tracked_prefixes.insert(PathBuf::new());
+        for dir in dirs {
+            let mut current = dir;
+            loop {
+                let parent = current.parent().map(Path::to_path_buf);
+                self.tracked_prefixes.insert(current);
+                match parent {
+                    Some(parent) if !parent.as_os_str().is_empty() => current = parent,
+                    _ => break,
+                }
+            }
+        }
     }
 
     fn invalidate(&mut self, reason: InvalidationReason) {

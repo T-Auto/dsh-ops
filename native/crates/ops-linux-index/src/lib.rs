@@ -8,7 +8,8 @@
 //! values without reading file contents, without following symlinks, and with
 //! an explicit entry/depth/deadline budget.
 //!
-//! L1 scope, deliberately:
+//! This crate currently delivers L1 (cold enumeration) and L2 (incremental
+//! watching), deliberately:
 //!
 //! - cold enumeration (`walk`), kernel/polling watch sessions (`watch`), the
 //!   watch-state machine (`state`) and the freshness state (`source`);
