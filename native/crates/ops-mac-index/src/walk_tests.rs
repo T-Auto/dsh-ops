@@ -102,7 +102,7 @@ fn oracle(root: &Path) -> Vec<OracleEntry> {
                 } else {
                     0
                 },
-                modified_ns: super::modified_ns(&metadata),
+                modified_ns: oracle_modified_ns(&metadata),
             });
             if file_type.is_dir() {
                 stack.push(path);
@@ -110,6 +110,21 @@ fn oracle(root: &Path) -> Vec<OracleEntry> {
         }
     }
     entries
+}
+
+/// Independent mtime conversion for the oracle.
+///
+/// It intentionally does not call the production `modified_ns` helper: if that
+/// helper had a sign or precision bug, sharing it would make the expected and
+/// actual values wrong in the same way and the comparison would stay green.
+fn oracle_modified_ns(metadata: &fs::Metadata) -> Option<i64> {
+    let modified = metadata.modified().ok()?;
+    match modified.duration_since(UNIX_EPOCH) {
+        Ok(elapsed) => i64::try_from(elapsed.as_nanos()).ok(),
+        Err(before) => i64::try_from(before.duration().as_nanos())
+            .ok()
+            .map(|nanos| -nanos),
+    }
 }
 
 /// Asserts that a candidate set agrees with the oracle entry by entry.
@@ -335,6 +350,48 @@ fn an_unreadable_directory_is_an_io_error() {
         Err(SourceError::Io(ErrorKind::PermissionDenied)),
         "a partially readable tree must be an error, not a truncated set"
     );
+}
+
+#[test]
+fn a_known_modification_time_arrives_in_nanoseconds() {
+    let tree = TempTree::new("mtime");
+    let path = tree.file("stamped.txt", b"stamped");
+    let expected_ns: i64 = 1_700_000_000_123_456_789;
+    let expected = UNIX_EPOCH + Duration::new(1_700_000_000, 123_456_789);
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .expect("open for set_modified")
+        .set_modified(expected)
+        .expect("set the modification time");
+    let set = walk(tree.root(), 1000, 32);
+    let entry = set
+        .entries
+        .iter()
+        .find(|candidate| candidate.rel == Path::new("stamped.txt"))
+        .expect("the stamped file is listed");
+    assert_eq!(
+        entry.modified_ns,
+        Some(expected_ns),
+        "a known mtime must survive as whole nanoseconds since the epoch"
+    );
+}
+
+#[test]
+fn a_symlinked_root_is_followed() {
+    let target = TempTree::new("root-target");
+    target.file("inside.txt", b"inside");
+    let host = TempTree::new("root-link");
+    let link = host.root().join("linked-root");
+    std::os::unix::fs::symlink(target.root(), &link).expect("symlink the root");
+    let set = walk_root(
+        &link,
+        EnumBudget::with_timeout(1000, 32, Duration::from_secs(60)),
+    )
+    .expect("a symlinked root is walked");
+    let mut rels: Vec<PathBuf> = set.entries.iter().map(|entry| entry.rel.clone()).collect();
+    rels.sort();
+    assert_eq!(rels, vec![PathBuf::from("inside.txt")]);
 }
 
 #[test]
