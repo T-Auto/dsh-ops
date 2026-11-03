@@ -20,7 +20,7 @@ use crate::usn::{
     ParsedUsnRecord, USN_REASON_FILE_CREATE, USN_REASON_FILE_DELETE, USN_REASON_RENAME_NEW_NAME,
 };
 use proptest::prelude::*;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 const ROOT: u64 = 5;
 const FIRST_RECORD: u64 = 100;
@@ -85,14 +85,14 @@ fn action_strategy() -> impl Strategy<Value = Action> {
     ]
 }
 
-/// Model state: record -> (parent record, name, is_dir) plus the records whose
-/// parent chain was severed by a parent delete (the index marks those entries
-/// CHAIN_DETACHED and refuses to build a path for them until their own record
-/// arrives again).
+/// Model state: record -> (parent record, name, is_dir).
+///
+/// A delete removes the whole subtree, matching a journal applied in consistent
+/// order (the index cannot assume that and instead severs live children; that
+/// behaviour is pinned by an explicit unit test).
 #[derive(Default)]
 struct Model {
     entries: BTreeMap<u64, (u64, Vec<u8>, bool)>,
-    detached: BTreeSet<u64>,
 }
 
 impl Action {
@@ -162,7 +162,6 @@ impl Action {
                 model
                     .entries
                     .insert(record, (parent_id(*parent), name_of(*name), *is_dir));
-                model.detached.remove(&record);
             }
             Self::Rename {
                 record,
@@ -178,13 +177,11 @@ impl Action {
                 model
                     .entries
                     .insert(record, (parent_id(*parent), name_of(*name), is_dir));
-                model.detached.remove(&record);
             }
             Self::Delete { record } => {
                 let mut stack = vec![record_id(*record)];
                 while let Some(record) = stack.pop() {
                     model.entries.remove(&record);
-                    model.detached.remove(&record);
                     let children: Vec<u64> = model
                         .entries
                         .iter()
@@ -202,9 +199,6 @@ fn resolve_path(model: &Model, record: u64) -> Option<String> {
     let mut parts = Vec::new();
     let mut current = record;
     while current != ROOT {
-        if model.detached.contains(&current) {
-            return None;
-        }
         let (parent, name, _) = model.entries.get(&current)?;
         parts.push(name.clone());
         current = *parent;
