@@ -18,6 +18,14 @@ use std::fmt;
 
 /// Size of the leading value that precedes every record buffer.
 pub const LEADING_VALUE_LEN: usize = 8;
+/// Size of the common header shared by every record version, and the alignment
+/// quantum every record length is rounded up to.
+///
+/// This is deliberately a separate constant from [`LEADING_VALUE_LEN`]: the two
+/// are both eight today, but one describes the leading value and the other the
+/// record layout, and conflating them would hide a format error behind a
+/// coincidence.
+pub const USN_COMMON_HEADER_LEN: usize = 8;
 /// Fixed header size of a version 2 record.
 pub const USN_V2_HEADER_LEN: usize = 60;
 /// Fixed header size of a version 3 record.
@@ -210,7 +218,7 @@ fn walk_records(buffer: &[u8]) -> Result<(Vec<ParsedUsnRecord>, SkipCounts), Wal
     let mut records = Vec::with_capacity((buffer.len() / USN_V2_HEADER_LEN).min(4096));
     let mut skipped = SkipCounts::default();
     let mut offset = LEADING_VALUE_LEN;
-    while offset + LEADING_VALUE_LEN <= buffer.len() {
+    while offset + USN_COMMON_HEADER_LEN <= buffer.len() {
         let length =
             read_u32(buffer, offset).ok_or(WalkError::TruncatedHeader { offset })? as usize;
         if length == 0 {
@@ -228,7 +236,7 @@ fn walk_records(buffer: &[u8]) -> Result<(Vec<ParsedUsnRecord>, SkipCounts), Wal
         }
         // Records are eight-byte aligned; round the end up. An incomplete tail
         // (fewer than eight bytes) is a normal end of buffer, not an error.
-        let Some(next) = end.checked_next_multiple_of(LEADING_VALUE_LEN) else {
+        let Some(next) = end.checked_next_multiple_of(USN_COMMON_HEADER_LEN) else {
             break;
         };
         offset = next;
@@ -274,7 +282,8 @@ fn parse_record(
         } else {
             // V3 ids are 128 bits; only the low 64 bits enter the index. The
             // high half is read and discarded, never treated as an error.
-            let _ = (read_u64(buffer, offset + 16), read_u64(buffer, offset + 32));
+            let _frn_high = read_u64(buffer, offset + 16);
+            let _parent_high = read_u64(buffer, offset + 32);
             (
                 record_at(8)?,
                 record_at(24)?,
