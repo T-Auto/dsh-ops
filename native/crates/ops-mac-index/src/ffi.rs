@@ -42,13 +42,26 @@ use objc2_core_services::{
     FSEventStreamGetLatestEventId, FSEventStreamInvalidate, FSEventStreamRef, FSEventStreamRelease,
     FSEventStreamStart, FSEventStreamStop, FSEventsGetCurrentEventId,
     kFSEventStreamCreateFlagFileEvents, kFSEventStreamCreateFlagUseCFTypes,
-    kFSEventStreamCreateFlagUseExtendedData,
+    kFSEventStreamCreateFlagUseExtendedData, kFSEventStreamCreateFlagWatchRoot,
 };
 use std::ffi::c_void;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+/// Test-only switch that makes the next delivery panic inside the callback, so
+/// the panic boundary is exercised on a real stream.
+#[cfg(test)]
+pub(crate) static PANIC_IN_DELIVERY: AtomicBool = AtomicBool::new(false);
+
+/// Counts panics the callback boundary caught; a test asserts it advanced.
+#[cfg(test)]
+pub(crate) static CAUGHT_PANICS: AtomicUsize = AtomicUsize::new(0);
 
 /// Creation flags this source always uses.
 ///
@@ -59,9 +72,13 @@ use std::time::Duration;
 /// - `UseExtendedData`: the callback receives a dictionary per event whose
 ///   `"path"` and `"fileID"` deliver the file id for free, so a rename can be
 ///   attributed without a second `stat`.
+/// - `WatchRoot`: report a change of a watched root itself (`RootChanged`).
+///   Without it a root that is replaced or renamed would go unnoticed, and
+///   `RootChanged` is one of the flags that forces a rescan.
 pub(crate) const CREATE_FLAGS: FSEventStreamCreateFlags = kFSEventStreamCreateFlagFileEvents
     | kFSEventStreamCreateFlagUseCFTypes
-    | kFSEventStreamCreateFlagUseExtendedData;
+    | kFSEventStreamCreateFlagUseExtendedData
+    | kFSEventStreamCreateFlagWatchRoot;
 
 /// Dictionary key whose value is the event path (a `CFString`).
 pub(crate) const EXTENDED_PATH_KEY: &str = "path";
@@ -319,6 +336,45 @@ unsafe extern "C-unwind" fn release_sink(info: *const c_void) {
 /// The kernel calls this with `num_events` valid entries in each of the three
 /// arrays and with `info` pointing at the sink from `FSEventStreamCreate`.
 unsafe extern "C-unwind" fn on_events(
+    stream: ConstFSEventStreamRef,
+    info: *mut c_void,
+    num_events: usize,
+    event_paths: NonNull<c_void>,
+    event_flags: NonNull<FSEventStreamEventFlags>,
+    event_ids: NonNull<FSEventStreamEventId>,
+) {
+    // No panic may unwind into the framework: unwinding is not part of the C
+    // ABI, and a panic here would abort the worker with no diagnostic. The body
+    // is written not to panic; this is the last line of defence, and it is
+    // tested by injecting a panic on a real stream.
+    if catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: the callback contract is forwarded unchanged.
+        unsafe {
+            deliver(
+                stream,
+                info,
+                num_events,
+                event_paths,
+                event_flags,
+                event_ids,
+            )
+        };
+    }))
+    .is_err()
+    {
+        #[cfg(test)]
+        CAUGHT_PANICS.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Reads and stores one callback batch.
+///
+/// # Safety
+///
+/// Same contract as [`on_events`]: the kernel provides `num_events` valid
+/// entries in the three arrays and `info` is the sink installed by
+/// `FSEventStreamCreate`.
+unsafe fn deliver(
     _stream: ConstFSEventStreamRef,
     info: *mut c_void,
     num_events: usize,
@@ -326,6 +382,10 @@ unsafe extern "C-unwind" fn on_events(
     event_flags: NonNull<FSEventStreamEventFlags>,
     event_ids: NonNull<FSEventStreamEventId>,
 ) {
+    #[cfg(test)]
+    if PANIC_IN_DELIVERY.load(Ordering::Relaxed) {
+        panic!("injected panic from the FSEvents callback");
+    }
     if info.is_null() || num_events == 0 {
         return;
     }
@@ -362,7 +422,12 @@ unsafe extern "C-unwind" fn on_events(
 
 /// Reads one `eventPaths` element, accepting both the extended-data dictionary
 /// and the plain-CFString form.
-fn read_path(
+///
+/// Values inside the dictionary are type-checked before use: the extended-data
+/// contract says `"path"` is a CFString and `"fileID"` a CFNumber, and a
+/// system that ever changed that must degrade to "skip this event" instead of
+/// reinterpreting one CF object as another.
+pub(crate) fn read_path(
     paths: &CFArray,
     index: CFIndex,
     path_key: &CFString,
@@ -387,20 +452,40 @@ fn read_path(
     if type_id != CFDictionary::type_id() {
         return None;
     }
-    // SAFETY: the type id identified a CFDictionary. Its keys are CFStrings and
-    // the value under `path_key` is a CFString; viewing the same object with
-    // those types is what the extended-data contract documents.
-    let dictionary: &CFDictionary<CFString, CFString> =
-        unsafe { &*raw.cast::<CFDictionary<CFString, CFString>>() };
-    // SAFETY: the dictionary is immutable and lives for the whole callback.
-    let path = unsafe { dictionary.get_unchecked(path_key) }?.to_string();
-    // SAFETY: same dictionary, viewed with the value type the extended data
-    // documents: `fileID` is a CFNumber.
-    let numbers: &CFDictionary<CFString, CFNumber> =
-        unsafe { &*raw.cast::<CFDictionary<CFString, CFNumber>>() };
-    // SAFETY: the dictionary and its values are immutable for the callback.
-    let file_id = unsafe { numbers.get_unchecked(file_id_key) }
-        .and_then(CFNumber::as_i64)
-        .and_then(|raw| u64::try_from(raw).ok());
-    Some((path, file_id))
+    // SAFETY: the type id identified a CFDictionary, valid for the whole
+    // callback.
+    let dictionary: &CFDictionary = unsafe { &*raw.cast::<CFDictionary>() };
+    let path_value = dictionary_value(dictionary, path_key)?;
+    if CFGetTypeID(Some(path_value)) != CFString::type_id() {
+        return None;
+    }
+    // SAFETY: the type id just identified this value as a CFString.
+    let path: &CFString = unsafe { &*std::ptr::from_ref(path_value).cast::<CFString>() };
+    let file_id = dictionary_value(dictionary, file_id_key).and_then(|value| {
+        if CFGetTypeID(Some(value)) != CFNumber::type_id() {
+            return None;
+        }
+        // SAFETY: the type id just identified this value as a CFNumber.
+        let number: &CFNumber = unsafe { &*std::ptr::from_ref(value).cast::<CFNumber>() };
+        number.as_i64().and_then(|raw| u64::try_from(raw).ok())
+    });
+    Some((path.to_string(), file_id))
 }
+
+/// Borrows one dictionary value as an untyped CF object.
+fn dictionary_value<'a>(dictionary: &'a CFDictionary, key: &CFString) -> Option<&'a CFType> {
+    // SAFETY: the dictionary is immutable for the callback's duration and the
+    // key is a live CFString; the lookup neither retains nor consumes either
+    // argument.
+    let value = unsafe { dictionary.value(std::ptr::from_ref(key).cast::<c_void>()) };
+    if value.is_null() {
+        return None;
+    }
+    // SAFETY: dictionary values are non-NULL CF objects that live as long as
+    // the dictionary, which the callback holds for the whole call.
+    Some(unsafe { &*value.cast::<CFType>() })
+}
+
+#[cfg(test)]
+#[path = "ffi_tests.rs"]
+mod ffi_tests;

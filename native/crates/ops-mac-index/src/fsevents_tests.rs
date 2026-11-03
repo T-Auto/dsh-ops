@@ -2,19 +2,19 @@ use super::*;
 use crate::ffi;
 use objc2_core_services::{
     kFSEventStreamCreateFlagFileEvents, kFSEventStreamCreateFlagUseCFTypes,
-    kFSEventStreamCreateFlagUseExtendedData, kFSEventStreamEventFlagEventIdsWrapped,
-    kFSEventStreamEventFlagHistoryDone, kFSEventStreamEventFlagItemChangeOwner,
-    kFSEventStreamEventFlagItemCloned, kFSEventStreamEventFlagItemCreated,
-    kFSEventStreamEventFlagItemFinderInfoMod, kFSEventStreamEventFlagItemInodeMetaMod,
-    kFSEventStreamEventFlagItemIsDir, kFSEventStreamEventFlagItemIsFile,
-    kFSEventStreamEventFlagItemIsHardlink, kFSEventStreamEventFlagItemIsLastHardlink,
-    kFSEventStreamEventFlagItemIsSymlink, kFSEventStreamEventFlagItemModified,
-    kFSEventStreamEventFlagItemRemoved, kFSEventStreamEventFlagItemRenamed,
-    kFSEventStreamEventFlagItemXattrMod, kFSEventStreamEventFlagKernelDropped,
-    kFSEventStreamEventFlagMount, kFSEventStreamEventFlagMustScanSubDirs,
-    kFSEventStreamEventFlagNone, kFSEventStreamEventFlagOwnEvent,
-    kFSEventStreamEventFlagRootChanged, kFSEventStreamEventFlagUnmount,
-    kFSEventStreamEventFlagUserDropped,
+    kFSEventStreamCreateFlagUseExtendedData, kFSEventStreamCreateFlagWatchRoot,
+    kFSEventStreamEventFlagEventIdsWrapped, kFSEventStreamEventFlagHistoryDone,
+    kFSEventStreamEventFlagItemChangeOwner, kFSEventStreamEventFlagItemCloned,
+    kFSEventStreamEventFlagItemCreated, kFSEventStreamEventFlagItemFinderInfoMod,
+    kFSEventStreamEventFlagItemInodeMetaMod, kFSEventStreamEventFlagItemIsDir,
+    kFSEventStreamEventFlagItemIsFile, kFSEventStreamEventFlagItemIsHardlink,
+    kFSEventStreamEventFlagItemIsLastHardlink, kFSEventStreamEventFlagItemIsSymlink,
+    kFSEventStreamEventFlagItemModified, kFSEventStreamEventFlagItemRemoved,
+    kFSEventStreamEventFlagItemRenamed, kFSEventStreamEventFlagItemXattrMod,
+    kFSEventStreamEventFlagKernelDropped, kFSEventStreamEventFlagMount,
+    kFSEventStreamEventFlagMustScanSubDirs, kFSEventStreamEventFlagNone,
+    kFSEventStreamEventFlagOwnEvent, kFSEventStreamEventFlagRootChanged,
+    kFSEventStreamEventFlagUnmount, kFSEventStreamEventFlagUserDropped,
 };
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
@@ -169,6 +169,9 @@ fn creation_flags_request_file_events_and_extended_data() {
     // UseExtendedData is only valid together with UseCFTypes; without the
     // latter the callback would receive C strings instead of dictionaries.
     assert_ne!(ffi::CREATE_FLAGS & kFSEventStreamCreateFlagUseCFTypes, 0);
+    // WatchRoot is what reports a replaced or renamed root as `RootChanged`,
+    // one of the flags that forces a rescan.
+    assert_ne!(ffi::CREATE_FLAGS & kFSEventStreamCreateFlagWatchRoot, 0);
 }
 
 #[test]
@@ -373,25 +376,28 @@ fn replay_from_a_persisted_id_reports_a_new_file() {
 }
 
 #[test]
-fn an_idle_stream_reports_no_events_and_keeps_the_marker() {
+fn an_idle_live_stream_reports_no_events() {
     let tree = TempTree::new("idle");
     let root = tree.to_path_buf();
-    let since = EventStream::current_event_id();
-    let mut stream = open_stream(std::slice::from_ref(&root), since);
+    // SINCE_NOW replays nothing, not even operations recorded a moment before
+    // the call: a stream opened at a concrete id can legitimately receive those
+    // because fseventsd assigns ids asynchronously.
+    let mut stream = open_stream(std::slice::from_ref(&root), EventId::SINCE_NOW);
     let batch = stream.drain(Duration::from_millis(300));
     assert!(batch.is_empty(), "{:?}", batch.events);
-    assert_eq!(batch.latest, since);
     assert!(!batch.dropped);
+    assert!(!batch.event_ids_wrapped);
+    assert!(!batch.history_done);
+    assert_eq!(batch.latest, EventId::SINCE_NOW);
 }
 
 #[test]
 fn drain_returns_within_its_timeout() {
     let tree = TempTree::new("timeout");
     let root = tree.to_path_buf();
-    // Opening at the current id keeps the replay empty, so the only reason to
-    // return early would be a bug in the timeout loop.
-    let since = EventStream::current_event_id();
-    let mut stream = open_stream(std::slice::from_ref(&root), since);
+    // A live stream has no replay to finish, so nothing can end the wait early
+    // except a real event; none is written here.
+    let mut stream = open_stream(std::slice::from_ref(&root), EventId::SINCE_NOW);
     let start = Instant::now();
     let batch = stream.drain(Duration::from_millis(150));
     let elapsed = start.elapsed();
@@ -415,6 +421,148 @@ fn opening_and_dropping_a_stream_repeatedly_is_safe() {
             let stream = open_stream(std::slice::from_ref(&root), EventId::SINCE_NOW);
             assert_eq!(stream.watched_roots().len(), 1);
             assert!(stream.latest_event_id() > EventId::from_raw(0));
+        }
+    }
+}
+
+#[test]
+fn the_history_done_sentinel_is_dropped_without_moving_the_cursor() {
+    let mut latest = EventId::from_raw(11);
+    let mut tally = Tally::default();
+    // The kernel's replay-end marker can carry a high id; it names no file, so
+    // it must not become the persisted cursor.
+    let raw = ffi::RawEvent {
+        id: u64::MAX - 1,
+        flags: EventFlags::HISTORY_DONE.raw() | EventFlags::ITEM_IS_DIR.raw(),
+        path: "/root".to_string(),
+        file_id: None,
+    };
+    assert_eq!(absorb(&raw, &mut latest, &mut tally), None);
+    assert_eq!(latest, EventId::from_raw(11));
+    assert!(tally.history_done);
+    assert!(!tally.dropped);
+    assert!(!tally.event_ids_wrapped);
+
+    // A real event still advances it.
+    let raw = ffi::RawEvent {
+        id: 12,
+        flags: EventFlags::ITEM_CREATED.raw(),
+        path: "/root/a".to_string(),
+        file_id: Some(3),
+    };
+    let event = absorb(&raw, &mut latest, &mut tally).expect("a real event is kept");
+    assert_eq!(event.id, EventId::from_raw(12));
+    assert_eq!(latest, EventId::from_raw(12));
+}
+
+#[test]
+fn wrapped_ids_are_reported_separately_from_drops() {
+    let mut latest = EventId::from_raw(0);
+    let mut tally = Tally::default();
+    let raw = ffi::RawEvent {
+        id: 5,
+        flags: EventFlags::EVENT_IDS_WRAPPED.raw(),
+        path: "/root".to_string(),
+        file_id: None,
+    };
+    assert!(absorb(&raw, &mut latest, &mut tally).is_some());
+    assert!(tally.event_ids_wrapped);
+    assert!(!tally.dropped);
+    assert_eq!(latest, EventId::from_raw(5));
+}
+
+#[test]
+fn relative_path_survives_a_case_difference_between_root_and_event() {
+    // The default macOS file systems are case-insensitive and FSEvents reports
+    // the on-disk spelling; the root may have been created with other case.
+    let roots = vec![PathBuf::from("/Users/Alice/Data")];
+    assert_eq!(
+        relative_path(&roots, Path::new("/users/alice/data/report.pdf")),
+        Some(PathBuf::from("report.pdf"))
+    );
+    assert_eq!(
+        relative_path(&roots, Path::new("/USERS/ALICE/DATA")),
+        Some(PathBuf::new())
+    );
+    // Components are compared whole: a longer sibling never matches.
+    assert_eq!(
+        relative_path(&roots, Path::new("/users/alice/database/x")),
+        None
+    );
+}
+
+#[test]
+fn an_exact_case_match_wins_over_a_case_insensitive_one() {
+    let roots = vec![PathBuf::from("/data"), PathBuf::from("/Data")];
+    assert_eq!(
+        relative_path(&roots, Path::new("/data/x")),
+        Some(PathBuf::from("x"))
+    );
+    assert_eq!(
+        relative_path(&roots, Path::new("/Data/x")),
+        Some(PathBuf::from("x"))
+    );
+}
+
+#[test]
+fn a_panic_inside_the_callback_cannot_cross_the_ffi_boundary() {
+    let tree = TempTree::new("panic");
+    let root = tree.to_path_buf();
+    let mut stream = open_stream(std::slice::from_ref(&root), EventId::SINCE_NOW);
+    let before = ffi::CAUGHT_PANICS.load(Ordering::Relaxed);
+    ffi::PANIC_IN_DELIVERY.store(true, Ordering::Relaxed);
+    std::fs::write(root.join("trigger.txt"), b"x").expect("write trigger file");
+    // Every delivery panics now. Without the catch_unwind boundary the process
+    // would abort here; with it the stream keeps running and the count rises.
+    for _ in 0..50 {
+        let _ = stream.drain(Duration::from_millis(100));
+        if ffi::CAUGHT_PANICS.load(Ordering::Relaxed) > before {
+            break;
+        }
+    }
+    ffi::PANIC_IN_DELIVERY.store(false, Ordering::Relaxed);
+    assert!(
+        ffi::CAUGHT_PANICS.load(Ordering::Relaxed) > before,
+        "the callback never ran while the panic probe was set"
+    );
+}
+
+#[test]
+fn unsafe_is_confined_to_the_ffi_module() {
+    let sources: [(&str, &str); 9] = [
+        ("lib.rs", include_str!("lib.rs")),
+        ("ffi.rs", include_str!("ffi.rs")),
+        ("ffi_tests.rs", include_str!("ffi_tests.rs")),
+        ("fsevents.rs", include_str!("fsevents.rs")),
+        ("fsevents_tests.rs", include_str!("fsevents_tests.rs")),
+        ("source.rs", include_str!("source.rs")),
+        ("source_tests.rs", include_str!("source_tests.rs")),
+        ("walk.rs", include_str!("walk.rs")),
+        ("walk_tests.rs", include_str!("walk_tests.rs")),
+    ];
+    for (name, source) in sources {
+        let unsafe_lines: Vec<&str> = source
+            .lines()
+            .filter(|line| {
+                let text = line.trim_start();
+                if text.starts_with("//") || text.starts_with("/*") || text.starts_with('*') {
+                    return false;
+                }
+                text.contains("unsafe {")
+                    || text.contains("unsafe fn")
+                    || text.starts_with("unsafe ")
+            })
+            .collect();
+        if name == "ffi.rs" {
+            assert!(
+                !unsafe_lines.is_empty(),
+                "the unsafe island should contain the unsafe blocks"
+            );
+        } else {
+            assert!(
+                unsafe_lines.is_empty(),
+                "{name} has unsafe code outside ffi.rs: {unsafe_lines:?}"
+            );
         }
     }
 }

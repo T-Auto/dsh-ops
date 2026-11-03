@@ -22,11 +22,13 @@
 //! ## What a batch promises
 //!
 //! [`EventStream::drain`] runs the calling thread's run loop for a bounded
-//! slice and returns what arrived. The batch honestly reports three things
-//! beyond the events: the highest id seen (so the caller can persist it), whether
-//! the historical replay reached its end (`HistoryDone`), and whether the
-//! kernel signalled lost events. A dropped batch must never be reported as a
-//! complete answer; deciding what to re-scan is the caller's policy (M3).
+//! slice and returns what arrived. The batch honestly reports four things
+//! beyond the events: the highest id seen (so the caller can persist it),
+//! whether the historical replay reached its end (`HistoryDone`), whether the
+//! kernel signalled lost events, and whether the journal's ids wrapped (which
+//! invalidates a stored cursor even when no event was lost). A dropped or
+//! wrapped batch must never be reported as a complete answer; deciding what to
+//! re-scan is the caller's policy (M3).
 //!
 //! ## Threading
 //!
@@ -39,7 +41,7 @@ use ops_index::SourceError;
 use std::fmt;
 use std::fs;
 use std::io::ErrorKind;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
 /// Upper bound of one run-loop slice inside [`EventStream::drain`].
@@ -53,10 +55,18 @@ const MIN_DRAIN_SLICE: Duration = Duration::from_millis(10);
 
 /// Event id from the FSEvents journal.
 ///
-/// Exclusive and monotonically increasing per volume, so storing the highest
-/// id of one batch and replaying from it cannot miss or duplicate an event
-/// (ids are assigned once and are never reused). The value is a plain `u64` on
-/// the wire; [`EventId::from_raw`] accepts any value a previous process stored.
+/// FSEvents ids are a **machine-wide, persistently increasing counter**, not a
+/// per-volume or per-process number: the kernel keeps counting across volumes
+/// and across reboots, and an id is never reused. That is what makes storing
+/// the highest id of a batch and replaying from it safe — the same `u64` still
+/// names the same journal position in the next worker process, even after a
+/// restart. It is not a timestamp and carries no wall-clock meaning, and it is
+/// not comparable across machines. Wrapping is signalled with
+/// [`EventFlags::EVENT_IDS_WRAPPED`] (see [`Batch::event_ids_wrapped`]); after
+/// a wrap every stored id is meaningless and the caller must rebuild.
+///
+/// The value is a plain `u64` on the wire; [`EventId::from_raw`] accepts any
+/// value a previous process stored.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EventId(u64);
 
@@ -225,6 +235,13 @@ pub struct Batch {
     ///
     /// `true` means the batch is incomplete by the kernel's own admission.
     pub dropped: bool,
+    /// Whether the journal's event ids wrapped during this batch.
+    ///
+    /// A stored [`EventId`] from before the wrap no longer names a journal
+    /// position, so the caller must discard its cursor as well as rescan. Kept
+    /// separate from [`Batch::dropped`] because "ids restarted" and "events
+    /// were lost" need different words in a diagnostic.
+    pub event_ids_wrapped: bool,
 }
 
 impl Batch {
@@ -349,14 +366,22 @@ impl EventStream {
 
     /// Runs the run loop for at most `timeout` and returns what arrived.
     ///
-    /// Returns early once the historical replay is known to be finished and at
-    /// least one event has arrived; otherwise it waits out the timeout, so a
-    /// live stream can be polled without busy-waiting.
+    /// The call runs the loop in short slices until the timeout. Two early
+    /// returns are possible:
+    ///
+    /// - the historical replay finished (`HistoryDone`) **and** at least one
+    ///   event arrived, so there is nothing left to wait for;
+    /// - the timeout elapsed.
+    ///
+    /// A stream opened with a persisted id therefore returns as soon as the
+    /// replay caught up, while a stream opened with [`EventId::SINCE_NOW`] has
+    /// no replay to finish and always waits out the full `timeout` (a live
+    /// stream normally never sees `HistoryDone`). Callers choose the window
+    /// accordingly instead of busy-polling.
     pub fn drain(&mut self, timeout: Duration) -> Batch {
         let deadline = Instant::now() + timeout;
+        let mut tally = Tally::default();
         let mut events = Vec::new();
-        let mut history_done = false;
-        let mut dropped = false;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
@@ -365,22 +390,11 @@ impl EventStream {
             let slice = remaining.clamp(MIN_DRAIN_SLICE, MAX_DRAIN_SLICE);
             ffi::run_current_run_loop(slice.as_secs_f64());
             for raw in self.inner.take_events() {
-                let flags = EventFlags::from_raw(raw.flags);
-                if flags.is_history_done() {
-                    history_done = true;
-                    continue;
+                if let Some(event) = absorb(&raw, &mut self.latest, &mut tally) {
+                    events.push(event);
                 }
-                dropped |= flags.signals_dropped();
-                let event = Event {
-                    id: EventId::from_raw(raw.id),
-                    flags,
-                    path: PathBuf::from(raw.path),
-                    file_id: raw.file_id,
-                };
-                self.latest = self.latest.max(event.id);
-                events.push(event);
             }
-            if history_done && !events.is_empty() {
+            if tally.history_done && !events.is_empty() {
                 // The replay caught up and delivered what it had; waiting for
                 // more would only delay the caller.
                 break;
@@ -389,8 +403,9 @@ impl EventStream {
         Batch {
             events,
             latest: self.latest,
-            history_done,
-            dropped,
+            history_done: tally.history_done,
+            dropped: tally.dropped,
+            event_ids_wrapped: tally.event_ids_wrapped,
         }
     }
 
@@ -402,6 +417,14 @@ impl EventStream {
     }
 
     /// The latest event id the system has assigned, for opening a live stream.
+    ///
+    /// This is the journal's tail as known at call time. fseventsd assigns ids
+    /// asynchronously, so a change recorded a moment earlier may still receive
+    /// a higher id afterwards and be replayed into a stream opened from the
+    /// returned value — observed on real systems with a directory created just
+    /// before the call. Applying the replayed events is harmless (the index
+    /// apply is idempotent) but a caller must not assume "since this id" means
+    /// "nothing before it will be delivered".
     pub fn current_event_id() -> EventId {
         ffi::current_event_id()
     }
@@ -411,15 +434,31 @@ impl EventStream {
 ///
 /// Roots are compared as path prefixes, so `/a/b` wins over `/a` for a path
 /// below it. The root itself yields an empty path.
+///
+/// The default macOS file systems are case-insensitive, and FSEvents reports
+/// the on-disk spelling: a root created as `/Users/Alice/Data` can arrive in an
+/// event as `/users/alice/data/...`. The exact prefix is tried first; when no
+/// root matches exactly, component-wise ASCII-case-insensitive comparison is
+/// the fallback. Components are compared whole, so `/data` never matches
+/// `/database`, and non-UTF-8 components never match a UTF-8 root. Callers that
+/// can canonicalize their roots should still do so, because that is the only
+/// way to resolve symlinks; this function intentionally never touches the file
+/// system.
 pub fn relative_path(roots: &[PathBuf], path: &Path) -> Option<PathBuf> {
+    if let Some(relative) = exact_relative(roots, path) {
+        return Some(relative);
+    }
+    folded_relative(roots, path)
+}
+
+/// Longest root that is a literal prefix of `path`.
+fn exact_relative(roots: &[PathBuf], path: &Path) -> Option<PathBuf> {
     let mut best: Option<&PathBuf> = None;
     for root in roots {
         if !path.starts_with(root) {
             continue;
         }
-        let longer =
-            best.is_none_or(|current| root.components().count() > current.components().count());
-        if longer {
+        if best.is_none_or(|current| root.components().count() > current.components().count()) {
             best = Some(root);
         }
     }
@@ -428,6 +467,78 @@ pub fn relative_path(roots: &[PathBuf], path: &Path) -> Option<PathBuf> {
             .map(Path::to_path_buf)
             .unwrap_or_default()
     })
+}
+
+/// Longest root that matches `path` component-wise ignoring ASCII case.
+fn folded_relative(roots: &[PathBuf], path: &Path) -> Option<PathBuf> {
+    let path_components: Vec<Component<'_>> = path.components().collect();
+    let mut best: Option<usize> = None;
+    for root in roots {
+        let root_components: Vec<Component<'_>> = root.components().collect();
+        if root_components.is_empty() || root_components.len() > path_components.len() {
+            continue;
+        }
+        let matches = root_components
+            .iter()
+            .zip(&path_components)
+            .all(|(left, right)| component_eq_folded(left, right));
+        if matches && best.is_none_or(|current| root_components.len() > current) {
+            best = Some(root_components.len());
+        }
+    }
+    best.map(|len| {
+        let mut relative = PathBuf::new();
+        for component in &path_components[len..] {
+            relative.push(component.as_os_str());
+        }
+        relative
+    })
+}
+
+/// Whether two path components are equal, ignoring ASCII case.
+fn component_eq_folded(left: &Component<'_>, right: &Component<'_>) -> bool {
+    match (left, right) {
+        (Component::Normal(left), Component::Normal(right)) => {
+            match (left.to_str(), right.to_str()) {
+                (Some(left), Some(right)) => left.eq_ignore_ascii_case(right),
+                _ => false,
+            }
+        }
+        _ => left == right,
+    }
+}
+
+/// Per-drain accumulation of the facts a [`Batch`] reports.
+#[derive(Default)]
+struct Tally {
+    history_done: bool,
+    dropped: bool,
+    event_ids_wrapped: bool,
+}
+
+/// Folds one raw callback event into the batch state.
+///
+/// Returns the event unless it is the replay-end sentinel: `HistoryDone` is a
+/// synthetic marker the kernel appends to a replay, it names no file, and its
+/// id must never move the persisted cursor forward (it is not a journal entry a
+/// caller could replay from). Other invalidating flags stay on the event so the
+/// rescan policy can see which one fired.
+fn absorb(raw: &ffi::RawEvent, latest: &mut EventId, tally: &mut Tally) -> Option<Event> {
+    let flags = EventFlags::from_raw(raw.flags);
+    if flags.is_history_done() {
+        tally.history_done = true;
+        return None;
+    }
+    tally.dropped |= flags.signals_dropped();
+    tally.event_ids_wrapped |= flags.intersects(EventFlags::EVENT_IDS_WRAPPED);
+    let event = Event {
+        id: EventId::from_raw(raw.id),
+        flags,
+        path: PathBuf::from(&raw.path),
+        file_id: raw.file_id,
+    };
+    *latest = (*latest).max(event.id);
+    Some(event)
 }
 
 #[cfg(test)]
