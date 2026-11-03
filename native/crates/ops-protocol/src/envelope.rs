@@ -68,10 +68,13 @@ pub fn decode(bytes: &[u8]) -> Result<Decoded> {
         }
         if let Some(storage) = &envelope.storage { storage.validate()?; }
         envelope.request.storage = envelope.storage;
+        envelope.request.validate_cache_dir()?;
         Ok(Decoded { request: envelope.request, budget: envelope.budget.validate()?,
             request_id: Some(envelope.request_id), component: Some(envelope.component) })
     } else {
-        Ok(Decoded { request: serde_json::from_slice(bytes)?, budget: Budget::default(), request_id: None, component: None })
+        let request: Request = serde_json::from_slice(bytes)?;
+        request.validate_cache_dir()?;
+        Ok(Decoded { request, budget: Budget::default(), request_id: None, component: None })
     }
 }
 

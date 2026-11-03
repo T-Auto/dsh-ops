@@ -157,6 +157,28 @@ impl Request {
     pub fn deny_roots_paths(&self) -> Vec<std::path::PathBuf> {
         self.deny_roots.iter().map(std::path::PathBuf::from).collect()
     }
+    /// Validates the optional host cache directory from the trusted envelope.
+    ///
+    /// The directory is only a hint: this crate never creates it, and an absent
+    /// or unusable directory must degrade to the walk. Rejecting a malformed one
+    /// here keeps a relative, oversized or NUL-bearing path from reaching the
+    /// index layer where it could be joined to a workspace path.
+    pub fn validate_cache_dir(&self) -> Result<()> {
+        if let Some(directory) = &self.cache_dir {
+            let length = directory.as_os_str().len();
+            if !directory.is_absolute()
+                || length == 0
+                || length > 4096
+                || directory.to_string_lossy().contains('\0')
+            {
+                return Err(Failure::new(
+                    "INVALID_ARGUMENT",
+                    "cacheDir must be an absolute path of 1..4096 bytes without NUL",
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 pub type Result<T> = std::result::Result<T, Failure>;
 
@@ -170,6 +192,14 @@ pub struct Request {
     /// Trusted envelope metadata; never accepted from the tool argument/request data plane.
     #[serde(skip)]
     pub storage: Option<storage::StorageContext>,
+    /// Host-provided cache directory for the ops-index snapshot.
+    ///
+    /// `None` means the index is disabled for this request and every caller keeps
+    /// the existing walk semantics. When present it must be an absolute path the
+    /// host created private (0700 on POSIX); the worker never invents or widens
+    /// it, and an unusable directory falls back to the walk without an error.
+    #[serde(default)]
+    pub cache_dir: Option<std::path::PathBuf>,
     pub root: String,
     #[serde(default)]
     pub read_only: bool,
