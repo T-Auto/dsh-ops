@@ -225,13 +225,21 @@ fn plain_mount(mount: &Path) -> PathBuf {
 /// and the cycle guard keep this bounded even for a damaged parent graph.
 pub(crate) struct SubtreePaths {
     pub(crate) paths: HashMap<u64, PathBuf>,
+    /// Every file id in the whole-volume MFT map. Lets a journal record with an
+    /// unknown parent be classified as outside the requested root (the parent
+    /// exists, just elsewhere) instead of as a dangling reference.
+    pub(crate) known: HashSet<u64>,
 }
 
 /// Rebuilds the requested subtree's relative paths. Pure: no IO, no clock.
 pub(crate) fn subtree_paths(nodes: &[MftNode], root_fid: u64) -> Result<SubtreePaths, SourceError> {
     let mut children: HashMap<u64, Vec<usize>> = HashMap::new();
+    let mut known: HashSet<u64> = HashSet::with_capacity(nodes.len());
     for (index, node) in nodes.iter().enumerate() {
         let parent = node.parent.as_u64().ok_or(SourceError::Unsupported)?;
+        if let Some(fid) = node.fid.as_u64() {
+            known.insert(fid);
+        }
         children.entry(parent).or_default().push(index);
     }
     let mut paths: HashMap<u64, PathBuf> = HashMap::new();
@@ -255,7 +263,7 @@ pub(crate) fn subtree_paths(nodes: &[MftNode], root_fid: u64) -> Result<SubtreeP
             queue.push(child);
         }
     }
-    Ok(SubtreePaths { paths })
+    Ok(SubtreePaths { paths, known })
 }
 
 /// Rebuilds candidates from MFT records. Pure: no IO, no clock, no handles.

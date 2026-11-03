@@ -108,19 +108,31 @@ impl JournalCursor {
     }
 }
 
+/// A persisted cursor together with the moment its snapshot was built.
+///
+/// consistent_at_ms travels with the cursor so state can report the snapshot's
+/// own timestamp instead of the moment state happens to be asked.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StoredCursor {
+    /// Cursor to replay from.
+    pub cursor: JournalCursor,
+    /// Snapshot build time, milliseconds since the Unix epoch.
+    pub consistent_at_ms: i64,
+}
+
 /// Host-provided cursor storage, keyed by root and by snapshot id.
 pub trait CursorStore: Send + Sync {
     /// Latest cursor saved for root, with the snapshot id that describes it.
-    fn load_for_root(&self, root: &Path) -> Option<(SnapshotId, JournalCursor)>;
+    fn load_for_root(&self, root: &Path) -> Option<(SnapshotId, StoredCursor)>;
 
-    /// Cursor belonging to a snapshot id.
-    fn load(&self, snapshot: SnapshotId) -> Option<JournalCursor>;
+    /// Cursor belonging to a snapshot id, but only when it belongs to root.
+    fn load_for_snapshot(&self, root: &Path, snapshot: SnapshotId) -> Option<StoredCursor>;
 
-    /// Stores cursor for root and returns the snapshot id the host assigned.
+    /// Stores the cursor for root and returns the snapshot id the host assigned.
     ///
-    /// The persistence layer owns atomicity: it must publish the snapshot and
-    /// the cursor in one generation, never the cursor alone.
-    fn save(&self, root: &Path, cursor: JournalCursor) -> Option<SnapshotId>;
+    /// The persistence layer owns atomicity: it must publish the snapshot, the
+    /// snapshot time, and the cursor in one generation, never the cursor alone.
+    fn save(&self, root: &Path, stored: StoredCursor) -> Option<SnapshotId>;
 }
 
 /// In-memory CursorStore for tests and single-call integration.
@@ -132,8 +144,8 @@ pub struct MemoryCursorStore {
 
 #[derive(Default)]
 struct MemoryState {
-    by_root: HashMap<PathBuf, (SnapshotId, JournalCursor)>,
-    by_snapshot: HashMap<u64, JournalCursor>,
+    by_root: HashMap<PathBuf, (SnapshotId, StoredCursor)>,
+    by_snapshot: HashMap<u64, (PathBuf, StoredCursor)>,
 }
 
 impl MemoryCursorStore {
@@ -147,24 +159,23 @@ impl MemoryCursorStore {
 }
 
 impl CursorStore for MemoryCursorStore {
-    fn load_for_root(&self, root: &Path) -> Option<(SnapshotId, JournalCursor)> {
+    fn load_for_root(&self, root: &Path) -> Option<(SnapshotId, StoredCursor)> {
         self.state.lock().ok()?.by_root.get(root).copied()
     }
 
-    fn load(&self, snapshot: SnapshotId) -> Option<JournalCursor> {
-        self.state
-            .lock()
-            .ok()?
-            .by_snapshot
-            .get(&snapshot.get())
-            .copied()
+    fn load_for_snapshot(&self, root: &Path, snapshot: SnapshotId) -> Option<StoredCursor> {
+        let state = self.state.lock().ok()?;
+        let (stored_root, stored) = state.by_snapshot.get(&snapshot.get())?;
+        (stored_root == root).then_some(*stored)
     }
 
-    fn save(&self, root: &Path, cursor: JournalCursor) -> Option<SnapshotId> {
+    fn save(&self, root: &Path, stored: StoredCursor) -> Option<SnapshotId> {
         let mut state = self.state.lock().ok()?;
         let snapshot = SnapshotId::new(self.next_snapshot.fetch_add(1, Ordering::Relaxed));
-        state.by_root.insert(root.to_path_buf(), (snapshot, cursor));
-        state.by_snapshot.insert(snapshot.get(), cursor);
+        state.by_root.insert(root.to_path_buf(), (snapshot, stored));
+        state
+            .by_snapshot
+            .insert(snapshot.get(), (root.to_path_buf(), stored));
         Some(snapshot)
     }
 }
@@ -249,25 +260,24 @@ pub(crate) fn catch_up(
             return Ok((entries, JournalCursor::from_info(&before)));
         }
         let round = read_from(volume, cursor, budget)?;
-        let mut frontier = cursor.next_usn;
-        for entry in round {
-            frontier = frontier.max(entry.usn.get().saturating_add(1));
-            if entries.len() >= MAX_JOURNAL_ENTRIES {
-                return Err(SourceError::Budget);
-            }
-            entries.push(entry);
+        if entries.len().saturating_add(round.len()) > MAX_JOURNAL_ENTRIES {
+            return Err(SourceError::Budget);
         }
+        entries.extend(round);
         let after = info(volume)?;
         if after.journal_id != cursor.journal_id {
             return Err(SourceError::NotReady);
         }
-        if after.next_usn <= frontier {
+        if after.next_usn <= before.next_usn {
             return Ok((
                 entries,
                 JournalCursor::new(after.journal_id, after.next_usn),
             ));
         }
-        cursor = JournalCursor::new(after.journal_id, frontier);
+        // Writes landed while reading. The reason mask may have filtered every
+        // record out of this read, so advance by the queried boundary, not by
+        // the last matching record, and read the new tail next round.
+        cursor = JournalCursor::new(after.journal_id, before.next_usn);
     }
     Err(SourceError::NotReady)
 }

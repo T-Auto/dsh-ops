@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use std::path::PathBuf;
@@ -18,7 +18,12 @@ fn seed() -> SubtreePaths {
     let mut paths = HashMap::new();
     paths.insert(5, PathBuf::new());
     paths.insert(10, PathBuf::from("docs"));
-    SubtreePaths { paths }
+    let mut known = HashSet::new();
+    known.insert(5);
+    known.insert(10);
+    // A file that lives on the same volume but outside the requested root.
+    known.insert(77);
+    SubtreePaths { paths, known }
 }
 
 fn entry(fid: u64, parent: u64, name: &str, reason: u32, is_dir: bool) -> UsnEntry {
@@ -87,8 +92,29 @@ fn records_outside_the_requested_root_are_ignored_not_skipped() {
         false,
     )];
     let skipped = apply_entries(&seed(), &mut candidates, &entries, SERIAL).expect("apply");
-    assert_eq!(skipped, 0, "unrelated volume activity is not a defect");
+    assert_eq!(
+        skipped, 0,
+        "an existing parent outside the root is not a defect"
+    );
     assert!(candidates.is_empty());
+}
+
+#[test]
+fn a_dangling_parent_is_counted_as_skipped() {
+    let mut candidates: HashMap<FileKey, Candidate> = HashMap::new();
+    let entries = [entry(98, 999, "orphan.txt", USN_REASON_FILE_CREATE, false)];
+    let skipped = apply_entries(&seed(), &mut candidates, &entries, SERIAL).expect("apply");
+    assert_eq!(skipped, 1, "a parent missing from the MFT is never guessed");
+    assert!(candidates.is_empty());
+}
+
+#[test]
+fn a_dangling_parent_marks_the_change_report_as_skipped() {
+    let entries = [entry(97, 999, "orphan.txt", USN_REASON_FILE_CREATE, false)];
+    let report =
+        changes_for_entries(&seed(), &entries, SERIAL, JournalCursor::new(7, 500)).expect("map");
+    assert_eq!(report.skipped, 1);
+    assert!(report.changes.is_empty());
 }
 
 #[test]
@@ -103,6 +129,7 @@ fn changes_map_reason_classes_to_actions() {
     let mut seed = seed();
     seed.paths
         .insert(33, PathBuf::from("docs").join("linked.txt"));
+    seed.known.insert(33);
     let report = changes_for_entries(&seed, &entries, SERIAL, JournalCursor::new(7, 500))
         .expect("map changes");
     assert_eq!(report.cursor, JournalCursor::new(7, 500));
@@ -115,7 +142,11 @@ fn changes_map_reason_classes_to_actions() {
             .map(|change| change.action)
             .collect::<Vec<_>>()
     };
-    assert_eq!(action_for("added.txt"), vec![ChangeAction::Added]);
+    assert_eq!(
+        action_for("added.txt"),
+        vec![ChangeAction::Added, ChangeAction::Modified],
+        "FILE_CREATE is Upsert plus StatDirty in P3's normalization"
+    );
     assert_eq!(action_for("renamed.txt"), vec![ChangeAction::Renamed]);
     assert_eq!(action_for("dead.txt"), vec![ChangeAction::Removed]);
     assert_eq!(action_for("linked.txt"), vec![ChangeAction::Modified]);

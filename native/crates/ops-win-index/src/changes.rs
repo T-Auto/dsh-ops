@@ -19,8 +19,11 @@
 //!   is authoritative);
 //! - HARD_LINK_CHANGE becomes a Modified row for the current name; the full link
 //!   set is W4's reconciliation, this slice must not invent links;
-//! - records whose parent path cannot be resolved are counted as skipped, never
-//!   guessed, and a skipped record marks the set as not complete.
+//! - records whose parent path cannot be resolved are never guessed. A parent
+//!   that exists elsewhere in the volume is ordinary activity outside the
+//!   requested root and is ignored; a parent missing from the whole-volume MFT
+//!   map is a dangling reference and is counted as skipped, which marks the
+//!   candidate set as not complete.
 
 use crate::journal::JournalCursor;
 use crate::mft::SubtreePaths;
@@ -86,38 +89,41 @@ pub(crate) fn apply_entries(
     volume_serial: u64,
 ) -> Result<u64, SourceError> {
     let mut paths = seed.paths.clone();
-    let skipped = 0u64;
+    let mut skipped = 0u64;
     for entry in entries {
         let record = entry.fid.as_u64().ok_or(SourceError::Unsupported)?;
+        let parent = entry.parent_fid.as_u64().ok_or(SourceError::Unsupported)?;
         let parsed = parsed_record(entry)?;
         for op in ops_for(&parsed).as_slice() {
             match op {
                 UsnOp::Upsert { is_dir, .. } => {
-                    let Some(rel) = child_path(&paths, entry) else {
-                        // Unknown parent means the record is outside the
-                        // requested root, which is ordinary volume activity,
-                        // not an inconsistency inside the subtree.
-                        continue;
-                    };
-                    paths.insert(record, rel.clone());
-                    let key = FileKey::new(volume_serial, record);
-                    candidates.insert(
-                        key,
-                        Candidate {
-                            rel,
+                    if let Some(rel) = child_path(&paths, entry) {
+                        paths.insert(record, rel.clone());
+                        let key = FileKey::new(volume_serial, record);
+                        candidates.insert(
                             key,
-                            kind: if *is_dir {
-                                EntryKind::Dir
-                            } else {
-                                EntryKind::File
+                            Candidate {
+                                rel,
+                                key,
+                                kind: if *is_dir {
+                                    EntryKind::Dir
+                                } else {
+                                    EntryKind::File
+                                },
+                                len: 0,
+                                modified_ns: None,
                             },
-                            len: 0,
-                            modified_ns: None,
-                        },
-                    );
+                        );
+                    } else if !seed.known.contains(&parent) {
+                        // The parent is not anywhere in this volume's MFT, so
+                        // the path cannot be reconstructed: never guess it.
+                        skipped = skipped.saturating_add(1);
+                    }
                 }
                 UsnOp::Delete { .. } => {
-                    paths.remove(&record);
+                    if paths.remove(&record).is_none() && !seed.known.contains(&parent) {
+                        skipped = skipped.saturating_add(1);
+                    }
                     candidates.remove(&FileKey::new(volume_serial, record));
                 }
                 UsnOp::LinkDirty { .. } | UsnOp::StatDirty { .. } | UsnOp::RenameOldSeen { .. } => {
@@ -149,16 +155,17 @@ pub(crate) fn changes_for_entries(
     for entry in entries {
         let record = entry.fid.as_u64().ok_or(SourceError::Unsupported)?;
         let key = FileKey::new(volume_serial, record);
+        let parent = entry.parent_fid.as_u64().ok_or(SourceError::Unsupported)?;
         let parsed = parsed_record(entry)?;
-        let mut upserted = false;
         for op in ops_for(&parsed).as_slice() {
             match op {
                 UsnOp::Upsert { .. } => {
                     let Some(rel) = child_path(&paths, entry) else {
-                        // Outside the requested root: ordinary volume activity.
+                        if !seed.known.contains(&parent) {
+                            report.skipped = report.skipped.saturating_add(1);
+                        }
                         continue;
                     };
-                    upserted = true;
                     paths.insert(record, rel.clone());
                     let action = if entry.reason.is_file_create() {
                         ChangeAction::Added
@@ -179,14 +186,11 @@ pub(crate) fn changes_for_entries(
                             key,
                             action: ChangeAction::Removed,
                         });
+                    } else if !seed.known.contains(&parent) {
+                        report.skipped = report.skipped.saturating_add(1);
                     }
                 }
                 UsnOp::LinkDirty { .. } | UsnOp::StatDirty { .. } => {
-                    // The upsert row already carries the current state; do not
-                    // repeat it as Modified for the same record.
-                    if upserted {
-                        continue;
-                    }
                     // Only records already inside the subtree matter here.
                     if let Some(rel) = paths.get(&record).cloned() {
                         report.changes.push(Change {
@@ -194,6 +198,8 @@ pub(crate) fn changes_for_entries(
                             key,
                             action: ChangeAction::Modified,
                         });
+                    } else if !seed.known.contains(&parent) {
+                        report.skipped = report.skipped.saturating_add(1);
                     }
                 }
                 UsnOp::RenameOldSeen { .. } => {

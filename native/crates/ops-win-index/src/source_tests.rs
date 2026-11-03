@@ -7,7 +7,7 @@ use cap_fs_ext::MetadataExt;
 use ops_index::{ChangeAction, EntryKind, SourceState};
 
 use super::*;
-use crate::journal::MemoryCursorStore;
+use crate::journal::{MemoryCursorStore, StoredCursor};
 
 fn unique_root(tag: &str) -> PathBuf {
     std::env::temp_dir().join(format!("dsh-ops-win-w2-{tag}-{}", std::process::id()))
@@ -132,20 +132,35 @@ fn changes_replay_from_a_saved_cursor() {
     fs::write(root.join("docs").join("base.txt"), b"base").expect("write base");
     let store = Arc::new(MemoryCursorStore::new());
     let source = WinFsSource::with_cursor_store(store.clone());
-    let cursor = match source.capture_cursor(&root) {
-        Ok(cursor) => cursor,
+    // Probe the environment first: a runner without an active USN journal (or
+    // without elevation) is the documented fallback, not a test failure.
+    let cursor = match source.enumerate_with_cursor(&root, generous_budget()) {
+        Ok((_, cursor)) => cursor,
         Err(SourceError::Unsupported) => {
             assert!(!source.state(&root).is_ready());
             let _ = fs::remove_dir_all(&root);
             return;
         }
-        Err(other) => panic!("unexpected capture failure: {other:?}"),
+        Err(other) => panic!("unexpected enumeration failure: {other:?}"),
     };
-    let snapshot = store.save(&root, cursor).expect("save cursor");
-    assert!(
-        source.state(&root).is_ready(),
-        "a valid saved cursor lets state claim Ready"
-    );
+    let snapshot = store
+        .save(
+            &root,
+            StoredCursor {
+                cursor,
+                consistent_at_ms: 4242,
+            },
+        )
+        .expect("save cursor");
+    match source.state(&root) {
+        SourceState::Ready {
+            consistent_at_ms, ..
+        } => assert_eq!(
+            consistent_at_ms, 4242,
+            "state reports the snapshot's own build time, not the call time"
+        ),
+        other => panic!("expected Ready for a valid saved cursor, got {other:?}"),
+    }
     fs::write(root.join("added.txt"), b"added").expect("write added");
     fs::rename(
         root.join("docs").join("base.txt"),
@@ -192,7 +207,15 @@ fn changes_replay_from_a_saved_cursor() {
     );
     let stale =
         crate::journal::JournalCursor::new(cursor.journal_id().wrapping_add(1), cursor.next_usn());
-    let stale_snapshot = store.save(&root, stale).expect("save stale");
+    let stale_snapshot = store
+        .save(
+            &root,
+            StoredCursor {
+                cursor: stale,
+                consistent_at_ms: 0,
+            },
+        )
+        .expect("save stale");
     assert_eq!(source.state(&root), SourceState::Unavailable);
     assert_eq!(
         source.changes_report(&root, stale_snapshot),

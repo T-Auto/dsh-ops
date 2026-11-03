@@ -19,7 +19,7 @@
 //! is caught up.
 
 use crate::changes::{ChangeReport, apply_entries, changes_for_entries};
-use crate::journal::{CursorStore, JournalCursor, catch_up, info, is_replayable};
+use crate::journal::{CursorStore, JournalCursor, StoredCursor, catch_up, info, is_replayable};
 use crate::mft::{assemble, collect_nodes, now_ms, open_for_root, subtree_paths};
 use ops_index::{
     Candidate, CandidateSet, Change, EnumBudget, FileKey, FsDataSource, SnapshotId, SourceError,
@@ -51,11 +51,12 @@ impl WinFsSource {
         Self { store: Some(store) }
     }
 
-    /// Captures the current journal tail cursor for a first snapshot.
+    /// Captures the current journal tail cursor for a recovery snapshot.
     ///
-    /// The caller persists it together with the snapshot it just built; this
-    /// crate exposes the cursor and the CursorStore interface, while the
-    /// persistence slices own atomic publication.
+    /// Prefer enumerate_with_cursor for the normal path: it returns the cursor
+    /// that belongs to the set it just built. A cursor captured after a separate
+    /// enumerate can be newer than that set and would silently skip records it
+    /// did not include.
     pub fn capture_cursor(&self, root: &Path) -> Result<JournalCursor, SourceError> {
         let opened = open_for_root(root)?;
         crate::journal::current_cursor(&opened.volume)
@@ -68,7 +69,10 @@ impl WinFsSource {
         since: SnapshotId,
     ) -> Result<ChangeReport, SourceError> {
         let store = self.store.as_ref().ok_or(SourceError::NotReady)?;
-        let cursor = store.load(since).ok_or(SourceError::NotReady)?;
+        let stored: StoredCursor = store
+            .load_for_snapshot(root, since)
+            .ok_or(SourceError::NotReady)?;
+        let cursor = stored.cursor;
         let opened = open_for_root(root)?;
         let live = info(&opened.volume)?;
         if !is_replayable(cursor, &live) {
@@ -87,13 +91,13 @@ impl WinFsSource {
         let Some(store) = self.store.as_ref() else {
             return Ok(SourceState::Unavailable);
         };
-        let Some((snapshot, cursor)) = store.load_for_root(root) else {
+        let Some((snapshot, stored)) = store.load_for_root(root) else {
             return Ok(SourceState::Unavailable);
         };
-        if is_replayable(cursor, &live) {
+        if is_replayable(stored.cursor, &live) {
             Ok(SourceState::Ready {
                 snapshot,
-                consistent_at_ms: now_ms(),
+                consistent_at_ms: stored.consistent_at_ms,
             })
         } else {
             Ok(SourceState::Unavailable)
@@ -114,6 +118,26 @@ impl FsDataSource for WinFsSource {
     }
 
     fn enumerate(&self, root: &Path, budget: EnumBudget) -> Result<CandidateSet, SourceError> {
+        Ok(self.enumerate_with_cursor(root, budget)?.0)
+    }
+
+    fn changes(&self, root: &Path, since: SnapshotId) -> Result<Vec<Change>, SourceError> {
+        Ok(self.changes_report(root, since)?.changes)
+    }
+}
+
+impl WinFsSource {
+    /// Cold enumeration plus the tail cursor that describes it.
+    ///
+    /// Call this first, then persist `StoredCursor { cursor, consistent_at_ms:
+    /// set.consistent_at_ms }` through the host store. The returned cursor is
+    /// the journal boundary the set was caught up to; using a cursor captured
+    /// after a separate enumerate would skip records that set never saw.
+    pub fn enumerate_with_cursor(
+        &self,
+        root: &Path,
+        budget: EnumBudget,
+    ) -> Result<(CandidateSet, JournalCursor), SourceError> {
         if budget.expired() {
             return Err(SourceError::Budget);
         }
@@ -123,7 +147,7 @@ impl FsDataSource for WinFsSource {
         let nodes = collect_nodes(&opened.volume, &budget)?;
         let batch = assemble(&nodes, opened.root_fid, opened.volume_serial, &budget)?;
         let seed = subtree_paths(&nodes, opened.root_fid)?;
-        let (entries, _tail) = catch_up(&opened.volume, start, &budget)?;
+        let (entries, tail) = catch_up(&opened.volume, start, &budget)?;
         let mut candidates: HashMap<FileKey, Candidate> =
             HashMap::with_capacity(batch.entries.len());
         for candidate in batch.entries {
@@ -137,15 +161,14 @@ impl FsDataSource for WinFsSource {
             truncated = true;
             collected.truncate(budget.max_entries);
         }
-        Ok(CandidateSet {
-            entries: collected,
-            truncated,
-            consistent_at_ms: now_ms(),
-        })
-    }
-
-    fn changes(&self, root: &Path, since: SnapshotId) -> Result<Vec<Change>, SourceError> {
-        Ok(self.changes_report(root, since)?.changes)
+        Ok((
+            CandidateSet {
+                entries: collected,
+                truncated,
+                consistent_at_ms: now_ms(),
+            },
+            tail,
+        ))
     }
 }
 

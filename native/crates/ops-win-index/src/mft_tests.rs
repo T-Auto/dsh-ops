@@ -80,7 +80,7 @@ fn subtree_paths_anchor_the_root_with_an_empty_path() {
 }
 
 #[test]
-fn candidate_key_is_the_record_number_not_the_full_reference() {
+fn candidate_key_is_the_full_file_reference_and_volume_serial() {
     let full = Fid::from_parts(42, 7);
     let nodes = vec![
         node(5, 5, "root", DIRECTORY),
@@ -98,10 +98,11 @@ fn candidate_key_is_the_record_number_not_the_full_reference() {
         .find(|entry| entry.rel.as_path() == Path::new("file.txt"))
         .expect("file entry");
     assert_eq!(
-        entry.key.file, 42,
-        "only the 48-bit record number is exposed"
+        entry.key.file,
+        full.as_u64().expect("standard 64-bit id"),
+        "the full nFileIndex is exposed, sequence included"
     );
-    assert_eq!(entry.key.volume, 0, "W1 has no volume serial yet");
+    assert_eq!(entry.key.volume, SERIAL);
 }
 
 #[test]
@@ -197,12 +198,11 @@ fn assemble_collapses_duplicate_records_for_one_id() {
 }
 
 #[test]
-fn assemble_requires_a_volume_root() {
+fn a_root_fid_outside_the_mft_yields_an_empty_batch() {
     let nodes = vec![node(10, 99, "orphan.txt", NORMAL)];
-    assert_eq!(
-        assemble(&nodes, 5, SERIAL, &generous_budget()),
-        Err(SourceError::Unsupported)
-    );
+    let batch = assemble(&nodes, 5, SERIAL, &generous_budget()).expect("assembly");
+    assert!(batch.entries.is_empty());
+    assert!(!batch.truncated);
 }
 
 #[test]

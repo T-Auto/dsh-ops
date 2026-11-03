@@ -58,23 +58,26 @@ fn replayability_follows_the_pure_truth_table() {
 fn the_memory_store_round_trips_by_root_and_snapshot() {
     let store = MemoryCursorStore::new();
     let root = Path::new("C:\\work");
-    let first = store
-        .save(root, JournalCursor::new(1, 10))
-        .expect("first snapshot");
-    assert_eq!(
-        store.load_for_root(root),
-        Some((first, JournalCursor::new(1, 10)))
-    );
-    assert_eq!(store.load(first), Some(JournalCursor::new(1, 10)));
+    let first_stored = StoredCursor {
+        cursor: JournalCursor::new(1, 10),
+        consistent_at_ms: 111,
+    };
+    let first = store.save(root, first_stored).expect("first snapshot");
+    assert_eq!(store.load_for_root(root), Some((first, first_stored)));
+    assert_eq!(store.load_for_snapshot(root, first), Some(first_stored));
 
-    let second = store
-        .save(root, JournalCursor::new(1, 20))
-        .expect("second snapshot");
+    let second_stored = StoredCursor {
+        cursor: JournalCursor::new(1, 20),
+        consistent_at_ms: 222,
+    };
+    let second = store.save(root, second_stored).expect("second snapshot");
     assert_ne!(first, second);
+    assert_eq!(store.load_for_root(root), Some((second, second_stored)));
+    assert_eq!(store.load_for_snapshot(root, first), Some(first_stored));
+    assert_eq!(store.load_for_snapshot(root, SnapshotId::new(999)), None);
     assert_eq!(
-        store.load_for_root(root),
-        Some((second, JournalCursor::new(1, 20)))
+        store.load_for_snapshot(Path::new("D:\\other"), first),
+        None,
+        "a snapshot is bound to the root it was saved for"
     );
-    assert_eq!(store.load(first), Some(JournalCursor::new(1, 10)));
-    assert_eq!(store.load(SnapshotId::new(999)), None);
 }
