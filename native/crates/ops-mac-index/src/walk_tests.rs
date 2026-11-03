@@ -1,8 +1,9 @@
 //! Tests for the cold walk: an independent `std::fs` oracle, the budget rules
 //! and the symlink contract.
 //!
-//! The oracle below traverses the same tree with `std::fs` only (no
-//! `walkdir`, no rayon) and rebuilds the candidates from `symlink_metadata`.
+//! The oracle below traverses the same tree with a plain recursive
+//! `std::fs::read_dir` (no rayon, no parallel recursion) and rebuilds the
+//! candidates from `symlink_metadata`.
 //! That is the "cold enumeration agrees with a walk" assertion in #609: if the
 //! two disagree on a path, on a kind, on the identity or on a timestamp, the
 //! test fails.
