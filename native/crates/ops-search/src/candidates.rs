@@ -11,9 +11,17 @@
 //!   have listed it either, so it is neither an item nor a skip reason;
 //! - the path exists but cannot be read: keep it as an `unreadable-entry` gap,
 //!   because dropping it would hide a hole the walk reports;
-//! - the identity moved, an ancestor is a link, or a file became a directory:
-//!   the indexed answer can no longer be called complete, so the caller must
-//!   discard the whole batch and fall back to `crate::scan::Scan::walk`.
+//! - the identity moved, an ancestor is a link, a file became a directory, or a
+//!   directory became a file or a link: the indexed answer can no longer be
+//!   called complete, so the caller must discard the whole batch and fall back
+//!   to `crate::scan::Scan::walk`.
+//!
+//! Directory candidates are traversal state, not items, but they are revalidated
+//! too: a directory that vanished is stale like any other vanished path, one
+//! that changed type or identity invalidates the batch, and one that can no
+//! longer be read falls back so the walk recomputes its `unreadable-directory`
+//! gap. Skipping that check would let the indexed `skipReasons`/gaps disagree
+//! with the walk even when every leaf still looked fresh.
 //!
 //! The module also restores the walk's lexical rules (invalid components,
 //! hidden names, credential roots, reserved names) and the component-order sort
@@ -110,7 +118,14 @@ impl Skip {
 pub struct Fresh {
     /// The source entry, including the identity that was verified.
     pub candidate: Candidate,
-    /// Absolute display path, already normalized by `file_path::checked`.
+    /// Absolute display path: `root.join(&candidate.rel)`, the root exactly as
+    /// the caller passed it plus the candidate's lexically validated relative
+    /// path.
+    ///
+    /// It is not the canonicalised path `file_path::checked` opened: a root
+    /// with a trailing separator or a different spelling shows up here the way
+    /// the caller wrote it, which is what keeps the indexed display string
+    /// byte-identical to the walk's own `root.join(...)`.
     pub path: PathBuf,
     /// Metadata read through the no-follow parent handle.
     pub metadata: Metadata,
@@ -172,8 +187,14 @@ pub enum FallbackKind {
     AncestorLink,
     /// The candidate's `(dev, ino)` no longer matches the snapshot.
     IdDrift,
-    /// The candidate used to be a file and is now a directory.
+    /// The candidate used to be a file and is now a directory, or the reverse.
     KindChanged,
+    /// A directory candidate could not be read live.
+    ///
+    /// The walk would report its `unreadable-directory` gap; recomputing that
+    /// count from the index side would duplicate the walk's rule, so the caller
+    /// falls back and lets the walk account for it.
+    DirectoryUnreadable,
     /// The source violated the walk's lexical contract or an unclassified I/O
     /// failure occurred; do not invent a skip reason.
     Unverified,
@@ -363,11 +384,14 @@ fn revalidate(
     if ancestors.iter().any(|name| excluded_name(name)) {
         return Verdict::Fallback(FallbackKind::Unverified);
     }
+    let inspected = inspect.leaf(parent, leaf);
     if candidate.kind == EntryKind::Dir {
-        // Directories are how the walk reaches items, not items themselves.
-        return Verdict::Directory;
+        // Directories are how the walk reaches items, not items themselves,
+        // but they are still checked live: the walk's gap/count semantics
+        // depend on what happened to them.
+        return classify_directory(candidate, inspected);
     }
-    match inspect.leaf(parent, leaf) {
+    match inspected {
         Ok(metadata) => classify(candidate, metadata),
         Err(InspectError::Stale) => Verdict::Stale,
         Err(InspectError::Invalid) => Verdict::Skip(SkipReason::InvalidPath),
@@ -395,6 +419,47 @@ fn classify(candidate: &Candidate, metadata: Metadata) -> Verdict {
         return Verdict::Fallback(FallbackKind::KindChanged);
     }
     Verdict::Skip(SkipReason::Unsupported)
+}
+
+/// Classifies a directory candidate against the live file system.
+///
+/// A directory that is still the same directory produces nothing: it is
+/// traversal state, not an item. Everything else must fall back or be silent,
+/// because the walk's counters depend on what happened to it:
+///
+/// - vanished -> stale, exactly like a vanished file (the walk would not list
+///   it either, and its children report themselves);
+/// - unreadable -> fall back so the walk computes its `unreadable-directory`
+///   gap; inventing the count here would duplicate the walk's rule;
+/// - became a file or a link -> the snapshot's children no longer describe the
+///   tree, so the whole batch is invalid;
+/// - different `(dev, ino)` while still a directory -> a different directory
+///   now owns the path, so the children resolve under an identity the snapshot
+///   never saw.
+fn classify_directory(candidate: &Candidate, inspected: Result<Metadata, InspectError>) -> Verdict {
+    match inspected {
+        Ok(metadata) => {
+            if file_path::link(&metadata) {
+                return Verdict::Fallback(FallbackKind::AncestorLink);
+            }
+            if metadata.is_dir() {
+                let actual = FileKey::new(metadata.dev(), metadata.ino());
+                if actual != candidate.key {
+                    return Verdict::Fallback(FallbackKind::IdDrift);
+                }
+                return Verdict::Directory;
+            }
+            if metadata.is_file() {
+                return Verdict::Fallback(FallbackKind::KindChanged);
+            }
+            Verdict::Fallback(FallbackKind::Unverified)
+        }
+        Err(InspectError::Stale) => Verdict::Stale,
+        Err(InspectError::Unreadable) => Verdict::Fallback(FallbackKind::DirectoryUnreadable),
+        Err(InspectError::Invalid) => Verdict::Fallback(FallbackKind::Unverified),
+        Err(InspectError::AncestorLink) => Verdict::Fallback(FallbackKind::AncestorLink),
+        Err(InspectError::Unverified) => Verdict::Fallback(FallbackKind::Unverified),
+    }
 }
 
 fn excluded_name(name: &str) -> bool {

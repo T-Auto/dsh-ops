@@ -580,3 +580,134 @@ fn an_ancestor_link_invalidates_the_batch() {
     assert_eq!(failure.kind, FallbackKind::AncestorLink);
     assert_eq!(failure.rel.as_deref(), Some(Path::new("a.txt")));
 }
+
+fn vanished_dir(rel: &str) -> Candidate {
+    Candidate {
+        rel: rel_path(rel),
+        key: FileKey::new(0, 0),
+        kind: EntryKind::Dir,
+        len: 0,
+        modified_ns: None,
+    }
+}
+
+#[test]
+fn a_live_directory_is_traversal_state_not_an_item() {
+    let fixture = Fixture::new("dir-live");
+    fixture.dir("a");
+    let source = MemorySource::ready(SnapshotId::new(1), vec![candidate(&fixture.root, "a")]);
+    let batch = ready(collect(
+        &fixture.root,
+        &request(&fixture.root),
+        &source,
+        budget(),
+    ));
+
+    assert_eq!(batch.entries, 1);
+    assert!(batch.fresh.is_empty(), "a directory is not an item");
+    assert!(
+        batch.skipped.is_empty(),
+        "a directory is never a skip reason"
+    );
+    assert_eq!(batch.stale, 0);
+    assert_eq!(batch.gaps(), 0);
+}
+
+#[test]
+fn a_vanished_directory_is_silent_and_never_a_skip_reason() {
+    let fixture = Fixture::new("dir-stale");
+    let source = MemorySource::ready(SnapshotId::new(1), vec![vanished_dir("gone")]);
+    let batch = ready(collect(
+        &fixture.root,
+        &request(&fixture.root),
+        &source,
+        budget(),
+    ));
+
+    assert_eq!(batch.stale, 1);
+    assert!(batch.skipped.is_empty());
+    assert_eq!(batch.gaps(), 0);
+    assert_eq!(batch.skipped_files(), 0);
+}
+
+#[test]
+fn a_directory_that_became_a_file_invalidates_the_batch() {
+    let fixture = Fixture::new("dir-to-file");
+    fixture.dir("a");
+    let snapshot = candidate(&fixture.root, "a");
+    std::fs::remove_dir_all(fixture.root.join("a")).unwrap();
+    std::fs::write(fixture.root.join("a"), b"now a file").unwrap();
+    let source = MemorySource::ready(SnapshotId::new(1), vec![snapshot]);
+    let failure = fallback(collect(
+        &fixture.root,
+        &request(&fixture.root),
+        &source,
+        budget(),
+    ));
+
+    assert_eq!(failure.kind, FallbackKind::KindChanged);
+    assert_eq!(failure.rel.as_deref(), Some(Path::new("a")));
+}
+
+#[test]
+fn a_directory_that_became_unreadable_falls_back_for_the_walk_gap() {
+    let fixture = Fixture::new("dir-eacces");
+    fixture.dir("locked");
+    let source = MemorySource::ready(SnapshotId::new(1), vec![candidate(&fixture.root, "locked")]);
+    let mut faults = FaultyInspect::default();
+    faults.fail(fixture.root.join("locked"), InspectError::Unreadable);
+    let request = request(&fixture.root);
+    let failure = fallback(collect_with(
+        &fixture.root,
+        &request,
+        &source,
+        budget(),
+        &faults,
+    ));
+
+    assert_eq!(
+        failure.kind,
+        FallbackKind::DirectoryUnreadable,
+        "the walk must recompute its unreadable-directory gap"
+    );
+    assert_eq!(failure.rel.as_deref(), Some(Path::new("locked")));
+}
+
+#[test]
+fn a_directory_with_drifted_identity_invalidates_the_batch() {
+    let fixture = Fixture::new("dir-drift");
+    fixture.dir("a");
+    let source = MemorySource::ready(
+        SnapshotId::new(1),
+        vec![drifted(candidate(&fixture.root, "a"))],
+    );
+    let failure = fallback(collect(
+        &fixture.root,
+        &request(&fixture.root),
+        &source,
+        budget(),
+    ));
+
+    assert_eq!(failure.kind, FallbackKind::IdDrift);
+    assert_eq!(failure.rel.as_deref(), Some(Path::new("a")));
+}
+
+#[test]
+fn a_directory_whose_ancestor_became_a_link_invalidates_the_batch() {
+    let fixture = Fixture::new("dir-link");
+    fixture.dir("a");
+    let source = MemorySource::ready(SnapshotId::new(1), vec![candidate(&fixture.root, "a")]);
+    let mut faults = FaultyInspect::default();
+    faults.fail(fixture.root.join("a"), InspectError::AncestorLink);
+    let request = request(&fixture.root);
+    let failure = fallback(collect_with(
+        &fixture.root,
+        &request,
+        &source,
+        budget(),
+        &faults,
+    ));
+
+    assert_eq!(failure.kind, FallbackKind::AncestorLink);
+    assert_eq!(failure.rel.as_deref(), Some(Path::new("a")));
+}
