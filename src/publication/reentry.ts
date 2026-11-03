@@ -33,8 +33,6 @@ export const REENTRY_COOLDOWN_STEPS_MS: readonly number[] = Object.freeze([25, 1
  * its refusals readable instead of leaving them in a counter nobody ever prints.
  */
 const REENTRY_WARN_WINDOW_MS = 1000
-/** Quiet time after the last refusal before the burst's total may be stated. */
-const REENTRY_QUIET_MS = 250
 
 /**
  * Read an error's message without letting a hostile getter throw.
@@ -120,50 +118,43 @@ export function createReentryCooling(options: ReentryCoolingOptions): ReentryCoo
   let attempt = 0
   let coolUntil = 0
   let timer: ReturnType<typeof setTimeout> | undefined
-  let roundOpen = false
-  let roundSuppressed = 0
-  let suppressed = 0
-  /**
-   * Every refusal since the burst opened, including the one the deferral line reported without a
-   * count. It is reset by the first refusal after a quiet window, never by a line being printed, so
-   * a summary written mid-burst still states the whole burst instead of the tail since the last
-   * line (#579).
-   */
+  /** Every refusal in the burst; reset only by a refusal that follows a quiet window. */
   let burstRefusals = 0
+  /** Refusals no line has reported yet. */
+  let unreported = 0
   let lastRefusalAt = -Infinity
   let lastDeferralAt = -Infinity
   let lastRecoveryAt = -Infinity
   const windowFree = (at: number, last: number) => at - last >= REENTRY_WARN_WINDOW_MS
   /**
-   * The deferral line: one per window, and silent once the burst has folded refusals.
+   * The deferral line: one per window, printed when the burst opens.
    *
-   * A deferral printed before anything was folded cannot state a count, and a second deferral
-   * would spend the slot the closing summary needs; a burst therefore speaks once at its start and
-   * once at its end (#579).
+   * It cannot state a count — nothing has been folded when it is written — so every burst also owes
+   * a closing summary.
    */
-  const sayDeferral = () => {
-    const at = now()
-    if (suppressed > 0 || !windowFree(at, lastDeferralAt)) { suppressed += 1; return }
+  const sayDeferral = (at: number) => {
+    if (!windowFree(at, lastDeferralAt)) return
     lastDeferralAt = at
     report(`dsh-ops: the host is publishing an append; ${label} publication was deferred and will retry after a cooldown.`)
   }
   /**
-   * The recovery line: it carries the folded count and is exempt from the deferral budget.
+   * The closing summary: the only line that can state a burst, so it is written once the burst has
+   * been quiet for a full window — not when the first pass happens to succeed (#579).
    *
-   * It is written when the burst has gone quiet, because that is the first moment the total is
-   * known: a summary written while refusals are still arriving states a prefix of the burst, and
-   * the throttle then swallows the rest (#579).
+   * The burst is over when the surrounding system next runs a pass after that silence: a jitter's
+   * episodes alternate refusal and success, so no local signal (a success, a timer) can tell the
+   * tenth episode from the first. "Settled" is therefore read from the injected clock at a pass
+   * boundary, never from a wall-clock timer: a timer fires mid-burst and states a prefix of it.
+   * @param {number} at - the clock reading of this pass boundary.
    */
-  const sayRecovery = () => {
-    if (suppressed === 0) return
-    const at = now()
-    if (!windowFree(at, lastRecoveryAt)) return
+  const sayRecovery = (at: number) => {
+    if (unreported === 0 || !windowFree(at, lastRecoveryAt)) return
+    if (at - lastRefusalAt < REENTRY_WARN_WINDOW_MS) return
     const total = burstRefusals
+    unreported = 0
     lastRecoveryAt = at
-    // The summary spends the deferral slot as well: one deferral plus one recovery is the budget.
     lastDeferralAt = at
-    suppressed = 0
-    report(`dsh-ops: ${label} publication recovered after ${total} refusal(s) during the cooldown (${total - 1} suppressed).`)
+    report(`dsh-ops: ${label} publication recovered after ${total} refusal(s) during the cooldown (${Math.max(0, total - 1)} suppressed).`)
   }
   let armedStep = 0
   const armTimer = (delay: number) => {
@@ -200,35 +191,25 @@ export function createReentryCooling(options: ReentryCoolingOptions): ReentryCoo
     return delay
   }
   const note = (outcome: ReentryOutcome) => {
-    if (outcome === 'failed') {
-      const at = now()
-      if (at - lastRefusalAt >= REENTRY_WARN_WINDOW_MS) burstRefusals = 0
-      lastRefusalAt = at
-      burstRefusals += 1
-      if (!roundOpen) {
-        roundOpen = true
-        roundSuppressed = 0
-        sayDeferral()
-        return
-      }
-      roundSuppressed += 1
-      suppressed += 1
-      return
-    }
-    roundOpen = false
-    // The recovery line is what makes an aggregated burst readable: it states how many refusals
-    // the burst produced while the throttle was closed (#579).
-    sayRecovery()
+    if (outcome !== 'failed') return
+    const at = now()
+    if (at - lastRefusalAt >= REENTRY_WARN_WINDOW_MS) burstRefusals = 0
+    lastRefusalAt = at
+    burstRefusals += 1
+    unreported += 1
+    if (burstRefusals === 1) sayDeferral(at)
   }
   return {
     classify: classifyHostReentry,
     cooled: () => now() < coolUntil,
     remaining: () => Math.max(0, coolUntil - now()),
     failed: (_error: unknown) => { note('failed'); return armStep() },
-    deferred: () => armStep(),
-    succeeded: () => { attempt = 0; coolUntil = 0; note('recovered') },
+    // A pass that could not run and a pass that completed are both boundaries where the burst may
+    // have settled; only the second is guaranteed to happen once the window really closed.
+    deferred: () => { const delay = armStep(); sayRecovery(now()); return delay },
+    succeeded: () => { attempt = 0; coolUntil = 0; note('recovered'); sayRecovery(now()) },
     note,
-    suppressed: () => suppressed,
+    suppressed: () => unreported,
     dispose: () => { if (timer !== undefined) { clearTimeout(timer); timer = undefined } coolUntil = 0 },
   }
 }
