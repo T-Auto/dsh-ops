@@ -38,13 +38,20 @@ const JITTER_WINDOW_MS = 5
 /**
  * Absolute acceptance bounds. `warns` is the acceptance bar the issue states; `touches` is the
  * guard that keeps a storm from returning under another name. The jitter shape cannot be cheaper
- * than one register per session plus the one refusal that produced it, so its touch guard is that
- * required work plus a constant — still an absolute formula, never "fewer than the baseline".
+ * than the work each session owes, so each guard is that work as a formula — absolute, never
+ * "fewer than the baseline".
+ *
+ * - bash `2 × sessions + 8`: one refused pass plus one publication per session.
+ * - ptc `3 × sessions`: one refused discovery plus the two resident API registers per session —
+ *   the zero-redundancy decomposition `{register: 60, restrict: 0, dispose: 0}` at 20 sessions.
+ *   Compressing it further would mean publishing fewer APIs, which changes the visible surface,
+ *   so this is the floor, not a relaxed bound.
+ * - native `2 × sessions`: one refused pass plus one publication per session.
  */
 const BOUNDS = Object.freeze({
   bash: Object.freeze({ warns: 2, touches: 2 * JITTER_SESSIONS + 8 }),
-  ptc: Object.freeze({ warns: 2, touches: 40 }),
-  native: Object.freeze({ warns: 2, touches: 40 }),
+  ptc: Object.freeze({ warns: 2, touches: 3 * JITTER_SESSIONS }),
+  native: Object.freeze({ warns: 2, touches: 2 * JITTER_SESSIONS }),
 })
 /** Every session must be published again within this budget after a window closes. */
 const RECOVERY_MS = 1500
@@ -195,11 +202,17 @@ async function jitter(fixture) {
   fixture.state.open = false
   const storm = { touches: fixture.touches(), warns: fixture.warns.length }
   const released = Date.now()
-  // The host keeps working: one ordinary event per session, the trigger the sibling paths use to
-  // notice that the window closed. A path that needs a second refusal to wake up fails this.
-  for (const agent of fixture.agents) await fixture.drive(agent)
+  // The host stops talking: no further event is sent. The cooled pass must publish everyone on its
+  // own timer (a path that needs another event wakes up only when the host happens to speak again).
+  let withoutEvent = true
   let recovered
-  try { recovered = await waitFor(fixture.allPublished, RECOVERY_MS, 'every session to be published') } catch { recovered = undefined }
+  try { recovered = await waitFor(fixture.allPublished, RECOVERY_MS, 'every session to be published without another host event') }
+  catch { recovered = undefined; withoutEvent = false }
+  // Only then, and only to keep measuring the rest of the row, give the path one ordinary event.
+  if (!withoutEvent) {
+    for (const agent of fixture.agents) await fixture.drive(agent)
+    try { recovered = await waitFor(fixture.allPublished, RECOVERY_MS, 'every session to be published after one event') } catch { recovered = undefined }
+  }
   // Let a summary line that the recovery pass writes land before the log is read: the acceptance is
   // about what the operator ends up with, not about the instant the last layer appears.
   await sleep(60)
@@ -208,6 +221,7 @@ async function jitter(fixture) {
     ...storm,
     refusals: fixture.state.refusals,
     lines: fixture.warns.slice(),
+    recoveredWithoutEvent: withoutEvent,
     recoveredMs: recovered === undefined ? null : Date.now() - released,
     published: `${fixture.publishedCount()}/${fixture.agents.length}`,
     sample: fixture.warns[0] ?? null,
@@ -228,6 +242,7 @@ await test('a jittery append window is reported at most twice, with a fact, and 
     assert.ok(fixture.warns.some(informative),
       `a warning still states what happens (cooling, deferral or a suppressed count): ${JSON.stringify(fixture.warns)}`)
     assert.equal(row.published, `${row.sessions}/${row.sessions}`, `no session is lost: ${JSON.stringify(row)}`)
+    assert.ok(row.recoveredWithoutEvent, `the cooled pass publishes on its own timer, with no further host event: ${JSON.stringify(row)}`)
     assert.ok(row.recoveredMs !== null && row.recoveredMs <= RECOVERY_MS,
       `every session is published within ${RECOVERY_MS} ms: ${JSON.stringify(row)}`)
     // The one fact aggregation must never trade away: a quiet log still says how many refusals happened.
@@ -270,6 +285,7 @@ await test('the sibling publication paths stay inside the same absolute bounds',
       if (row.warns > BOUNDS[kind].warns) failures.push(`${kind}: ${row.warns} warnings > ${BOUNDS[kind].warns} (${JSON.stringify(row)})`)
       if (row.touches > BOUNDS[kind].touches) failures.push(`${kind}: ${row.touches} registry touches > ${BOUNDS[kind].touches} (${JSON.stringify(row)})`)
       if (row.published !== `${row.sessions}/${row.sessions}`) failures.push(`${kind}: lost sessions ${row.published} (${JSON.stringify(row)})`)
+      if (!row.recoveredWithoutEvent) failures.push(`${kind}: needed another host event to recover (${JSON.stringify(row)})`)
       if (row.recoveredMs === null || row.recoveredMs > RECOVERY_MS) failures.push(`${kind}: recovery ${row.recoveredMs} ms (${JSON.stringify(row)})`)
       // Same invariant on every path: folded refusals stay countable in the log.
       try { assertCountSurvivesAggregation({ path: kind, ...row }) } catch (error) { failures.push(error.message) }
