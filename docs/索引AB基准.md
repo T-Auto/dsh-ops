@@ -68,7 +68,7 @@ harness 位于 `bench/index-ab`，入口为 `node bench/cli.mjs index-ab`，直�
 | node | v24.21.0 |
 | 内核 | 6.12.113+deb13-amd64 |
 | CPU / 内存 | 16 / 15,706 MiB |
-| 记录 revision | `4b6d66a4656514ceccd39f10dead81adeb244a91`（G3 base；报告 JSON 的 `revision` 字段是运行时的 checkout HEAD） |
+| 记录 revision | `4b6d66a4656514ceccd39f10dead81adeb244a91`（测量时的 G3 base；PR 之后 rebase 到 `00125c6`，它只是 PS3 测试改动、重建 worker 哈希不变；报告 JSON 的 `revision` 字段是运行时的 checkout HEAD） |
 | worker sha256 | `9de72d53af9196da1cec911799fc33f4c5246f142f26439e279391957877a63e` |
 
 ### 冷态首次调用（ms）
