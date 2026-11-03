@@ -165,15 +165,13 @@ impl Request {
     /// index layer where it could be joined to a workspace path.
     pub fn validate_cache_dir(&self) -> Result<()> {
         if let Some(directory) = &self.cache_dir {
-            let length = directory.as_os_str().len();
-            if !directory.is_absolute()
-                || length == 0
-                || length > 4096
-                || directory.to_string_lossy().contains('\0')
-            {
+            // Compare encoded bytes (WTF-8 on Windows), so a NUL or an oversized
+            // UTF-16 path is measured the same way the OS encodes it.
+            let encoded = directory.as_os_str().as_encoded_bytes();
+            if !directory.is_absolute() || encoded.is_empty() || encoded.len() > 4096 || encoded.contains(&0) {
                 return Err(Failure::new(
                     "INVALID_ARGUMENT",
-                    "cacheDir must be an absolute path of 1..4096 bytes without NUL",
+                    "cache_dir must be an absolute path of 1..4096 encoded bytes without NUL",
                 ));
             }
         }
@@ -194,13 +192,16 @@ pub struct Request {
     pub storage: Option<storage::StorageContext>,
     /// Host-provided cache directory for the ops-index snapshot.
     ///
+    /// Trusted envelope metadata: the host writes it on the request object and it
+    /// is never read from a tool's `args`; model-visible arguments cannot set it.
+    /// The wire name is `cache_dir`, matching the other request fields
+    /// (`read_only`, `deny_roots`).
+    ///
     /// `None` means the index is disabled for this request and every caller keeps
     /// the existing walk semantics. When present it must be an absolute path the
     /// host created private (0700 on POSIX); the worker never invents or widens
     /// it, and an unusable directory falls back to the walk without an error.
-    /// The wire name is `cacheDir` (camelCase), matching the issue, docs and
-    /// CHANGELOG wording for this field.
-    #[serde(default, rename = "cacheDir")]
+    #[serde(default)]
     pub cache_dir: Option<std::path::PathBuf>,
     pub root: String,
     #[serde(default)]
