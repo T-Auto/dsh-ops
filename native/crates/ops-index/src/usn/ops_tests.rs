@@ -339,6 +339,27 @@ fn op_list_is_copy_and_iterates_by_value() {
 }
 
 #[test]
+fn op_list_debug_prints_only_live_ops() {
+    assert_eq!(format!("{:?}", ops_for(&record(0))), "[]");
+
+    let rec = record(
+        USN_REASON_RENAME_NEW_NAME | USN_REASON_HARD_LINK_CHANGE | USN_REASON_BASIC_INFO_CHANGE,
+    );
+    let printed = format!("{:?}", ops_for(&rec));
+    assert!(
+        printed.starts_with('[') && printed.ends_with(']'),
+        "unexpected Debug output: {printed}"
+    );
+    assert!(printed.contains("Upsert"), "{printed}");
+    assert!(printed.contains("LinkDirty"), "{printed}");
+    assert!(printed.contains("StatDirty"), "{printed}");
+    assert!(
+        !printed.contains("RenameOldSeen"),
+        "the placeholder slot leaked into Debug: {printed}"
+    );
+}
+
+#[test]
 fn every_decision_mask_produces_the_table_row_count_in_order() {
     for mask in every_mask() {
         let rec = record(mask);
