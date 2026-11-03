@@ -9,7 +9,10 @@ use super::*;
 use cap_fs_ext::MetadataExt;
 use cap_std::ambient_authority;
 use cap_std::fs::Dir;
-use ops_index::{Candidate, EntryKind, FileKey, MemorySource, SnapshotId};
+use ops_index::{
+    Candidate, CandidateSet, Change, EntryKind, EnumBudget, FileKey, FsDataSource, MemorySource,
+    SnapshotId, SourceError, SourceState,
+};
 
 struct Fixture {
     root: PathBuf,
@@ -209,4 +212,89 @@ fn an_indexed_continuation_replayed_through_the_walk_is_stale() {
     ))
     .unwrap_err();
     assert_eq!(error.code, "SEARCH_STALE");
+}
+
+use std::cell::Cell;
+
+struct CountingSource {
+    inner: MemorySource,
+    states: Cell<usize>,
+    enumerates: Cell<usize>,
+}
+
+impl CountingSource {
+    fn new(inner: MemorySource) -> Self {
+        Self {
+            inner,
+            states: Cell::new(0),
+            enumerates: Cell::new(0),
+        }
+    }
+}
+
+impl FsDataSource for CountingSource {
+    fn state(&self, _root: &Path) -> SourceState {
+        self.states.set(self.states.get() + 1);
+        SourceState::Ready {
+            snapshot: SnapshotId::new(1),
+            consistent_at_ms: 0,
+        }
+    }
+
+    fn enumerate(
+        &self,
+        root: &Path,
+        budget: EnumBudget,
+    ) -> std::result::Result<CandidateSet, SourceError> {
+        self.enumerates.set(self.enumerates.get() + 1);
+        self.inner.enumerate(root, budget)
+    }
+
+    fn changes(
+        &self,
+        root: &Path,
+        since: SnapshotId,
+    ) -> std::result::Result<Vec<Change>, SourceError> {
+        self.inner.changes(root, since)
+    }
+}
+
+#[test]
+fn grep_never_consults_an_index_source() {
+    let fixture = Fixture::new("grep-gate");
+    fixture.file("a.txt", "hit\n");
+    fixture.file("b.txt", "hit\n");
+    let cache = fixture.root.join("cache");
+    std::fs::create_dir(&cache).unwrap();
+    let counting = CountingSource::new(source(&fixture.root, &["a.txt", "b.txt"]));
+    let indexed = grep_with_source(
+        &request(
+            &fixture.root,
+            Some(&cache),
+            json!({ "path": fixture.root, "pattern": "hit" }),
+        ),
+        &counting,
+    )
+    .unwrap();
+    let walked = grep(&request(
+        &fixture.root,
+        None,
+        json!({ "path": fixture.root, "pattern": "hit" }),
+    ))
+    .unwrap();
+
+    assert_eq!(
+        indexed, walked,
+        "grep keeps the walk even with a cache hint"
+    );
+    assert_eq!(
+        counting.states.get(),
+        0,
+        "grep must never ask for source state"
+    );
+    assert_eq!(
+        counting.enumerates.get(),
+        0,
+        "grep must never enumerate a source"
+    );
 }

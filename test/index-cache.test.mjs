@@ -56,17 +56,61 @@ await test('an existing wider directory is narrowed to 0700', () => {
 await test('an unusable cache falls back to the walk without failing the call', () => {
   const root = home('unusable')
   try {
-    const denied = { mkdir() { const error = new Error('EACCES'); error.code = 'EACCES'; throw error }, chmod() {} }
+    const denied = {
+      mkdir() { const error = new Error('EACCES'); error.code = 'EACCES'; throw error },
+      chmod() {},
+      lstat() { return { isDirectory: () => true, isSymbolicLink: () => false } },
+      realpath: (value) => value,
+    }
     assert.equal(indexCacheDir({ enabled: true, home: root, fs: denied }), null)
     assert.deepEqual(indexCacheRequest({ enabled: true, home: root, fs: denied }), {}, 'no cache_dir reaches the worker')
 
-    const full = { mkdir() { const error = new Error('ENOSPC'); error.code = 'ENOSPC'; throw error }, chmod() {} }
+    const full = {
+      mkdir() { const error = new Error('ENOSPC'); error.code = 'ENOSPC'; throw error },
+      chmod() {},
+      lstat() { return { isDirectory: () => true, isSymbolicLink: () => false } },
+      realpath: (value) => value,
+    }
     assert.equal(indexCacheDir({ enabled: true, home: root, fs: full }), null, 'a full disk is not an error')
 
-    const noChmod = { mkdir() {}, chmod() { const error = new Error('EPERM'); error.code = 'EPERM'; throw error } }
+    const noChmod = {
+      mkdir() {},
+      chmod() { const error = new Error('EPERM'); error.code = 'EPERM'; throw error },
+      lstat() { return { isDirectory: () => true, isSymbolicLink: () => false } },
+      realpath: (value) => value,
+    }
     assert.equal(indexCacheDir({ enabled: true, home: root, fs: noChmod }), null, 'an unenforceable mode is not usable')
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+await test('a symlinked cache path is refused and nothing is sent', () => {
+  const root = home('symlink')
+  const outside = home('symlink-target')
+  try {
+    const linkType = process.platform === 'win32' ? 'junction' : 'dir'
+    fs.mkdirSync(path.join(root, 'dsh-ops'), { recursive: true })
+    const linked = path.join(root, 'dsh-ops', 'index-cache')
+    fs.symlinkSync(outside, linked, linkType)
+    assert.equal(indexCacheDir({ enabled: true, home: root }), null, 'a symlinked cache entry is not usable')
+    assert.deepEqual(indexCacheRequest({ enabled: true, home: root }), {})
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+    fs.rmSync(outside, { recursive: true, force: true })
+  }
+})
+
+await test('a symlinked dsh-ops directory is refused', () => {
+  const root = home('symlink-parent')
+  const outside = home('symlink-parent-target')
+  try {
+    const linkType = process.platform === 'win32' ? 'junction' : 'dir'
+    fs.symlinkSync(outside, path.join(root, 'dsh-ops'), linkType)
+    assert.equal(indexCacheDir({ enabled: true, home: root }), null, 'a symlinked parent is not usable')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+    fs.rmSync(outside, { recursive: true, force: true })
   }
 })
 

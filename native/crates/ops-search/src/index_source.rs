@@ -15,6 +15,9 @@
 //!   no snapshot persistence, so every platform source answers
 //!   `Unsupported`/`Unavailable` until its watcher slice lands.
 //!
+//! G3 wires this for `glob` only: `grep` reads file content and keeps the
+//! live traversal until its own integration slice.
+//!
 //! The crates are `#![cfg(target_os = ...)]` libraries: only the matching one
 //! is compiled, and the dependencies are target-gated in `Cargo.toml`, so a
 //! Linux build never compiles the Windows or macOS crate.
