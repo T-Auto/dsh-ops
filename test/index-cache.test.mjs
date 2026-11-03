@@ -10,6 +10,9 @@ function home(tag) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `dsh-ops-index-cache-${tag}-`))
 }
 
+/** Mode bits are only meaningful where the platform has POSIX modes. */
+const POSIX_MODES = process.platform !== 'win32'
+
 function modeOf(target) {
   return fs.statSync(target).mode & 0o777
 }
@@ -32,7 +35,7 @@ await test('an enabled cache is created once with mode 0700', () => {
     assert.equal(first, indexCachePath(root))
     assert.equal(first, path.join(root, 'dsh-ops', 'index-cache'))
     assert.equal(fs.existsSync(first), true)
-    assert.equal(modeOf(first), 0o700, 'the cache directory must be private')
+    if (POSIX_MODES) assert.equal(modeOf(first), 0o700, 'the cache directory must be private')
     assert.equal(indexCacheDir({ enabled: true, home: root }), first, 'preparation is idempotent')
     assert.deepEqual(indexCacheRequest({ enabled: true, home: root }), { cache_dir: first })
   } finally {
@@ -47,7 +50,7 @@ await test('an existing wider directory is narrowed to 0700', () => {
     fs.mkdirSync(dir, { recursive: true, mode: 0o755 })
     fs.chmodSync(dir, 0o755)
     assert.equal(indexCacheDir({ enabled: true, home: root }), dir)
-    assert.equal(modeOf(dir), 0o700)
+    if (POSIX_MODES) assert.equal(modeOf(dir), 0o700)
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
@@ -96,7 +99,7 @@ await test('a symlinked cache path is refused and nothing is sent', () => {
     fs.symlinkSync(outside, linked, linkType)
     assert.equal(indexCacheDir({ enabled: true, home: root }), null, 'a symlinked cache entry is not usable')
     assert.deepEqual(indexCacheRequest({ enabled: true, home: root }), {})
-    assert.equal(modeOf(outside), 0o755, 'the link target must not be chmod-ed')
+    if (POSIX_MODES) assert.equal(modeOf(outside), 0o755, 'the link target must not be chmod-ed')
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
     fs.rmSync(outside, { recursive: true, force: true })
@@ -111,7 +114,7 @@ await test('a symlinked dsh-ops directory is refused', () => {
     fs.chmodSync(outside, 0o755)
     fs.symlinkSync(outside, path.join(root, 'dsh-ops'), linkType)
     assert.equal(indexCacheDir({ enabled: true, home: root }), null, 'a symlinked parent is not usable')
-    assert.equal(modeOf(outside), 0o755, 'the link target must not be chmod-ed')
+    if (POSIX_MODES) assert.equal(modeOf(outside), 0o755, 'the link target must not be chmod-ed')
     assert.equal(fs.existsSync(path.join(outside, 'index-cache')), false, 'nothing is created behind the link')
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
