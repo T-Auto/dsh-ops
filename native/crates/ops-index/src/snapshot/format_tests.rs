@@ -452,6 +452,29 @@ fn record_segment_is_exactly_thirty_two_bytes_per_entry() {
 }
 
 #[test]
+fn names_must_not_contain_nul() {
+    let mut snapshot = sample();
+    snapshot.names = vec![b"a\0b".to_vec()];
+    assert_eq!(
+        encode(&snapshot),
+        Err(SnapshotError::OutOfRange {
+            what: "name contains NUL"
+        })
+    );
+    // A CRC-valid image can still carry a NUL name: decode must reject it,
+    // because the index arena is NUL-separated.
+    let names = one_name_section(b"a\0b");
+    let image = header_image(1, FileKey::new(1, 1), 0, &names, &empty_name_section());
+    assert!(matches!(
+        decode(&image),
+        Err(SnapshotError::Malformed {
+            what: "name contains NUL",
+            ..
+        })
+    ));
+}
+
+#[test]
 fn snapshot_error_codes_and_display_are_stable() {
     let errors = [
         (

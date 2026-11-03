@@ -174,6 +174,42 @@ fn a_failed_save_removes_its_temporary_file() {
 }
 
 #[test]
+fn a_write_failure_leaves_no_temporary_file() {
+    let directory = TestDir::new("write-failure");
+    let store = SnapshotStore::new(directory.path());
+    super::FAIL_AFTER_CREATE.store(true, Ordering::Relaxed);
+    let error = store.save(&snapshot(1)).unwrap_err();
+    super::FAIL_AFTER_CREATE.store(false, Ordering::Relaxed);
+    assert_eq!(error.code(), "INDEX_SNAPSHOT_IO");
+    assert_eq!(
+        listing(directory.path()),
+        Vec::<String>::new(),
+        "a partial temporary file must not survive a failed write"
+    );
+    assert!(!store.path().exists(), "nothing was published");
+}
+
+#[test]
+fn an_oversized_image_is_rejected_before_decoding() {
+    let directory = TestDir::new("too-large");
+    let store = SnapshotStore::new(directory.path());
+    store.save(&snapshot(1)).unwrap();
+    let size = fs::metadata(store.path()).unwrap().len();
+    let error = store.load_with_limit(size - 1).unwrap_err();
+    assert_eq!(error.code(), "INDEX_SNAPSHOT_TOO_LARGE");
+    match &error {
+        StoreError::TooLarge { size: found, max } => {
+            assert_eq!(*found, size);
+            assert_eq!(*max, size - 1);
+        }
+        other => panic!("expected TooLarge, got {other:?}"),
+    }
+    assert!(error.to_string().contains("above the"));
+    // The exact cap is still accepted.
+    assert!(store.load_with_limit(size).unwrap().is_some());
+}
+
+#[test]
 fn a_corrupt_image_is_reported_not_ignored() {
     let directory = TestDir::new("corrupt");
     let store = SnapshotStore::new(directory.path());
@@ -250,4 +286,8 @@ fn store_error_codes_and_sources_are_stable() {
     assert_eq!(io.code(), "INDEX_SNAPSHOT_IO");
     assert!(io.corrupt().is_none());
     assert!(std::error::Error::source(&io).is_some());
+    let too_large = StoreError::TooLarge { size: 9, max: 8 };
+    assert_eq!(too_large.code(), "INDEX_SNAPSHOT_TOO_LARGE");
+    assert!(too_large.corrupt().is_none());
+    assert!(std::error::Error::source(&too_large).is_none());
 }
