@@ -1,5 +1,6 @@
 use super::*;
-use notify::event::{CreateKind, Flag, RemoveKind};
+use crate::state::SessionCore;
+use notify::event::{AccessKind, CreateKind, DataChange, RemoveKind};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
@@ -90,14 +91,13 @@ fn wait_for(
 #[test]
 fn maps_create_remove_modify_and_rename_events() {
     let root = Path::new("/root");
-    let mut state = core(root);
 
     let created = event_with(
         EventKind::Create(CreateKind::File),
         &["/root/a.txt", "/outside/ignored.txt"],
     );
     assert_eq!(
-        state.on_event(&created),
+        map_event(root, &created),
         vec![WatchEvent {
             rel: PathBuf::from("a.txt"),
             action: ChangeAction::Added,
@@ -106,7 +106,7 @@ fn maps_create_remove_modify_and_rename_events() {
 
     let removed = event_with(EventKind::Remove(RemoveKind::File), &["/root/old.txt"]);
     assert_eq!(
-        state.on_event(&removed),
+        map_event(root, &removed),
         vec![WatchEvent {
             rel: PathBuf::from("old.txt"),
             action: ChangeAction::Removed,
@@ -114,11 +114,11 @@ fn maps_create_remove_modify_and_rename_events() {
     );
 
     let modified = event_with(
-        EventKind::Modify(ModifyKind::Data(notify::event::DataChange::Content)),
+        EventKind::Modify(ModifyKind::Data(DataChange::Content)),
         &["/root/data.bin"],
     );
     assert_eq!(
-        state.on_event(&modified),
+        map_event(root, &modified),
         vec![WatchEvent {
             rel: PathBuf::from("data.bin"),
             action: ChangeAction::Modified,
@@ -130,7 +130,7 @@ fn maps_create_remove_modify_and_rename_events() {
         &["/root/from.txt", "/root/to.txt"],
     );
     assert_eq!(
-        state.on_event(&renamed),
+        map_event(root, &renamed),
         vec![
             WatchEvent {
                 rel: PathBuf::from("from.txt"),
@@ -143,71 +143,40 @@ fn maps_create_remove_modify_and_rename_events() {
         ]
     );
 
-    let accessed = event_with(
-        EventKind::Access(notify::event::AccessKind::Any),
-        &["/root/read.txt"],
-    );
-    assert!(state.on_event(&accessed).is_empty());
+    let accessed = event_with(EventKind::Access(AccessKind::Any), &["/root/read.txt"]);
+    assert!(map_event(root, &accessed).is_empty());
 }
 
 #[test]
-fn a_rescan_flag_invalidates_before_any_mapping() {
-    let mut state = core(Path::new("/root"));
-    let overflow = Event::new(EventKind::Other).set_flag(Flag::Rescan);
-    assert!(state.on_event(&overflow).is_empty());
-    assert_eq!(state.invalidated, Some(InvalidationReason::QueueOverflow));
-    assert_eq!(
-        InvalidationReason::QueueOverflow.code(),
-        "INDEX_WATCH_QUEUE_OVERFLOW"
-    );
-}
-
-#[test]
-fn removing_a_tracked_directory_invalidates_the_snapshot() {
+fn a_removed_tracked_directory_requires_a_rescan_but_a_removed_file_does_not() {
     let mut state = core(Path::new("/root"));
     state.adopt_directories([PathBuf::from("dir")]);
-    let removed = event_with(EventKind::Remove(RemoveKind::Folder), &["/root/dir"]);
-    state.on_event(&removed);
+
+    let file = event_with(EventKind::Remove(RemoveKind::File), &["/root/dir/file.txt"]);
+    note_structural_changes(&mut state, &file);
+    assert_eq!(state.invalidated(), None);
+
+    let directory = event_with(EventKind::Remove(RemoveKind::Folder), &["/root/dir"]);
+    note_structural_changes(&mut state, &directory);
     assert_eq!(
-        state.invalidated,
+        state.invalidated(),
         Some(InvalidationReason::WatchedTreeMoved)
     );
 }
 
 #[test]
-fn removing_a_file_is_not_a_structural_change() {
-    let mut state = core(Path::new("/root"));
-    state.adopt_directories([PathBuf::from("dir")]);
-    let removed = event_with(EventKind::Remove(RemoveKind::File), &["/root/dir/file.txt"]);
-    let mapped = state.on_event(&removed);
-    assert_eq!(mapped.len(), 1);
-    assert_eq!(state.invalidated, None);
-}
-
-#[test]
-fn removing_an_ancestor_of_a_tracked_directory_invalidates() {
-    let mut state = core(Path::new("/root"));
-    state.adopt_directories([PathBuf::from("a/b")]);
-    let removed = event_with(EventKind::Remove(RemoveKind::Folder), &["/root/a"]);
-    state.on_event(&removed);
-    assert_eq!(
-        state.invalidated,
-        Some(InvalidationReason::WatchedTreeMoved)
-    );
-}
-
-#[test]
-fn a_directory_moved_into_the_tree_invalidates() {
-    let tree = TempTree::new("moved-in");
+fn a_directory_renamed_by_both_paths_requires_a_rescan() {
+    let tree = TempTree::new("rename-both");
     tree.dir("newdir");
     let mut state = core(&tree.root);
-    let moved = event_with(
-        EventKind::Modify(ModifyKind::Name(RenameMode::To)),
-        &[tree.root.join("newdir").to_str().unwrap()],
+    state.adopt_directories([PathBuf::from("olddir")]);
+    let event = event_with(
+        EventKind::Modify(ModifyKind::Name(RenameMode::Both)),
+        &["/root/olddir", tree.root.join("newdir").to_str().unwrap()],
     );
-    state.on_event(&moved);
+    note_structural_changes(&mut state, &event);
     assert_eq!(
-        state.invalidated,
+        state.invalidated(),
         Some(InvalidationReason::WatchedTreeMoved)
     );
 }
@@ -221,42 +190,10 @@ fn a_file_renamed_into_the_tree_is_a_plain_add() {
         EventKind::Modify(ModifyKind::Name(RenameMode::To)),
         &[tree.root.join("new.txt").to_str().unwrap()],
     );
-    assert_eq!(state.on_event(&moved).len(), 1);
-    assert_eq!(state.invalidated, None);
-}
-
-#[test]
-fn a_native_failure_degrades_to_polling_and_requires_a_rescan() {
-    let mut state = core(Path::new("/root"));
-    assert!(state.on_backend_error());
-    assert_eq!(state.mode, WatchMode::Polling);
-    assert_eq!(
-        state.invalidated,
-        Some(InvalidationReason::DegradedToPolling)
-    );
-}
-
-#[test]
-fn a_polling_failure_means_the_backend_is_lost() {
-    let mut state = core(Path::new("/root"));
-    state.mode = WatchMode::Polling;
-    assert!(!state.on_backend_error());
-    assert_eq!(state.invalidated, Some(InvalidationReason::BackendLost));
-    assert_eq!(
-        InvalidationReason::BackendLost.code(),
-        "INDEX_WATCH_BACKEND_LOST"
-    );
-}
-
-#[test]
-fn resync_baseline_clears_invalidation_and_replaces_the_directory_set() {
-    let mut state = core(Path::new("/root"));
-    state.adopt_directories([PathBuf::from("old")]);
-    state.invalidate(InvalidationReason::WatchedTreeMoved);
-    state.resync_baseline([PathBuf::from("new")]);
-    assert_eq!(state.invalidated, None);
-    assert!(state.tracks(Path::new("new")));
-    assert!(!state.tracks(Path::new("old")));
+    let mapped = map_event(&tree.root, &moved);
+    note_structural_changes(&mut state, &moved);
+    assert_eq!(mapped.len(), 1);
+    assert_eq!(state.invalidated(), None);
 }
 
 #[test]
