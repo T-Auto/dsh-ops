@@ -164,6 +164,13 @@ impl Inspect for FaultyInspect {
         }
         HostInspect.leaf(parent, name)
     }
+
+    fn directory(&self, parent: &Path, name: &str) -> Result<(), InspectError> {
+        if let Some(error) = self.faults.get(&parent.join(name)) {
+            return Err(*error);
+        }
+        HostInspect.directory(parent, name)
+    }
 }
 
 struct LateSource {
@@ -217,38 +224,49 @@ fn skip_reasons_keep_the_walk_vocabulary() {
 
 #[test]
 fn host_errors_map_to_the_walk_classes() {
+    // A leaf that cannot be stat'ed is the walk's `unreadable-entry` gap.
     assert_eq!(
-        io_to_inspect(io::Error::from(io::ErrorKind::PermissionDenied)),
+        leaf_io_to_inspect(io::Error::from(io::ErrorKind::PermissionDenied)),
         InspectError::Unreadable
     );
     assert_eq!(
-        io_to_inspect(io::Error::from(io::ErrorKind::NotFound)),
+        leaf_io_to_inspect(io::Error::from(io::ErrorKind::NotFound)),
+        InspectError::Stale
+    );
+    // An ancestor that cannot be opened is the walk's `unreadable-directory`
+    // gap, which only a fallback can reproduce with the same count.
+    assert_eq!(
+        parent_io_to_inspect(io::Error::from(io::ErrorKind::PermissionDenied)),
+        InspectError::ParentUnreadable
+    );
+    assert_eq!(
+        parent_io_to_inspect(io::Error::from(io::ErrorKind::NotFound)),
         InspectError::Stale
     );
     assert_eq!(
-        io_to_inspect(io::Error::from(io::ErrorKind::NotADirectory)),
+        parent_io_to_inspect(io::Error::from(io::ErrorKind::NotADirectory)),
         InspectError::Stale
     );
     assert_eq!(
-        io_to_inspect(io::Error::from(io::ErrorKind::Other)),
+        parent_io_to_inspect(io::Error::from(io::ErrorKind::Other)),
         InspectError::Unverified
     );
     assert_eq!(
-        failure_to_inspect(Failure::from(io::Error::from(
+        parent_failure_to_inspect(Failure::from(io::Error::from(
             io::ErrorKind::PermissionDenied
         ))),
-        InspectError::Unreadable
+        InspectError::ParentUnreadable
     );
     assert_eq!(
-        failure_to_inspect(Failure::from(io::Error::from(io::ErrorKind::NotFound))),
+        parent_failure_to_inspect(Failure::from(io::Error::from(io::ErrorKind::NotFound))),
         InspectError::Stale
     );
     assert_eq!(
-        failure_to_inspect(Failure::new("PATH_RESTRICTED", "link")),
+        parent_failure_to_inspect(Failure::new("PATH_RESTRICTED", "link")),
         InspectError::AncestorLink
     );
     assert_eq!(
-        failure_to_inspect(Failure::new("IO_ERROR", "eio")),
+        parent_failure_to_inspect(Failure::new("IO_ERROR", "eio")),
         InspectError::Unverified
     );
 }
@@ -710,4 +728,72 @@ fn a_directory_whose_ancestor_became_a_link_invalidates_the_batch() {
 
     assert_eq!(failure.kind, FallbackKind::AncestorLink);
     assert_eq!(failure.rel.as_deref(), Some(Path::new("a")));
+}
+
+/// Restores a directory's permissions when the test ends, so the fixture can
+/// still be removed after a failed assertion.
+#[cfg(unix)]
+struct Permissions(std::path::PathBuf, u32);
+
+#[cfg(unix)]
+impl Drop for Permissions {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(self.1));
+    }
+}
+
+#[cfg(unix)]
+fn lock_directory(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_directory_with_no_permissions_matches_the_walk_gap() {
+    let fixture = Fixture::new("dir-chmod");
+    fixture.file("locked/inside.txt", b"inside");
+    let entries = vec![
+        candidate(&fixture.root, "locked"),
+        candidate(&fixture.root, "locked/inside.txt"),
+    ];
+    let source = MemorySource::ready(SnapshotId::new(1), entries);
+    let locked = fixture.root.join("locked");
+    let _restore = Permissions(locked.clone(), 0o755);
+    lock_directory(&locked);
+
+    let outcome = collect(&fixture.root, &request(&fixture.root), &source, budget());
+    let failure = fallback(outcome);
+
+    assert_eq!(
+        failure.kind,
+        FallbackKind::DirectoryUnreadable,
+        "the walk records one unreadable-directory gap; the index must not          invent one unreadable-entry gap per child"
+    );
+    assert_eq!(failure.rel.as_deref(), Some(Path::new("locked")));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_child_below_an_unreadable_directory_falls_back_instead_of_a_leaf_gap() {
+    let fixture = Fixture::new("leaf-chmod");
+    fixture.file("locked/inside.txt", b"inside");
+    let source = MemorySource::ready(
+        SnapshotId::new(1),
+        vec![candidate(&fixture.root, "locked/inside.txt")],
+    );
+    let locked = fixture.root.join("locked");
+    let _restore = Permissions(locked.clone(), 0o755);
+    lock_directory(&locked);
+
+    let outcome = collect(&fixture.root, &request(&fixture.root), &source, budget());
+    let failure = fallback(outcome);
+
+    assert_eq!(
+        failure.kind,
+        FallbackKind::DirectoryUnreadable,
+        "an ancestor that cannot be opened is not an unreadable-entry"
+    );
+    assert_eq!(failure.rel.as_deref(), Some(Path::new("locked/inside.txt")));
 }
