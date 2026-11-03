@@ -177,9 +177,8 @@ fn a_failed_save_removes_its_temporary_file() {
 fn a_write_failure_leaves_no_temporary_file() {
     let directory = TestDir::new("write-failure");
     let store = SnapshotStore::new(directory.path());
-    super::FAIL_AFTER_CREATE.store(true, Ordering::Relaxed);
+    super::inject_write_failure();
     let error = store.save(&snapshot(1)).unwrap_err();
-    super::FAIL_AFTER_CREATE.store(false, Ordering::Relaxed);
     assert_eq!(error.code(), "INDEX_SNAPSHOT_IO");
     assert_eq!(
         listing(directory.path()),
