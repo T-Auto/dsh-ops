@@ -14,10 +14,7 @@ ops-index = { path = "../ops-index" }
 # never resolve them into a compile unit. Keeping them out of `[dependencies]`
 # is what makes that true for every target, not just the one this branch runs on.
 [target.'cfg(target_os = "macos")'.dependencies]
-# Directory traversal for the cold path. Exact pin: 2.5.0 has been the newest
-# release since 2024-03-01 and the declared MSRV (1.88) is already above the
-# crate's, so a range could only deliver a silent edition bump.
-walkdir = "=2.5.0"
-# Per-entry stat fan-out for the same path: #423 measured `symlink_metadata` at
-# 71–87 % of a walk, which is the part worth parallelising.
+# Sibling-directory recursion and per-entry stat fan-out for the cold path:
+# #423 measured `symlink_metadata` at 71–87 % of a walk, which is the part
+# worth parallelising. The traversal itself is `std::fs` only, by design.
 rayon = "=1.12.0"

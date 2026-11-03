@@ -4,16 +4,18 @@
 //!
 //! This crate is the macOS member of the platform data-source crates designed
 //! in #584. It implements [`ops_index::source::FsDataSource`] over a directory
-//! root. M1 covers the cold path only: one bounded `walkdir` traversal whose
-//! per-entry `stat` is fanned out through `rayon` and mapped into
+//! root. M1 covers the cold path only: a bounded `std::fs::read_dir` recursion
+//! (sibling directories visited in parallel through `rayon`) whose per-entry
+//! `stat` is also fanned out through `rayon`, mapped into
 //! [`ops_index::Candidate`] values. FSEvents, replay and coalescing arrive in
 //! M2/M3.
 //!
 //! The whole crate body is behind `#![cfg(target_os = "macos")]`, so on every
 //! other target it compiles to an empty library: the workspace build stays
-//! green and CI does not build code that cannot run there. Its dependencies sit
-//! under `[target.'cfg(target_os = "macos")'.dependencies]` for the same
-//! reason.
+//! green and CI does not build code that cannot run there. The only third-party
+//! dependency is `rayon`, declared under
+//! `[target.'cfg(target_os = "macos")'.dependencies]` for the same reason; the
+//! traversal itself is `std::fs` only.
 //!
 //! What this crate does **not** claim (and must not be read as claiming):
 //!

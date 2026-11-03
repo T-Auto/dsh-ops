@@ -1,7 +1,7 @@
 // Design informed by mustafaahci/goz (MIT).
 
-//! Cold, bounded enumeration of one root with `walkdir`, fanned out by
-//! `rayon`.
+//! Cold, bounded enumeration of one root with `std::fs::read_dir`, with the
+//! per-directory work fanned out by `rayon`.
 //!
 //! ## Why two phases
 //!
@@ -9,33 +9,37 @@
 //! measured `symlink_metadata` at 71–87 % of an `ops_glob` walk. So the cold
 //! path is split where the cost is:
 //!
-//! 1. `walkdir` visits the tree serially and yields at most
-//!    [`EnumBudget::max_entries`] entries. No threads are needed for
-//!    `readdir`.
+//! 1. `read_dir` recursion collects the names and file types. Sibling
+//!    directories are visited in parallel through `rayon`; a directory's own
+//!    `read_dir` stays serial because the syscall is cheap.
 //! 2. The collected entries become [`Candidate`] values in a `rayon` parallel
 //!    map. Each one costs a `stat` for size, modification time and
 //!    `(dev, ino)`, which is exactly the part that parallelises.
 //!
-//! Collecting first also bounds memory by the budget instead of by the tree:
-//! the walk stops pulling entries once `max_entries` is reached.
+//! There is no third-party walker: the recursion is `std::fs` only, so the
+//! traversal keeps the same path-based semantics as `read_dir` itself and adds
+//! no crate that would need its own handle-boundary review.
 //!
-//! Rayon's indexed collect preserves iteration order, so the result keeps walk
-//! order. Callers must still not rely on it: [`CandidateSet`] documents that
-//! order belongs to the source, and deterministic callers sort by path bytes.
+//! The result is sorted by relative path before the entry budget is applied, so
+//! the truncation boundary is deterministic. [`CandidateSet`] still documents
+//! that order belongs to the source; sorting here is what makes the *budget*
+//! reproducible, not a promise about enumeration order.
 //!
 //! ## Budget rules
 //!
-//! - `max_entries`: stop after that many entries and report
-//!   [`CandidateSet::truncated`].
-//! - `max_depth`: do not visit entries deeper than that many path components.
-//!   A directory sitting exactly at the limit may hide children, so
-//!   `truncated` is set as well. `max_depth == 0` fits no entry at all (the root
-//!   itself is depth 0) and is likewise reported as truncated.
-//! - `deadline`: checked before the walk, every [`DEADLINE_CHECK_EVERY`] walked
-//!   entries, and every [`DEADLINE_CHECK_EVERY`] mapped entries. An expired
-//!   deadline returns [`SourceError::Budget`] instead of a partial set: the
-//!   caller discards the index result and falls back to its own traversal
-//!   either way, and a partial set would only be a second full walk.
+//! - `max_entries`: the returned set is cut to that many entries (after
+//!   sorting) and reports [`CandidateSet::truncated`]. Peak walk memory is the
+//!   tree's name/type list, not the returned set: the budget bounds what a
+//!   caller receives, not what the cold scan observes.
+//! - `max_depth`: entries deeper than that many path components are not
+//!   visited. A directory sitting exactly at the limit may hide children, so
+//!   `truncated` is set as well. `max_depth == 0` fits no entry at all (the
+//!   root itself is depth 0) and is likewise reported as truncated.
+//! - `deadline`: checked before the walk, every [`DEADLINE_CHECK_EVERY`]
+//!   directory entries read, and every [`DEADLINE_CHECK_EVERY`] mapped entries.
+//!   An expired deadline returns [`SourceError::Budget`] instead of a partial
+//!   set: the caller discards the index result and falls back to its own
+//!   traversal either way, and a partial set would only be a second full walk.
 //!
 //! ## What an entry means
 //!
@@ -44,8 +48,9 @@
 //! - `key` is `(st_dev, st_ino)`: stable across renames and hard links, which
 //!   is what the index needs to apply a rename as a move instead of a
 //!   delete/add pair.
-//! - `kind` comes from the entry's own `lstat`, without following links.
-//!   Symlinks are reported as [`EntryKind::Link`] and never descended into.
+//! - `kind` comes from the directory entry's own type, without following
+//!   links. Symlinks are reported as [`EntryKind::Link`] and never descended
+//!   into.
 //! - `len` is the size for regular files and `0` for everything else, so a
 //!   directory's block count can never be mistaken for a file size.
 //! - `modified_ns` is whole nanoseconds since the Unix epoch, negative before
@@ -56,9 +61,8 @@ use rayon::prelude::*;
 use std::fs;
 use std::io::ErrorKind;
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use walkdir::{DirEntry, WalkDir};
 
 /// How many entries run between two deadline checks.
 pub const DEADLINE_CHECK_EVERY: usize = 1024;
@@ -82,11 +86,10 @@ pub const DEADLINE_CHECK_EVERY: usize = 1024;
 ///
 /// # Root symlinks
 ///
-/// The root itself is followed when it is a symlink (both `walkdir` and
-/// [`fs::metadata`] here stat the root by path), while every descendant symlink
-/// is reported as [`EntryKind::Link`] and never descended into. That is an
-/// invariant of this source, not an accident of `walkdir`'s defaults:
-/// "the root is followed, descendants never are."
+/// The root itself is followed when it is a symlink (`fs::metadata` and
+/// `fs::read_dir` both resolve the path), while every descendant symlink is
+/// reported as [`EntryKind::Link`] and never descended into. That is an
+/// invariant of this source: "the root is followed, descendants never are."
 pub fn walk_root(root: &Path, budget: EnumBudget) -> Result<CandidateSet, SourceError> {
     if budget.expired() {
         return Err(SourceError::Budget);
@@ -99,8 +102,16 @@ pub fn walk_root(root: &Path, budget: EnumBudget) -> Result<CandidateSet, Source
     if !root_metadata.is_dir() {
         return Err(SourceError::Io(ErrorKind::NotADirectory));
     }
-    let (entries, truncated) = collect_entries(root, budget)?;
-    let candidates = entries
+    if budget.max_depth == 0 {
+        return Ok(CandidateSet {
+            entries: Vec::new(),
+            truncated: true,
+            consistent_at_ms,
+        });
+    }
+    let scan = scan_directory(root, Path::new(""), 1, budget)?;
+    let mut candidates = scan
+        .entries
         .par_iter()
         .enumerate()
         .map(|(index, entry)| {
@@ -110,6 +121,14 @@ pub fn walk_root(root: &Path, budget: EnumBudget) -> Result<CandidateSet, Source
             candidate_for(root, entry)
         })
         .collect::<Result<Vec<_>, SourceError>>()?;
+    // Sorting before the cut makes the truncation boundary deterministic even
+    // though sibling directories are visited in parallel.
+    candidates.sort_by(|left, right| left.rel.cmp(&right.rel));
+    let mut truncated = scan.truncated;
+    if candidates.len() > budget.max_entries {
+        truncated = true;
+        candidates.truncate(budget.max_entries);
+    }
     Ok(CandidateSet {
         entries: candidates,
         truncated,
@@ -117,52 +136,76 @@ pub fn walk_root(root: &Path, budget: EnumBudget) -> Result<CandidateSet, Source
     })
 }
 
-/// Serial phase: collect at most `max_entries` entries in walk order.
-fn collect_entries(root: &Path, budget: EnumBudget) -> Result<(Vec<DirEntry>, bool), SourceError> {
-    // `walkdir` clamps `max_depth` up to `min_depth`; with `min_depth(1)` a
-    // budget of 0 would silently become 1 and list the root's children. Zero
-    // means "no entry fits the budget", so stop before building the walker.
-    if budget.max_depth == 0 {
-        return Ok((Vec::new(), true));
-    }
-    let walker = WalkDir::new(root)
-        .follow_links(false)
-        .min_depth(1)
-        .max_depth(budget.max_depth)
-        .into_iter();
+/// One entry as the traversal sees it, before its metadata is read.
+struct RawEntry {
+    /// Path relative to the root.
+    rel: PathBuf,
+    /// Type from the directory entry itself, without following links.
+    file_type: fs::FileType,
+}
+
+/// What one directory subtree contains.
+struct DirectoryScan {
+    /// Entries below the directory, in visit order.
+    entries: Vec<RawEntry>,
+    /// Whether a budget cut a part of the subtree away.
+    truncated: bool,
+}
+
+/// Visits `dir` and its descendants, `rel_prefix` being the path of `dir`
+/// relative to the root and `depth` the component depth of its children.
+///
+/// Sibling directories are scanned in parallel; the recursion is bounded by
+/// [`EnumBudget::max_depth`] and re-checks the deadline as it goes.
+fn scan_directory(
+    dir: &Path,
+    rel_prefix: &Path,
+    depth: usize,
+    budget: EnumBudget,
+) -> Result<DirectoryScan, SourceError> {
     let mut entries = Vec::new();
-    // A directory sitting exactly at the depth limit may hide children.
+    let mut subdirectories: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut truncated = false;
-    let mut walked = 0usize;
-    for next in walker {
-        walked += 1;
-        if walked.is_multiple_of(DEADLINE_CHECK_EVERY) && budget.expired() {
+    let mut seen = 0usize;
+    for next in fs::read_dir(dir).map_err(|error| SourceError::Io(error.kind()))? {
+        seen += 1;
+        if seen.is_multiple_of(DEADLINE_CHECK_EVERY) && budget.expired() {
             return Err(SourceError::Budget);
         }
-        let entry = next.map_err(|error| walk_error(&error))?;
-        if entries.len() >= budget.max_entries {
-            truncated = true;
-            break;
+        let entry = next.map_err(|error| SourceError::Io(error.kind()))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| SourceError::Io(error.kind()))?;
+        let rel = rel_prefix.join(entry.file_name());
+        if file_type.is_dir() {
+            if depth == budget.max_depth {
+                // The directory itself is listed, but its children cannot be:
+                // the set is not complete.
+                truncated = true;
+            } else {
+                subdirectories.push((rel.clone(), entry.path()));
+            }
         }
-        if entry.depth() == budget.max_depth && entry.file_type().is_dir() {
-            truncated = true;
-        }
-        entries.push(entry);
+        entries.push(RawEntry { rel, file_type });
     }
-    Ok((entries, truncated))
+    let child_scans: Vec<DirectoryScan> = subdirectories
+        .par_iter()
+        .map(|(rel, path)| scan_directory(path, rel, depth + 1, budget))
+        .collect::<Result<Vec<_>, SourceError>>()?;
+    for mut child in child_scans {
+        entries.append(&mut child.entries);
+        truncated |= child.truncated;
+    }
+    Ok(DirectoryScan { entries, truncated })
 }
 
 /// Maps one walked entry into a candidate, using its own (not followed) stat.
-fn candidate_for(root: &Path, entry: &DirEntry) -> Result<Candidate, SourceError> {
-    let rel = entry
-        .path()
-        .strip_prefix(root)
-        .map_err(|_| SourceError::Io(ErrorKind::InvalidInput))?
-        .to_path_buf();
-    let kind = kind_of(entry.file_type());
-    let metadata = entry.metadata().map_err(|error| walk_error(&error))?;
+fn candidate_for(root: &Path, entry: &RawEntry) -> Result<Candidate, SourceError> {
+    let path = root.join(&entry.rel);
+    let kind = kind_of(entry.file_type);
+    let metadata = fs::symlink_metadata(&path).map_err(|error| SourceError::Io(error.kind()))?;
     Ok(Candidate {
-        rel,
+        rel: entry.rel.clone(),
         key: FileKey::new(metadata.dev(), metadata.ino()),
         kind,
         len: if kind == EntryKind::File {
@@ -203,17 +246,6 @@ fn now_ms() -> i64 {
     match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(elapsed) => i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX),
         Err(_) => 0,
-    }
-}
-
-/// Maps a `walkdir` failure onto the source error vocabulary.
-fn walk_error(error: &walkdir::Error) -> SourceError {
-    match error.io_error() {
-        Some(io) => SourceError::Io(io.kind()),
-        // Not an I/O failure: a depth or loop guard. `follow_links(false)` and
-        // a depth limit mean the cold path should not produce these, but they
-        // must not be reported as a complete set.
-        None => SourceError::Io(ErrorKind::Other),
     }
 }
 
