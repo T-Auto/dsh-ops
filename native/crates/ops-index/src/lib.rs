@@ -14,6 +14,8 @@
 //! - [`error`]: byte-buffer decoding errors carrying the offset that failed.
 //! - [`wtf8`]: reversible UTF-16/WTF-8 codec for names, including unpaired surrogates.
 //! - [`fold`]: normalization + one-to-one lowercase key for case-insensitive matching.
+//! - [`layout`]: decoding of NTFS `FSCTL_QUERY_FILE_LAYOUT` output pages into
+//!   file records (names, sizes, modification times).
 //! - [`usn`]: pure byte parsers for USN enumeration and journal buffers.
 //! - [`ids`]: stable identifiers and the 128-bit `FileKey` (NTFS FRN or
 //!   POSIX `(dev, ino)`). `FileKey` is 16 bytes so ReFS' 128-bit file ids
@@ -32,6 +34,7 @@
 pub mod error;
 pub mod fold;
 pub mod ids;
+pub mod layout;
 pub mod source;
 pub mod usn;
 pub mod wtf8;
