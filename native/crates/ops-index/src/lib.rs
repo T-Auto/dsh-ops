@@ -14,6 +14,7 @@
 //! - [`error`]: byte-buffer decoding errors carrying the offset that failed.
 //! - [`wtf8`]: reversible UTF-16/WTF-8 codec for names, including unpaired surrogates.
 //! - [`fold`]: normalization + one-to-one lowercase key for case-insensitive matching.
+//! - [`usn`]: pure byte parsers for USN enumeration and journal buffers.
 //! - [`ids`]: stable identifiers and the 128-bit `FileKey` (NTFS FRN or
 //!   POSIX `(dev, ino)`). `FileKey` is 16 bytes so ReFS' 128-bit file ids
 //!   fit; `EntryId`/`NameId` stay 4 bytes because they index this crate's
@@ -32,6 +33,7 @@ pub mod error;
 pub mod fold;
 pub mod ids;
 pub mod source;
+pub mod usn;
 pub mod wtf8;
 
 pub use error::{Error, Result};
