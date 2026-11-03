@@ -10,10 +10,11 @@
 //!
 //! L1 scope, deliberately:
 //!
-//! - cold enumeration (`walk`) and the freshness state machine (`source`);
-//! - no incremental watcher yet (L2 adds notify/inotify), so the production
-//!   source reports `Unsupported` and every caller falls back to the existing
-//!   walk — identical output to today;
+//! - cold enumeration (`walk`), kernel/polling watch sessions (`watch`) and the
+//!   freshness state machine (`source`);
+//! - inotify limits and the polling-degradation policy (`limits`); a session
+//!   that cannot attribute events reports that a rescan is required instead of
+//!   replaying them onto a stale snapshot;
 //! - no file-system classification yet (L3 adds statfs and `Offline`).
 //!
 //! The crate is compiled only on Linux: the root attribute gates it, so a
@@ -23,5 +24,7 @@
 //! follow a symlink while walking, never read file content, and never report a
 //! truncated or partially enumerated set as complete.
 
+pub mod limits;
 pub mod source;
 pub mod walk;
+pub mod watch;
