@@ -31,21 +31,23 @@ import { NATIVE_RESIDENT_RAW } from '../lib/capabilities/profiles.js'
 const HOST_REFUSAL = 'session append cannot reenter while another append is being published'
 /** The staged worker; the controllers only build definitions, they do not spawn here. */
 const WORKER = fileURLToPath(new URL('../runtime/win32-x64/dsh-ops-worker.exe', import.meta.url))
-/**
- * Absolute acceptance bounds. `warns` is the acceptance bar the issue states; `touches` is the
- * guard that keeps a storm from returning under another name.
- */
-const BOUNDS = Object.freeze({
-  bash: Object.freeze({ warns: 2, touches: 12 }),
-  ptc: Object.freeze({ warns: 2, touches: 40 }),
-  native: Object.freeze({ warns: 2, touches: 20 }),
-})
-/** Every session must be published again within this budget after a window closes. */
-const RECOVERY_MS = 1500
 /** A jittery window: one short lock per new session, the shape the issue reports. */
 const JITTER_SESSIONS = 20
 const JITTER_SPAN_MS = 1000
 const JITTER_WINDOW_MS = 5
+/**
+ * Absolute acceptance bounds. `warns` is the acceptance bar the issue states; `touches` is the
+ * guard that keeps a storm from returning under another name. The jitter shape cannot be cheaper
+ * than one register per session plus the one refusal that produced it, so its touch guard is that
+ * required work plus a constant — still an absolute formula, never "fewer than the baseline".
+ */
+const BOUNDS = Object.freeze({
+  bash: Object.freeze({ warns: 2, touches: 2 * JITTER_SESSIONS + 8 }),
+  ptc: Object.freeze({ warns: 2, touches: 40 }),
+  native: Object.freeze({ warns: 2, touches: 40 }),
+})
+/** Every session must be published again within this budget after a window closes. */
+const RECOVERY_MS = 1500
 const EVENT_MS = 10
 /** A lock that never releases long enough to prove nothing wedges. */
 const HELD_LOCK_MS = 5000
@@ -74,6 +76,38 @@ function informative(line) {
 }
 
 /**
+ * The largest count of folded refusals any warning states, or 0 when none does.
+ *
+ * Aggregation is only acceptable if the number it hides is still recoverable from the log: the
+ * operator must be able to read "N refusals happened" even when only one line was printed. The
+ * match accepts the shapes a summary can take — "12 suppressed", "deferred 12 times",
+ * "12 refusals folded" — and ignores bare numbers (a latency or a timeout is not a count).
+ * @param {readonly string[]} lines - every warning captured for the window.
+ * @returns {number} the largest stated suppression count.
+ */
+function statedSuppressions(lines) {
+  // Accept the shapes a summary takes: "12 suppressed", "deferred 12 times", "12 earlier
+  // refusal(s) were not reported", "12 refusals folded". An adjective may sit between the number
+  // and its noun; a bare number (a latency, a budget) is never a count.
+  const numbers = [...lines.join('\n').matchAll(/(\d+)\s+(?:[A-Za-z-]+\s+){0,2}(?:suppressed|deferred|refusals?|occurrences?|times|more|other)/gi)]
+    .map(match => Number(match[1]))
+    .filter(count => Number.isFinite(count))
+  return Math.max(0, ...numbers)
+}
+
+/**
+ * The acceptance fact aggregation must not lose: quiet must not mean silent.
+ * @param {object} row - one measurement row (needs `path`, `refusals`, `warns`, `lines`).
+ */
+function assertCountSurvivesAggregation(row) {
+  if (row.refusals <= row.warns) return
+  const stated = statedSuppressions(row.lines)
+  assert.ok(stated >= row.refusals - row.warns,
+    `${row.path}: ${row.refusals} refusals were folded into ${row.warns} warning(s), so the log must still state the count `
+    + `(stated ${stated}, need at least ${row.refusals - row.warns}): ${JSON.stringify(row.lines)}`)
+}
+
+/**
  * Boot the real host, count registry traffic, and mount one publication path on it.
  * @param {'bash'|'ptc'|'native'} kind - which path to mount.
  * @returns {Promise<object>} the fixture surface.
@@ -87,19 +121,19 @@ async function setup(kind) {
   ctx.provide('agents', { list: () => agents })
   ctx.provide('sandboxPolicy', { resolve: ({ session } = {}) => ({ mode: 'danger-full-access', workspaceRoot: process.env.DSH_HOME, sessionId: session?.id }) })
   ctx.provide('ptcRuntime', { language: 'typescript' })
-  const state = { open: false, register: 0, restrict: 0, dispose: 0 }
+  const state = { open: false, register: 0, restrict: 0, dispose: 0, refusals: 0 }
   const originalRegister = tools.register
   tools.register = function windowedRegister(definition) {
     state.register += 1
-    if (state.open) throw new Error(HOST_REFUSAL)
+    if (state.open) { state.refusals += 1; throw new Error(HOST_REFUSAL) }
     const dispose = originalRegister.call(this, definition)
-    return () => { state.dispose += 1; if (state.open) throw new Error(HOST_REFUSAL); dispose() }
+    return () => { state.dispose += 1; if (state.open) { state.refusals += 1; throw new Error(HOST_REFUSAL) }; dispose() }
   }
   if (typeof tools.restrict === 'function') {
     const originalRestrict = tools.restrict
     tools.restrict = function windowedRestrict(patch) {
       state.restrict += 1
-      if (state.open) throw new Error(HOST_REFUSAL)
+      if (state.open) { state.refusals += 1; throw new Error(HOST_REFUSAL) }
       return originalRestrict.call(this, patch)
     }
   }
@@ -131,7 +165,7 @@ async function setup(kind) {
   const published = agent => tools.get('ops_bash', agent) !== undefined || tools.schemas(agent).some(schema => schema.name.startsWith('ops_'))
   const publishedCount = () => agents.filter(published).length
   const allPublished = () => agents.length > 0 && agents.every(published)
-  const reset = () => { state.register = 0; state.restrict = 0; state.dispose = 0; warns.length = 0 }
+  const reset = () => { state.register = 0; state.restrict = 0; state.dispose = 0; state.refusals = 0; warns.length = 0 }
   const touches = () => state.register + state.restrict + state.dispose
   const drive = async agent => { await ctx.serial('session/event', agent.session, { type: 'agent-preset/selected' }); if (notify) notify() }
   return { ctx, tools, warns, state, agents, mint, published, publishedCount, allPublished, reset, touches, drive, notify: () => notify?.() }
@@ -169,6 +203,8 @@ async function jitter(fixture) {
   return {
     sessions: fixture.agents.length,
     ...storm,
+    refusals: fixture.state.refusals,
+    lines: fixture.warns.slice(),
     recoveredMs: recovered === undefined ? null : Date.now() - released,
     published: `${fixture.publishedCount()}/${fixture.agents.length}`,
     sample: fixture.warns[0] ?? null,
@@ -191,6 +227,8 @@ await test('a jittery append window is reported at most twice, with a fact, and 
     assert.equal(row.published, `${row.sessions}/${row.sessions}`, `no session is lost: ${JSON.stringify(row)}`)
     assert.ok(row.recoveredMs !== null && row.recoveredMs <= RECOVERY_MS,
       `every session is published within ${RECOVERY_MS} ms: ${JSON.stringify(row)}`)
+    // The one fact aggregation must never trade away: a quiet log still says how many refusals happened.
+    assertCountSurvivesAggregation({ path: 'bash', ...row })
   } finally { fixture.state.open = false; await shutdown(fixture.ctx) }
 })
 
@@ -230,6 +268,8 @@ await test('the sibling publication paths stay inside the same absolute bounds',
       if (row.touches > BOUNDS[kind].touches) failures.push(`${kind}: ${row.touches} registry touches > ${BOUNDS[kind].touches} (${JSON.stringify(row)})`)
       if (row.published !== `${row.sessions}/${row.sessions}`) failures.push(`${kind}: lost sessions ${row.published} (${JSON.stringify(row)})`)
       if (row.recoveredMs === null || row.recoveredMs > RECOVERY_MS) failures.push(`${kind}: recovery ${row.recoveredMs} ms (${JSON.stringify(row)})`)
+      // Same invariant on every path: folded refusals stay countable in the log.
+      try { assertCountSurvivesAggregation({ path: kind, ...row }) } catch (error) { failures.push(error.message) }
     } finally { fixture.state.open = false; await shutdown(fixture.ctx) }
   }
   assert.deepEqual(failures, [], `sibling publication paths:\n${failures.join('\n')}`)
