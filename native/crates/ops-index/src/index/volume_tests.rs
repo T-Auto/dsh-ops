@@ -542,6 +542,38 @@ fn model_names_are_path_unique() {
 }
 
 #[test]
+fn deleting_a_directory_severs_live_children_and_a_new_generation_does_not_reattach_them() {
+    let mut index = new_index();
+    index.insert_enum(&create(100, ROOT, b"parent", true));
+    index.insert_enum(&create(200, 100, b"child.txt", false));
+    assert_eq!(
+        sorted_paths(&index),
+        vec!["parent".to_string(), "parent/child.txt".to_string()]
+    );
+
+    let delete = record(100, ROOT, b"", USN_REASON_FILE_DELETE, true);
+    index.apply_batch(&[delete]);
+    let child = index
+        .head_of(RecordId::new(200))
+        .expect("child record survives");
+    let mut path = Vec::new();
+    assert_eq!(index.path_of(child, &mut path), PathStatus::Stale);
+    assert!(sorted_paths(&index).is_empty());
+
+    // The record number reappears (a new generation of the same directory).
+    // The severed child keeps its dangling parent pointer and must stay
+    // detached: only the child's own record may relink it.
+    index.insert_enum(&create(100, ROOT, b"parent2", true));
+    let child = index
+        .head_of(RecordId::new(200))
+        .expect("child record survives");
+    let mut path = Vec::new();
+    assert_eq!(index.path_of(child, &mut path), PathStatus::Stale);
+    assert_eq!(sorted_paths(&index), vec!["parent2".to_string()]);
+    assert!(child_chains_match_rebuild(&index));
+}
+
+#[test]
 fn entry_if_record_rejects_dead_and_reused_slots() {
     let mut index = new_index();
     index.insert_enum(&create(7, ROOT, b"one.txt", false));

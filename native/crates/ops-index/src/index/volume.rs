@@ -111,6 +111,8 @@ pub struct IndexStats {
     pub stale_slots: u64,
     /// Hard-link reconciles the caller reported as impossible.
     pub link_reconciles_dropped: u64,
+    /// Names above [`MAX_NAME_BYTES`] rejected during bootstrap or apply.
+    pub oversized_names: u64,
 }
 
 /// Side effects a batch produced that the caller must service out of band.
@@ -221,7 +223,7 @@ impl VolumeIndex {
 
     /// Whether the index has no entry beyond the two synthetic roots.
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.len() <= 2
     }
 
     /// Allocated entry slots (live plus reusable tombstones).
@@ -264,6 +266,7 @@ impl VolumeIndex {
     /// so this is defensive only (and must not reach the interner's panic).
     pub fn insert_enum(&mut self, record: &ParsedUsnRecord) {
         if record.name.len() > MAX_NAME_BYTES {
+            self.stats.oversized_names += 1;
             return;
         }
         self.upsert_link(
@@ -378,6 +381,7 @@ impl VolumeIndex {
                         is_dir,
                     } => {
                         if name.len() > MAX_NAME_BYTES {
+                            self.stats.oversized_names += 1;
                             outcome.anomalies.push(Anomaly::OversizedName {
                                 record,
                                 len: name.len() as u64,
@@ -771,6 +775,9 @@ impl VolumeIndex {
 
         for (position, &entry) in current.iter().enumerate() {
             if !used[position] {
+                if self.entries.flags(entry).contains(EntryFlags::PLACEHOLDER) {
+                    self.live_placeholders = self.live_placeholders.saturating_sub(1);
+                }
                 self.dir_index_remove(entry);
                 self.unlink_same_name(entry);
                 self.unlink_child(entry);

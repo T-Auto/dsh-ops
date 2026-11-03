@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 9e4a6bd8aa3788c8b9e4d195cefb77ed09a33a36fe1628b9036a7f61157bb4c6 # shrinks to creates = [(0, 40, 0, false), (0, 0, 0, false), (0, 0, 0, false), (0, 0, 0, false), (0, 0, 0, false), (0, 0, 0, false), (0, 0, 0, false), (0, 0, 0, false), (0, 0, 0, false), (0, 0, 0, false)], seed = 2558110409079425490, enrich_after = false
+cc 1cb8b09d8f7fac6f077f9e6fd89286a99eee1b517a5a375328e3a46defc2e58a # shrinks to actions = [Rename { record: 1, parent: 0, name: 0 }, Delete { record: 0 }, Rename { record: 0, parent: 40, name: 0 }]

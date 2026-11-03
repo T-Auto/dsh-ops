@@ -73,10 +73,13 @@ impl VolumeIndex {
     pub fn child_dir(&self, parent: EntryId, folded_name: &[u8]) -> Option<EntryId> {
         let key = (parent, scope_key_hash(folded_name));
         let candidates = self.dir_children.get(&key)?;
-        candidates
-            .iter()
-            .copied()
-            .find(|&directory| self.folded_name(directory) == folded_name)
+        candidates.iter().copied().find(|&directory| {
+            !self
+                .entries
+                .flags(directory)
+                .contains(EntryFlags::CHAIN_DETACHED)
+                && self.folded_name(directory) == folded_name
+        })
     }
 
     /// Depth-first walk of every live entry strictly under `root` (the root
