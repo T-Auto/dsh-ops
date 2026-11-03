@@ -8,7 +8,7 @@ import type { SandboxExecutionPolicy } from '../adapter/dsh/types.js'
 import type { EffectState } from '../kernel/outcome.js'
 import type { WorkerInvokeConfig } from './boundary.js'
 import { record, errorText } from './boundary.js'
-import { workerEnvelope } from './protocol.js'
+import { indexCacheRequest, workerEnvelope } from './protocol.js'
 import path from 'node:path'
 import { credentialPath, credentialRefusal, credentialRoots } from '../credential-policy.js'
 import { ensureSessionTemp, sessionTempDir } from '../session-temp.js'
@@ -177,7 +177,7 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
   const denyRoots = (config?.denyCredentialReads ?? true) !== false ? credentialRoots() : []
   const storage = await resultStorage(ctx, session, exec.agent, file, tool, policy, denyRoots,
     (config?.denyCredentialReads ?? true) !== false, signal).catch(() => undefined)
-  const envelope = workerEnvelope('file', { root: trustedPath(cwd), scope: String(session.id), tool, args: workerArgs, read_only: policy.mode === 'read-only', deny_roots: denyRoots, deny_credential_names: (config?.denyCredentialReads ?? true) !== false, ...(policy.mode === 'workspace-write' ? { write_roots: writeRoots } : {}) }, config?.toolCallTimeoutMs, storage)
+  const envelope = workerEnvelope('file', { root: trustedPath(cwd), scope: String(session.id), tool, args: workerArgs, read_only: policy.mode === 'read-only', deny_roots: denyRoots, deny_credential_names: (config?.denyCredentialReads ?? true) !== false, ...(policy.mode === 'workspace-write' ? { write_roots: writeRoots } : {}), ...indexCacheRequest({ enabled: config?.indexCache === true }) }, config?.toolCallTimeoutMs, storage)
   const input = JSON.stringify(envelope)
   if (Buffer.byteLength(input) > 2 * 1024 * 1024) return failure('OUTPUT_LIMIT', 'Request exceeds the 2 MiB byte budget.')
   let spawned = false

@@ -8,7 +8,7 @@ import type { EffectState } from '../kernel/outcome.js'
 import type { WorkerInvokeConfig } from './boundary.js'
 import { record, errorText } from './boundary.js'
 import { exchange } from './transport.js'
-import { workerEnvelope } from './protocol.js'
+import { indexCacheRequest, workerEnvelope } from './protocol.js'
 import { withCallBudget, CallBudgetError } from '../kernel/call-budget.js'
 import { withResultSession } from '../kernel/result-lifecycle.js'
 import { exposePosixCache, resultStorage } from '../kernel/result-storage.js'
@@ -108,7 +108,7 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
       return failure('EXECUTOR_UNAVAILABLE', 'Session result storage is unavailable under current host authority.')
     }
     if (confined) argv = exposePosixCache(argv, storage)
-    const envelope = workerEnvelope('ptc', { root: operationRoot, scope: String(session.id), tool, args: workerArgs, read_only: readOnly, deny_roots: denyRoots, deny_credential_names: (config?.denyCredentialReads ?? true) !== false, ...(jobId ? { job_id: jobId } : {}) }, undefined, storage)
+    const envelope = workerEnvelope('ptc', { root: operationRoot, scope: String(session.id), tool, args: workerArgs, read_only: readOnly, deny_roots: denyRoots, deny_credential_names: (config?.denyCredentialReads ?? true) !== false, ...(jobId ? { job_id: jobId } : {}), ...indexCacheRequest({ enabled: config?.indexCache === true }) }, undefined, storage)
     const input = JSON.stringify(envelope)
     if (Buffer.byteLength(input) > 2 * 1024 * 1024) return failure('OUTPUT_LIMIT', 'Request exceeds the 2 MiB byte budget.')
     signal?.throwIfAborted?.()

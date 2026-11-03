@@ -4,6 +4,7 @@ export interface WorkerInvokeConfig {
   required?: boolean
   denyCredentialReads?: boolean
   toolCallTimeoutMs?: number
+  indexCache?: boolean
 }
 export function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
