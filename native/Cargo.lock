@@ -457,6 +457,14 @@ name = "ops-index"
 version = "0.5.0-alpha3"
 
 [[package]]
+name = "ops-linux-index"
+version = "0.5.0-alpha3"
+dependencies = [
+ "ops-index",
+ "rayon",
+]
+
+[[package]]
 name = "ops-mac-index"
 version = "0.5.0-alpha3"
 dependencies = [
@@ -496,7 +504,10 @@ dependencies = [
  "cap-std",
  "ops-files",
  "ops-index",
+ "ops-linux-index",
+ "ops-mac-index",
  "ops-protocol",
+ "ops-win-index",
  "regex",
  "serde",
  "serde_json",
