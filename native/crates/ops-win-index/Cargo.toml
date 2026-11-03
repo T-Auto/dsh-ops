@@ -1,0 +1,16 @@
+[package]
+name = "ops-win-index"
+version = "0.5.0-alpha3"
+edition = "2024"
+license = "MIT"
+rust-version = "1.88"
+publish = false
+
+# The crate root is #![cfg(windows)], so on every other target these
+# dependencies are not built at all. ops-index is the platform-agnostic core
+# this crate feeds; usn-journal-rs is the only Windows boundary and is exact
+# pinned per the #584 dependency whitelist (0.5.0, published 2026-10-13,
+# MSRV 1.88, requires Administrator privileges at runtime).
+[target.'cfg(windows)'.dependencies]
+ops-index = { path = "../ops-index" }
+usn-journal-rs = "=0.5.0"
