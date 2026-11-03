@@ -432,6 +432,7 @@ dependencies = [
  "cap-fs-ext",
  "cap-std",
  "ops-files",
+ "ops-index",
  "ops-protocol",
  "regex",
  "serde",
