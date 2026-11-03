@@ -5,11 +5,12 @@
 依赖都记录精确版本、crates.io 发布时间（2026-11-04 UTC+08 依据 crates.io API 核对）与引入理由。
 完整许可证正文见 [`licenses/index/THIRD-PARTY-NOTICES.txt`](../licenses/index/THIRD-PARTY-NOTICES.txt)。
 
-## 运行时依赖（1 个）
+## 运行时依赖（2 个）
 
 | crate | 精确版本 | 发布时间（UTC） | 许可证 | 用途 |
 | --- | --- | --- | --- | --- |
 | `unicode-normalization` | `=0.1.26` | 2026-10-16 | MIT OR Apache-2.0 AND Unicode-3.0 | 为大小写折叠键做 NFC/NFD 规范化（P1）。APFS/HFS+ 给出 NFD 名字，NTFS/ext4 给出 NFC；不归一化会把同一个名字索引成两条。纯 Rust、无构建脚本、无 OS 调用。 |
+| `fs2` | `=0.4.3` | 2018-01-06 | MIT OR Apache-2.0 | 快照写者的 advisory 文件锁（PS2，#600）。已通过 `ops-files` 存在于 workspace lock；精确 pin，MIT 正文见 `licenses/index/THIRD-PARTY-NOTICES.txt`。这是 #584 白名单的唯一显式例外，#586 要求用它做加锁发布与 GC 串行化。 |
 
 该 crate 内嵌 Unicode 数据文件，因此许可证除 MIT/Apache-2.0 外还需要 `Unicode-3.0` 标识；在可
 选择时本项目选用 MIT。
