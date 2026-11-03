@@ -1,3 +1,47 @@
+#[test]
+fn cache_directory_is_trusted_metadata_validated_before_execution() {
+    // Present: absolute host directory is carried on the request, snake_case to
+    // match every other request field the host sends.
+    let mut value = versioned();
+    value["request"]["cache_dir"] = json!("/home/user/.dsh/dsh-ops/index-cache");
+    let decoded_request = decoded(&value).unwrap();
+    assert_eq!(
+        decoded_request.request.cache_dir.as_deref(),
+        Some(std::path::Path::new("/home/user/.dsh/dsh-ops/index-cache"))
+    );
+    // Absent means disabled, not an error.
+    assert!(decoded(&versioned()).unwrap().request.cache_dir.is_none());
+    // Unknown fields inside the request are still rejected.
+    let mut value = versioned();
+    value["request"]["cache_dir"] = json!("/cache");
+    value["request"]["cache_extra"] = json!(true);
+    assert!(decoded(&value).is_err());
+    // Relative, empty, oversized and NUL-bearing paths are rejected in both the
+    // versioned and the legacy form: a relative path could be joined to the
+    // workspace later, which is exactly what this field must not allow.
+    let invalid = [
+        json!("relative/cache"),
+        json!(""),
+        json!(format!("/{}", "x".repeat(4096))),
+        json!("/tmp/a\u{0}b"),
+    ];
+    for dir in invalid {
+        let mut value = versioned();
+        value["request"]["cache_dir"] = dir.clone();
+        assert_eq!(
+            decoded(&value).err().unwrap().code,
+            "INVALID_ARGUMENT",
+            "{dir}"
+        );
+        let mut legacy_value = legacy();
+        legacy_value["cache_dir"] = dir;
+        assert_eq!(
+            decoded(&legacy_value).err().unwrap().code,
+            "INVALID_ARGUMENT"
+        );
+    }
+}
+
 use super::*;
 
 fn legacy() -> Value { json!({"root":"/workspace","scope":"session","tool":"stat","args":{"path":"/workspace/file"},"read_only":true,"deny_roots":["/secret"]}) }

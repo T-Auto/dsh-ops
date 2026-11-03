@@ -109,6 +109,18 @@ The host must first invalidate references logically and await active calls; a de
 purge is deferred cleanup, never a reason to rerun business operations. Host lifecycle hooks are
 attached by the host integration slice.
 
+## Index cache directory (PS3, #601)
+
+The optional trusted request field `cacheDir` names the host-created directory where the worker may
+persist the platform-agnostic name-index snapshot. It is neither a tool argument nor the
+result-storage root above. Absent means the index is disabled and every caller keeps the existing
+walk. When present it must be an absolute path of 1..4096 bytes that the host created private to the
+user (0700 on POSIX, for example `<DSH_HOME>/dsh-ops/index-cache`); the worker never creates or
+widens it. A cache failure is never a request error: an unwritable, full or corrupt directory falls
+back to the walk, so output stays byte-identical to today's behaviour. Uninstall removes the
+snapshot store (`index.snapshot`, temporary files and the lock file) and leaves the host's
+`dsh-ops` directory in place.
+
 ## Automatic bounded output spill (6b/16)
 
 With trusted storage, ordinary file/search/batch output that exceeds the serialized inline budget
