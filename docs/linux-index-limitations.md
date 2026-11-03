@@ -6,14 +6,22 @@ contracts are not discovered in production.
 
 ## File systems that never back an index
 
-The source classifies a root against the kernel mount table and refuses four families:
+The source classifies a root against the kernel mount table. These families are refused:
 
-| family | mount-table type names (prefix match) | state |
+| family | mount-table type names | state |
 | --- | --- | --- |
-| NFS | `nfs`, `nfs4`, `nfsd` | `Offline` |
-| FUSE | `fuse`, `fuse.sshfs`, `fuse.rclone`, `fusectl` | `Offline` |
+| NFS | `nfs`, `nfs4`, `nfsd` (all `nfs*`) | `Offline` |
+| FUSE | `fuse`, `fuse.sshfs`, `fuse.rclone`, `fusectl` (all `fuse*`) | `Offline` |
+| CIFS/SMB | `cifs`, `smb`, `smb3` | `Offline` |
+| 9p | `9p` | `Offline` |
+| Ceph | `ceph` | `Offline` |
+| AFS | `afs` | `Offline` |
 | procfs | `proc` | `Offline` |
 | sysfs | `sysfs` | `Offline` |
+| debugfs | `debugfs` | `Offline` |
+| tracefs | `tracefs` | `Offline` |
+| securityfs | `securityfs` | `Offline` |
+| cgroup | `cgroup`, `cgroup2` | `Offline` |
 
 `Offline` is `SourceState::Unavailable`: the source does not participate in queries, and the caller
 runs the existing bounded walk instead. The output is byte-identical to a run without an index.
@@ -22,15 +30,33 @@ The root is classified by the mount point that owns it (longest matching prefix)
 over an NFS tree is indexed as its local file system, and a path under `/proc` or `/sys` is
 refused even when the volume root is elsewhere.
 
+### Known gaps
+
+The classification is a conservative name allowlist, not a proof of locality. Network or pseudo
+file systems whose type name is not in the table above (for example `virtiofs`, `gpfs`,
+`lustre`, `fuse.*` variants spelled differently by a vendor kernel, or an out-of-tree network
+file system) pass through as indexable. Recognizing a local family as remote only costs the walk
+the caller already had, so adding a name is cheap; forgetting one is the correctness risk. Extend
+`UnsupportedFs::from_fs_type` and this table together when one is found.
+
 ### Why the mount table, not statfs(2)
 
 The crate is `#![forbid(unsafe_code)]` and has no `libc`/`rustix` dependency, so it cannot issue
 the `statfs` syscall directly. It reads `/proc/self/mounts` instead, which carries the same
 file-system type name that `statfs` would return as `f_type`, plus the mount point needed to decide
 which entry owns the root. Reading it is plain file I/O; the table logic is pure and unit-tested
-with synthetic tables. The classification is deliberately conservative: a false `Offline` costs
-only the walk the caller already had, while a wrong index-backed answer would be a correctness bug.
-Other local file systems stay indexable.
+with synthetic tables. A reviewed syscall wrapper could replace that one read later.
+
+The table is read as **bytes**, and mount points keep their raw bytes (the kernel escapes only
+space, tab, newline and backslash as `\040`, `\011`, `\012`, `\134`). A non-UTF-8 mount point
+therefore neither fails the parse nor disables classification for every other root. The root is
+canonicalized before matching, so a symlink pointing into `/proc` is classified as procfs.
+
+### Fail closed
+
+If the mount table cannot be read or the root cannot be canonicalized, the source reports
+`Unavailable` (Offline) rather than falling back to its phase state: not being able to prove a root
+is local is not proof that it is. The cost is the walk the caller already had.
 
 ## inotify cannot replay events across processes
 

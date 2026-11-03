@@ -16,9 +16,11 @@
 //! - inotify limits and the polling-degradation policy (`limits`); a session
 //!   that cannot attribute events reports that a rescan is required instead of
 //!   replaying them onto a stale snapshot;
-//! - file-system classification (`fs`): roots on NFS, FUSE, procfs and sysfs
-//!   report `Offline` and never back an index, because no local event source
-//!   can keep their snapshot consistent.
+//! - file-system classification (`fs`): roots on network file systems (NFS,
+//!   FUSE, CIFS/SMB, 9p, Ceph, AFS) and kernel pseudo file systems (procfs,
+//!   sysfs, debugfs, tracefs, securityfs, cgroup) report `Offline` and never
+//!   back an index; a classification failure is `Offline` too (fail closed),
+//!   because not being able to prove a root is local is not proof that it is.
 //!
 //! The crate is compiled only on Linux: the root attribute gates it, so a
 //! non-Linux workspace build sees an empty library and builds no dependency.

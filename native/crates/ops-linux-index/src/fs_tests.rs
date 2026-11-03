@@ -8,10 +8,20 @@ const SAMPLE: &str = "\
 proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0
 sysfs /sys sysfs rw,nosuid,nodev,noexec,relatime 0 0
 server:/export /mnt/nfs nfs4 rw,relatime,vers=4.2,rsize=1048576 0 0
+//server/share /mnt/share cifs rw,vers=3.1.1 0 0
 sshfs#host:/ /home/user/ssh fuse.sshfs rw,nosuid,nodev 0 0
 tmpfs /tmp tmpfs rw,nosuid,nodev 0 0
 /dev/sda1 /mnt/bind ext4 rw 0 0
 ";
+
+const LIVE: Phase = Phase::Live {
+    snapshot: SnapshotId::new(7),
+    consistent_at_ms: 1000,
+};
+
+fn live() -> LinuxSource {
+    LinuxSource::with_phase(LIVE)
+}
 
 #[test]
 fn families_of_interest_are_offline() {
@@ -22,8 +32,19 @@ fn families_of_interest_are_offline() {
         ("fuse", UnsupportedFs::Fuse),
         ("fuse.sshfs", UnsupportedFs::Fuse),
         ("fusectl", UnsupportedFs::Fuse),
+        ("cifs", UnsupportedFs::Cifs),
+        ("smb", UnsupportedFs::Cifs),
+        ("smb3", UnsupportedFs::Cifs),
+        ("9p", UnsupportedFs::NineP),
+        ("ceph", UnsupportedFs::Ceph),
+        ("afs", UnsupportedFs::Afs),
         ("proc", UnsupportedFs::Procfs),
         ("sysfs", UnsupportedFs::Sysfs),
+        ("debugfs", UnsupportedFs::Debugfs),
+        ("tracefs", UnsupportedFs::Tracefs),
+        ("securityfs", UnsupportedFs::Securityfs),
+        ("cgroup", UnsupportedFs::Cgroupfs),
+        ("cgroup2", UnsupportedFs::Cgroupfs),
     ] {
         assert_eq!(
             UnsupportedFs::from_fs_type(fs_type),
@@ -36,7 +57,7 @@ fn families_of_interest_are_offline() {
 #[test]
 fn local_families_stay_indexable() {
     for fs_type in [
-        "ext4", "xfs", "btrfs", "tmpfs", "overlay", "zfs", "apfs", "vfat", "9p", "",
+        "ext4", "xfs", "btrfs", "tmpfs", "overlay", "zfs", "apfs", "vfat", "",
     ] {
         assert_eq!(
             UnsupportedFs::from_fs_type(fs_type),
@@ -51,8 +72,20 @@ fn codes_and_names_are_stable() {
     for (family, code, name) in [
         (UnsupportedFs::Nfs, "INDEX_FS_NFS", "nfs"),
         (UnsupportedFs::Fuse, "INDEX_FS_FUSE", "fuse"),
+        (UnsupportedFs::Cifs, "INDEX_FS_CIFS", "cifs"),
+        (UnsupportedFs::NineP, "INDEX_FS_9P", "9p"),
+        (UnsupportedFs::Ceph, "INDEX_FS_CEPH", "ceph"),
+        (UnsupportedFs::Afs, "INDEX_FS_AFS", "afs"),
         (UnsupportedFs::Procfs, "INDEX_FS_PROCFS", "procfs"),
         (UnsupportedFs::Sysfs, "INDEX_FS_SYSFS", "sysfs"),
+        (UnsupportedFs::Debugfs, "INDEX_FS_DEBUGFS", "debugfs"),
+        (UnsupportedFs::Tracefs, "INDEX_FS_TRACEFS", "tracefs"),
+        (
+            UnsupportedFs::Securityfs,
+            "INDEX_FS_SECURITYFS",
+            "securityfs",
+        ),
+        (UnsupportedFs::Cgroupfs, "INDEX_FS_CGROUPFS", "cgroupfs"),
     ] {
         assert_eq!(family.code(), code);
         assert_eq!(family.name(), name);
@@ -62,12 +95,23 @@ fn codes_and_names_are_stable() {
 #[test]
 fn mounts_parse_the_three_fields_this_module_needs() {
     let mounts = parse_mounts(SAMPLE);
-    assert_eq!(mounts.len(), 7);
+    assert_eq!(mounts.len(), 8);
     assert_eq!(mounts[0].path, PathBuf::from("/"));
     assert_eq!(mounts[0].fs_type, "ext4");
     assert_eq!(mounts[3].path, PathBuf::from("/mnt/nfs"));
     assert_eq!(mounts[3].fs_type, "nfs4");
-    assert_eq!(mounts[4].fs_type, "fuse.sshfs");
+    assert_eq!(mounts[4].fs_type, "cifs");
+    assert_eq!(mounts[5].fs_type, "fuse.sshfs");
+}
+
+#[test]
+fn raw_bytes_keep_a_non_utf8_mount_point() {
+    use std::os::unix::ffi::OsStrExt;
+    let table = b"/dev/sda1 /mnt/\xff ext4 rw 0 0\n/dev/sdb1 /data xfs rw 0 0\n";
+    let mounts = parse_mounts_bytes(table);
+    assert_eq!(mounts.len(), 2);
+    assert_eq!(mounts[0].path.as_os_str().as_bytes(), b"/mnt/\xff");
+    assert_eq!(mounts[1].path, PathBuf::from("/data"));
 }
 
 #[test]
@@ -114,7 +158,6 @@ fn classify_picks_the_longest_matching_mount_point() {
     assert_eq!(classification.unsupported(), Some(UnsupportedFs::Nfs));
     assert!(classification.is_offline());
 
-    // The bind mount over the NFS prefix wins over the shorter NFS mount.
     let classification = classify_mounts(Path::new("/mnt/bind/x"), SAMPLE);
     assert_eq!(classification.mount_point(), Some(Path::new("/mnt/bind")));
     assert_eq!(classification.fs_type(), Some("ext4"));
@@ -144,6 +187,7 @@ fn classify_reports_each_offline_family() {
         ("/proc/self", UnsupportedFs::Procfs),
         ("/sys/kernel", UnsupportedFs::Sysfs),
         ("/mnt/nfs/x", UnsupportedFs::Nfs),
+        ("/mnt/share/x", UnsupportedFs::Cifs),
         ("/home/user/ssh/x", UnsupportedFs::Fuse),
     ] {
         let classification = classify_mounts(Path::new(root), SAMPLE);
@@ -163,6 +207,25 @@ fn classify_reports_each_offline_family() {
 }
 
 #[test]
+fn classify_root_canonicalizes_a_symlink_into_a_pseudo_file_system() {
+    let directory = std::env::temp_dir().join(format!("dsh-l3-fs-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).expect("create temp dir");
+    let link = directory.join("proc-link");
+    std::os::unix::fs::symlink("/proc", &link).expect("create symlink");
+
+    let classification = classify_root(&link).expect("classify the symlink root");
+    assert_eq!(classification.unsupported(), Some(UnsupportedFs::Procfs));
+    assert!(classification.is_offline());
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[test]
+fn classify_root_fails_for_a_missing_root() {
+    assert!(classify_root(Path::new("/definitely/not/a/real/root/l3")).is_err());
+}
+
+#[test]
 fn the_real_mount_table_classifies_proc_and_sys_offline() {
     let proc_root = classify_root(Path::new("/proc")).expect("read the kernel mount table");
     assert_eq!(proc_root.unsupported(), Some(UnsupportedFs::Procfs));
@@ -179,14 +242,8 @@ fn the_real_mount_table_classifies_proc_and_sys_offline() {
 
 #[test]
 fn source_reports_offline_for_a_pseudo_file_system_root() {
-    let live = LinuxSource::with_phase(Phase::Live {
-        snapshot: SnapshotId::new(7),
-        consistent_at_ms: 1000,
-    });
-    // Even a caught-up watcher cannot serve a procfs root: there is no local
-    // identity to keep consistent, so the state is Offline (Unavailable).
-    assert_eq!(live.state(Path::new("/proc")), SourceState::Unavailable);
-    assert_eq!(live.state(Path::new("/sys")), SourceState::Unavailable);
+    assert_eq!(live().state(Path::new("/proc")), SourceState::Unavailable);
+    assert_eq!(live().state(Path::new("/sys")), SourceState::Unavailable);
     assert_eq!(
         LinuxSource::new().state(Path::new("/proc")),
         SourceState::Unavailable,
@@ -196,12 +253,8 @@ fn source_reports_offline_for_a_pseudo_file_system_root() {
 
 #[test]
 fn source_keeps_the_phase_state_for_an_indexable_root() {
-    let live = LinuxSource::with_phase(Phase::Live {
-        snapshot: SnapshotId::new(7),
-        consistent_at_ms: 1000,
-    });
     assert_eq!(
-        live.state(Path::new("/tmp")),
+        live().state(Path::new("/tmp")),
         SourceState::Ready {
             snapshot: SnapshotId::new(7),
             consistent_at_ms: 1000,
@@ -210,5 +263,33 @@ fn source_keeps_the_phase_state_for_an_indexable_root() {
     assert_eq!(
         LinuxSource::new().state(Path::new("/tmp")),
         SourceState::Unsupported
+    );
+}
+
+#[test]
+fn source_fails_closed_when_classification_fails() {
+    let failure = Err(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "mount table unreadable",
+    ));
+    assert_eq!(
+        LinuxSource::state_with(LIVE, failure),
+        SourceState::Unavailable,
+        "an unreadable mount table must be Offline, not the phase state"
+    );
+
+    let local = Ok(classify_mounts(Path::new("/tmp"), SAMPLE));
+    assert_eq!(
+        LinuxSource::state_with(LIVE, local),
+        SourceState::Ready {
+            snapshot: SnapshotId::new(7),
+            consistent_at_ms: 1000,
+        }
+    );
+
+    let offline = Ok(classify_mounts(Path::new("/proc"), SAMPLE));
+    assert_eq!(
+        LinuxSource::state_with(LIVE, offline),
+        SourceState::Unavailable
     );
 }
