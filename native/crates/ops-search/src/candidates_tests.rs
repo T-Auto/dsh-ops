@@ -16,6 +16,13 @@ struct Fixture {
     root: PathBuf,
 }
 
+/// Builds a relative path with the host separator, so a verbatim Windows
+/// fixture root never receives a forward slash inside a file name.
+fn rel_path(rel: &str) -> PathBuf {
+    rel.split('/')
+        .fold(PathBuf::new(), |path, name| path.join(name))
+}
+
 impl Fixture {
     fn new(tag: &str) -> Self {
         let root = std::fs::canonicalize(std::env::temp_dir())
@@ -26,7 +33,7 @@ impl Fixture {
     }
 
     fn file(&self, rel: &str, bytes: &[u8]) -> PathBuf {
-        let path = self.root.join(rel);
+        let path = self.root.join(rel_path(rel));
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
@@ -35,7 +42,7 @@ impl Fixture {
     }
 
     fn dir(&self, rel: &str) {
-        std::fs::create_dir_all(self.root.join(rel)).unwrap();
+        std::fs::create_dir_all(self.root.join(rel_path(rel))).unwrap();
     }
 }
 
@@ -46,8 +53,9 @@ impl Drop for Fixture {
 }
 
 fn identity(root: &Path, rel: &str) -> (FileKey, EntryKind, u64) {
+    let rel = rel_path(rel);
     let directory = Dir::open_ambient_dir(root, ambient_authority()).unwrap();
-    let metadata = directory.symlink_metadata(rel).unwrap();
+    let metadata = directory.symlink_metadata(&rel).unwrap();
     let kind = if metadata.is_file() {
         EntryKind::File
     } else if metadata.is_dir() {
@@ -65,7 +73,7 @@ fn identity(root: &Path, rel: &str) -> (FileKey, EntryKind, u64) {
 fn candidate(root: &Path, rel: &str) -> Candidate {
     let (key, kind, len) = identity(root, rel);
     Candidate {
-        rel: PathBuf::from(rel),
+        rel: rel_path(rel),
         key,
         kind,
         len,
@@ -75,7 +83,7 @@ fn candidate(root: &Path, rel: &str) -> Candidate {
 
 fn vanished(rel: &str) -> Candidate {
     Candidate {
-        rel: PathBuf::from(rel),
+        rel: rel_path(rel),
         key: FileKey::new(0, 0),
         kind: EntryKind::File,
         len: 0,
@@ -301,7 +309,7 @@ fn fresh_candidates_are_revalidated_in_component_order() {
     assert_eq!(
         sorted_rels(&batch),
         ["a/x.txt", "a-b.txt", "a.txt", "b.txt"]
-            .map(PathBuf::from)
+            .map(rel_path)
             .to_vec(),
         "component order, not a rendered-string order"
     );
