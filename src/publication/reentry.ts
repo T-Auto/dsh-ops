@@ -193,7 +193,10 @@ export function createReentryCooling(options: ReentryCoolingOptions): ReentryCoo
   const note = (outcome: ReentryOutcome) => {
     if (outcome !== 'failed') return
     const at = now()
-    if (at - lastRefusalAt >= REENTRY_WARN_WINDOW_MS) burstRefusals = 0
+    // A new burst needs a quiet window *and* a cooldown that has been over for a window: a lock
+    // held while the ladder climbs spans more than one window, and treating its later refusals as a
+    // fresh burst would report the same incident twice (#579).
+    if (at - lastRefusalAt >= REENTRY_WARN_WINDOW_MS && at - coolUntil >= REENTRY_WARN_WINDOW_MS) burstRefusals = 0
     lastRefusalAt = at
     burstRefusals += 1
     unreported += 1
