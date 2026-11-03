@@ -200,6 +200,9 @@ async function jitter(fixture) {
   for (const agent of fixture.agents) await fixture.drive(agent)
   let recovered
   try { recovered = await waitFor(fixture.allPublished, RECOVERY_MS, 'every session to be published') } catch { recovered = undefined }
+  // Let a summary line that the recovery pass writes land before the log is read: the acceptance is
+  // about what the operator ends up with, not about the instant the last layer appears.
+  await sleep(60)
   return {
     sessions: fixture.agents.length,
     ...storm,
