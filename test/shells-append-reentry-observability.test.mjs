@@ -57,6 +57,8 @@ const JITTER_SESSIONS = 20
 const EPISODE_STEP_MS = 20
 /** Past the longest cooldown step, so one more pass must run without any host event. */
 const LADDER_PASS_MS = 2000
+/** More than one warning window of quiet: the moment a burst may be called over. */
+const QUIET_WINDOW_MS = 1200
 /** A held window: five fake seconds across the ladder, in fixed steps. */
 const HELD_STEPS = 5
 const HELD_STEP_MS = 1000
@@ -225,14 +227,22 @@ async function jitter(fixture) {
       clock.advance(EPISODE_STEP_MS)
       await sleep(YIELD_MS * 2)
     }
-    // The burst is over: these are the lines the operator sees for it.
+    // The burst is over: these are the lines the operator sees while it is happening.
     const burst = { touches: fixture.touches(), warns: fixture.warns.length, refusals: fixture.state.refusals }
     const linesAtBurst = fixture.warns.slice()
-    // No host event is sent from here on: advance past the ladder and let the cooled pass publish.
+    // The host keeps working. Nothing is published while the burst is still recent, so the cooled
+    // pass must publish everyone by itself; then the host goes quiet for more than one warning
+    // window and runs one ordinary pass — the only moment the closing summary may state the whole
+    // burst, because a burst can be called over only once it has been quiet for a window.
     clock.advance(LADDER_PASS_MS)
     await until(() => fixture.publishedCount() === fixture.agents.length, 'every session to be published without a host event')
-    // The summary line is written by the pass that completes the cooled burst, so give that turn a
-    // chance to land before the log is read. A yield, not a deadline.
+    const publishedWithoutEvent = fixture.publishedCount()
+    // The host keeps working. A burst can be called over only after it has been quiet for a whole
+    // window, so the fixture says so the way reality does: a quiet window, then one ordinary pass.
+    // That pass is what writes the closing summary.
+    clock.advance(QUIET_WINDOW_MS)
+    await fixture.drive(fixture.agents[0])
+    await until(() => fixture.warns.some(line => /recovered after/i.test(line)), 'the closing summary to state the burst')
     await sleep(YIELD_MS * 2)
     const published = fixture.publishedCount()
     return {
@@ -240,7 +250,7 @@ async function jitter(fixture) {
       ...burst,
       lines: fixture.warns.slice(),
       linesAtBurst,
-      recoveredWithoutEvent: true,
+      recoveredWithoutEvent: publishedWithoutEvent === fixture.agents.length,
       published: `${published}/${fixture.agents.length}`,
     }
   } finally { clock.uninstall() }
@@ -253,15 +263,16 @@ await test('a jittery append window is reported at most twice, with a fact, and 
   const fixture = await setup('bash')
   try {
     const row = await jitter(fixture)
+    const reported = { ...row, warns: row.lines.length }
     emitRow({ path: 'bash', ...row })
-    assert.ok(row.warns <= BOUNDS.bash.warns,
-      `the log receives at most ${BOUNDS.bash.warns} warnings for the burst: got ${row.warns} (${JSON.stringify(row)})`)
+    assert.ok(reported.warns <= BOUNDS.bash.warns,
+      `the burst costs at most ${BOUNDS.bash.warns} warnings, closing summary included: got ${reported.warns} (${JSON.stringify(row)})`)
     assert.ok(row.warns >= 1, 'the deferral is not silent')
     assert.ok(row.linesAtBurst.some(line => /(coold?|deferr?|retry|retrying)/i.test(line)),
       `a warning still states what happens: ${JSON.stringify(row.linesAtBurst)}`)
     assert.equal(row.published, `${row.sessions}/${row.sessions}`, `no session is lost: ${JSON.stringify(row)}`)
     assert.equal(row.touches <= BOUNDS.bash.touches, true, `the burst stays inside the absolute bound: ${JSON.stringify(row)}`)
-    assertCountSurvivesAggregation({ path: 'bash', ...row })
+    assertCountSurvivesAggregation({ path: 'bash', ...reported })
   } finally { await shutdown(fixture.ctx) }
 })
 
@@ -299,11 +310,13 @@ await test('the sibling publication paths stay inside the same absolute bounds',
     const fixture = await setup(kind)
     try {
       const row = await jitter(fixture)
+      const reported = { ...row, warns: row.lines.length }
       emitRow({ path: kind, ...row })
-      if (row.warns > BOUNDS[kind].warns) failures.push(`${kind}: ${row.warns} warnings > ${BOUNDS[kind].warns} (${JSON.stringify(row)})`)
+      if (reported.warns > BOUNDS[kind].warns) failures.push(`${kind}: ${reported.warns} warnings > ${BOUNDS[kind].warns} (${JSON.stringify(row)})`)
       if (row.touches > BOUNDS[kind].touches) failures.push(`${kind}: ${row.touches} registry touches > ${BOUNDS[kind].touches} (${JSON.stringify(row)})`)
       if (row.published !== `${row.sessions}/${row.sessions}`) failures.push(`${kind}: lost sessions ${row.published} (${JSON.stringify(row)})`)
-      try { assertCountSurvivesAggregation({ path: kind, ...row }) } catch (error) { failures.push(error.message) }
+      if (!row.recoveredWithoutEvent) failures.push(`${kind}: needed another host event to recover (${JSON.stringify(row)})`)
+      try { assertCountSurvivesAggregation({ path: kind, ...reported }) } catch (error) { failures.push(error.message) }
     } finally { await shutdown(fixture.ctx) }
   }
   assert.deepEqual(failures, [], `sibling publication paths:\n${failures.join('\n')}`)
