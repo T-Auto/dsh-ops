@@ -26,14 +26,13 @@ export const REENTRY_COOLDOWN_STEPS_MS: readonly number[] = Object.freeze([25, 1
  * The warning budget, per publication path (#579).
  *
  * A jittering lock — one short window per new session — used to print one line per session. The
- * aggregator allows {@link REENTRY_WARN_LINES} lines in any rolling
- * {@link REENTRY_WARN_WINDOW_MS} window and counts everything else; the count travels with the
- * next line that is allowed through, and a recovery with a count prints one summary. Two lines
- * rather than one keeps a genuinely new incident visible while a burst stays inside the "at most
- * two warnings per burst" acceptance the suites measure.
+ * aggregator therefore allows {@link REENTRY_WARN_WINDOW_MS} to carry one deferral line and one
+ * recovery line, in that order, and counts everything it drops; that is the "at most two warnings"
+ * acceptance the suites measure. The recovery line is exempt from the deferral budget on purpose:
+ * it is the line that carries the folded count, so a lock that releases quickly must still make
+ * its refusals readable instead of leaving them in a counter nobody ever prints.
  */
 const REENTRY_WARN_WINDOW_MS = 1000
-const REENTRY_WARN_LINES = 1
 
 /**
  * Read an error's message without letting a hostile getter throw.
@@ -120,19 +119,44 @@ export function createReentryCooling(options: ReentryCoolingOptions): ReentryCoo
   let coolUntil = 0
   let timer: ReturnType<typeof setTimeout> | undefined
   let roundOpen = false
+  let roundSuppressed = 0
   let suppressed = 0
-  const printedAt: number[] = []
-  /** Print one aggregated line if the rolling window has room; otherwise count the refusal. */
-  const say = (build: () => string) => {
+  let lastDeferralAt = -Infinity
+  let lastRecoveryAt = -Infinity
+  const windowFree = (at: number, last: number) => at - last >= REENTRY_WARN_WINDOW_MS
+  /**
+   * The deferral line: one per window, and silent once the burst has folded refusals.
+   *
+   * A deferral printed before anything was folded cannot state a count, and a second deferral
+   * would spend the slot the closing summary needs; a burst therefore speaks once at its start and
+   * once at its end (#579).
+   */
+  const sayDeferral = () => {
     const at = now()
-    while (printedAt.length > 0 && at - printedAt[0] >= REENTRY_WARN_WINDOW_MS) printedAt.shift()
-    if (printedAt.length >= REENTRY_WARN_LINES) { suppressed += 1; return }
-    const line = build()
-    printedAt.push(at)
-    suppressed = 0
-    report(line)
+    if (suppressed > 0 || !windowFree(at, lastDeferralAt)) { suppressed += 1; return }
+    lastDeferralAt = at
+    report(`dsh-ops: the host is publishing an append; ${label} publication was deferred and will retry after a cooldown.`)
   }
-  const earlier = () => suppressed > 0 ? ` (${suppressed} earlier refusal(s) in the same window were not reported.)` : ''
+  /**
+   * The recovery line: it carries the folded count and is exempt from the deferral budget.
+   *
+   * It has to be out of budget, because a short lock prints its deferral before anything was
+   * folded; it is allowed either when the round itself folded several refusals (a sustained lock)
+   * or once the deferral window has gone by (a jitter of one-refusal rounds), so a jitter's count
+   * is stated at its end instead of at its start (#579).
+   */
+  const sayRecovery = () => {
+    if (suppressed === 0) return
+    const at = now()
+    if (!windowFree(at, lastRecoveryAt)) return
+    if (roundSuppressed < 2 && !windowFree(at, lastDeferralAt)) return
+    const folded = suppressed
+    lastRecoveryAt = at
+    // The summary spends the deferral slot as well: one deferral plus one recovery is the budget.
+    lastDeferralAt = at
+    suppressed = 0
+    report(`dsh-ops: ${label} publication recovered after ${folded} suppressed refusal(s) during the cooldown.`)
+  }
   let armedStep = 0
   const armTimer = (delay: number) => {
     armedStep = delay
@@ -172,16 +196,18 @@ export function createReentryCooling(options: ReentryCoolingOptions): ReentryCoo
     if (outcome === 'failed') {
       if (!roundOpen) {
         roundOpen = true
-        say(() => `dsh-ops: the host is publishing an append; ${label} publication was deferred and will retry after a cooldown.${earlier()}`)
+        roundSuppressed = 0
+        sayDeferral()
         return
       }
+      roundSuppressed += 1
       suppressed += 1
       return
     }
     roundOpen = false
     // The recovery line is what makes an aggregated burst readable: it states how many refusals
     // were folded away while the throttle was closed (#579).
-    if (suppressed > 0) say(() => `dsh-ops: ${label} publication recovered after ${suppressed} suppressed refusal(s) during the cooldown.`)
+    sayRecovery()
   }
   return {
     classify: classifyHostReentry,
