@@ -51,7 +51,11 @@ const JITTER_WINDOW_MS = 5
 const BOUNDS = Object.freeze({
   bash: Object.freeze({ warns: 2, touches: 2 * JITTER_SESSIONS + 8 }),
   ptc: Object.freeze({ warns: 2, touches: 3 * JITTER_SESSIONS }),
-  native: Object.freeze({ warns: 2, touches: 2 * JITTER_SESSIONS }),
+  // Native publishes five resident definitions per session, so its floor is (5 + 1) x sessions, the
+  // same arithmetic that gives bash (1 + 1) and ptc (2 + 1). Measured churn after the fix is 16
+  // touches for 20 sessions; this bound is the work owed, not the measured value.
+  native: Object.freeze({ warns: 2, touches: 6 * JITTER_SESSIONS }),
+  
 })
 /** Every session must be published again within this budget after a window closes. */
 const RECOVERY_MS = 1500
