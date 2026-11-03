@@ -33,7 +33,7 @@ export const REENTRY_COOLDOWN_STEPS_MS: readonly number[] = Object.freeze([25, 1
  * two warnings per burst" acceptance the suites measure.
  */
 const REENTRY_WARN_WINDOW_MS = 1000
-const REENTRY_WARN_LINES = 2
+const REENTRY_WARN_LINES = 1
 
 /**
  * Read an error's message without letting a hostile getter throw.
@@ -120,7 +120,6 @@ export function createReentryCooling(options: ReentryCoolingOptions): ReentryCoo
   let coolUntil = 0
   let timer: ReturnType<typeof setTimeout> | undefined
   let roundOpen = false
-  let roundSuppressed = 0
   let suppressed = 0
   const printedAt: number[] = []
   /** Print one aggregated line if the rolling window has room; otherwise count the refusal. */
@@ -173,19 +172,16 @@ export function createReentryCooling(options: ReentryCoolingOptions): ReentryCoo
     if (outcome === 'failed') {
       if (!roundOpen) {
         roundOpen = true
-        roundSuppressed = 0
         say(() => `dsh-ops: the host is publishing an append; ${label} publication was deferred and will retry after a cooldown.${earlier()}`)
         return
       }
-      roundSuppressed += 1
       suppressed += 1
       return
     }
     roundOpen = false
-    // A summary belongs to a sustained cooldown (several refusals in one round). A jitter of
-    // one-refusal rounds is reported by the lines themselves, so it never spends a second line on
-    // a summary that would only restate a count of one (#579).
-    if (roundSuppressed >= 2 && suppressed > 0) say(() => `dsh-ops: ${label} publication recovered after ${suppressed} suppressed refusal(s) during the cooldown.`)
+    // The recovery line is what makes an aggregated burst readable: it states how many refusals
+    // were folded away while the throttle was closed (#579).
+    if (suppressed > 0) say(() => `dsh-ops: ${label} publication recovered after ${suppressed} suppressed refusal(s) during the cooldown.`)
   }
   return {
     classify: classifyHostReentry,
