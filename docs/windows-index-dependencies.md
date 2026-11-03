@@ -11,15 +11,28 @@ its crates.io publication date (checked against the crates.io API on 2026-11-04 
 lockfile pins the transitive graph. Full licence texts are in
 [`licenses/windows-index/THIRD-PARTY-NOTICES.txt`](../licenses/windows-index/THIRD-PARTY-NOTICES.txt).
 
-## Direct dependency (1)
+## Direct dependency (2)
 
 | Crate | Pin | Published (UTC) | License | Why |
 | --- | --- | --- | --- | --- |
-| `usn-journal-rs` | `=0.5.0` | 2026-10-13 | MIT | Safe wrappers over `FSCTL_ENUM_USN_DATA` for W1's cold MFT enumeration and, from W2, over the USN change journal. It owns the slice's only Win32 code: this crate stays `#![forbid(unsafe_code)]` and names no raw Windows type. Runtime operation requires Administrator privileges, which is the documented fallback. MSRV 1.88, equal to this crate's floor. |
+| `usn-journal-rs` | `=0.5.0` | 2026-10-13 | MIT | Safe wrappers over `FSCTL_ENUM_USN_DATA` for W1's cold MFT enumeration and, from W2, over the USN change journal. It keeps its own Win32 unsafe inside its crate. Runtime operation requires Administrator privileges, which is the documented fallback. MSRV 1.88, equal to this crate's floor. |
+| `windows-sys` | `0.61` (locked 0.61.2) | 2025-10-06 | MIT OR Apache-2.0 | W4's hard-link enumeration: `FindFirstFileNameW`, `FindNextFileNameW`, `FindClose` and `GetLastError`, with features `Win32_Foundation` + `Win32_Storage_FileSystem`. The package was already resolved in `native/Cargo.lock` through the workspace's other Windows crate, so this slice adds no new package; the direct edge is new. MSRV 1.71. |
 
-The dependency is target-gated because `usn-journal-rs` itself contains
-`#[cfg(not(windows))] compile_error!`. It must never appear in `ops-index` or in any other
-platform-agnostic crate.
+Both dependencies are target-gated. `usn-journal-rs` itself contains
+`#[cfg(not(windows))] compile_error!`, and `windows-sys` must stay at the workspace's single
+0.61 line. Neither may appear in `ops-index` or in any other platform-agnostic crate.
+
+### The crate's one unsafe boundary (W4)
+
+Before W4 this crate was `#![forbid(unsafe_code)]`. `FindFirstFileNameW`/`FindNextFileNameW`
+have no safe wrapper in any already-locked crate, so W4 opens exactly one boundary:
+
+- the crate root denies `unsafe_code` globally and `unsafe_op_in_unsafe_fn` too;
+- `#[allow(unsafe_code)]` is applied to the `winfs` module only;
+- every unsafe block in `src/winfs/links.rs` carries a `SAFETY:` note and every search handle
+  is closed exactly once by a drop guard.
+
+That keeps the Windows FFI surface reviewable in one file without relaxing the rest of the crate.
 
 ## Transitive packages resolved for the Windows target
 
