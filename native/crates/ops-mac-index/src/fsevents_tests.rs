@@ -549,12 +549,16 @@ fn a_panic_inside_the_callback_cannot_cross_the_ffi_boundary() {
 
 #[test]
 fn unsafe_is_confined_to_the_ffi_module() {
-    let sources: [(&str, &str); 9] = [
+    let sources: [(&str, &str); 13] = [
         ("lib.rs", include_str!("lib.rs")),
         ("ffi.rs", include_str!("ffi.rs")),
         ("ffi_tests.rs", include_str!("ffi_tests.rs")),
         ("fsevents.rs", include_str!("fsevents.rs")),
         ("fsevents_tests.rs", include_str!("fsevents_tests.rs")),
+        ("coalesce.rs", include_str!("coalesce.rs")),
+        ("coalesce_tests.rs", include_str!("coalesce_tests.rs")),
+        ("rescan.rs", include_str!("rescan.rs")),
+        ("rescan_tests.rs", include_str!("rescan_tests.rs")),
         ("source.rs", include_str!("source.rs")),
         ("source_tests.rs", include_str!("source_tests.rs")),
         ("walk.rs", include_str!("walk.rs")),

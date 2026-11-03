@@ -1,7 +1,7 @@
 #![deny(unsafe_code)]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![cfg(target_os = "macos")]
-//! macOS file-name index data source (M1 cold walk, M2 FSEvents FFI).
+//! macOS file-name index data source (M1 cold walk, M2 FSEvents FFI, M3 policy).
 //!
 //! This crate is the macOS member of the platform data-source crates designed
 //! in #584. It implements [`ops_index::source::FsDataSource`] over a directory
@@ -11,6 +11,9 @@
 //! [`ops_index::Candidate`] values. M2 adds the event primitives: the FSEvents
 //! bindings and a safe stream that watches every root through one kernel
 //! stream, replays from a persisted event id, and drains a bounded batch.
+//! M3 adds the policy on top of a batch: [`coalesce`] reduces the batch to net
+//! changes per path, and [`rescan`] decides when the incremental half must be
+//! discarded, including Time Machine volume exclusion.
 //!
 //! The whole crate body is behind `#![cfg(target_os = "macos")]`, so on every
 //! other target it compiles to an empty library: the workspace build stays
@@ -33,17 +36,20 @@
 //! - [`walk`]: bounded `read_dir` recursion with `rayon` stat fan-out.
 //! - [`fsevents`]: safe FSEvents stream — one stream over many roots, replay
 //!   from a persisted event id, bounded batch drain, dropped-event reporting.
+//! - [`coalesce`]: net changes per path from one batch, including attributable
+//!   renames.
+//! - [`rescan`]: the only three answers a batch allows (caught up, replay
+//!   incomplete, rescan), plus Time Machine mount exclusion.
 //! - `ffi`: the `unsafe` island behind [`fsevents`].
 //!
 //! What this crate does **not** claim (and must not be read as claiming):
 //!
-//! - The event stream is not wired into [`ops_index::FsDataSource::state`] yet.
-//!   The source still answers [`ops_index::SourceState::Unsupported`] for a
-//!   readable directory, because a cold walk finishes and then keeps missing
-//!   changes. Callers gate on `state`, so today they keep using their own
-//!   traversal and produce exactly today's output. Coalescing and the
-//!   rescan policy are M3's work; the integration that flips `state` is a
-//!   later slice.
+//! - The event stream and the M3 policy are not wired into
+//!   [`ops_index::FsDataSource::state`] yet. The source still answers
+//!   [`ops_index::SourceState::Unsupported`] for a readable directory, because
+//!   a cold walk finishes and then keeps missing changes. Callers gate on
+//!   `state`, so today they keep using their own traversal and produce exactly
+//!   today's output; the integration that flips `state` is a later slice.
 //! - No content, no extended attributes, no resource forks: names, kinds, sizes
 //!   and modification times only. This is a name index, not a text index.
 //! - No skip rules. The source reports what the file system contains, hidden
@@ -58,10 +64,17 @@
 #[allow(unsafe_code)]
 mod ffi;
 
+pub mod coalesce;
 pub mod fsevents;
+pub mod rescan;
 pub mod source;
 pub mod walk;
 
+pub use coalesce::{CoalescedBatch, CoalescedChange, coalesce, coalesce_with};
 pub use fsevents::{Batch, Event, EventError, EventFlags, EventId, EventStream, relative_path};
+pub use rescan::{
+    Recovery, RescanReason, invalidating_reason, is_time_machine_path, recovery,
+    split_time_machine_roots,
+};
 pub use source::MacFsSource;
 pub use walk::walk_root;
