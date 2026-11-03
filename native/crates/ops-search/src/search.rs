@@ -1,6 +1,38 @@
 //! Search execution streams bounded files and keeps only the requested output page.
 use super::*;
-use super::{scan::Scan, paging::{Cursor, Page, finish}};
+use super::{scan::{Scan, SourceKind}, paging::{Cursor, Page, finish}};
+use ops_index::FsDataSource;
+
+/// Cursor plus the traversal kind encoded by a continuation, when present.
+///
+/// Page two must keep the source domain of page one: the token prefix names the
+/// kind that produced the snapshot, and the cursor binds it.
+fn cursor_for(request: &Request, offset: usize, token: Option<&str>) -> Result<(Cursor, Option<SourceKind>)> {
+    let Some(token) = token else { return Ok((Cursor::new(request, offset, None)?, None)); };
+    let Some(kind) = SourceKind::from_token(token) else { return Ok((Cursor::new(request, offset, Some(token))?, None)); };
+    Ok((Cursor::new_for(request, kind, offset, Some(token))?, Some(kind)))
+}
+
+/// Runs one traversal, trying a platform index source only when the host passed
+/// a cache directory. `source` is the `cfg(test)` injection point; production
+/// calls pass `None` and the platform choice stays in `index_source`.
+fn walk_request<F>(scan: &mut Scan, root: &Path, patterns: &[String], request: &Request, source: Option<&dyn FsDataSource>, mut each: F) -> Result<SourceKind>
+where F: FnMut(&Path, &cap_std::fs::Metadata, &mut Scan) -> Result<()> {
+    match source {
+        Some(source) => scan.walk_indexed(root, source, patterns, request, &mut each),
+        None if request.cache_dir.is_none() => { scan.walk(root, patterns, request, &mut each)?; Ok(SourceKind::Walk) }
+        None => { let platform = crate::index_source::platform_source(); scan.walk_indexed(root, platform.as_ref(), patterns, request, &mut each) }
+    }
+}
+
+/// Rebinds a page-one cursor to the traversal that actually ran.
+///
+/// A continuation already carries its kind; if the second page is served by the
+/// other traversal, `finish` rejects it instead of mixing snapshot domains.
+fn actual_cursor(request: &Request, cursor: Cursor, expected: Option<SourceKind>, used: SourceKind) -> Result<Cursor> {
+    if expected.is_none() && used != SourceKind::Walk { return Cursor::new_for(request, used, cursor.offset, None); }
+    Ok(cursor)
+}
 use ops_protocol::search::TruncatedBy;
 
 #[derive(Debug, Deserialize)]
@@ -30,7 +62,14 @@ struct GrepArgs {
     continuation: Option<String>,
 }
 
-pub fn glob(request: &Request) -> Result<Value> {
+pub fn glob(request: &Request) -> Result<Value> { glob_with(request, None) }
+
+/// The same glob with an injected source: a `cfg(test)` seam for a fake-Ready
+/// source, so the indexed path is exercised without a platform bypass.
+#[cfg(test)]
+pub(crate) fn glob_with_source(request: &Request, source: &dyn FsDataSource) -> Result<Value> { glob_with(request, Some(source)) }
+
+fn glob_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Value> {
     let args: GlobArgs = serde_json::from_value(request.args.clone())?;
     if args.limit == 0 || args.limit > 10_000 { return Err(Failure::new("INVALID_ARGUMENT", "glob limit is 1-10000")); }
     if args.pattern.is_empty() || args.pattern.iter().all(|pattern| pattern.starts_with('!')) { return Err(Failure::new("INVALID_ARGUMENT", "pattern requires a positive glob")); }
@@ -38,12 +77,13 @@ pub fn glob(request: &Request) -> Result<Value> {
     if !matches!(args.output_mode.as_str(), "" | "paths" | "details") { return Err(Failure::new("INVALID_ARGUMENT", "outputMode must be paths or details")); }
     let root = target(&args.path, false)?;
     if !root.is_dir() { return Err(Failure::new("INVALID_ARGUMENT", "glob path must be a directory")); }
-    let cursor = Cursor::new(request, args.offset, args.continuation.as_deref())?;
+    let (cursor, expected) = cursor_for(request, args.offset, args.continuation.as_deref())?;
     let mut scan = Scan::new(); let mut files = Vec::new();
-    scan.walk(&root, &args.pattern, request, |file, metadata, _| {
+    let used = walk_request(&mut scan, &root, &args.pattern, request, source, |file, metadata, _| {
         let modified = metadata.modified().ok().and_then(|time| time.into_std().duration_since(std::time::UNIX_EPOCH).ok()).map(|time| time.as_millis());
         files.push((file.to_path_buf(), modified, metadata.len())); Ok(())
     })?;
+    let cursor = actual_cursor(request, cursor, expected, used)?;
     if args.sort == "modified" { files.sort_by_key(|(_, modified, _)| std::cmp::Reverse(*modified)); }
     let total = files.len(); let mut page = Page::new(cursor.offset, args.limit, request.output_sink.clone());
     for (ordinal, (file, modified, bytes)) in files.into_iter().enumerate() {
@@ -73,14 +113,14 @@ pub fn grep(request: &Request) -> Result<Value> {
     if !matches!(args.output_mode.as_str(), "" | "content" | "files_with_matches" | "count" | "summary") { return Err(Failure::new("INVALID_ARGUMENT", "invalid grep outputMode")); }
     let regex = RegexBuilder::new(&args.pattern).case_insensitive(args.case_insensitive).multi_line(args.multiline).build().map_err(|error| Failure::new("INVALID_ARGUMENT", error))?;
     let root = target(&args.path, false)?;
-    let cursor = Cursor::new(request, args.offset, args.continuation.as_deref())?;
+    let (cursor, expected) = cursor_for(request, args.offset, args.continuation.as_deref())?;
     let mut scan = Scan::new(); let mut page = Page::new(cursor.offset, args.limit, request.output_sink.clone());
     let mut file_count = 0; let mut match_count = 0;
     let content = matches!(args.output_mode.as_str(), "" | "content");
     // Cursors must revalidate a complete snapshot; summaries always need every match.
     let early = !args.exact_total && args.continuation.is_none() && args.output_mode != "summary";
     let wanted = cursor.offset.saturating_add(args.limit);
-    scan.walk(&root, &args.glob, request, |file, _, scan| {
+    let used = walk_request(&mut scan, &root, &args.glob, request, None, |file, _, scan| {
         let Some(bytes) = scan.read(file) else { return Ok(()); };
         let started = scan.profile.start();
         let result = (|| {
@@ -130,7 +170,12 @@ pub fn grep(request: &Request) -> Result<Value> {
         scan.profile.record("matchAndResults", started);
         result
     })?;
+    let cursor = actual_cursor(request, cursor, expected, used)?;
     let total = if args.output_mode == "summary" { 0 } else if content { match_count } else { file_count };
     let extra = if args.output_mode == "summary" { json!({"files":file_count,"matches":match_count}) } else { json!({}) };
     finish(scan, cursor, page, match_count, total, extra)
 }
+
+#[cfg(test)]
+#[path = "index_source_tests.rs"]
+mod index_source_tests;

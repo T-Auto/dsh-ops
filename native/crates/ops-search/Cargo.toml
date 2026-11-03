@@ -19,3 +19,16 @@ sha2 = "0.10.9"
 
 [dev-dependencies]
 uuid = { version = "1.26", features = ["v4"] }
+
+# The platform index sources are target-gated: each crate is itself
+# `#![cfg(target_os = ...)]`, so only the matching one contributes code and the
+# others are never built. `ops-search` names them; the pure `ops-index` crate
+# stays free of platform dependencies.
+[target.'cfg(windows)'.dependencies]
+ops-win-index = { path = "../ops-win-index" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ops-linux-index = { path = "../ops-linux-index" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+ops-mac-index = { path = "../ops-mac-index" }

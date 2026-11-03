@@ -41,6 +41,18 @@ impl SourceKind {
             Self::Index => "s2",
         }
     }
+
+    /// The kind a continuation token names, when it names one.
+    ///
+    /// A page must resume the traversal that produced its snapshot, so the
+    /// prefix (not the caller) decides which cursor domain page two validates.
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token.split(':').next() {
+            Some("s1") => Some(Self::Walk),
+            Some("s2") => Some(Self::Index),
+            _ => None,
+        }
+    }
 }
 
 pub struct Scan {

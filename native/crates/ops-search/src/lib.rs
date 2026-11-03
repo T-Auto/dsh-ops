@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 pub mod scan;
 pub mod candidates;
+pub mod index_source;
 mod paging;
 mod search;
 mod profile;

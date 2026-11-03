@@ -185,6 +185,14 @@ pub struct Request {
     pub deny_roots: Vec<String>,
     #[serde(default)]
     pub deny_credential_names: bool,
+    /// Host-owned cache directory for optional index snapshots.
+    ///
+    /// The host creates it (``0700``) and omits the field when index caching is
+    /// disabled or the directory is unusable. The worker treats it as a hint:
+    /// without it every search keeps the live traversal, so an absent or
+    /// unwritable cache can never fail a request.
+    #[serde(default)]
+    pub cache_dir: Option<String>,
     #[serde(default)]
     pub root_identity: String,
     pub scope: String,
