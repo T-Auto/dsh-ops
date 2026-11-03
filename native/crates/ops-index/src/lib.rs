@@ -27,6 +27,9 @@
 //!   (always `Unsupported`) and [`source::MemorySource`] (deterministic test
 //!   injection). Sources report whether their snapshot may be trusted before a
 //!   query touches it.
+//! - [`query`]: deterministic name queries over a read-only name view:
+//!   substring/prefix matching with a folded-arena prefilter, chunked parallel
+//!   scanning, an exact total, and a total order before pagination.
 //!
 //! Every identifier is a newtype so a waypoint count and a name id cannot be
 //! swapped by accident. The library is `#![forbid(unsafe_code)]`, contains no
@@ -38,6 +41,7 @@ pub mod fold;
 pub mod ids;
 pub mod index;
 pub mod layout;
+pub mod query;
 pub mod source;
 pub mod usn;
 pub mod wtf8;
