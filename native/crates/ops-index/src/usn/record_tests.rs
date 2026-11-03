@@ -214,6 +214,19 @@ fn record_overrun_is_an_error() {
 }
 
 #[test]
+fn trailing_full_length_garbage_is_an_overrun() {
+    let mut buffer = build_enum_buffer(0, &[RecordFixture::file(id(1), id(0), "a")]);
+    // The first record occupies 64 bytes starting at offset 8, so the next
+    // record would start at 72; a full eight-byte tail of 0xFF is read as a
+    // 0xFFFFFFFF record length and must be reported as an overrun, not skipped.
+    buffer.extend_from_slice(&[0xFF; 8]);
+    assert_eq!(
+        walk_enum_buffer(&buffer),
+        Err(WalkError::RecordOverrun { offset: 72 })
+    );
+}
+
+#[test]
 fn truncated_v2_header_is_an_error() {
     let buffer = with_patch(RecordFixture::file(id(1), id(0), "a"), |bytes| {
         bytes[0..4].copy_from_slice(&16u32.to_le_bytes());
