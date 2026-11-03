@@ -49,7 +49,6 @@ fn limits() -> WatchLimits {
     WatchLimits {
         max_user_watches: 65_536,
         max_user_instances: 128,
-        max_queued_events: 16_384,
     }
 }
 
@@ -145,6 +144,54 @@ fn maps_create_remove_modify_and_rename_events() {
 
     let accessed = event_with(EventKind::Access(AccessKind::Any), &["/root/read.txt"]);
     assert!(map_event(root, &accessed).is_empty());
+}
+
+#[test]
+fn a_created_directory_requires_a_rescan() {
+    let tree = TempTree::new("created-dir");
+    let mut state = core(&tree.root);
+    state.adopt_directories(Vec::new());
+    let created = tree.dir("newdir");
+    let event = event_with(
+        EventKind::Create(CreateKind::Folder),
+        &[created.to_str().unwrap()],
+    );
+    note_structural_changes(&mut state, &event);
+    assert_eq!(
+        state.invalidated(),
+        Some(InvalidationReason::WatchedTreeMoved)
+    );
+}
+
+#[test]
+fn a_created_file_is_not_structural() {
+    let tree = TempTree::new("created-file");
+    let mut state = core(&tree.root);
+    state.adopt_directories(Vec::new());
+    let created = tree.file("new.txt");
+    let event = event_with(
+        EventKind::Create(CreateKind::File),
+        &[created.to_str().unwrap()],
+    );
+    note_structural_changes(&mut state, &event);
+    assert_eq!(state.invalidated(), None);
+}
+
+#[test]
+fn an_unclassifiable_rename_invalidates_conservatively() {
+    let tree = TempTree::new("ghost-rename");
+    let mut state = core(&tree.root);
+    state.adopt_directories(Vec::new());
+    let ghost = tree.root.join("does-not-exist");
+    let event = event_with(
+        EventKind::Modify(ModifyKind::Name(RenameMode::To)),
+        &[ghost.to_str().unwrap()],
+    );
+    note_structural_changes(&mut state, &event);
+    assert_eq!(
+        state.invalidated(),
+        Some(InvalidationReason::WatchedTreeMoved)
+    );
 }
 
 #[test]
@@ -286,6 +333,21 @@ fn renaming_a_tracked_directory_invalidates_a_live_session() {
     assert!(
         update.events.is_empty(),
         "an invalidated update carries no events"
+    );
+}
+
+#[test]
+fn creating_a_directory_during_a_live_session_requires_a_rescan() {
+    let tree = TempTree::new("live-created-dir");
+    let mut session =
+        WatchSession::start(&tree.root, &limits(), Duration::from_millis(20)).unwrap();
+    session.adopt_directories(Vec::new());
+    tree.dir("appeared");
+    let update = wait_for(&mut session, |update| update.invalidated.is_some())
+        .expect("a directory created after the baseline must require a rescan");
+    assert_eq!(
+        update.invalidated,
+        Some(InvalidationReason::WatchedTreeMoved)
     );
 }
 

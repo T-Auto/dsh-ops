@@ -1,22 +1,21 @@
 // Design informed by mustafaahci/goz (MIT).
 //! inotify limits and the degradation policy for a Linux watch session.
 //!
-//! The kernel bounds how many directories one user may watch. Adding one watch
-//! past that bound fails with ENOSPC; running out of instances or of process
-//! file descriptors fails with EMFILE/ENFILE. None of those failures may be
-//! treated as "no events happened": the session must degrade to polling and
-//! say so, because a watcher that quietly stops delivering events is exactly
-//! the stale-index failure the ownership boundary forbids.
+//! The kernel bounds how many directories and instances one user may watch.
+//! Adding a watch past that bound fails with ENOSPC; running out of process
+//! file descriptors fails with EMFILE/ENFILE. Neither failure may be treated
+//! as "no events happened": the session must degrade to polling and say so,
+//! because a watcher that quietly stops delivering events is exactly the
+//! stale-index failure the ownership boundary forbids.
 //!
 //! The values live in procfs:
 //!
 //! - `/proc/sys/fs/inotify/max_user_watches`
 //! - `/proc/sys/fs/inotify/max_user_instances`
-//! - `/proc/sys/fs/inotify/max_queued_events`
 //!
 //! Reading them through a path parameter keeps the parser testable without a
 //! kernel mount, and the classifier takes an [`io::Error`] so the watcher can
-//! map a notify error onto the same three cases.
+//! map a notify error onto the same cases.
 
 use std::fs;
 use std::io;
@@ -41,18 +40,14 @@ pub struct WatchLimits {
     /// Maximum number of inotify instances a user may create
     /// (`max_user_instances`).
     pub max_user_instances: u64,
-    /// Maximum number of queued events before the kernel drops the oldest
-    /// (`max_queued_events`).
-    pub max_queued_events: u64,
 }
 
 impl WatchLimits {
-    /// Reads the three limits from `dir` (normally [`PROC_INOTIFY_DIR`]).
+    /// Reads the limits from `dir` (normally [`PROC_INOTIFY_DIR`]).
     pub fn read_from(dir: &Path) -> Result<Self, io::Error> {
         Ok(Self {
             max_user_watches: read_limit(dir, "max_user_watches")?,
             max_user_instances: read_limit(dir, "max_user_instances")?,
-            max_queued_events: read_limit(dir, "max_queued_events")?,
         })
     }
 
@@ -69,21 +64,7 @@ impl WatchLimits {
     pub fn can_watch(&self) -> bool {
         self.max_user_watches > 0 && self.max_user_instances > 0
     }
-
-    /// The event-buffer capacity a session should request, with the kernel's
-    /// default when the value is missing or absurdly small.
-    pub fn queue_capacity(&self) -> usize {
-        usize::try_from(self.max_queued_events)
-            .unwrap_or(usize::MAX)
-            .max(MIN_QUEUE_CAPACITY)
-    }
 }
-
-/// Lower bound for the session's own event buffer.
-///
-/// The kernel default is 16,384; a smaller configured value is legal but a
-/// session still needs a usable buffer before it can claim it is caught up.
-pub const MIN_QUEUE_CAPACITY: usize = 1024;
 
 /// Why a watch could not be maintained.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

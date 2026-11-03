@@ -188,16 +188,37 @@ fn classify_notify_error(error: notify::Error) -> DegradeReason {
     }
 }
 
-/// Reports structural removals/moves that make the snapshot unattributable.
+/// Reports structural changes that make the snapshot unattributable.
+///
+/// Anything the file system cannot classify also invalidates: guessing whether
+/// an unreadable path is a file or a directory is exactly how a subtree gets
+/// silently dropped.
 fn note_structural_changes(core: &mut SessionCore, event: &Event) {
     if core.invalidated().is_some() {
         return;
     }
-    let rename = matches!(&event.kind, EventKind::Modify(ModifyKind::Name(_)));
+    let create = matches!(event.kind, EventKind::Create(_));
     let remove = matches!(event.kind, EventKind::Remove(_));
-    if !rename && !remove {
+    let rename = matches!(&event.kind, EventKind::Modify(ModifyKind::Name(_)));
+    if !(create || remove || rename) {
         return;
     }
+
+    if create {
+        for path in &event.paths {
+            match std::fs::symlink_metadata(path) {
+                Ok(metadata) if !metadata.is_dir() => {}
+                // A directory appeared (its watch registration races its
+                // children) or the path cannot be classified.
+                Ok(_) | Err(_) => {
+                    core.note_structure_changed();
+                    return;
+                }
+            }
+        }
+        return;
+    }
+
     let removed_side = remove
         || matches!(
             &event.kind,
@@ -208,15 +229,20 @@ fn note_structural_changes(core: &mut SessionCore, event: &Event) {
         EventKind::Modify(ModifyKind::Name(RenameMode::To | RenameMode::Both))
     );
     for path in &event.paths {
-        if moved_in && path.is_dir() {
-            core.note_directory_moved_in();
-            return;
+        if moved_in {
+            match std::fs::symlink_metadata(path) {
+                Ok(metadata) if !metadata.is_dir() => {}
+                Ok(_) | Err(_) => {
+                    core.note_structure_changed();
+                    return;
+                }
+            }
         }
         let Ok(rel) = path.strip_prefix(core.root()) else {
             continue;
         };
         if removed_side && core.tracks(rel) {
-            core.note_tracked_tree_moved();
+            core.note_structure_changed();
             return;
         }
     }
