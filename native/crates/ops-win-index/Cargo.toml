@@ -8,9 +8,14 @@ publish = false
 
 # The crate root is #![cfg(windows)], so on every other target these
 # dependencies are not built at all. ops-index is the platform-agnostic core
-# this crate feeds; usn-journal-rs is the only Windows boundary and is exact
-# pinned per the #584 dependency whitelist (0.5.0, published 2026-10-13,
-# MSRV 1.88, requires Administrator privileges at runtime).
+# this crate feeds; usn-journal-rs is the Win32 boundary (MFT + USN journal,
+# exact 0.5.0, published 2026-10-13, MSRV 1.88, requires Administrator rights);
+# cap-std/cap-fs-ext are the same safe path/metadata layer the integration
+# uses, so the volume serial and file index read here are byte-identical to
+# cap-fs-ext dev()/ino(). All four are already resolved in native/Cargo.lock
+# through other workspace crates.
 [target.'cfg(windows)'.dependencies]
 ops-index = { path = "../ops-index" }
 usn-journal-rs = "=0.5.0"
+cap-std = "3.4"
+cap-fs-ext = "3.4"
