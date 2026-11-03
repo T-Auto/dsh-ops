@@ -92,18 +92,18 @@ silently from its description.
 | node | v24.21.0 |
 | kernel | 6.12.113+deb13-amd64 |
 | cpus / memory | 16 / 15,706 MiB |
-| recorded revision | `27a7e124e24f4c512b125e8e625018e0391bb0c6` |
+| recorded revision | `4b6d66a4656514ceccd39f10dead81adeb244a91` (G3 base; the report's `revision` field names the checkout HEAD at run time) |
 | worker sha256 | `9de72d53af9196da1cec911799fc33f4c5246f142f26439e279391957877a63e` |
 
 ### Cold first call (ms)
 
 | query | walk | index | delta |
 | --- | ---: | ---: | ---: |
-| ext-rs | 21.31 | 17.40 | -3.91 |
-| basename-json | 12.80 | 16.63 | +3.83 |
-| nested-js | 10.81 | 13.58 | +2.76 |
-| name-mod-rs | 13.59 | 16.64 | +3.05 |
-| no-hit | 12.93 | 15.72 | +2.79 |
+| ext-rs | 12.92 | 8.84 | -4.08 |
+| basename-json | 11.93 | 10.90 | -1.03 |
+| nested-js | 9.44 | 11.02 | +1.58 |
+| name-mod-rs | 8.89 | 8.69 | -0.20 |
+| no-hit | 14.31 | 13.48 | -0.83 |
 
 One sample per arm: cold deltas are dominated by first-touch and process-start noise, which is why
 they are reported separately and not used for the verdict.
@@ -112,25 +112,26 @@ they are reported separately and not used for the verdict.
 
 | query | walk median | walk p95 | index median | index p95 | delta | paired delta | identical bytes |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| ext-rs | 11.69 | 14.24 | 10.56 | 14.50 | -1.13 | -0.33 | yes |
-| basename-json | 11.02 | 14.68 | 11.91 | 14.34 | +0.89 | -0.63 | yes |
-| nested-js | 11.27 | 14.15 | 11.36 | 14.92 | +0.09 | -1.37 | yes |
-| name-mod-rs | 10.01 | 14.39 | 10.79 | 13.63 | +0.78 | +0.98 | yes |
-| no-hit | 11.76 | 15.34 | 12.57 | 14.27 | +0.81 | +0.51 | yes |
+| ext-rs | 13.51 | 17.21 | 13.81 | 15.51 | +0.3 | -1.98 | yes |
+| basename-json | 11.77 | 16.01 | 13.68 | 16.26 | +1.91 | +1.43 | yes |
+| nested-js | 13.84 | 16.65 | 13.24 | 18.23 | -0.6 | -0.32 | yes |
+| name-mod-rs | 10.68 | 15.79 | 12.82 | 15.96 | +2.14 | +3.89 | yes |
+| no-hit | 12.71 | 16.98 | 10.74 | 17.18 | -1.97 | +0.2 | yes |
 
-Paired deltas stay inside +/-1.4 ms on ~10-12 ms calls; both arms are dominated by process start
-and the walk itself, and the difference changes sign across queries. No query shows a repeatable
-index-side improvement.
+Paired deltas range from -2.0 to +3.9 ms across queries with no consistent sign; both arms are
+dominated by process start and the walk itself. The widest pair (name-mod-rs, +3.89 ms) is not
+repeatable (its independent median delta was +2.14 ms while ext-rs and no-hit were negative), so the
+run does not establish an index-side effect in either direction.
 
 ### RSS and budget
 
 | query | walk median RSS (kB) | index median RSS (kB) | delta (kB) |
 | --- | ---: | ---: | ---: |
-| ext-rs | 4,060 | 4,032 | -28 |
-| basename-json | 3,884 | 3,956 | +72 |
-| nested-js | 3,944 | 3,988 | +44 |
-| name-mod-rs | 3,908 | 3,896 | -12 |
-| no-hit | 3,876 | 3,988 | +112 |
+| ext-rs | 3,944 | 3,988 | +44 |
+| basename-json | 3,880 | 3,980 | +100 |
+| nested-js | 3,884 | 3,980 | +96 |
+| name-mod-rs | 3,932 | 3,968 | +36 |
+| no-hit | 3,876 | 3,968 | +92 |
 
 | budget fact | value |
 | --- | --- |
@@ -138,16 +139,16 @@ index-side improvement.
 | snapshot cap enforced by the persistence slice (`MAX_SNAPSHOT_BYTES`) | 256 MiB |
 | headroom at this corpus size | 255.89 MiB |
 
-RSS deltas are tens of kB and change sign; they are consistent with sampling noise and with the
-extra code path, and they are far below the 256 MiB cap. A 1,552-file corpus cannot exercise the cap;
-the cap is checked by the persistence slice's own tests.
+RSS deltas are +36..+100 kB, consistent in sign with the extra code path but far below the 256 MiB
+cap; no index payload is built in this stack. A 1,552-file corpus cannot exercise the cap, which the
+persistence slice's own tests cover.
 
 ## Verdict
 
 - **Output:** byte-identical on every cold and warm call of every query: the opt-in gate does not
   change an answer.
-- **Warm latency:** no repeatable delta; paired medians within +/-1.4 ms of 10-12 ms calls.
-- **Memory:** no measurable index payload in this stack; delta within +/-112 kB, budget headroom
+- **Warm latency:** no repeatable delta; paired deltas of -2.0..+3.9 ms on 10-14 ms calls and no consistent sign.
+- **Memory:** no measurable index payload in this stack; delta +36..+100 kB, budget headroom
   255.89 MiB at 1,552 files.
 - **Benefit:** not measurable today, because the index never becomes `Ready` in G3; claiming a
   speed-up from these numbers would be false.
