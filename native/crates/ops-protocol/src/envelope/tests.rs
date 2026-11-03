@@ -1,44 +1,61 @@
+use super::*;
+
+fn legacy() -> Value {
+    json!({"root":"/workspace","scope":"session","tool":"stat","args":{"path":"/workspace/file"},"read_only":true,"deny_roots":["/secret"]})
+}
+fn versioned() -> Value {
+    json!({"version":1,"requestId":"req-1","component":"file","budget":{"timeoutMs":300000,"maxBytes":131072},"request":legacy()})
+}
+fn decoded(value: &Value) -> Result<Decoded> {
+    decode(&serde_json::to_vec(value).unwrap())
+}
+
 #[test]
 fn cache_directory_is_trusted_metadata_validated_before_execution() {
-    // Present: absolute host directory is carried on the request, snake_case to
-    // match every other request field the host sends.
+    // temp_dir() is absolute on every platform, so the happy path is portable.
+    let absolute = std::env::temp_dir().join("dsh-ops-index-cache");
+    let absolute_text = absolute.to_string_lossy().into_owned();
     let mut value = versioned();
-    value["request"]["cacheDir"] = json!("/home/user/.dsh/dsh-ops/index-cache");
+    value["request"]["cache_dir"] = json!(absolute_text);
     let decoded_request = decoded(&value).unwrap();
     assert_eq!(
         decoded_request.request.cache_dir.as_deref(),
-        Some(std::path::Path::new("/home/user/.dsh/dsh-ops/index-cache"))
+        Some(absolute.as_path())
     );
-    // Absent means disabled, not an error.
     assert!(decoded(&versioned()).unwrap().request.cache_dir.is_none());
-    // The wire name is camelCase; the snake_case spelling is an unknown field.
-    let mut snake = versioned();
-    snake["request"]["cache_dir"] = json!("/cache");
-    assert!(decoded(&snake).is_err());
-    // Unknown fields inside the request are still rejected.
+    // Trusted metadata: the same key inside tool args must not set it.
+    let mut args_value = versioned();
+    args_value["request"]["args"]["cache_dir"] = json!(absolute_text);
+    assert!(decoded(&args_value).unwrap().request.cache_dir.is_none());
+    // The wire name is snake_case like read_only/deny_roots; camelCase is not it.
+    let mut camel = versioned();
+    camel["request"]["cacheDir"] = json!(absolute_text);
+    assert!(decoded(&camel).is_err());
+    // Unknown sibling fields inside the request are still rejected.
     let mut value = versioned();
-    value["request"]["cacheDir"] = json!("/cache");
+    value["request"]["cache_dir"] = json!(absolute_text);
     value["request"]["cache_extra"] = json!(true);
     assert!(decoded(&value).is_err());
-    // Relative, empty, oversized and NUL-bearing paths are rejected in both the
-    // versioned and the legacy form: a relative path could be joined to the
-    // workspace later, which is exactly what this field must not allow.
+    // Relative, empty, oversized (encoded bytes) and NUL-bearing absolute paths
+    // are rejected in both the versioned and the legacy form: a relative path
+    // could be joined to the workspace later, which is what this field forbids.
+    let prefix = absolute_text.trim_end_matches(['/', '\\']);
     let invalid = [
         json!("relative/cache"),
         json!(""),
-        json!(format!("/{}", "x".repeat(4096))),
-        json!("/tmp/a\u{0}b"),
+        json!(format!("{prefix}/{}", "x".repeat(4096))),
+        json!(format!("{prefix}/a\u{0}b")),
     ];
     for dir in invalid {
         let mut value = versioned();
-        value["request"]["cacheDir"] = dir.clone();
+        value["request"]["cache_dir"] = dir.clone();
         assert_eq!(
             decoded(&value).err().unwrap().code,
             "INVALID_ARGUMENT",
             "{dir}"
         );
         let mut legacy_value = legacy();
-        legacy_value["cacheDir"] = dir;
+        legacy_value["cache_dir"] = dir;
         assert_eq!(
             decoded(&legacy_value).err().unwrap().code,
             "INVALID_ARGUMENT"
@@ -46,12 +63,20 @@ fn cache_directory_is_trusted_metadata_validated_before_execution() {
     }
 }
 
-use super::*;
-
-fn legacy() -> Value { json!({"root":"/workspace","scope":"session","tool":"stat","args":{"path":"/workspace/file"},"read_only":true,"deny_roots":["/secret"]}) }
-fn versioned() -> Value { json!({"version":1,"requestId":"req-1","component":"file","budget":{"timeoutMs":300000,"maxBytes":131072},"request":legacy()}) }
-fn decoded(value: &Value) -> Result<Decoded> { decode(&serde_json::to_vec(value).unwrap()) }
-
+#[cfg(windows)]
+#[test]
+fn windows_absolute_cache_paths_are_accepted() {
+    for dir in [r"C:\dsh-ops\index-cache", r"\\server\share\dsh-ops\index-cache"] {
+        let mut value = versioned();
+        value["request"]["cache_dir"] = json!(dir);
+        let request = decoded(&value).unwrap();
+        assert_eq!(
+            request.request.cache_dir.as_deref(),
+            Some(std::path::Path::new(dir)),
+            "{dir}"
+        );
+    }
+}
 #[test]
 fn formats_preserve_authority_and_use_bounded_budgets() {
     let old = decoded(&legacy()).unwrap();

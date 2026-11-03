@@ -111,7 +111,7 @@ attached by the host integration slice.
 
 ## Index cache directory (PS3, #601)
 
-The optional trusted request field `cacheDir` names the host-created directory where the worker may
+The optional trusted request field `cache_dir` names the host-created directory where the worker may
 persist the platform-agnostic name-index snapshot. It is neither a tool argument nor the
 result-storage root above. Absent means the index is disabled and every caller keeps the existing
 walk. When present it must be an absolute path of 1..4096 bytes that the host created private to the

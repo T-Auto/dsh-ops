@@ -7,8 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-- Accept an optional trusted `cacheDir` request field for the shared name-index cache: it must be an absolute, host-created directory private to the user (0700 on POSIX, for example `<DSH_HOME>/dsh-ops/index-cache`); absence disables the index and an unusable or corrupt directory falls back to the walk without changing output. Uninstall cleanup removes the snapshot store and keeps the host's `dsh-ops` directory (#601).
-- 新增可选可信 `cacheDir` 请求字段，用于共享名字索引缓存：必须是宿主创建、仅当前用户可访问（POSIX 上 0700，例如 `<DSH_HOME>/dsh-ops/index-cache`）的绝对目录；缺省关闭索引，不可用或损坏时回退 walk 且不改变输出。卸载清理删除快照存储并保留宿主的 `dsh-ops` 目录（#601）。
+- Accept an optional trusted `cache_dir` request field for the shared name-index cache: it must be an absolute, host-created directory private to the user (0700 on POSIX, for example `<DSH_HOME>/dsh-ops/index-cache`); absence disables the index and an unusable or corrupt directory falls back to the walk without changing output. Uninstall cleanup removes the snapshot store and keeps the host's `dsh-ops` directory (#601).
+- 新增可选可信 `cache_dir` 请求字段，用于共享名字索引缓存：必须是宿主创建、仅当前用户可访问（POSIX 上 0700，例如 `<DSH_HOME>/dsh-ops/index-cache`）的绝对目录；缺省关闭索引，不可用或损坏时回退 walk 且不改变输出。卸载清理删除快照存储并保留宿主的 `dsh-ops` 目录（#601）。
 
 - Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
 - 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。
