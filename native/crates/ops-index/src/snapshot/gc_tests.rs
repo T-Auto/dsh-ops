@@ -45,7 +45,7 @@ fn collecting_a_missing_directory_is_a_no_op() {
     let missing = std::env::temp_dir().join("ops-index-gc-does-not-exist");
     let _ = fs::remove_dir_all(&missing);
     assert_eq!(
-        collect(&missing, MAX_SNAPSHOT_BYTES).unwrap(),
+        collect_unlocked(&missing, MAX_SNAPSHOT_BYTES).unwrap(),
         GcReport::default()
     );
     assert_eq!(remove_all(&missing).unwrap(), GcReport::default());
@@ -57,7 +57,7 @@ fn collecting_removes_crash_residue_and_keeps_the_published_image() {
     publish(directory.path(), 64);
     residue(directory.path(), 0, 10);
     residue(directory.path(), 1, 20);
-    let report = collect(directory.path(), MAX_SNAPSHOT_BYTES).unwrap();
+    let report = collect_unlocked(directory.path(), MAX_SNAPSHOT_BYTES).unwrap();
     assert_eq!(report.removed_temporary, 2);
     assert_eq!(report.removed_published, 0);
     assert_eq!(report.bytes_reclaimed, 30);
@@ -69,7 +69,7 @@ fn collecting_removes_crash_residue_and_keeps_the_published_image() {
 fn a_published_image_over_the_cap_is_removed() {
     let directory = TestDir::new("cap");
     publish(directory.path(), 100);
-    let report = collect(directory.path(), 99).unwrap();
+    let report = collect_unlocked(directory.path(), 99).unwrap();
     assert_eq!(report.removed_published, 1);
     assert_eq!(report.bytes_reclaimed, 100);
     assert!(!directory.path().join(SNAPSHOT_FILE).exists());
@@ -79,7 +79,7 @@ fn a_published_image_over_the_cap_is_removed() {
 fn a_published_image_at_the_cap_is_kept() {
     let directory = TestDir::new("cap-equal");
     publish(directory.path(), 100);
-    let report = collect(directory.path(), 100).unwrap();
+    let report = collect_unlocked(directory.path(), 100).unwrap();
     assert_eq!(report, GcReport::default());
     assert!(directory.path().join(SNAPSHOT_FILE).is_file());
 }
@@ -92,7 +92,7 @@ fn unrelated_files_and_directories_are_never_touched() {
     let nested = directory.path().join(format!("{SNAPSHOT_FILE}.tmp.dir"));
     fs::create_dir(&nested).unwrap();
     fs::write(nested.join("inside"), b"x").unwrap();
-    let report = collect(directory.path(), MAX_SNAPSHOT_BYTES).unwrap();
+    let report = collect_unlocked(directory.path(), MAX_SNAPSHOT_BYTES).unwrap();
     assert_eq!(report, GcReport::default());
     assert!(directory.path().join("notes.txt").is_file());
     assert!(nested.join("inside").is_file());

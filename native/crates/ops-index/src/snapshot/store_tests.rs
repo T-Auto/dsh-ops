@@ -174,6 +174,42 @@ fn a_failed_save_removes_its_temporary_file() {
 }
 
 #[test]
+fn a_write_failure_leaves_no_temporary_file() {
+    let directory = TestDir::new("write-failure");
+    let store = SnapshotStore::new(directory.path());
+    super::FAIL_AFTER_CREATE.store(true, Ordering::Relaxed);
+    let error = store.save(&snapshot(1)).unwrap_err();
+    super::FAIL_AFTER_CREATE.store(false, Ordering::Relaxed);
+    assert_eq!(error.code(), "INDEX_SNAPSHOT_IO");
+    assert_eq!(
+        listing(directory.path()),
+        Vec::<String>::new(),
+        "a partial temporary file must not survive a failed write"
+    );
+    assert!(!store.path().exists(), "nothing was published");
+}
+
+#[test]
+fn an_oversized_image_is_rejected_before_decoding() {
+    let directory = TestDir::new("too-large");
+    let store = SnapshotStore::new(directory.path());
+    store.save(&snapshot(1)).unwrap();
+    let size = fs::metadata(store.path()).unwrap().len();
+    let error = store.load_with_limit(size - 1).unwrap_err();
+    assert_eq!(error.code(), "INDEX_SNAPSHOT_TOO_LARGE");
+    match &error {
+        StoreError::TooLarge { size: found, max } => {
+            assert_eq!(*found, size);
+            assert_eq!(*max, size - 1);
+        }
+        other => panic!("expected TooLarge, got {other:?}"),
+    }
+    assert!(error.to_string().contains("above the"));
+    // The exact cap is still accepted.
+    assert!(store.load_with_limit(size).unwrap().is_some());
+}
+
+#[test]
 fn a_corrupt_image_is_reported_not_ignored() {
     let directory = TestDir::new("corrupt");
     let store = SnapshotStore::new(directory.path());
@@ -241,6 +277,77 @@ fn two_stores_over_one_directory_do_not_share_state() {
 }
 
 #[test]
+fn save_locked_refuses_a_generation_that_does_not_advance() {
+    let directory = TestDir::new("generation");
+    let store = SnapshotStore::new(directory.path());
+    let lock = SnapshotLock::acquire(directory.path()).unwrap();
+    store.save_locked(&lock, &snapshot(5)).unwrap();
+    for attempted in [5, 4, 0] {
+        assert_eq!(
+            store
+                .save_locked(&lock, &snapshot(attempted))
+                .unwrap_err()
+                .code(),
+            "INDEX_SNAPSHOT_STALE_GENERATION",
+            "generation {attempted} must not replace 5"
+        );
+    }
+    assert_eq!(store.load().unwrap().unwrap().generation, 5);
+    store.save_locked(&lock, &snapshot(6)).unwrap();
+    assert_eq!(store.load().unwrap().unwrap().generation, 6);
+}
+
+#[test]
+fn save_locked_requires_the_lock_for_this_directory() {
+    let directory = TestDir::new("lock-mismatch");
+    let other = TestDir::new("lock-mismatch-other");
+    let store = SnapshotStore::new(directory.path());
+    let wrong = SnapshotLock::acquire(other.path()).unwrap();
+    let error = store.save_locked(&wrong, &snapshot(1)).unwrap_err();
+    assert_eq!(error.code(), "INDEX_SNAPSHOT_LOCK_MISMATCH");
+    assert!(error.to_string().contains("different directory"));
+    assert!(!store.path().exists());
+}
+
+#[test]
+fn save_locked_replaces_a_corrupt_image_instead_of_regressing() {
+    let directory = TestDir::new("generation-corrupt");
+    let store = SnapshotStore::new(directory.path());
+    fs::write(store.path(), vec![b'x'; 100]).unwrap();
+    let lock = SnapshotLock::acquire(directory.path()).unwrap();
+    store.save_locked(&lock, &snapshot(0)).unwrap();
+    assert_eq!(store.load().unwrap().unwrap().generation, 0);
+}
+
+#[test]
+fn load_checked_rejects_an_image_older_than_the_cursor() {
+    let directory = TestDir::new("load-checked");
+    let store = SnapshotStore::new(directory.path());
+    store.save(&snapshot(3)).unwrap();
+    let error = store.load_checked(4).unwrap_err();
+    assert_eq!(error.code(), "INDEX_SNAPSHOT_STALE_GENERATION");
+    match &error {
+        StoreError::StaleGeneration {
+            published,
+            attempted,
+        } => {
+            assert_eq!((*published, *attempted), (3, 4));
+        }
+        other => panic!("expected StaleGeneration, got {other:?}"),
+    }
+    assert_eq!(store.load_checked(3).unwrap().unwrap().generation, 3);
+    assert_eq!(store.load_checked(2).unwrap().unwrap().generation, 3);
+    assert_eq!(store.load_checked(0).unwrap().unwrap().generation, 3);
+}
+
+#[test]
+fn load_checked_accepts_a_missing_image() {
+    let directory = TestDir::new("load-checked-missing");
+    let store = SnapshotStore::new(directory.path());
+    assert_eq!(store.load_checked(7).unwrap(), None);
+}
+
+#[test]
 fn store_error_codes_and_sources_are_stable() {
     let corrupt = StoreError::Corrupt(format::SnapshotError::BadMagic);
     assert_eq!(corrupt.code(), "INDEX_SNAPSHOT_CORRUPT");
@@ -250,4 +357,18 @@ fn store_error_codes_and_sources_are_stable() {
     assert_eq!(io.code(), "INDEX_SNAPSHOT_IO");
     assert!(io.corrupt().is_none());
     assert!(std::error::Error::source(&io).is_some());
+    let too_large = StoreError::TooLarge { size: 9, max: 8 };
+    assert_eq!(too_large.code(), "INDEX_SNAPSHOT_TOO_LARGE");
+    assert!(too_large.corrupt().is_none());
+    assert!(std::error::Error::source(&too_large).is_none());
+    let stale = StoreError::StaleGeneration {
+        published: 3,
+        attempted: 2,
+    };
+    assert_eq!(stale.code(), "INDEX_SNAPSHOT_STALE_GENERATION");
+    assert!(std::error::Error::source(&stale).is_none());
+    assert!(stale.to_string().contains("would not advance"));
+    let mismatch = StoreError::LockMismatch;
+    assert_eq!(mismatch.code(), "INDEX_SNAPSHOT_LOCK_MISMATCH");
+    assert!(std::error::Error::source(&mismatch).is_none());
 }

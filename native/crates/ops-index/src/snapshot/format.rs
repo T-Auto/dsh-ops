@@ -36,6 +36,16 @@
 //!  16..24   size (u64, u64::MAX = unknown)
 //!  24..32   mtime in nanoseconds (i64, i64::MIN = unknown)
 //! ```
+//!
+//! A snapshot carries only persistable state. [`RecordFlags`] has exactly four
+//! bits because transient repair state (for example a "chain detached" marker)
+//! is not durable: the loader recomputes it from parent/name links instead of
+//! reading it back. Names are raw WTF-8 and must not contain NUL, because the
+//! index stores them NUL-separated in one arena; both `encode` and `decode`
+//! reject a NUL byte. The root is identified by the header's `root` key and is
+//! the record with `PARENT_NIL` that is not `LOST_FOUND`; a loader must reject
+//! an image with zero or several such records instead of guessing, and must not
+//! invent a root from a child record.
 
 use crate::ids::{FileKey, RecordId, VolumeId};
 use std::fmt;
@@ -460,6 +470,11 @@ fn section_end(
 fn encode_names_len(names: &[Vec<u8>]) -> Result<usize, SnapshotError> {
     let mut total = 4usize;
     for name in names {
+        if name.contains(&0) {
+            return Err(SnapshotError::OutOfRange {
+                what: "name contains NUL",
+            });
+        }
         total = total
             .checked_add(4)
             .and_then(|total| total.checked_add(name.len()))
@@ -543,7 +558,14 @@ fn decode_names(bytes: &[u8]) -> Result<Vec<Vec<u8>>, SnapshotError> {
                 what: "name bytes",
                 offset,
             })?;
-        names.push(bytes[offset..end].to_vec());
+        let raw = &bytes[offset..end];
+        if raw.contains(&0) {
+            return Err(SnapshotError::Malformed {
+                what: "name contains NUL",
+                offset,
+            });
+        }
+        names.push(raw.to_vec());
         offset = end;
     }
     if offset != bytes.len() {

@@ -1,29 +1,46 @@
 // Design informed by mustafaahci/goz (MIT).
 //! Atomic publication and reading of a snapshot image.
 //!
-//! A write creates a private temporary file next to the target, fills it,
-//! calls `sync_all`, renames it over the target, and then best-effort syncs the
-//! containing directory so the rename itself is durable on file systems that
-//! require it. A reader therefore sees either the previous complete image or the
-//! new complete image, never a half-written one.
+//! A write creates a private temporary file next to the target with
+//! `create_new` (never through a pre-created link), fills it, calls `sync_all`,
+//! renames it over the target, and then best-effort syncs the containing
+//! directory so the rename itself is durable on file systems that require it.
+//! Any failure before the rename removes the temporary file, so a disk-full or
+//! sync error cannot leak a half-written image. A reader therefore sees either
+//! the previous complete image or the new complete image, never a partial one.
+//!
+//! The published file is [`SNAPSHOT_FILE`] (`index.snapshot`). A read is capped
+//! at [`MAX_SNAPSHOT_BYTES`]: a corrupt or sparse multi-gigabyte file is
+//! rejected before it is loaded into memory.
+//!
+//! The store does not set directory permissions (this crate is
+//! platform-agnostic). The host must create the cache directory private (0700 on
+//! POSIX) because a snapshot carries every file name under the root.
 //!
 //! Deliberately not in this slice: cross-process locking, cursor replay and
 //! garbage collection (#600), and the host cache-directory field (#601). A
 //! reader never deletes temporary files: another writer may own them, and
 //! cleanup is a locking concern.
-//!
-//! A corrupt image is reported, never silently repaired. The caller discards it
-//! and rebuilds; a stale snapshot must never be presented as current.
 
 use super::format::{self, Snapshot, SnapshotError};
+use super::lock::SnapshotLock;
 use std::fmt;
-use std::fs::{self, File};
-use std::io::{self, Write};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// File name of the published snapshot inside the store directory.
 pub const SNAPSHOT_FILE: &str = "index.snapshot";
+
+/// Upper bound on a snapshot image read from disk, and the capacity cap for a
+/// published image.
+///
+/// 256 MiB is far above a realistic name+record image and far below anything
+/// that would exhaust the worker's memory budget; a larger file is treated as
+/// corrupt so the caller rebuilds. This is the single cap definition: garbage
+/// collection re-exports it instead of keeping a second number.
+pub const MAX_SNAPSHOT_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Why a snapshot file could not be read or published.
 #[derive(Debug)]
@@ -33,6 +50,22 @@ pub enum StoreError {
     Io(io::Error),
     /// The image exists but failed validation.
     Corrupt(SnapshotError),
+    /// The image is larger than [`MAX_SNAPSHOT_BYTES`].
+    TooLarge {
+        /// Size reported by the file system.
+        size: u64,
+        /// Maximum accepted size.
+        max: u64,
+    },
+    /// A locked publish would move the generation backwards (or repeat it).
+    StaleGeneration {
+        /// Generation already published.
+        published: u64,
+        /// Generation the caller tried to publish or expected to load.
+        attempted: u64,
+    },
+    /// The writer lock guards a different directory than this store.
+    LockMismatch,
 }
 
 impl StoreError {
@@ -41,6 +74,9 @@ impl StoreError {
         match self {
             Self::Io(_) => "INDEX_SNAPSHOT_IO",
             Self::Corrupt(_) => "INDEX_SNAPSHOT_CORRUPT",
+            Self::TooLarge { .. } => "INDEX_SNAPSHOT_TOO_LARGE",
+            Self::StaleGeneration { .. } => "INDEX_SNAPSHOT_STALE_GENERATION",
+            Self::LockMismatch => "INDEX_SNAPSHOT_LOCK_MISMATCH",
         }
     }
 
@@ -48,7 +84,10 @@ impl StoreError {
     pub fn corrupt(&self) -> Option<&SnapshotError> {
         match self {
             Self::Corrupt(error) => Some(error),
-            Self::Io(_) => None,
+            Self::Io(_)
+            | Self::TooLarge { .. }
+            | Self::StaleGeneration { .. }
+            | Self::LockMismatch => None,
         }
     }
 }
@@ -58,6 +97,20 @@ impl fmt::Display for StoreError {
         match self {
             Self::Io(error) => write!(f, "snapshot store I/O failed: {error}"),
             Self::Corrupt(error) => write!(f, "snapshot image is corrupt: {error}"),
+            Self::TooLarge { size, max } => {
+                write!(
+                    f,
+                    "snapshot image is {size} bytes, above the {max}-byte cap"
+                )
+            }
+            Self::StaleGeneration {
+                published,
+                attempted,
+            } => write!(
+                f,
+                "snapshot generation {attempted} would not advance past the published {published}"
+            ),
+            Self::LockMismatch => f.write_str("the writer lock guards a different directory"),
         }
     }
 }
@@ -67,6 +120,7 @@ impl std::error::Error for StoreError {
         match self {
             Self::Io(error) => Some(error),
             Self::Corrupt(error) => Some(error),
+            Self::TooLarge { .. } | Self::StaleGeneration { .. } | Self::LockMismatch => None,
         }
     }
 }
@@ -113,21 +167,93 @@ impl SnapshotStore {
     /// exists but must be discarded; the caller rebuilds instead of claiming a
     /// stale result is current.
     pub fn load(&self) -> Result<Option<Snapshot>, StoreError> {
+        self.load_with_limit(MAX_SNAPSHOT_BYTES)
+    }
+
+    /// [`Self::load`] with an explicit size cap; used by tests to exercise the
+    /// rejection path without writing a 256 MiB file.
+    fn load_with_limit(&self, max: u64) -> Result<Option<Snapshot>, StoreError> {
         let path = self.path();
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
+        let file = match File::open(&path) {
+            Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(StoreError::Io(error)),
         };
+        let size = file.metadata()?.len();
+        if size > max {
+            return Err(StoreError::TooLarge { size, max });
+        }
+        let mut bytes = Vec::new();
+        // Read at most one byte past the cap: a file that grew between the
+        // metadata check and the read cannot make this allocation unbounded.
+        (&file)
+            .take(max.saturating_add(1))
+            .read_to_end(&mut bytes)?;
+        if bytes.len() as u64 > max {
+            return Err(StoreError::TooLarge {
+                size: bytes.len() as u64,
+                max,
+            });
+        }
         format::decode(&bytes)
             .map(Some)
             .map_err(StoreError::Corrupt)
     }
 
-    /// Publishes `snapshot` atomically.
+    /// Loads the published snapshot, rejecting an image older than
+    /// `minimum_generation`.
     ///
-    /// The temporary file is removed on failure; on success it has been renamed
-    /// away. The containing directory is synced best-effort after the rename.
+    /// The caller passes the generation its cursor belongs to. A published image
+    /// older than that would replay a cursor from the future, so it is reported
+    /// as [`StoreError::StaleGeneration`] and must be rebuilt instead of used.
+    pub fn load_checked(&self, minimum_generation: u64) -> Result<Option<Snapshot>, StoreError> {
+        match self.load()? {
+            Some(snapshot) if snapshot.generation < minimum_generation => {
+                Err(StoreError::StaleGeneration {
+                    published: snapshot.generation,
+                    attempted: minimum_generation,
+                })
+            }
+            other => Ok(other),
+        }
+    }
+
+    /// Publishes under the writer lock, refusing a generation that does not
+    /// advance.
+    ///
+    /// Two writers can only be serialised by the lock, and the lock alone does
+    /// not stop an older generation from being published after a newer one (for
+    /// example a slow writer that started earlier). Comparing against the
+    /// published generation makes the last write the newest one; an equal or
+    /// older generation is [`StoreError::StaleGeneration`].
+    pub fn save_locked(&self, lock: &SnapshotLock, snapshot: &Snapshot) -> Result<(), StoreError> {
+        if lock.directory() != self.directory.as_path() {
+            return Err(StoreError::LockMismatch);
+        }
+        match self.load() {
+            Ok(Some(published)) if snapshot.generation <= published.generation => {
+                return Err(StoreError::StaleGeneration {
+                    published: published.generation,
+                    attempted: snapshot.generation,
+                });
+            }
+            // A corrupt image has no trustworthy generation; replacing it is the
+            // rebuild path, not a regression.
+            Ok(Some(_)) | Ok(None) | Err(StoreError::Corrupt(_)) => {}
+            Err(error) => return Err(error),
+        }
+        self.save(snapshot)
+    }
+
+    /// Publishes `snapshot` atomically without taking the writer lock.
+    ///
+    /// Callers that publish generations should use [`Self::save_locked`], which
+    /// also refuses a generation regression. This form exists for tests and for
+    /// callers that already serialise publication another way.
+    ///
+    /// The temporary file is removed on every failure path, including a failed
+    /// write or sync; on success it has been renamed away. The containing
+    /// directory is synced best-effort after the rename.
     pub fn save(&self, snapshot: &Snapshot) -> Result<(), StoreError> {
         fs::create_dir_all(&self.directory)?;
         let image = format::encode(snapshot)?;
@@ -143,14 +269,40 @@ impl SnapshotStore {
 
     /// Writes `image` to a fresh temporary file and syncs its contents.
     ///
+    /// `create_new` guarantees the write cannot follow or overwrite an entry
+    /// someone pre-placed under a predictable temporary name. A collision with a
+    /// concurrent writer's file is retried with a new name; any other failure,
+    /// including a partial `write_all` or a failed `sync_all`, removes the file
+    /// before returning.
+    ///
     /// Kept separate from [`Self::save`] so a test can observe a published old
     /// image while a new one is still only in a temporary file.
     fn write_temporary(&self, image: &[u8]) -> Result<PathBuf, StoreError> {
-        let temporary = self.next_temporary_path();
-        let mut file = File::create(&temporary)?;
-        file.write_all(image)?;
-        file.sync_all()?;
-        Ok(temporary)
+        for _ in 0..16 {
+            let temporary = self.next_temporary_path();
+            let mut file = match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)
+            {
+                Ok(file) => file,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(StoreError::Io(error)),
+            };
+            let written = fill_temporary(&mut file, image);
+            drop(file);
+            match written {
+                Ok(()) => return Ok(temporary),
+                Err(error) => {
+                    let _ = fs::remove_file(&temporary);
+                    return Err(StoreError::Io(error));
+                }
+            }
+        }
+        Err(StoreError::Io(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "could not create a temporary snapshot file",
+        )))
     }
 
     /// Renames a synced temporary file over the published image.
@@ -169,6 +321,24 @@ impl SnapshotStore {
         ))
     }
 }
+
+/// Writes and syncs one temporary file.
+///
+/// The test build can inject a short write right after the file is created, so
+/// the failure-cleanup path in [`SnapshotStore::write_temporary`] is exercised
+/// without relying on a full disk.
+fn fill_temporary(file: &mut File, image: &[u8]) -> io::Result<()> {
+    #[cfg(test)]
+    if FAIL_AFTER_CREATE.swap(false, Ordering::Relaxed) {
+        file.write_all(&image[..image.len() / 2])?;
+        return Err(io::Error::other("injected write failure"));
+    }
+    file.write_all(image)?;
+    file.sync_all()
+}
+
+#[cfg(test)]
+static FAIL_AFTER_CREATE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Best-effort directory sync after a rename.
 ///

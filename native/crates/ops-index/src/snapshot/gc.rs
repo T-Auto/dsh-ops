@@ -23,9 +23,12 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-/// Default cap on the published image. A snapshot larger than this is removed
-/// before it is loaded; rebuilding is cheaper than trusting an oversized cache.
-pub const MAX_SNAPSHOT_BYTES: u64 = 256 * 1024 * 1024;
+/// Default cap on the published image.
+///
+/// Re-exported from [`super::store`] so the read cap and the garbage-collection
+/// cap can never diverge; a snapshot larger than this is removed before it is
+/// loaded.
+pub use super::store::MAX_SNAPSHOT_BYTES;
 
 /// What a collection pass removed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -89,9 +92,10 @@ impl From<io::Error> for GcError {
 /// Collects crash residue and enforces the size cap.
 ///
 /// `max_bytes` is the cap for the published image; pass [`MAX_SNAPSHOT_BYTES`].
-/// Callers must hold the writer lock first; [`collect_locked` makes that
-/// requirement hard to forget.
-pub fn collect(directory: &Path, max_bytes: u64) -> Result<GcReport, GcError> {
+/// This is crate-private on purpose: without the writer lock a collector could
+/// delete a live writer's temporary file. [`collect_locked`] is the public form
+/// and makes the proof impossible to forget.
+fn collect_unlocked(directory: &Path, max_bytes: u64) -> Result<GcReport, GcError> {
     let mut report = GcReport::default();
     let entries = match fs::read_dir(directory) {
         Ok(entries) => entries,
@@ -118,9 +122,9 @@ pub fn collect(directory: &Path, max_bytes: u64) -> Result<GcReport, GcError> {
     Ok(report)
 }
 
-/// [`collect`], taking the writer lock as proof of exclusivity.
+/// [`collect_unlocked`], taking the writer lock as proof of exclusivity.
 pub fn collect_locked(lock: &SnapshotLock, max_bytes: u64) -> Result<GcReport, GcError> {
-    collect(lock.directory(), max_bytes)
+    collect_unlocked(lock.directory(), max_bytes)
 }
 
 /// Removes the snapshot store: published image, temporary files and lock file.

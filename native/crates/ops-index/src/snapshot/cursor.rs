@@ -2,62 +2,53 @@
 //! Replayable source cursors and the rescan decision.
 //!
 //! A snapshot is only reusable when the source can prove it has caught up from
-//! the cursor that was saved with it. That decision is a pure function here:
+//! the cursor saved with it. That decision is a pure function here:
 //! [`validate_cursor`] takes the saved cursor and the live source state and
-//! returns either `InSync` or `FullRescan(reason)`. Being pure is what makes the
-//! wrap, restamp and purge boundaries exhaustively testable without a volume.
+//! returns `InSync` or `FullRescan(reason)`.
 //!
-//! Three source shapes are modelled:
+//! The USN truth table is **not** duplicated: the `Cursor::Usn` branch converts
+//! to [`crate::usn::cursor`] and delegates to its `validate_cursor`, then maps the
+//! three USN reasons into this module's vocabulary. There is exactly one place
+//! that decides journal-id change, purge and restamp, so the two layers cannot
+//! drift.
 //!
-//! - USN: `journal_id` plus the next USN. A journal id change, a purge below
-//!   `first_usn`, a restamp below `lowest_valid_usn` or a cursor from the future
-//!   all force a full rescan.
-//! - FSEvents: an event id. A cursor that is ahead of the latest id cannot be
-//!   from this log, so it is treated as a restamp.
-//! - Unreplayable: Linux watch descriptors have no replay log, so there is no
-//!   cursor that can prove anything; the answer is always a full rescan.
+//! Two source shapes need their own rules:
 //!
-//! The caller persists cursors next to the snapshot and must only reuse them
+//! - FSEvents: an event id. `InSync` here means only that the id is
+//!   *replayable*, not that replay is complete: the FSEvents log can be rotated
+//!   or purged, which the platform stream reports as
+//!   `kFSEventStreamEventFlagMustScanSubDirs`. The macOS source crate (M2/M3)
+//!   must turn that flag into a full rescan; this pure function cannot see it
+//!   from an event id.
+//! - Unreplayable: Linux watch descriptors have no replay log, so no cursor can
+//!   prove anything; the answer is always a full rescan.
+//!
+//! The caller persists a cursor next to the snapshot and must only reuse them
 //! together; a saved cursor without its snapshot would let an empty index claim
 //! to be current.
+
+use crate::usn::cursor;
 
 /// Saved cursor of the source that produced a snapshot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cursor {
-    /// USN journal position.
-    Usn {
-        /// Journal identity; a change invalidates every saved position.
-        journal_id: u64,
-        /// First USN not yet applied.
-        next_usn: i64,
-    },
+    /// USN journal position; validated by [`crate::usn::cursor`].
+    Usn(cursor::SavedCursor),
     /// FSEvents event id.
     Fsevents {
-        /// Last event id that was applied.
+        /// Last event id that was applied. `InSync` only promises replayability;
+        /// a `MustScanSubDirs` replay result still forces a full rescan.
         event_id: u64,
     },
     /// The source has no replay log (Linux watch descriptors).
     Unreplayable,
 }
 
-/// Live state of a USN journal.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct JournalInfo {
-    /// Identity of the journal.
-    pub journal_id: u64,
-    /// First USN still readable.
-    pub first_usn: i64,
-    /// Next USN the journal would hand out.
-    pub next_usn: i64,
-    /// Lowest USN that may be read after a restamp.
-    pub lowest_valid_usn: i64,
-}
-
 /// Live state of the source, used to validate a saved cursor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Replay {
     /// A USN journal is live with this state.
-    Usn(JournalInfo),
+    Usn(cursor::JournalInfo),
     /// An FSEvents log is live up to this event id.
     Fsevents {
         /// Latest event id the source can hand out.
@@ -84,6 +75,9 @@ impl Resync {
 }
 
 /// Why a saved cursor forced a full rescan.
+///
+/// The three USN reasons are produced by [`crate::usn::cursor`] and mapped by
+/// [`validate_cursor`]; `SourceChanged` and `Unreplayable` are decided here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RescanReason {
@@ -115,39 +109,23 @@ impl RescanReason {
 
 /// Decides whether a saved cursor may be trusted against the live source.
 ///
-/// Total and pure: no I/O, no clock, no panics. The first matching rule wins,
-/// which is observable and tested:
+/// Total and pure: no I/O, no clock, no panics. Order:
 ///
 /// 1. either side unreplayable -> `Unreplayable`;
-/// 2. cursor kind does not match the live source -> `SourceChanged`;
-/// 3. journal id differs -> `JournalIdChanged` (before any position rule);
-/// 4. `next_usn < first_usn` -> `CursorPurged` (before the lowest-valid rule);
-/// 5. `next_usn < lowest_valid_usn` or `next_usn > live.next_usn` -> `RestampDiscontinuity`;
-/// 6. otherwise `InSync`. Equality at `first_usn`, `lowest_valid_usn` and
-///    `live.next_usn` is in sync.
+/// 2. the USN branch delegates to [`crate::usn::cursor::validate_cursor`] and
+///    maps its reason (journal id, purge, restamp);
+/// 3. FSEvents: a cursor ahead of the latest id is a restamp, otherwise the id
+///    is replayable (`InSync`);
+/// 4. a cursor for another source kind -> `SourceChanged`.
 pub fn validate_cursor(saved: &Cursor, live: &Replay) -> Resync {
     if matches!(saved, Cursor::Unreplayable) || matches!(live, Replay::Unreplayable) {
         return Resync::FullRescan(RescanReason::Unreplayable);
     }
     match (saved, live) {
-        (
-            Cursor::Usn {
-                journal_id,
-                next_usn,
-            },
-            Replay::Usn(info),
-        ) => {
-            if *journal_id != info.journal_id {
-                return Resync::FullRescan(RescanReason::JournalIdChanged);
-            }
-            if *next_usn < info.first_usn {
-                return Resync::FullRescan(RescanReason::CursorPurged);
-            }
-            if *next_usn < info.lowest_valid_usn || *next_usn > info.next_usn {
-                return Resync::FullRescan(RescanReason::RestampDiscontinuity);
-            }
-            Resync::InSync
-        }
+        (Cursor::Usn(saved), Replay::Usn(info)) => match cursor::validate_cursor(saved, info) {
+            cursor::Resync::InSync => Resync::InSync,
+            cursor::Resync::FullRescan(reason) => Resync::FullRescan(from_usn_reason(reason)),
+        },
         (Cursor::Fsevents { event_id }, Replay::Fsevents { latest_event_id }) => {
             if *event_id > *latest_event_id {
                 return Resync::FullRescan(RescanReason::RestampDiscontinuity);
@@ -155,6 +133,18 @@ pub fn validate_cursor(saved: &Cursor, live: &Replay) -> Resync {
             Resync::InSync
         }
         _ => Resync::FullRescan(RescanReason::SourceChanged),
+    }
+}
+
+/// Maps the USN vocabulary into the persistence vocabulary.
+///
+/// The USN enum is exhaustive inside this crate, so a new USN reason becomes a
+/// compile error here instead of silently mapping to a full rescan.
+fn from_usn_reason(reason: cursor::RescanReason) -> RescanReason {
+    match reason {
+        cursor::RescanReason::JournalIdChanged => RescanReason::JournalIdChanged,
+        cursor::RescanReason::CursorPurged => RescanReason::CursorPurged,
+        cursor::RescanReason::RestampDiscontinuity => RescanReason::RestampDiscontinuity,
     }
 }
 
