@@ -3,7 +3,7 @@ fn cache_directory_is_trusted_metadata_validated_before_execution() {
     // Present: absolute host directory is carried on the request, snake_case to
     // match every other request field the host sends.
     let mut value = versioned();
-    value["request"]["cache_dir"] = json!("/home/user/.dsh/dsh-ops/index-cache");
+    value["request"]["cacheDir"] = json!("/home/user/.dsh/dsh-ops/index-cache");
     let decoded_request = decoded(&value).unwrap();
     assert_eq!(
         decoded_request.request.cache_dir.as_deref(),
@@ -11,9 +11,13 @@ fn cache_directory_is_trusted_metadata_validated_before_execution() {
     );
     // Absent means disabled, not an error.
     assert!(decoded(&versioned()).unwrap().request.cache_dir.is_none());
+    // The wire name is camelCase; the snake_case spelling is an unknown field.
+    let mut snake = versioned();
+    snake["request"]["cache_dir"] = json!("/cache");
+    assert!(decoded(&snake).is_err());
     // Unknown fields inside the request are still rejected.
     let mut value = versioned();
-    value["request"]["cache_dir"] = json!("/cache");
+    value["request"]["cacheDir"] = json!("/cache");
     value["request"]["cache_extra"] = json!(true);
     assert!(decoded(&value).is_err());
     // Relative, empty, oversized and NUL-bearing paths are rejected in both the
@@ -27,14 +31,14 @@ fn cache_directory_is_trusted_metadata_validated_before_execution() {
     ];
     for dir in invalid {
         let mut value = versioned();
-        value["request"]["cache_dir"] = dir.clone();
+        value["request"]["cacheDir"] = dir.clone();
         assert_eq!(
             decoded(&value).err().unwrap().code,
             "INVALID_ARGUMENT",
             "{dir}"
         );
         let mut legacy_value = legacy();
-        legacy_value["cache_dir"] = dir;
+        legacy_value["cacheDir"] = dir;
         assert_eq!(
             decoded(&legacy_value).err().unwrap().code,
             "INVALID_ARGUMENT"

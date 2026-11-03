@@ -198,7 +198,9 @@ pub struct Request {
     /// the existing walk semantics. When present it must be an absolute path the
     /// host created private (0700 on POSIX); the worker never invents or widens
     /// it, and an unusable directory falls back to the walk without an error.
-    #[serde(default)]
+    /// The wire name is `cacheDir` (camelCase), matching the issue, docs and
+    /// CHANGELOG wording for this field.
+    #[serde(default, rename = "cacheDir")]
     pub cache_dir: Option<std::path::PathBuf>,
     pub root: String,
     #[serde(default)]
