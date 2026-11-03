@@ -27,12 +27,13 @@
 //!
 //! ## Unsafe isolation
 //!
-//! The crate root denies `unsafe_code` and re-allows it for this module only;
+//! The crate root denies `unsafe_code`; only `sys` is allowed to break it;
 //! `unsafe_op_in_unsafe_fn` is denied, so every raw call sits in a block with a
 //! SAFETY comment naming its invariant. No other module in this crate names a
 //! raw Win32 type, and `cfg(any(...))` branches stay absent: the whole crate is
 //! `cfg(windows)`.
 
+#[allow(unsafe_code)]
 mod sys;
 
 #[cfg(test)]
@@ -41,11 +42,17 @@ pub(crate) mod fixtures;
 pub mod enum_data;
 pub mod error;
 pub mod journal;
+pub mod volume_path;
 
 pub use enum_data::{EnumPage, EnumRequest, read_enum_page};
+
+#[cfg(test)]
+#[path = "unsafe_guard_tests.rs"]
+mod unsafe_guard_tests;
 pub use error::WinfsError;
 pub use journal::{JournalPage, ReadJournalRequest, read_journal_page};
-pub use sys::{VolumeHandle, VolumeIo};
+pub use sys::{PageOutcome, VolumeHandle, VolumeIo};
+pub use volume_path::device_path;
 
 /// `FSCTL_ENUM_USN_DATA`: enumerate the MFT between two USNs.
 ///

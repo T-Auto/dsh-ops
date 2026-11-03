@@ -17,6 +17,10 @@ fn every_error_maps_to_the_source_vocabulary() {
             WinfsError::Malformed(WalkError::ZeroRecordLength { offset: 8 }),
             SourceError::Io(ErrorKind::InvalidData),
         ),
+        (
+            WinfsError::Incomplete,
+            SourceError::Io(ErrorKind::InvalidData),
+        ),
     ];
     for (error, expected) in cases {
         assert_eq!(error.source_error(), expected, "{error}");
@@ -33,6 +37,7 @@ fn every_error_has_a_stable_code() {
         WinfsError::Malformed(WalkError::TruncatedHeader { offset: 0 }).code(),
         "WINFS_MALFORMED_PAGE"
     );
+    assert_eq!(WinfsError::Incomplete.code(), "WINFS_INCOMPLETE_PAGE");
 }
 
 #[test]
@@ -44,4 +49,5 @@ fn display_names_the_failure() {
             .to_string()
             .contains("offset 8")
     );
+    assert!(WinfsError::Incomplete.to_string().contains("truncated"));
 }

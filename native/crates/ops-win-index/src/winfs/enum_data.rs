@@ -14,7 +14,7 @@
 
 use crate::winfs::FSCTL_ENUM_USN_DATA;
 use crate::winfs::error::WinfsError;
-use crate::winfs::sys::VolumeIo;
+use crate::winfs::sys::{PageOutcome, VolumeIo};
 use ops_index::usn::ParsedUsnRecord;
 use ops_index::usn::{LEADING_VALUE_LEN, SkipCounts, walk_enum_buffer};
 use std::io::ErrorKind;
@@ -89,16 +89,23 @@ pub fn read_enum_page(
         return Err(WinfsError::Io(ErrorKind::InvalidInput));
     }
     let input = request.encode();
-    let written = io.device_io_control(FSCTL_ENUM_USN_DATA, &input, buffer)?;
-    if written == 0 {
+    let written = match io.device_io_control(FSCTL_ENUM_USN_DATA, &input, buffer)? {
         // ERROR_HANDLE_EOF: the enumeration is complete.
-        return Ok(EnumPage {
-            next_start: 0,
-            records: Vec::new(),
-            skipped: SkipCounts::default(),
-            more: false,
-            bytes: 0,
-        });
+        PageOutcome::EndOfData => {
+            return Ok(EnumPage {
+                next_start: 0,
+                records: Vec::new(),
+                skipped: SkipCounts::default(),
+                more: false,
+                bytes: 0,
+            });
+        }
+        // The kernel had more data but wrote none: truncated, not complete.
+        PageOutcome::Wrote(0) => return Err(WinfsError::Incomplete),
+        PageOutcome::Wrote(written) => written,
+    };
+    if written > buffer.len() {
+        return Err(WinfsError::Io(ErrorKind::InvalidData));
     }
     let page = &buffer[..written];
     let walk = walk_enum_buffer(page).map_err(WinfsError::Malformed)?;

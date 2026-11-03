@@ -47,7 +47,6 @@
 
 pub mod mft;
 pub mod source;
-#[allow(unsafe_code)]
 pub mod winfs;
 
 pub use mft::cold_candidates;

@@ -13,7 +13,7 @@
 
 use crate::winfs::FSCTL_READ_USN_JOURNAL;
 use crate::winfs::error::WinfsError;
-use crate::winfs::sys::VolumeIo;
+use crate::winfs::sys::{PageOutcome, VolumeIo};
 use ops_index::usn::{
     LEADING_VALUE_LEN, ParsedUsnRecord, REASON_MASK, SkipCounts, walk_journal_buffer,
 };
@@ -99,15 +99,22 @@ pub fn read_journal_page(
         return Err(WinfsError::Io(ErrorKind::InvalidInput));
     }
     let input = request.encode();
-    let written = io.device_io_control(FSCTL_READ_USN_JOURNAL, &input, buffer)?;
-    if written == 0 {
-        return Ok(JournalPage {
-            next_usn: request.start_usn,
-            records: Vec::new(),
-            skipped: SkipCounts::default(),
-            more: false,
-            bytes: 0,
-        });
+    let written = match io.device_io_control(FSCTL_READ_USN_JOURNAL, &input, buffer)? {
+        PageOutcome::EndOfData => {
+            return Ok(JournalPage {
+                next_usn: request.start_usn,
+                records: Vec::new(),
+                skipped: SkipCounts::default(),
+                more: false,
+                bytes: 0,
+            });
+        }
+        // The kernel had more data but wrote none: truncated, not complete.
+        PageOutcome::Wrote(0) => return Err(WinfsError::Incomplete),
+        PageOutcome::Wrote(written) => written,
+    };
+    if written > buffer.len() {
+        return Err(WinfsError::Io(ErrorKind::InvalidData));
     }
     let page = &buffer[..written];
     let walk = walk_journal_buffer(page).map_err(WinfsError::Malformed)?;
