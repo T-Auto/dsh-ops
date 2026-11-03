@@ -74,6 +74,19 @@ pub const DEADLINE_CHECK_EVERY: usize = 1024;
 ///   than a `truncated` set: "incomplete because a directory was refused" and
 ///   "incomplete because the budget ran out" are different answers, and only
 ///   the caller can decide what to do with the first.
+/// - [`SourceError::Io`] also when one entry's own `stat` fails, for example an
+///   entry deleted between the directory read and the metadata call. The whole
+///   enumeration fails rather than silently leaving a gap, so a caller falls
+///   back to its own traversal instead of reporting an incomplete set as
+///   complete.
+///
+/// # Root symlinks
+///
+/// The root itself is followed when it is a symlink (both `walkdir` and
+/// [`fs::metadata`] here stat the root by path), while every descendant symlink
+/// is reported as [`EntryKind::Link`] and never descended into. That is an
+/// invariant of this source, not an accident of `walkdir`'s defaults:
+/// "the root is followed, descendants never are."
 pub fn walk_root(root: &Path, budget: EnumBudget) -> Result<CandidateSet, SourceError> {
     if budget.expired() {
         return Err(SourceError::Budget);
