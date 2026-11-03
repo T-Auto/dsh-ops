@@ -7,8 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-- Stop retrying a host append-reentry refusal inside the same microtask: publication stops the current pass at the first refusal and one cooled pass (25/100/400/1000 ms, reset on success) tries again, so a held append window costs a bounded number of registry attempts instead of one burst per tracked session. A host that opens a short window per session still costs one warning per incident, and the sibling PTC and native publication rows are not covered here (#579).
-- 宿主发布 append 期间的重入拒绝不再在同一微任务内重试：发布在首次拒绝处中止本次 pass，改由单次冷却重试（25/100/400/1000 ms，成功即复位）恢复；因此一个被持有的 append 窗口只产生有界的少量注册表尝试，而不再按受跟踪会话数放大。若宿主为每个会话各开一次短窗口，仍会按事件各记一条 warn；PTC 与 native 两条兄弟发布路径不在本 PR 范围内（#579）。
+- Stop retrying a host append-reentry refusal inside the same microtask on every publication row: bash, PTC and native now share one classifier and one cooled retry (25/100/400/1000 ms, reset on success), so a held append window costs a bounded number of registry attempts instead of one burst per tracked session. A jittery host - one short window per new session - is reported at most twice a second, with the folded refusal count still readable in the line or its recovery summary. Seven other registry-write points are not covered here (#579).
+- 宿主发布 append 期间的重入拒绝不再在同一微任务内重试：bash、PTC 与 native 三条发布路径共用同一分类器与同一次冷却重试（25/100/400/1000 ms，成功即复位），因此一个被持有的 append 窗口只产生有界的少量注册表尝试，而不再按受跟踪会话数放大。抖动型宿主（每个新会话一次短窗）也最多每秒两条告警，且被折叠的拒绝次数仍能从告警行或恢复汇总里读到。其余七个注册表写入点不在本 PR 范围内（#579）。
 - Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
 - 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。
 - Report PowerShell ConstrainedLanguage before workspace ACL preparation and preserve a named diagnostic without changing security policy (#458). / 工作区 ACL 准备前明确报告 PowerShell ConstrainedLanguage，并保留具名诊断，不改变安全策略（#458）。
