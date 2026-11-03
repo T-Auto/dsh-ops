@@ -18,6 +18,10 @@
 //! the output it produces without an index. The dangerous state would be
 //! `Ready` without a caught-up watcher, and the type makes that unconstructible
 //! outside this crate.
+//!
+//! L3 adds one override ABOVE the phase: a root on an unsupported file system
+//! ([`crate::fs`]) is `Unavailable` whatever the phase says. That is why a
+//! `Live` watcher on NFS/procfs/sysfs/FUSE never produces `Ready`.
 
 use ops_index::source::{CandidateSet, Change, EnumBudget, FsDataSource};
 use ops_index::{SnapshotId, SourceError, SourceState};
@@ -76,7 +80,15 @@ impl LinuxSource {
 }
 
 impl FsDataSource for LinuxSource {
-    fn state(&self, _root: &Path) -> SourceState {
+    fn state(&self, root: &Path) -> SourceState {
+        // A remote or kernel pseudo file system is Offline regardless of the
+        // watcher phase: no local event source can keep its snapshot
+        // consistent, so an index-backed answer would be a correctness bug.
+        // The caller falls back to the existing walk, exactly as for
+        // `Unsupported`.
+        if crate::fs::classify_root(root).is_ok_and(|classification| classification.is_offline()) {
+            return SourceState::Unavailable;
+        }
         match self.phase {
             Phase::Unwatched => SourceState::Unsupported,
             Phase::CatchingUp => SourceState::Unavailable,
