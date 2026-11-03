@@ -33,6 +33,8 @@ export const REENTRY_COOLDOWN_STEPS_MS: readonly number[] = Object.freeze([25, 1
  * its refusals readable instead of leaving them in a counter nobody ever prints.
  */
 const REENTRY_WARN_WINDOW_MS = 1000
+/** Quiet time after the last refusal before the burst's total may be stated. */
+const REENTRY_QUIET_MS = 250
 
 /**
  * Read an error's message without letting a hostile getter throw.
@@ -121,6 +123,14 @@ export function createReentryCooling(options: ReentryCoolingOptions): ReentryCoo
   let roundOpen = false
   let roundSuppressed = 0
   let suppressed = 0
+  /**
+   * Every refusal since the burst opened, including the one the deferral line reported without a
+   * count. It is reset by the first refusal after a quiet window, never by a line being printed, so
+   * a summary written mid-burst still states the whole burst instead of the tail since the last
+   * line (#579).
+   */
+  let burstRefusals = 0
+  let lastRefusalAt = -Infinity
   let lastDeferralAt = -Infinity
   let lastRecoveryAt = -Infinity
   const windowFree = (at: number, last: number) => at - last >= REENTRY_WARN_WINDOW_MS
@@ -140,22 +150,20 @@ export function createReentryCooling(options: ReentryCoolingOptions): ReentryCoo
   /**
    * The recovery line: it carries the folded count and is exempt from the deferral budget.
    *
-   * It has to be out of budget, because a short lock prints its deferral before anything was
-   * folded; it is allowed either when the round itself folded several refusals (a sustained lock)
-   * or once the deferral window has gone by (a jitter of one-refusal rounds), so a jitter's count
-   * is stated at its end instead of at its start (#579).
+   * It is written when the burst has gone quiet, because that is the first moment the total is
+   * known: a summary written while refusals are still arriving states a prefix of the burst, and
+   * the throttle then swallows the rest (#579).
    */
   const sayRecovery = () => {
     if (suppressed === 0) return
     const at = now()
     if (!windowFree(at, lastRecoveryAt)) return
-    if (roundSuppressed < 2 && !windowFree(at, lastDeferralAt)) return
-    const folded = suppressed
+    const total = burstRefusals
     lastRecoveryAt = at
     // The summary spends the deferral slot as well: one deferral plus one recovery is the budget.
     lastDeferralAt = at
     suppressed = 0
-    report(`dsh-ops: ${label} publication recovered after ${folded} suppressed refusal(s) during the cooldown.`)
+    report(`dsh-ops: ${label} publication recovered after ${total} refusal(s) during the cooldown (${total - 1} suppressed).`)
   }
   let armedStep = 0
   const armTimer = (delay: number) => {
@@ -169,18 +177,17 @@ export function createReentryCooling(options: ReentryCoolingOptions): ReentryCoo
    * A later refusal extends `coolUntil` without touching the running timer, so a timer that fires
    * early must renew for the remainder instead of releasing a pass the cooldown would refuse
    * anyway — otherwise a lock that then releases with no further host event would never be
-   * retried (#579). A deadline further away than the step itself means the wall clock jumped
-   * backwards: advance the ladder instead of parking for the jumped distance.
+   * retried (#579). The pass is released only when the deadline really passed: releasing it while
+   * still cooled would re-arm the next ladder step from a gated pass and run the ladder away.
+   * A deadline further away than the step means the wall clock jumped backwards; advance instead of
+   * parking for the jumped distance.
    */
   const tick = () => {
     timer = undefined
     const left = coolUntil - now()
-    if (left > 0) {
-      if (left <= armedStep) armTimer(left)
-      else armStep()
-      return
-    }
-    options.retry()
+    if (left <= 0) { options.retry(); return }
+    if (left <= armedStep) { armTimer(left); return }
+    armStep()
   }
   /** Advance the ladder and arm the step unless one is already pending. */
   const armStep = (): number => {
@@ -194,6 +201,10 @@ export function createReentryCooling(options: ReentryCoolingOptions): ReentryCoo
   }
   const note = (outcome: ReentryOutcome) => {
     if (outcome === 'failed') {
+      const at = now()
+      if (at - lastRefusalAt >= REENTRY_WARN_WINDOW_MS) burstRefusals = 0
+      lastRefusalAt = at
+      burstRefusals += 1
       if (!roundOpen) {
         roundOpen = true
         roundSuppressed = 0
@@ -206,7 +217,7 @@ export function createReentryCooling(options: ReentryCoolingOptions): ReentryCoo
     }
     roundOpen = false
     // The recovery line is what makes an aggregated burst readable: it states how many refusals
-    // were folded away while the throttle was closed (#579).
+    // the burst produced while the throttle was closed (#579).
     sayRecovery()
   }
   return {
