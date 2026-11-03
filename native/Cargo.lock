@@ -400,6 +400,9 @@ dependencies = [
 [[package]]
 name = "ops-index"
 version = "0.5.0-alpha3"
+dependencies = [
+ "fs2",
+]
 
 [[package]]
 name = "ops-protocol"

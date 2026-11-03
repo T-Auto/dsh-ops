@@ -12,12 +12,22 @@
 //! the current fold implementation (P1), and `SCHEMA_VERSION` is tied to that fold
 //! behaviour so an older image is discarded instead of silently comparing
 //! against a different fold.
+//!
+//! [`cursor`] decides whether a saved cursor may be replayed (or forces a full
+//! rescan), [`lock`] serialises writers with an advisory file lock, and [`gc`]
+//! removes crash residue, enforces the size cap and implements uninstall cleanup.
 
+pub mod cursor;
 pub mod format;
+pub mod gc;
+pub mod lock;
 pub mod store;
 
+pub use cursor::{Cursor, JournalInfo, Replay, RescanReason, Resync, validate_cursor};
 pub use format::{
     FORMAT_VERSION, HEADER_LEN, MAGIC, NAME_ID_MAX, PARENT_NIL, RECORD_LEN, RecordFlags,
     SCHEMA_VERSION, Snapshot, SnapshotError, SnapshotRecord, crc32, decode, encode,
 };
+pub use gc::{GcError, GcReport, MAX_SNAPSHOT_BYTES, collect, collect_locked, remove_all};
+pub use lock::{LOCK_FILE, LockError, SnapshotLock};
 pub use store::{SNAPSHOT_FILE, SnapshotStore, StoreError};
