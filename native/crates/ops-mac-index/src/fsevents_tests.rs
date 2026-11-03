@@ -540,6 +540,12 @@ fn unsafe_is_confined_to_the_ffi_module() {
         ("walk.rs", include_str!("walk.rs")),
         ("walk_tests.rs", include_str!("walk_tests.rs")),
     ];
+    // The needles are assembled from fragments: written literally, this test
+    // would find its own source (it contains the very words it searches for).
+    let word = ["uns", "afe"].concat();
+    let block = format!("{word} {{");
+    let function = format!("{word} fn");
+    let prefix = format!("{word} ");
     for (name, source) in sources {
         let unsafe_lines: Vec<&str> = source
             .lines()
@@ -548,9 +554,9 @@ fn unsafe_is_confined_to_the_ffi_module() {
                 if text.starts_with("//") || text.starts_with("/*") || text.starts_with('*') {
                     return false;
                 }
-                text.contains("unsafe {")
-                    || text.contains("unsafe fn")
-                    || text.starts_with("unsafe ")
+                text.contains(block.as_str())
+                    || text.contains(function.as_str())
+                    || text.starts_with(prefix.as_str())
             })
             .collect();
         if name == "ffi.rs" {
