@@ -150,6 +150,7 @@ pub(crate) fn changes_for_entries(
         let record = entry.fid.as_u64().ok_or(SourceError::Unsupported)?;
         let key = FileKey::new(volume_serial, record);
         let parsed = parsed_record(entry)?;
+        let mut upserted = false;
         for op in ops_for(&parsed).as_slice() {
             match op {
                 UsnOp::Upsert { .. } => {
@@ -157,6 +158,7 @@ pub(crate) fn changes_for_entries(
                         // Outside the requested root: ordinary volume activity.
                         continue;
                     };
+                    upserted = true;
                     paths.insert(record, rel.clone());
                     let action = if entry.reason.is_file_create() {
                         ChangeAction::Added
@@ -180,6 +182,11 @@ pub(crate) fn changes_for_entries(
                     }
                 }
                 UsnOp::LinkDirty { .. } | UsnOp::StatDirty { .. } => {
+                    // The upsert row already carries the current state; do not
+                    // repeat it as Modified for the same record.
+                    if upserted {
+                        continue;
+                    }
                     // Only records already inside the subtree matter here.
                     if let Some(rel) = paths.get(&record).cloned() {
                         report.changes.push(Change {

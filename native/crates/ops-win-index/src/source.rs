@@ -76,7 +76,7 @@ impl WinFsSource {
         }
         let budget = changes_budget();
         let nodes = collect_nodes(&opened.volume, &budget)?;
-        let seed = subtree_paths(&nodes, &opened.root_components)?;
+        let seed = subtree_paths(&nodes, opened.root_fid)?;
         let (entries, end_cursor) = catch_up(&opened.volume, cursor, &budget)?;
         changes_for_entries(&seed, &entries, opened.volume_serial, end_cursor)
     }
@@ -121,13 +121,8 @@ impl FsDataSource for WinFsSource {
         let live = info(&opened.volume)?;
         let start = JournalCursor::from_info(&live);
         let nodes = collect_nodes(&opened.volume, &budget)?;
-        let batch = assemble(
-            &nodes,
-            &opened.root_components,
-            opened.volume_serial,
-            &budget,
-        )?;
-        let seed = subtree_paths(&nodes, &opened.root_components)?;
+        let batch = assemble(&nodes, opened.root_fid, opened.volume_serial, &budget)?;
+        let seed = subtree_paths(&nodes, opened.root_fid)?;
         let (entries, _tail) = catch_up(&opened.volume, start, &budget)?;
         let mut candidates: HashMap<FileKey, Candidate> =
             HashMap::with_capacity(batch.entries.len());

@@ -1,5 +1,5 @@
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::*;
@@ -39,7 +39,7 @@ fn assemble_rebuilds_paths_from_parent_ids() {
         node(12, 10, "nested", DIRECTORY),
         node(13, 12, "deep.md", NORMAL),
     ];
-    let batch = assemble(&nodes, &[], SERIAL, &generous_budget()).expect("assembly");
+    let batch = assemble(&nodes, 5, SERIAL, &generous_budget()).expect("assembly");
     let mut got = names(&batch);
     got.sort();
     assert_eq!(
@@ -62,31 +62,21 @@ fn assemble_roots_at_a_requested_subdirectory() {
         node(11, 10, "report.txt", NORMAL),
         node(12, 5, "other.txt", NORMAL),
     ];
-    let batch = assemble(
-        &nodes,
-        &[OsString::from("docs")],
-        SERIAL,
-        &generous_budget(),
-    )
-    .expect("assembly");
+    let batch = assemble(&nodes, 10, SERIAL, &generous_budget()).expect("assembly");
     assert_eq!(names(&batch), vec!["report.txt"]);
 }
 
 #[test]
-fn assemble_matches_root_components_case_insensitively() {
+fn subtree_paths_anchor_the_root_with_an_empty_path() {
     let nodes = vec![
         node(5, 5, "root", DIRECTORY),
-        node(10, 5, "Docs", DIRECTORY),
+        node(10, 5, "docs", DIRECTORY),
         node(11, 10, "report.txt", NORMAL),
     ];
-    let batch = assemble(
-        &nodes,
-        &[OsString::from("docs")],
-        SERIAL,
-        &generous_budget(),
-    )
-    .expect("assembly");
-    assert_eq!(names(&batch), vec!["report.txt"]);
+    let paths = subtree_paths(&nodes, 10).expect("paths");
+    assert_eq!(paths.paths.get(&10), Some(&PathBuf::new()));
+    assert_eq!(paths.paths.get(&11), Some(&PathBuf::from("report.txt")));
+    assert!(!paths.paths.contains_key(&5));
 }
 
 #[test]
@@ -101,7 +91,7 @@ fn candidate_key_is_the_record_number_not_the_full_reference() {
             attributes: FileAttributes::from_bits_retain(NORMAL),
         },
     ];
-    let batch = assemble(&nodes, &[], SERIAL, &generous_budget()).expect("assembly");
+    let batch = assemble(&nodes, 5, SERIAL, &generous_budget()).expect("assembly");
     let entry = batch
         .entries
         .iter()
@@ -122,7 +112,7 @@ fn assemble_classifies_entries_from_attributes() {
         node(11, 5, "link", REPARSE_POINT),
         node(12, 5, "file.txt", NORMAL),
     ];
-    let batch = assemble(&nodes, &[], SERIAL, &generous_budget()).expect("assembly");
+    let batch = assemble(&nodes, 5, SERIAL, &generous_budget()).expect("assembly");
     let kind = |name: &str| {
         batch
             .entries
@@ -145,7 +135,7 @@ fn assemble_prunes_at_max_depth_and_reports_truncation() {
         node(12, 11, "deep.md", NORMAL),
     ];
     let budget = EnumBudget::new(100, 1, Instant::now() + Duration::from_secs(30));
-    let batch = assemble(&nodes, &[], SERIAL, &budget).expect("assembly");
+    let batch = assemble(&nodes, 5, SERIAL, &budget).expect("assembly");
     assert_eq!(names(&batch), vec!["docs"]);
     assert!(
         batch.truncated,
@@ -162,7 +152,7 @@ fn assemble_stops_at_max_entries_and_reports_truncation() {
         node(12, 5, "c.txt", NORMAL),
     ];
     let budget = EnumBudget::new(2, 64, Instant::now() + Duration::from_secs(30));
-    let batch = assemble(&nodes, &[], SERIAL, &budget).expect("assembly");
+    let batch = assemble(&nodes, 5, SERIAL, &budget).expect("assembly");
     assert_eq!(batch.entries.len(), 2);
     assert!(batch.truncated);
 }
@@ -173,7 +163,7 @@ fn assemble_reports_an_expired_deadline() {
     let deadline = Instant::now() - Duration::from_millis(1);
     let budget = EnumBudget::new(100, 64, deadline);
     assert_eq!(
-        assemble(&nodes, &[], SERIAL, &budget),
+        assemble(&nodes, 5, SERIAL, &budget),
         Err(SourceError::Budget)
     );
 }
@@ -190,7 +180,7 @@ fn assemble_rejects_extended_file_ids() {
         },
     ];
     assert_eq!(
-        assemble(&nodes, &[], SERIAL, &generous_budget()),
+        assemble(&nodes, 5, SERIAL, &generous_budget()),
         Err(SourceError::Unsupported)
     );
 }
@@ -202,7 +192,7 @@ fn assemble_collapses_duplicate_records_for_one_id() {
         node(11, 5, "first.txt", NORMAL),
         node(11, 5, "alias.txt", NORMAL),
     ];
-    let batch = assemble(&nodes, &[], SERIAL, &generous_budget()).expect("assembly");
+    let batch = assemble(&nodes, 5, SERIAL, &generous_budget()).expect("assembly");
     assert_eq!(names(&batch), vec!["first.txt"]);
 }
 
@@ -210,7 +200,7 @@ fn assemble_collapses_duplicate_records_for_one_id() {
 fn assemble_requires_a_volume_root() {
     let nodes = vec![node(10, 99, "orphan.txt", NORMAL)];
     assert_eq!(
-        assemble(&nodes, &[], SERIAL, &generous_budget()),
+        assemble(&nodes, 5, SERIAL, &generous_budget()),
         Err(SourceError::Unsupported)
     );
 }

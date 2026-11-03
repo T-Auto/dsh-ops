@@ -3,11 +3,12 @@
 //!
 //! usn-journal-rs gives us a stream of MftEntry values, each carrying a file id,
 //! a parent file id, a name and attribute flags. Paths are not in the MFT, so
-//! this module rebuilds them fully in memory: it indexes the nodes by file id,
-//! locates the volume root, walks down to the requested root through the path
-//! components, and then breadth-first descends the children map. That keeps the
-//! cold path to one kernel enumeration instead of one syscall per entry, and it
-//! never resolves paths by reopening files.
+//! this module rebuilds them fully in memory: it indexes the nodes by parent id
+//! and breadth-first descends the children map from the requested root, whose
+//! file id is the directory's own cap-fs-ext ino(). That keeps the cold path to
+//! one kernel enumeration instead of one syscall per entry, it never resolves
+//! paths by reopening files, and no short (8.3) or case-folded caller path can
+//! change which directory is indexed.
 //!
 //! Budget rules mirror the macOS cold source so callers see one contract:
 //!
@@ -40,7 +41,7 @@
 use cap_fs_ext::MetadataExt;
 use ops_index::{Candidate, CandidateSet, EntryKind, EnumBudget, FileKey, SourceError};
 use std::collections::{HashMap, HashSet};
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
@@ -77,14 +78,19 @@ pub(crate) struct ColdBatch {
 pub(crate) struct OpenedVolume {
     pub(crate) volume: Volume,
     pub(crate) volume_serial: u64,
-    pub(crate) root_components: Vec<OsString>,
+    pub(crate) root_fid: u64,
 }
 
-/// Opens the volume that hosts root and reads its serial number.
+/// Opens the volume that hosts root and reads the root's identity.
 ///
-/// This is the only path that touches the file system besides the kernel
-/// enumeration. The ambient authority is used once, on the volume root, for
-/// directory metadata only; it never widens what the caller may open.
+/// The identity is read through cap-std/cap-fs-ext, the same layer the
+/// integration uses: dev() is the volume serial and ino() is the root
+/// directory's full 64-bit nFileIndex, which is also its MFT file id. That
+/// makes the whole subtree directly addressable without walking path
+/// components, and it keeps a short-name or case-folded caller path from
+/// changing which directory is indexed. Ambient authority is used once, on the
+/// requested root, for directory metadata only; it never widens what the caller
+/// may open.
 pub(crate) fn open_for_root(root: &Path) -> Result<OpenedVolume, SourceError> {
     let metadata = fs::metadata(root).map_err(|error| SourceError::Io(error.kind()))?;
     if !metadata.is_dir() {
@@ -95,24 +101,18 @@ pub(crate) fn open_for_root(root: &Path) -> Result<OpenedVolume, SourceError> {
         // index-capable source, and the caller uses its own traversal.
         return Err(SourceError::Unsupported);
     }
-    let (volume_root, root_components) = split_volume_root(root)?;
+    let volume_root = volume_mount(root)?;
     let volume = Volume::from_mount_point(&volume_root).map_err(map_usn_error)?;
-    let volume_serial = volume_serial(&volume_root)?;
-    Ok(OpenedVolume {
-        volume,
-        volume_serial,
-        root_components,
-    })
-}
-
-/// Reads the volume serial number exactly as cap-fs-ext dev() reports it.
-fn volume_serial(volume_root: &Path) -> Result<u64, SourceError> {
-    let root_dir = cap_std::fs::Dir::open_ambient_dir(volume_root, cap_std::ambient_authority())
+    let root_dir = cap_std::fs::Dir::open_ambient_dir(root, cap_std::ambient_authority())
         .map_err(|error| SourceError::Io(error.kind()))?;
-    let metadata = root_dir
+    let root_metadata = root_dir
         .dir_metadata()
         .map_err(|error| SourceError::Io(error.kind()))?;
-    Ok(metadata.dev())
+    Ok(OpenedVolume {
+        volume,
+        volume_serial: root_metadata.dev(),
+        root_fid: root_metadata.ino(),
+    })
 }
 
 /// Cold enumeration of root within budget.
@@ -132,12 +132,7 @@ pub fn cold_candidates(root: &Path, budget: EnumBudget) -> Result<CandidateSet, 
     let opened = open_for_root(root)?;
     let nodes = collect_nodes(&opened.volume, &budget)?;
     let consistent_at_ms = now_ms();
-    let batch = assemble(
-        &nodes,
-        &opened.root_components,
-        opened.volume_serial,
-        &budget,
-    )?;
+    let batch = assemble(&nodes, opened.root_fid, opened.volume_serial, &budget)?;
     Ok(CandidateSet {
         entries: batch.entries,
         truncated: batch.truncated,
@@ -189,13 +184,12 @@ pub(crate) fn collect_nodes(
     Ok(nodes)
 }
 
-/// Splits a root into its volume mount point and the components below it.
+/// Rebuilds the volume mount point from a root's own path prefix.
 ///
-/// The mount point is rebuilt from the root's own prefix, so a caller path and
-/// the volume path can never disagree about bytes; verbatim prefixes are
-/// stripped for the volume handle call because the Win32 mount-point API does
-/// not accept them.
-fn split_volume_root(root: &Path) -> Result<(PathBuf, Vec<OsString>), SourceError> {
+/// The mount point is taken from the root's prefix, so a caller path and the
+/// volume path cannot disagree about bytes; a verbatim prefix is stripped
+/// because the Win32 mount-point API does not accept it.
+fn volume_mount(root: &Path) -> Result<PathBuf, SourceError> {
     let mut components = root.components();
     let first = components.next().ok_or(SourceError::Unsupported)?;
     let mut mount = PathBuf::from(first.as_os_str());
@@ -209,15 +203,7 @@ fn split_volume_root(root: &Path) -> Result<(PathBuf, Vec<OsString>), SourceErro
         Component::RootDir => {}
         _ => return Err(SourceError::Unsupported),
     }
-    let mut below = Vec::new();
-    for component in components {
-        match component {
-            Component::Normal(name) => below.push(name.to_os_string()),
-            Component::CurDir => {}
-            _ => return Err(SourceError::Unsupported),
-        }
-    }
-    Ok((plain_mount(&mount), below))
+    Ok(plain_mount(&mount))
 }
 
 /// Strips a verbatim prefix so the Win32 mount-point API accepts the path.
@@ -242,20 +228,12 @@ pub(crate) struct SubtreePaths {
 }
 
 /// Rebuilds the requested subtree's relative paths. Pure: no IO, no clock.
-pub(crate) fn subtree_paths(
-    nodes: &[MftNode],
-    root_components: &[OsString],
-) -> Result<SubtreePaths, SourceError> {
-    let mut by_fid: HashMap<u64, usize> = HashMap::with_capacity(nodes.len());
+pub(crate) fn subtree_paths(nodes: &[MftNode], root_fid: u64) -> Result<SubtreePaths, SourceError> {
     let mut children: HashMap<u64, Vec<usize>> = HashMap::new();
     for (index, node) in nodes.iter().enumerate() {
-        let fid = node.fid.as_u64().ok_or(SourceError::Unsupported)?;
         let parent = node.parent.as_u64().ok_or(SourceError::Unsupported)?;
-        by_fid.entry(fid).or_insert(index);
         children.entry(parent).or_default().push(index);
     }
-    let volume_root = find_volume_root(nodes, &by_fid).ok_or(SourceError::Unsupported)?;
-    let root_fid = resolve_root(nodes, volume_root, root_components)?;
     let mut paths: HashMap<u64, PathBuf> = HashMap::new();
     paths.insert(root_fid, PathBuf::new());
     let mut visited: HashSet<u64> = HashSet::new();
@@ -283,24 +261,13 @@ pub(crate) fn subtree_paths(
 /// Rebuilds candidates from MFT records. Pure: no IO, no clock, no handles.
 pub(crate) fn assemble(
     nodes: &[MftNode],
-    root_components: &[OsString],
+    root_fid: u64,
     volume_serial: u64,
     budget: &EnumBudget,
 ) -> Result<ColdBatch, SourceError> {
     if budget.expired() {
         return Err(SourceError::Budget);
     }
-    let mut by_fid: HashMap<u64, usize> = HashMap::with_capacity(nodes.len());
-    for (index, node) in nodes.iter().enumerate() {
-        let fid = node.fid.as_u64().ok_or(SourceError::Unsupported)?;
-        node.parent.as_u64().ok_or(SourceError::Unsupported)?;
-        // First record for an id wins; later duplicates are hard-link or short
-        // name aliases that W4 reconciles.
-        by_fid.entry(fid).or_insert(index);
-    }
-    let volume_root = find_volume_root(nodes, &by_fid).ok_or(SourceError::Unsupported)?;
-    let root_fid = resolve_root(nodes, volume_root, root_components)?;
-
     let mut children: HashMap<u64, Vec<usize>> = HashMap::new();
     for (index, node) in nodes.iter().enumerate() {
         let parent = node.parent.as_u64().ok_or(SourceError::Unsupported)?;
@@ -352,54 +319,6 @@ pub(crate) fn assemble(
         }
     }
     Ok(ColdBatch { entries, truncated })
-}
-
-/// Finds the volume root record: a self-parented record, or NTFS record 5.
-fn find_volume_root(nodes: &[MftNode], by_fid: &HashMap<u64, usize>) -> Option<u64> {
-    for node in nodes {
-        let Some(fid) = node.fid.as_u64() else {
-            continue;
-        };
-        if node.parent.as_u64() == Some(fid) {
-            return Some(fid);
-        }
-    }
-    let root = Fid::new(5).as_u64()?;
-    by_fid.contains_key(&root).then_some(root)
-}
-
-/// Walks from the volume root through the requested components to the root id.
-fn resolve_root(
-    nodes: &[MftNode],
-    volume_root: u64,
-    root_components: &[OsString],
-) -> Result<u64, SourceError> {
-    let mut current = volume_root;
-    for component in root_components {
-        let mut found = None;
-        for node in nodes {
-            if node.parent.as_u64() != Some(current) || !name_matches(&node.name, component) {
-                continue;
-            }
-            if found.is_some() {
-                // Two records claim the same parent and name: refuse rather
-                // than pick one at random.
-                return Err(SourceError::Unsupported);
-            }
-            found = node.fid.as_u64();
-        }
-        current = found.ok_or(SourceError::Unsupported)?;
-    }
-    Ok(current)
-}
-
-/// NTFS compares names case-insensitively; this comparison is exact first and
-/// then ASCII-case-insensitive, which covers ordinary path spelling.
-fn name_matches(stored: &OsStr, wanted: &OsStr) -> bool {
-    stored == wanted
-        || stored
-            .to_string_lossy()
-            .eq_ignore_ascii_case(&wanted.to_string_lossy())
 }
 
 /// Maps MFT attribute flags to the crate's entry kind.

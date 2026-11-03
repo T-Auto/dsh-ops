@@ -25,9 +25,9 @@
 //!   modified_ns is None until a later enrichment slice fills them.
 //! - No ReFS. A 128-bit file id cannot become the 64-bit half of FileKey, so an
 //!   extended id makes this slice answer Unsupported.
-//! - No roots below a mounted-volume directory. The root is located by walking
-//!   from the volume root through the path components, so it must live on a
-//!   volume mounted at its drive or UNC root.
+//! - No cross-volume trees. The root's file id is read through cap-fs-ext and
+//!   the MFT is that volume's, so the root must live on one locally-mounted NTFS
+//!   volume; reparse points are not followed.
 //! - No journal creation and no silent completeness: a volume without an active
 //!   journal is Unsupported, and a replay whose parent cannot be resolved marks
 //!   the set as not complete (truncated) or counts the record as skipped.
