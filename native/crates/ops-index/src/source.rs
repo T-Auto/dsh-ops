@@ -41,6 +41,12 @@ pub struct Candidate {
     /// Path relative to the root, in platform components.
     pub rel: PathBuf,
     /// Stable identity of the object, independent of its name.
+    ///
+    /// A source must fill this with the same identity a caller's no-follow
+    /// metadata reports: `(st_dev, st_ino)` on POSIX and
+    /// `(volume_serial_number, file_index)` on Windows — the `cap-fs-ext`
+    /// mapping `ops-search` compares against. See the identity contract on
+    /// [`FsDataSource`].
     pub key: FileKey,
     /// What kind of entry this is.
     pub kind: EntryKind,
@@ -224,6 +230,22 @@ pub struct Change {
 /// kernel journals, but they must not call back into the index. The trait is
 /// object safe so callers can hold a `&dyn FsDataSource` chosen once per
 /// request.
+///
+/// # Identity contract
+///
+/// [`Candidate::key`] is only useful if it names the *same* object the caller
+/// will look at. `ops-search` revalidates every candidate by comparing `key`
+/// with a live no-follow `symlink_metadata` taken through a directory handle,
+/// where the live identity comes from `cap-fs-ext`:
+///
+/// - POSIX: `(st_dev, st_ino)`;
+/// - Windows: `(volume_serial_number, file_index)`.
+///
+/// A source that numbers objects differently (an FRN without a volume
+/// component, a ReFS 128-bit id, a path hash) makes every comparison look
+/// drifted: the caller then discards the whole batch and walks instead. That
+/// is safe but makes the source useless, so a source that cannot honour this
+/// contract must report `Unsupported` instead of handing out keys.
 pub trait FsDataSource {
     /// Current consistency state of `root`.
     fn state(&self, root: &Path) -> SourceState;
