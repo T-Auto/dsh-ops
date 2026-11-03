@@ -132,7 +132,7 @@ fn cold_enumeration_matches_a_walk_of_the_same_root() {
             // volume handle was refused for another privileged reason (state
             // Unavailable). Both are typed fallbacks, never a panic, and W1
             // never claims a caught-up snapshot.
-            assert_ne!(state, SourceState::Ready, "W1 never claims Ready");
+            assert!(!state.is_ready(), "W1 never claims Ready");
             assert!(
                 matches!(state, SourceState::Unsupported | SourceState::Unavailable),
                 "unexpected state: {state:?}"
