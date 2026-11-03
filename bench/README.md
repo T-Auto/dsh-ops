@@ -100,6 +100,12 @@ The `calls` command compares official tools with OPS, or alternates two OPS buil
 
 参数、语料固定规则与隔离输出示例见 [工具调用基准](../docs/工具调用基准.md) / [English](../docs/benchmark-calls.md)。这些命令不调用模型，不需要配置 sweep 的两个 profile。
 
+`node bench/cli.mjs index-ab` 在**同一语料、同一 worker 二进制**上比较遍历 `glob` 与带 `cache_dir` 的可选索引路径：两臂请求形状相同、逐轮交替，冷态/热态/重复查询与 worker 峰值 RSS 一起报告；只有字节不一致才算失败，耗时只作证据。生成语料由固定配方决定（含被排除的 `.hidden`/`node_modules`/`target`），报告记录 revision、worker 哈希、语料哈希与每轮样本。命令不改变默认行为，也不作 CI 性能门禁。
+
+The `index-ab` command compares the walk with the opt-in `cache_dir` path on one corpus and one worker binary: same request shape, alternating rounds, cold/warm/repeated calls plus peak worker RSS; byte identity is the only failure and timings are evidence only. The recipe-generated corpus includes excluded directories, and the report records revision, worker hash, corpus hash and every sample. It changes no default and is never a CI performance gate.
+
+参数与语料复现见 [索引 AB 证据](../docs/索引AB基准.md) / [English](../docs/benchmark-index-ab.md)。
+
 ## 任务一览
 
 六个任务各自压一种能力，`ops_*` 工具名来自 `publicToolName()`。每个任务的期望值都由夹具生成器现算（`derive*`），判卷在 `bench/lib/verify.mjs`。
