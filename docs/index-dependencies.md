@@ -7,11 +7,12 @@ version, its crates.io publication date (checked against the crates.io API on 20
 the reason it is needed. Full license texts are in
 [`licenses/index/THIRD-PARTY-NOTICES.txt`](../licenses/index/THIRD-PARTY-NOTICES.txt).
 
-## Runtime dependency (1)
+## Runtime dependencies (2)
 
 | Crate | Pin | Published (UTC) | License | Why |
 | --- | --- | --- | --- | --- |
 | `unicode-normalization` | `=0.1.26` | 2026-10-16 | MIT OR Apache-2.0 AND Unicode-3.0 | Canonical NFC/NFD normalization for the case-fold key (P1). APFS/HFS+ deliver NFD names and NTFS/ext4 deliver NFC; without normalization the same name would index as two. Pure Rust, no build script, no OS call. |
+| `fs2` | `=0.4.3` | 2018-01-06 | MIT OR Apache-2.0 | Advisory file lock for the snapshot writer (PS2, #600). Already in the workspace lock through `ops-files`; exact pin, MIT text in `licenses/index/THIRD-PARTY-NOTICES.txt`. This is the one explicit exception to the #584 whitelist, required by #586 for locked publication and GC serialisation. |
 
 The license needs the `Unicode-3.0` identifier in addition to MIT/Apache-2.0 because the crate
 embeds Unicode data files. MIT is the selected alternative where a choice exists.
