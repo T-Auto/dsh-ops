@@ -184,6 +184,68 @@ impl FsDataSource for LateSource {
 }
 
 #[test]
+fn skip_reasons_keep_the_walk_vocabulary() {
+    let cases = [
+        (SkipReason::InvalidPath, "invalid-path", true, false),
+        (SkipReason::NonUtf8Path, "non-utf8-path", true, false),
+        (SkipReason::Symlink, "symlink", false, false),
+        (SkipReason::Credential, "credential", false, true),
+        (SkipReason::Excluded, "excluded", false, true),
+        (SkipReason::Unsupported, "unsupported-entry", false, false),
+        (SkipReason::Unreadable, "unreadable-entry", true, false),
+    ];
+    for (reason, name, gap, file) in cases {
+        assert_eq!(reason.as_str(), name);
+        assert_eq!(reason.is_gap(), gap, "{name}");
+        assert_eq!(reason.counts_file(), file, "{name}");
+    }
+    let skip = Skip {
+        rel: PathBuf::from("a"),
+        reason: SkipReason::Unreadable,
+        file: false,
+    };
+    assert!(skip.gap());
+}
+
+#[test]
+fn host_errors_map_to_the_walk_classes() {
+    assert_eq!(
+        io_to_inspect(io::Error::from(io::ErrorKind::PermissionDenied)),
+        InspectError::Unreadable
+    );
+    assert_eq!(
+        io_to_inspect(io::Error::from(io::ErrorKind::NotFound)),
+        InspectError::Stale
+    );
+    assert_eq!(
+        io_to_inspect(io::Error::from(io::ErrorKind::NotADirectory)),
+        InspectError::Stale
+    );
+    assert_eq!(
+        io_to_inspect(io::Error::from(io::ErrorKind::Other)),
+        InspectError::Unverified
+    );
+    assert_eq!(
+        failure_to_inspect(Failure::from(io::Error::from(
+            io::ErrorKind::PermissionDenied
+        ))),
+        InspectError::Unreadable
+    );
+    assert_eq!(
+        failure_to_inspect(Failure::from(io::Error::from(io::ErrorKind::NotFound))),
+        InspectError::Stale
+    );
+    assert_eq!(
+        failure_to_inspect(Failure::new("PATH_RESTRICTED", "link")),
+        InspectError::AncestorLink
+    );
+    assert_eq!(
+        failure_to_inspect(Failure::new("IO_ERROR", "eio")),
+        InspectError::Unverified
+    );
+}
+
+#[test]
 fn an_expired_deadline_stops_revalidation_even_if_the_source_ignores_it() {
     let fixture = Fixture::new("deadline");
     fixture.file("a.txt", b"a");
