@@ -45,6 +45,15 @@ impl Cursor {
         }
         Ok(cursor)
     }
+    /// Rejects a cursor whose page was produced by another traversal kind.
+    ///
+    /// `finish` calls this with the scan kind: a continuation minted by the walk
+    /// and replayed against an indexed scan (or the reverse) would compare two
+    /// snapshot domains, so it is `SEARCH_STALE` instead.
+    pub fn ensure_kind(&self, source: SourceKind) -> Result<()> {
+        if self.source == source { return Ok(()); }
+        Err(stale())
+    }
     fn token(&self, snapshot: &str, next: usize) -> String {
         let body = format!("{}:{}:{snapshot}:{next}", self.source.token_prefix(), self.binding);
         format!("{body}:{}", digest(body.as_bytes()))
@@ -93,6 +102,7 @@ impl Page {
 }
 pub fn finish(mut scan: Scan, cursor: Cursor, page: Page, observed: usize, item_total: usize, extra: Value) -> Result<Value> {
     scan.running(); // Account for time spent in the final read/match/output step too.
+    cursor.ensure_kind(scan.source)?;
     let snapshot = format!("{:x}", scan.hash.clone().finalize());
     let complete = scan.complete();
     if cursor.snapshot.as_ref().is_some_and(|expected| !complete || *expected != snapshot) { return Err(stale()); }

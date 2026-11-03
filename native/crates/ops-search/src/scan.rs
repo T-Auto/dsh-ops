@@ -149,12 +149,25 @@ impl Scan {
     /// default for a build with no platform source: it is never ready, so this
     /// is exactly the walk.
     ///
+    /// # Snapshot domain
+    ///
+    /// The two paths do not stamp the same snapshot: the walk stamps the root
+    /// and every directory it visits, while the indexed path stamps only the
+    /// revalidated candidate files. Snapshot ids therefore belong to one source
+    /// domain, which `paging::Cursor` binds by kind; items and counters are
+    /// comparable across paths only when both answers are complete.
+    ///
     /// # Errors
     ///
     /// Returns the walk's error unchanged (authority, root, or an unreadable
     /// root directory); a falling-back source is never an error.
     pub fn walk_indexed<F>(&mut self, root: &Path, source: &dyn FsDataSource, patterns: &[String], request: &Request, mut each: F) -> Result<SourceKind>
     where F: FnMut(&Path, &cap_std::fs::Metadata, &mut Self) -> Result<()> {
+        // Authorization precedes enumeration: a source must never be asked for
+        // candidates under a root the operator policy refuses. The walk fallback
+        // re-authorizes on its own path, so both branches check before they
+        // observe anything.
+        request.authorize_path(root)?;
         let started = self.profile.start();
         let kind = if self.running() {
             // One decision per request: the source's own deadline is the scan's
@@ -162,7 +175,7 @@ impl Scan {
             let budget = EnumBudget::with_timeout(MAX_WALK_ENTRIES, MAX_DEPTH, self.remaining());
             match candidates::collect(root, request, source, budget) {
                 Outcome::Ready(batch) => {
-                    self.apply_batch(root, patterns, request, &batch, &mut each)?;
+                    self.apply_batch(root, patterns, &batch, &mut each)?;
                     SourceKind::Index
                 }
                 Outcome::Fallback(_) => {
@@ -185,9 +198,10 @@ impl Scan {
     /// component order, the order the walk visits them, so the `scanned` /
     /// `skipped` cut-off at `max_files` and the skip counts match the walk
     /// byte for byte.
-    fn apply_batch<F>(&mut self, root: &Path, patterns: &[String], request: &Request, batch: &candidates::Batch, each: &mut F) -> Result<()>
+    fn apply_batch<F>(&mut self, root: &Path, patterns: &[String], batch: &candidates::Batch, each: &mut F) -> Result<()>
     where F: FnMut(&Path, &cap_std::fs::Metadata, &mut Self) -> Result<()> {
-        request.authorize_path(root)?;
+        // `walk_indexed` authorized `root` before the source was consulted; do
+        // not re-check here, so the decision happens exactly once.
         let compiled = self.profile.start();
         let patterns = patterns::Patterns::new(patterns);
         self.profile.record("globCompile", compiled);
