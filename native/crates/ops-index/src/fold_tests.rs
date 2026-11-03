@@ -150,8 +150,27 @@ fn ascii_fast_path_and_slow_path_agree() {
 
 fn fold_non_ascii_for_test(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
-    fold_non_ascii(bytes, &mut out);
+    let mut scratch = Vec::new();
+    fold_non_ascii(bytes, &mut out, &mut scratch);
     out
+}
+
+#[test]
+fn scratch_reuse_matches_fold_and_is_left_empty() {
+    let mut scratch = Vec::with_capacity(8);
+    let mut first = Vec::new();
+    fold_into_with_scratch("ÇAĞ".as_bytes(), &mut first, &mut scratch);
+    assert_eq!(first, fold_text("ÇAĞ"));
+    assert!(scratch.is_empty());
+    let mut second = Vec::new();
+    fold_into_with_scratch("café".as_bytes(), &mut second, &mut scratch);
+    assert_eq!(second, fold_text("café"));
+    assert!(scratch.is_empty());
+    // The ASCII fast path must not touch the scratch buffer either.
+    let mut ascii = Vec::new();
+    fold_into_with_scratch(b"ABC", &mut ascii, &mut scratch);
+    assert_eq!(ascii, b"abc");
+    assert!(scratch.is_empty());
 }
 
 proptest! {

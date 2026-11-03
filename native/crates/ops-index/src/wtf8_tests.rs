@@ -99,6 +99,7 @@ fn exact_resync_counts() {
     assert_eq!(decode(&[0xE0, 0x80, 0xAF]).len(), 3);
     assert_eq!(decode(&[0xF7, 0xBF, 0xBF, 0xBF]).len(), 4);
     assert_eq!(decode(&[0xF0, 0x8D, 0xA0, 0x80]).len(), 4);
+    assert_eq!(decode(&[0xC2]).len(), 1);
     assert_eq!(decode(&[0xE0, 0xA0]).len(), 2);
     assert_eq!(decode(&[0xF0, 0x90, 0x80]).len(), 3);
     assert_eq!(decode(&[0xF8, 0x41]).len(), 2);
@@ -136,13 +137,18 @@ fn little_endian_bytes_match_the_unit_slice_entry_point() {
     let actual_lone = from_utf16_le(&le, &mut actual);
     assert_eq!(actual, expected);
     assert_eq!(actual_lone, expected_lone);
-    let mut odd = le.clone();
-    odd.push(0xAA);
-    let mut actual = Vec::new();
-    from_utf16_le(&odd, &mut actual);
-    assert_eq!(
-        actual, expected,
-        "a trailing odd byte is ignored, not guessed"
+}
+
+#[test]
+#[cfg(debug_assertions)]
+fn odd_byte_length_is_a_debug_contract_violation() {
+    let result = std::panic::catch_unwind(|| {
+        let mut out = Vec::new();
+        from_utf16_le(&[0x61, 0x00, 0xAA], &mut out)
+    });
+    assert!(
+        result.is_err(),
+        "callers validate the even UTF-16 length; an odd buffer is a bug"
     );
 }
 
@@ -209,6 +215,11 @@ proptest! {
         let decoded: Vec<u32> = CodePoints::new(&bytes).collect();
         prop_assert!(decoded.iter().all(|code| *code <= 0x10_FFFF));
         let _ = to_string_lossy(&bytes);
-        prop_assert_eq!(to_utf16(&bytes).len(), to_utf16(&bytes).len());
+        // Re-encoding the decoded units is stable: to_utf16 output, fed back
+        // through from_utf16, must produce the same units.
+        let units = to_utf16(&bytes);
+        let mut reencoded = Vec::new();
+        from_utf16(&units, &mut reencoded);
+        prop_assert_eq!(to_utf16(&reencoded), units);
     }
 }
