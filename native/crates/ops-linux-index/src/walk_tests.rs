@@ -174,7 +174,7 @@ fn symlinks_are_reported_but_never_followed() {
     std::os::unix::fs::symlink(tree.root.join("real"), tree.root.join("linkdir")).unwrap();
 
     let set = enumerate(&tree.root, budget(100, 8)).unwrap();
-    let paths = rel_paths(&sorted(set.entries.clone()));
+    let paths = rel_paths(&set.entries);
     assert_eq!(paths, ["linkdir", "real", "real/inside.txt"]);
 
     let link = set
@@ -221,6 +221,22 @@ fn an_exactly_full_entry_budget_is_not_truncated() {
     let set = enumerate(&tree.root, budget(2, 4)).unwrap();
     assert_eq!(set.entries.len(), 2);
     assert!(!set.truncated);
+}
+
+#[test]
+fn global_component_order_is_applied_before_truncation() {
+    let tree = TempTree::new("sort-before-truncate");
+    // Breadth-first order would be: a, a0.txt, b.txt, then a/c.txt. The entry
+    // budget must keep the first two names in component order instead:
+    // "a" < "a/c.txt" < "a0.txt" < "b.txt".
+    tree.dir("a");
+    tree.file("a/c.txt", 1);
+    tree.file("a0.txt", 1);
+    tree.file("b.txt", 1);
+
+    let set = enumerate(&tree.root, budget(2, 4)).unwrap();
+    assert_eq!(rel_paths(&set.entries), ["a", "a/c.txt"]);
+    assert!(set.truncated);
 }
 
 #[test]
@@ -286,6 +302,21 @@ fn an_already_expired_budget_is_an_error() {
 }
 
 #[test]
+fn a_deadline_that_passes_during_the_walk_is_a_budget_error() {
+    let tree = TempTree::new("deadline");
+    tree.file("a.txt", 1);
+    let walk = WalkBudget {
+        deadline: Instant::now() - Duration::from_millis(1),
+        max_depth: 4,
+    };
+    assert!(matches!(
+        walk_directory(&tree.root, &tree.root, 1, &walk),
+        Err(SourceError::Budget)
+    ));
+    assert!(walk.expired());
+}
+
+#[test]
 fn a_symlinked_root_is_enumerated() {
     let tree = TempTree::new("root-symlink-target");
     tree.file("a.txt", 1);
@@ -314,24 +345,13 @@ fn a_generous_budget_is_reproducible() {
 }
 
 #[test]
-fn reserving_beyond_the_entry_budget_marks_truncation() {
-    let walk = WalkBudget::new(budget(1, 4));
-    assert!(walk.reserve());
-    assert!(!walk.reserve());
-    assert!(walk.truncated.load(Ordering::Relaxed));
-}
+fn entries_are_sorted_by_component_order() {
+    let tree = TempTree::new("sorted");
+    tree.file("b.txt", 1);
+    tree.file("a/c.txt", 1);
+    tree.file("a0.txt", 1);
 
-#[test]
-fn an_expired_deadline_inside_a_directory_stops_the_batch() {
-    let tree = TempTree::new("deadline");
-    tree.file("a.txt", 1);
-    let walk = WalkBudget::new(EnumBudget::new(
-        10,
-        4,
-        Instant::now() - Duration::from_millis(1),
-    ));
-    let batch = walk_directory(&tree.root, &tree.root, 1, &walk).unwrap();
-    assert!(batch.stopped);
-    assert!(batch.entries.is_empty());
-    assert!(walk.truncated.load(Ordering::Relaxed));
+    let set = enumerate(&tree.root, budget(100, 8)).unwrap();
+    assert_eq!(rel_paths(&set.entries), ["a", "a/c.txt", "a0.txt", "b.txt"]);
+    assert!(!set.truncated);
 }

@@ -3,16 +3,16 @@
 //!
 //! The walker is a breadth-first `read_dir` recursion. It never follows a
 //! symlink (candidates of kind `Link` are reported, their targets are not
-//! entered), never reads file contents, and reports a stopped walk through
-//! [`CandidateSet::truncated`]. Any I/O failure aborts the whole set: a partial
-//! answer must never be reported as complete.
+//! entered), never reads file contents, and never reports a partial answer as
+//! complete: an I/O failure or a passed deadline is returned as an error, and a
+//! depth cut is reported through [`CandidateSet::truncated`].
 //!
 //! Parallelism is per directory: one level's directories are read and lstat'ed
-//! concurrently, then the next level starts. Entries are returned in
-//! breadth-first order with each directory's names sorted, so a walk with a
-//! non-truncating budget is reproducible; a truncating entry budget keeps
-//! whichever entries won the shared slots, and the set is discarded by the
-//! caller anyway because `truncated` is set.
+//! concurrently, then the next level starts. The finished set is sorted by
+//! relative path component order before the entry budget is applied, so the
+//! same tree and budget always return the same entries — truncation keeps the
+//! lexicographically first `max_entries` names rather than whichever entries
+//! won a scheduling race.
 //!
 //! Depth counts relative path components: the root is depth 0, its direct
 //! children depth 1. A directory at the depth cap is not entered, and the set
@@ -26,62 +26,28 @@ use std::fs::{DirEntry, Metadata};
 use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// One directory's contribution to the walk.
 struct DirBatch {
     entries: Vec<Candidate>,
     subdirs: Vec<PathBuf>,
-    /// The shared budget stopped this directory; the caller must stop too.
-    stopped: bool,
+    /// A directory at the depth cap had content that was not enumerated.
+    truncated: bool,
 }
 
-/// Entry/depth/deadline budget shared by the concurrent per-directory tasks.
+/// The two budget values the walk itself must enforce.
+///
+/// `max_entries` is deliberately absent: it limits the returned set, which is
+/// applied after the global sort, never the traversal order.
 struct WalkBudget {
-    remaining: AtomicUsize,
-    truncated: AtomicBool,
     deadline: Instant,
     max_depth: usize,
 }
 
 impl WalkBudget {
-    fn new(budget: EnumBudget) -> Self {
-        Self {
-            remaining: AtomicUsize::new(budget.max_entries),
-            truncated: AtomicBool::new(false),
-            deadline: budget.deadline,
-            max_depth: budget.max_depth,
-        }
-    }
-
     fn expired(&self) -> bool {
         Instant::now() >= self.deadline
-    }
-
-    /// Reserves one entry slot. Returns false (and marks the set truncated)
-    /// when the entry budget is exhausted.
-    fn reserve(&self) -> bool {
-        let mut current = self.remaining.load(Ordering::Relaxed);
-        loop {
-            if current == 0 {
-                self.truncated.store(true, Ordering::Relaxed);
-                return false;
-            }
-            match self.remaining.compare_exchange_weak(
-                current,
-                current - 1,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => return true,
-                Err(observed) => current = observed,
-            }
-        }
-    }
-
-    fn mark_truncated(&self) {
-        self.truncated.store(true, Ordering::Relaxed);
     }
 }
 
@@ -91,10 +57,11 @@ impl WalkBudget {
 /// the caller named that path, and the relative paths stay rooted at it. Every
 /// entry below the root is lstat'ed, never followed.
 ///
-/// Any I/O failure (missing root, a file used as the root, a directory that
-/// cannot be read, an entry that vanished between `read_dir` and `lstat`) is
-/// returned as [`SourceError::Io`]; the caller then falls back to its own
-/// traversal.
+/// An already-expired deadline, or one that passes during the walk, returns
+/// [`SourceError::Budget`]. Any I/O failure (missing root, a file used as the
+/// root, a directory that cannot be read, an entry that vanished between
+/// `read_dir` and `lstat`) returns [`SourceError::Io`]. The caller falls back to
+/// its own traversal on either error.
 pub fn enumerate(root: &Path, budget: EnumBudget) -> Result<CandidateSet, SourceError> {
     if budget.expired() {
         return Err(SourceError::Budget);
@@ -104,45 +71,42 @@ pub fn enumerate(root: &Path, budget: EnumBudget) -> Result<CandidateSet, Source
         return Err(SourceError::Io(io::ErrorKind::NotADirectory));
     }
 
-    let walk = WalkBudget::new(budget);
+    let walk = WalkBudget {
+        deadline: budget.deadline,
+        max_depth: budget.max_depth,
+    };
     let mut entries = Vec::new();
+    let mut truncated = false;
 
     if budget.max_depth == 0 {
         // No relative path has fewer than one component, so nothing can be
         // returned; still report a non-empty root as truncated rather than
         // claiming an empty volume.
-        if std::fs::read_dir(root).map_err(io_error)?.next().is_some() {
-            walk.mark_truncated();
-        }
-        return Ok(finish(entries, &walk));
+        truncated = std::fs::read_dir(root).map_err(io_error)?.next().is_some();
+        return Ok(finish(entries, budget.max_entries, truncated));
     }
 
     let mut current = vec![root.to_path_buf()];
     let mut depth = 1;
     while !current.is_empty() && depth <= walk.max_depth {
+        if walk.expired() {
+            return Err(SourceError::Budget);
+        }
         let batches = current
             .par_iter()
             .map(|dir| walk_directory(root, dir, depth, &walk))
             .collect::<Result<Vec<_>, SourceError>>()?;
         let mut next = Vec::new();
-        let mut stopped = false;
         for batch in batches {
             entries.extend(batch.entries);
             next.extend(batch.subdirs);
-            stopped |= batch.stopped;
-        }
-        if stopped {
-            break;
-        }
-        if walk.expired() {
-            walk.mark_truncated();
-            break;
+            truncated |= batch.truncated;
         }
         current = next;
         depth += 1;
     }
 
-    Ok(finish(entries, &walk))
+    Ok(finish(entries, budget.max_entries, truncated))
 }
 
 /// Reads one directory and maps its entries, collecting subdirectories at the
@@ -153,35 +117,28 @@ fn walk_directory(
     depth: usize,
     walk: &WalkBudget,
 ) -> Result<DirBatch, SourceError> {
-    let mut batch = DirBatch {
-        entries: Vec::new(),
-        subdirs: Vec::new(),
-        stopped: false,
-    };
     if walk.expired() {
-        walk.mark_truncated();
-        batch.stopped = true;
-        return Ok(batch);
+        return Err(SourceError::Budget);
     }
 
     let read = std::fs::read_dir(dir).map_err(io_error)?;
     let mut raw = Vec::new();
     for item in read {
+        if walk.expired() {
+            return Err(SourceError::Budget);
+        }
         raw.push(item.map_err(io_error)?);
     }
-    // Sorted by name so an untruncated walk is reproducible regardless of the
-    // file system's directory order or rayon's scheduling.
     raw.sort_by_key(DirEntry::file_name);
 
+    let mut batch = DirBatch {
+        entries: Vec::new(),
+        subdirs: Vec::new(),
+        truncated: false,
+    };
     for entry in raw {
         if walk.expired() {
-            walk.mark_truncated();
-            batch.stopped = true;
-            break;
-        }
-        if !walk.reserve() {
-            batch.stopped = true;
-            break;
+            return Err(SourceError::Budget);
         }
         let metadata = entry.metadata().map_err(io_error)?;
         let rel = entry
@@ -197,7 +154,7 @@ fn walk_directory(
                 // Entries below the depth cap are not enumerated. Report
                 // truncation only when this directory really has content, so an
                 // exactly-sized tree is not falsely marked incomplete.
-                mark_depth_truncation(&entry.path(), walk)?;
+                batch.truncated |= mark_depth_truncation(&entry.path())?;
             }
         }
         batch.entries.push(Candidate {
@@ -214,21 +171,29 @@ fn walk_directory(
 
 /// Maps a directory at the depth cap: if it has any entry, the walk below it
 /// was skipped and the set is truncated.
-fn mark_depth_truncation(dir: &Path, walk: &WalkBudget) -> Result<(), SourceError> {
+fn mark_depth_truncation(dir: &Path) -> Result<bool, SourceError> {
     match std::fs::read_dir(dir).map_err(io_error)?.next() {
-        Some(Ok(_)) => {
-            walk.mark_truncated();
-            Ok(())
-        }
+        Some(Ok(_)) => Ok(true),
         Some(Err(error)) => Err(SourceError::Io(error.kind())),
-        None => Ok(()),
+        None => Ok(false),
     }
 }
 
-fn finish(entries: Vec<Candidate>, walk: &WalkBudget) -> CandidateSet {
+/// Sorts by relative path component order, then applies the entry budget.
+///
+/// Sorting first makes truncation deterministic: the retained entries are the
+/// first `max_entries` names in path order, independent of rayon scheduling or
+/// the file system's directory order.
+fn finish(entries: Vec<Candidate>, max_entries: usize, mut truncated: bool) -> CandidateSet {
+    let mut entries = entries;
+    entries.sort_by(|left, right| left.rel.cmp(&right.rel));
+    if entries.len() > max_entries {
+        entries.truncate(max_entries);
+        truncated = true;
+    }
     CandidateSet {
         entries,
-        truncated: walk.truncated.load(Ordering::Relaxed),
+        truncated,
         consistent_at_ms: now_ms(),
     }
 }
