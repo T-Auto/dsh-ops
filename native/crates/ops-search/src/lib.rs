@@ -1,6 +1,6 @@
 //! File search orchestration over the shared no-follow file primitives.
 #![forbid(unsafe_code)]
-mod scan;
+pub mod scan;
 pub mod candidates;
 mod paging;
 mod search;
