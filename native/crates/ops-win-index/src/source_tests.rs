@@ -128,10 +128,14 @@ fn cold_enumeration_matches_a_walk_of_the_same_root() {
             }
         }
         Err(SourceError::Unsupported) => {
-            assert_eq!(
-                state,
-                SourceState::Unsupported,
-                "the non-Administrator fallback must stay typed, not an error"
+            // Either the process is not elevated (state Unsupported) or the
+            // volume handle was refused for another privileged reason (state
+            // Unavailable). Both are typed fallbacks, never a panic, and W1
+            // never claims a caught-up snapshot.
+            assert_ne!(state, SourceState::Ready, "W1 never claims Ready");
+            assert!(
+                matches!(state, SourceState::Unsupported | SourceState::Unavailable),
+                "unexpected state: {state:?}"
             );
         }
         Err(other) => panic!("unexpected enumeration failure: {other:?}"),
