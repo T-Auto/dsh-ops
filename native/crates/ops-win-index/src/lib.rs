@@ -1,6 +1,8 @@
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
+#![deny(unsafe_op_in_unsafe_fn)]
 #![cfg(windows)]
-//! Windows file-name index data source (W1: cold MFT enumeration).
+//! Windows file-name index data source (W1: cold MFT enumeration; W3: raw FSCTL
+//! fallback).
 //!
 //! This crate is the Windows member of the platform data-source crates designed
 //! in #584. W1 delivers the cold half: FSCTL_ENUM_USN_DATA through
@@ -9,13 +11,20 @@
 //! no event stream and no daemon; W2 wires the USN journal and turns a cold
 //! enumeration into a caught-up snapshot.
 //!
+//! W3 adds [`winfs`], the raw FSCTL fallback: paged
+//! `FSCTL_ENUM_USN_DATA`/`FSCTL_READ_USN_JOURNAL` reads for the cases
+//! usn-journal-rs does not express (explicit start file reference, reason mask,
+//! `ReturnOnlyOnClose`, wait hints and caller-owned page buffers). Parsing stays
+//! in `ops_index::usn`; the crate's only `unsafe` lives in that module, behind
+//! a safe `VolumeHandle`/`VolumeIo` boundary, with `unsafe_op_in_unsafe_fn`
+//! denied and a SAFETY comment on every block.
+//!
 //! The whole crate body is behind #![cfg(windows)], so every other target
 //! compiles an empty library and the workspace stays green. The Windows-only
-//! dependency is target-gated for the same reason. usn-journal-rs keeps its
-//! unsafe in its own crate: nothing here uses unsafe, names a raw Win32 type,
-//! or writes a platform cfg branch.
+//! dependencies are target-gated for the same reason. usn-journal-rs keeps its
+//! own unsafe in its own crate; `winfs` is the single, documented island here.
 //!
-//! What W1 does NOT claim:
+//! What this crate does NOT claim:
 //!
 //! - No caught-up snapshot. state never answers Ready yet; callers keep
 //!   falling back to their own traversal until W2 can replay the journal.
@@ -29,12 +38,17 @@
 //! - No roots below a mounted-volume directory. W1 locates the root by walking
 //!   from the volume root through the path components, so the root must live
 //!   on a volume mounted at its drive or UNC root.
+//! - The raw FSCTL fallback is not wired into `WinFsSource` yet: W3 ships the
+//!   paged API and its tests, and the source keeps using usn-journal-rs until a
+//!   later slice needs the fallback.
 //!
 //! Design reference: goz v0.4.0 (8c6a7b1562bb1eea46dd67d462805b49b9a1f152,
 //! MIT). Nothing was copied; this platform layer is written for dsh-ops.
 
 pub mod mft;
 pub mod source;
+#[allow(unsafe_code)]
+pub mod winfs;
 
 pub use mft::cold_candidates;
 pub use source::WinFsSource;
