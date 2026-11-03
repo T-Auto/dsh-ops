@@ -1,0 +1,23 @@
+[package]
+name = "ops-mac-index"
+version = "0.5.0-alpha3"
+edition = "2024"
+license = "MIT"
+rust-version = "1.88"
+publish = false
+
+[dependencies]
+ops-index = { path = "../ops-index" }
+
+# The crate body starts with `#![cfg(target_os = "macos")]`, so the walk
+# dependencies are target-gated as well: Linux and Windows workspace builds
+# never resolve them into a compile unit. Keeping them out of `[dependencies]`
+# is what makes that true for every target, not just the one this branch runs on.
+[target.'cfg(target_os = "macos")'.dependencies]
+# Directory traversal for the cold path. Exact pin: 2.5.0 has been the newest
+# release since 2024-03-01 and the declared MSRV (1.88) is already above the
+# crate's, so a range could only deliver a silent edition bump.
+walkdir = "=2.5.0"
+# Per-entry stat fan-out for the same path: #423 measured `symlink_metadata` at
+# 71–87 % of a walk, which is the part worth parallelising.
+rayon = "=1.12.0"
