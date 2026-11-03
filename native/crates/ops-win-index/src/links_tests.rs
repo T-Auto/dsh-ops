@@ -199,6 +199,38 @@ fn every_reported_name_is_non_empty_and_has_no_interior_nul() {
 }
 
 #[test]
+fn an_anchor_with_an_embedded_nul_is_invalid() {
+    let wide: Vec<u16> = "C:\\tmp\\bad\u{0000}name.txt".encode_utf16().collect();
+    let anchor = PathBuf::from(OsString::from_wide(&wide));
+    let outcome = enumerate(&anchor);
+    assert_eq!(
+        outcome.failure().map(|failure| failure.kind),
+        Some(LinkFailureKind::InvalidAnchor),
+        "a NUL inside the anchor must be rejected before the FFI call"
+    );
+}
+
+#[test]
+fn a_path_longer_than_the_legacy_limit_still_enumerates() {
+    let tree = TempTree::new("long-path");
+    let mut rel = PathBuf::new();
+    for index in 0..14 {
+        rel.push(format!("0123456789abcdefghijklmnopqrstuvwxyz{index:02}"));
+    }
+    let dir = tree.dir(rel.to_str().unwrap());
+    let file_name = "long-0123456789abcdefghijklmnopqrstuvwxyz0123456789.txt";
+    let file = dir.join(file_name);
+    std::fs::write(&file, b"x").unwrap();
+
+    let outcome = enumerate(&file);
+    let set = outcome
+        .set()
+        .expect("a path past MAX_PATH must still enumerate (verbatim prefix)");
+    assert_eq!(set.len(), 1);
+    assert!(ends_with(&set.names()[0], &rel.join(file_name)));
+}
+
+#[test]
 fn failure_codes_are_stable() {
     assert_eq!(LinkFailureKind::FileGone.code(), "WIN_LINK_FILE_GONE");
     assert_eq!(

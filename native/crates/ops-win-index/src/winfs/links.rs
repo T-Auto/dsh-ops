@@ -28,6 +28,11 @@ const START_NAME_UNITS: usize = 512;
 /// Longest name buffer accepted, in UTF-16 units; beyond this is a corrupt or
 /// hostile answer, not a path.
 const MAX_NAME_UNITS: u32 = 32_768;
+/// Paths longer than this get the verbatim prefix: FindFirstFileNameW only
+/// accepts paths past the legacy MAX_PATH limit in that form.
+const LEGACY_MAX_PATH_UNITS: usize = 248;
+/// The verbatim prefix, as UTF-16 units.
+const VERBATIM_PREFIX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
 
 /// Closed on drop, including every early return.
 struct SearchHandle(HANDLE);
@@ -48,6 +53,12 @@ pub(crate) fn enumerate(anchor: &OsStr) -> Result<Vec<Vec<u16>>, LinkFailure> {
     if wide.is_empty() {
         return Err(failure(LinkFailureKind::InvalidAnchor, 0));
     }
+    if wide.len() > LEGACY_MAX_PATH_UNITS && !wide.starts_with(&VERBATIM_PREFIX) {
+        let mut prefixed = Vec::with_capacity(wide.len() + VERBATIM_PREFIX.len());
+        prefixed.extend_from_slice(&VERBATIM_PREFIX);
+        prefixed.extend_from_slice(&wide);
+        wide = prefixed;
+    }
     wide.push(0);
 
     let mut buf = vec![0u16; START_NAME_UNITS];
@@ -64,8 +75,12 @@ pub(crate) fn enumerate(anchor: &OsStr) -> Result<Vec<Vec<u16>>, LinkFailure> {
         if length == 0 || length > MAX_NAME_UNITS {
             return Err(failure(LinkFailureKind::WalkAborted, 0));
         }
-        buf = vec![0u16; length as usize];
-        // SAFETY: buf now holds exactly the size the API just asked for.
+        // One extra unit for the terminating NUL: the documented required size
+        // does not promise it.
+        let retry_units = length as usize + 1;
+        buf = vec![0u16; retry_units];
+        length = retry_units as u32;
+        // SAFETY: buf now holds the size the API asked for plus one NUL slot.
         let retry = unsafe { FindFirstFileNameW(wide.as_ptr(), 0, &mut length, buf.as_mut_ptr()) };
         if retry == INVALID_HANDLE_VALUE {
             // SAFETY: plain FFI read of the calling thread's last error.
@@ -99,8 +114,11 @@ pub(crate) fn enumerate(anchor: &OsStr) -> Result<Vec<Vec<u16>>, LinkFailure> {
                     if length == 0 || length > MAX_NAME_UNITS {
                         return Err(failure(LinkFailureKind::WalkAborted, names.len() as u32));
                     }
-                    buf = vec![0u16; length as usize];
-                    // SAFETY: buf is now the size the API just asked for.
+                    // One extra unit for the terminating NUL.
+                    let retry_units = length as usize + 1;
+                    buf = vec![0u16; retry_units];
+                    length = retry_units as u32;
+                    // SAFETY: buf now holds the size the API asked for plus one NUL slot.
                     let retry =
                         unsafe { FindNextFileNameW(handle.0, &mut length, buf.as_mut_ptr()) };
                     if retry == 0 {

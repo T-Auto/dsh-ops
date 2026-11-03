@@ -1,12 +1,13 @@
-//! Executable constraint: the crate's only unsafe lives in `sys`.
+//! Executable constraint: the crate's only unsafe lives in `sys` and `links`.
 
 use std::collections::BTreeMap;
 
 #[test]
-fn unsafe_is_confined_to_the_sys_module() {
-    let sources: [(&str, &str); 13] = [
+fn unsafe_is_confined_to_the_sys_and_links_modules() {
+    let sources: [(&str, &str); 14] = [
         ("mod.rs", include_str!("mod.rs")),
         ("sys.rs", include_str!("sys.rs")),
+        ("links.rs", include_str!("links.rs")),
         ("enum_data.rs", include_str!("enum_data.rs")),
         ("journal.rs", include_str!("journal.rs")),
         ("error.rs", include_str!("error.rs")),
@@ -42,15 +43,15 @@ fn unsafe_is_confined_to_the_sys_module() {
         by_file.insert(name, found);
     }
     for (name, found) in &by_file {
-        if *name == "sys.rs" {
+        if *name == "sys.rs" || *name == "links.rs" {
             assert!(
                 !found.is_empty(),
-                "the unsafe island should contain the raw calls"
+                "{name} is an allowed unsafe island and should contain its raw calls"
             );
         } else {
             assert!(
                 found.is_empty(),
-                "{name} has unsafe code outside sys.rs: {found:?}"
+                "{name} has unsafe code outside the sys/links islands: {found:?}"
             );
         }
     }

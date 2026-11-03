@@ -18,10 +18,11 @@
 //! contain unpaired surrogates, so decoding is left to the index's WTF-8 layer
 //! rather than being lossily flattened here.
 //!
-//! The public API is safe. All Win32 calls live in crate::winfs::links, which
-//! the crate allows unsafe for and nothing else.
+//! The public API is safe. All Win32 calls live in crate::winfs::links, one of
+//! the crate's two allowed unsafe islands (the other is crate::winfs::sys).
 
 use std::collections::HashSet;
+use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 
 /// Upper bound on names considered for one file.
@@ -161,21 +162,25 @@ impl LinkWalkStats {
 
 /// Enumerates every current hard-link name of the file at anchor.
 ///
-/// anchor must be an absolute path to an existing name of the file; the caller
-/// normally takes it from its own verified candidate. The returned names are
-/// volume-rooted exactly as Win32 reports them, so a caller joins them to
-/// parent entries by matching their trailing directory/name components.
+/// anchor must be an absolute, NUL-free path to an existing name of the file;
+/// the caller normally takes it from its own verified candidate. The returned
+/// names are volume-rooted exactly as Win32 reports them, so a caller joins them
+/// to parent entries by matching their trailing directory/name components.
+///
+/// Anchors longer than the legacy MAX_PATH limit are passed to Win32 with the
+/// verbatim prefix by the boundary module, so deep paths still enumerate.
 ///
 /// This never returns an empty complete set: a walk that could not be trusted is
 /// LinkOutcome::Incomplete and must be skipped and counted by the caller.
 pub fn enumerate(anchor: &Path) -> LinkOutcome {
-    if anchor.as_os_str().is_empty() || !anchor.is_absolute() {
+    let os = anchor.as_os_str();
+    if os.is_empty() || !anchor.is_absolute() || os.encode_wide().any(|unit| unit == 0) {
         return LinkOutcome::Incomplete(LinkFailure {
             kind: LinkFailureKind::InvalidAnchor,
             seen: 0,
         });
     }
-    match crate::winfs::links::enumerate(anchor.as_os_str()) {
+    match crate::winfs::links::enumerate(os) {
         Ok(names) => complete_or_aborted(names),
         Err(failure) => LinkOutcome::Incomplete(failure),
     }
