@@ -8,13 +8,22 @@
 //!    walk, so changes during enumeration are buffered.
 //! 2. `walk::enumerate` builds the snapshot.
 //! 3. [`WatchSession::adopt_directories`] records which relative paths are
-//!    directories in that snapshot.
+//!    directories in that snapshot. This step is required: until it runs the
+//!    baseline is not ready and every structural event conservatively requires
+//!    a rescan.
 //! 4. [`WatchSession::poll`] drains the buffer. The caller applies the events;
 //!    when `invalidated` is set it must discard the snapshot and rescan, then
 //!    call [`WatchSession::resync_baseline`].
 //!
 //! Event loss or a watch that can no longer be attributed is never replayed
 //! onto the snapshot; see [`crate::state`] for the invalidation rules.
+//!
+//! A directory created after the baseline also requires a rescan. notify's
+//! recursive inotify backend registers the new directory's watch
+//! asynchronously, so children created before registration would never emit
+//! events; expanding the subtree ourselves would race the same window. L2
+//! therefore invalidates instead of guessing, and a later slice may replace
+//! that with an explicit expansion once it can prove the watch is live.
 
 use crate::limits::{DegradeReason, WatchLimits};
 use crate::state::{InvalidationReason, SessionCore, WatchEvent, WatchMode, WatchUpdate};
@@ -89,6 +98,9 @@ impl WatchSession {
     }
 
     /// Records the relative paths that are directories in the cold snapshot.
+    ///
+    /// Required after the cold walk: until this runs, the session treats every
+    /// structural event as unattributable and requires a rescan.
     pub fn adopt_directories(&mut self, dirs: impl IntoIterator<Item = PathBuf>) {
         self.core.adopt_directories(dirs);
     }
