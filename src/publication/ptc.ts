@@ -25,6 +25,7 @@ import { surfaceOf as toolSurface, visibleNames } from './surface.js'
 import { onToolChange, withToolChange } from './changes.js'
 import { monitoredInvoke } from '../execution/monitored.js'
 import { scopedReconciliation, scopeFamilies } from './reconciliation.js'
+import { createReentryCooling, safeMessage } from './reentry.js'
 import { retired as retiredLegacyRow } from '../settings/legacy.js'
 export { resolvePtcConfig } from '../config.js'
 export const name = 'dsh-ops-ptc'
@@ -94,14 +95,50 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     const retired = new WeakSet<Agent>()
     let stopped = false, mutating = false, epoch = 0, foreignDuringPublish = false
     let verifyingForeign = false
-    const reconciliation = scopedReconciliation<Agent>(error => ctx.logger.warn('dsh-ops: PTC publication failed: ' + String(error)))
+    // The host refuses a nested registry write while it publishes an append. One cooldown per row:
+    // a refused pass stops where it is and no pass touches the registry until the timer expires,
+    // so a held window costs a bounded trickle instead of one refusal per session (#579).
+    // `reconcile` is declared below; the retry reaches it only after this line has run.
+    //
+    // `failed()` arms at most one timer and later refusals only extend the deadline; the shared
+    // `tick` renews that timer for the remainder, so the deferred pass also runs when the host
+    // sends no further event. This row only has to say *what* is owed.
+    //
+    // The deferred pass is **owed-only**. Forcing the whole fleet would republish every healthy
+    // session on each expiry, which under a jittery window costs far more than the refusals it
+    // saves: measured 820 touches for 20 sessions that way, 60 (3 × sessions) this way (#579).
+    const owed = new Set<Agent>()
+    const deferred = (): void => {
+      if (stopped || owed.size === 0) return
+      const retry = new Set(owed)
+      owed.clear()
+      void reconcile(false, retry)
+    }
+    const cooling = createReentryCooling({
+      label: 'PTC',
+      retry: deferred,
+      report: message => ctx.logger.warn(message),
+    })
+    // Every failed pass lands here: `scopedReconciliation` swallows the action's rejection into
+    // this callback. A host reentry refusal arms the row's cooldown and its single warning;
+    // anything else keeps its own line, now total against a hostile `message` getter.
+    const reconciliation = scopedReconciliation<Agent>(error => {
+      if (cooling.classify(error)) { cooling.failed(error); return }
+      ctx.logger.warn('dsh-ops: PTC publication failed: ' + safeMessage(error))
+    })
     let scopeChainOf: (scope: object) => object[] = scope => [scope]
     const surfaceOf = (agent: Agent): string => toolSurface(tools, agent) + '\u0002' + nativeProviderRevision(ctx, scopeChainOf(agent))
     const clear = (entry: Entry) => {
       entry.published = undefined
       entry.owned.clear()
       for (const dispose of entry.disposers.splice(0)) {
-        try { withToolChange([entry.agent], dispose) } catch (error) { ctx.logger.warn('dsh-ops: PTC teardown failed; continuing:', error) }
+        // A refusal here means the host is publishing that append: count it into the row's single
+        // aggregated episode instead of printing one line per disposer (#579). The publication
+        // path below arms the cooldown; a withdrawal never escalates the ladder on its own.
+        try { withToolChange([entry.agent], dispose) } catch (error) {
+          if (cooling.classify(error)) cooling.note('failed')
+          else ctx.logger.warn('dsh-ops: PTC teardown failed; continuing: ' + safeMessage(error))
+        }
       }
     }
     /**
@@ -161,6 +198,12 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     const queued = new Map<Agent, boolean>()
     const reconcile = (force = false, targets?: ReadonlySet<Agent>, verifyVerdict = true): Promise<void> => {
       if (stopped || mutating) return Promise.resolve()
+      // While the cooldown runs the host is still publishing that append, so a pass would pay the
+      // same refusal once per session. Record what this pass owed and retry only that (#579).
+      if (cooling.cooled()) {
+        for (const agent of targets ?? entries.keys()) owed.add(agent)
+        return Promise.resolve()
+      }
       for (const agent of targets ?? entries.keys()) {
         const entry = entries.get(agent)
         if (entry) ++entry.revision
@@ -205,7 +248,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         }
         if (stopped || !task.current()) return
         for (const agent of family) queued.delete(agent)
-        if (!dirty) return
+        if (!dirty) { cooling.succeeded(); return }
         const affected = related(changed)
         const publications = [...entries].filter(([agent]) => affected.has(agent))
         mutating = true; ownership?.begin()
@@ -261,8 +304,11 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
           // the next unrelated registry event mistakes our own definitions for a change.
           for (const [agent, entry] of publications) entry.surface = surfaceOf(agent)
           })
+          // The pass republished: the ladder restarts and the window's refusals are summarised.
+          cooling.succeeded()
         } catch (error) {
-          for (const [, entry] of publications) { clear(entry); entry.surface = undefined }
+          // Only the sessions this pass tried are owed a republication: the fleet is not.
+          for (const [, entry] of publications) { clear(entry); entry.surface = undefined; owed.add(entry.agent) }
           throw error
         } finally { ownership?.end(); mutating = false }
         if (foreignDuringPublish) {
@@ -435,6 +481,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     } }), 'dsh-ops: progressive PTC guidance')
     ctx.effect(() => async () => {
       stopped = true; mutating = true
+      cooling.dispose(); owed.clear()
       const cancelled = reconciliation.stop()
       for (const entry of entries.values()) { entry.calls.cancel('PTC component unloaded'); clear(entry) }
       await Promise.allSettled([...entries.values()].map(entry => entry.calls.stop()))
