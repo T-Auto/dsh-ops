@@ -14,7 +14,7 @@ crates.io API 核对），传递依赖由 lockfile 固定。完整许可证正�
 | crate | 精确版本 | 发布时间（UTC） | 许可证 | 用途 |
 | --- | --- | --- | --- | --- |
 | `usn-journal-rs` | `=0.5.0` | 2026-10-13 | MIT | 为 W1 的 MFT 冷枚举提供 `FSCTL_ENUM_USN_DATA` 安全封装，W2 起提供 USN 变更日志封装；它自己的 Win32 unsafe 收敛在其 crate 内。运行期需要 Administrator 权限，未提权即按文档回退。MSRV 1.88，与本 crate 地板相同。 |
-| `windows-sys` | `0.61`（锁定 0.61.2） | 2025-10-06 | MIT OR Apache-2.0 | W4 的硬链接枚举：`FindFirstFileNameW`、`FindNextFileNameW`、`FindClose` 与 `GetLastError`，features 为 `Win32_Foundation` + `Win32_Storage_FileSystem`。该包此前已通过 workspace 其它 Windows crate 进入 `native/Cargo.lock`，本片不新增包，只新增直接依赖边。MSRV 1.71。 |
+| `windows-sys` | `=0.61.2` | 2025-10-06 | MIT OR Apache-2.0 | W4 的硬链接枚举：`FindFirstFileNameW`、`FindNextFileNameW`、`FindClose` 与 `GetLastError`，features 为 `Win32_Foundation` + `Win32_Storage_FileSystem`。该包此前已通过 workspace 其它 Windows crate 进入 `native/Cargo.lock`，本片不新增包，只新增直接依赖边。MSRV 1.71。 |
 
 两个依赖都必须 target-gate：`usn-journal-rs` 自身包含 `#[cfg(not(windows))] compile_error!`，
 而 `windows-sys` 必须保持在 workspace 唯一的 0.61 线上；二者都不得出现在 `ops-index` 或其它

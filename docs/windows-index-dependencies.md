@@ -16,7 +16,7 @@ lockfile pins the transitive graph. Full licence texts are in
 | Crate | Pin | Published (UTC) | License | Why |
 | --- | --- | --- | --- | --- |
 | `usn-journal-rs` | `=0.5.0` | 2026-10-13 | MIT | Safe wrappers over `FSCTL_ENUM_USN_DATA` for W1's cold MFT enumeration and, from W2, over the USN change journal. It keeps its own Win32 unsafe inside its crate. Runtime operation requires Administrator privileges, which is the documented fallback. MSRV 1.88, equal to this crate's floor. |
-| `windows-sys` | `0.61` (locked 0.61.2) | 2025-10-06 | MIT OR Apache-2.0 | W4's hard-link enumeration: `FindFirstFileNameW`, `FindNextFileNameW`, `FindClose` and `GetLastError`, with features `Win32_Foundation` + `Win32_Storage_FileSystem`. The package was already resolved in `native/Cargo.lock` through the workspace's other Windows crate, so this slice adds no new package; the direct edge is new. MSRV 1.71. |
+| `windows-sys` | `=0.61.2` | 2025-10-06 | MIT OR Apache-2.0 | W4's hard-link enumeration: `FindFirstFileNameW`, `FindNextFileNameW`, `FindClose` and `GetLastError`, with features `Win32_Foundation` + `Win32_Storage_FileSystem`. The package was already resolved in `native/Cargo.lock` through the workspace's other Windows crate, so this slice adds no new package; the direct edge is new. MSRV 1.71. |
 
 Both dependencies are target-gated. `usn-journal-rs` itself contains
 `#[cfg(not(windows))] compile_error!`, and `windows-sys` must stay at the workspace's single
