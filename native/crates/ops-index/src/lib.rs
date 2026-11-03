@@ -17,6 +17,8 @@
 //! - [`layout`]: decoding of NTFS `FSCTL_QUERY_FILE_LAYOUT` output pages into
 //!   file records (names, sizes, modification times).
 //! - [`usn`]: pure byte parsers for USN enumeration and journal buffers.
+//! - [`index`]: interned name arenas, the struct-of-arrays entry table, and
+//!   record maps.
 //! - [`ids`]: stable identifiers and the 128-bit `FileKey` (NTFS FRN or
 //!   POSIX `(dev, ino)`). `FileKey` is 16 bytes so ReFS' 128-bit file ids
 //!   fit; `EntryId`/`NameId` stay 4 bytes because they index this crate's
@@ -34,6 +36,7 @@
 pub mod error;
 pub mod fold;
 pub mod ids;
+pub mod index;
 pub mod layout;
 pub mod source;
 pub mod usn;
