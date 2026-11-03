@@ -150,8 +150,8 @@ fn a_rename_pair_without_a_file_id_falls_back_to_remove_and_add() {
         .changes
         .iter()
         .find(|change| change.rel.as_path() == Path::new("new.txt"))
-        .expect("the existing name is a modification");
-    assert_eq!(added.action, ChangeAction::Modified);
+        .expect("the existing name is an addition");
+    assert_eq!(added.action, ChangeAction::Added);
 }
 
 #[test]
@@ -172,7 +172,7 @@ fn an_ambiguous_rename_falls_back_to_existence_per_path() {
         batch
             .changes
             .iter()
-            .all(|change| change.action == ChangeAction::Modified)
+            .all(|change| change.action == ChangeAction::Added)
     );
 }
 
@@ -262,4 +262,60 @@ fn changes_are_ordered_by_id_and_then_path() {
         order,
         vec![Path::new("c.txt"), Path::new("a.txt"), Path::new("b.txt")]
     );
+}
+
+#[test]
+fn a_clone_event_is_an_addition() {
+    // APFS clonefile / cp -c report ItemCloned (usually together with the file
+    // flags); the new entry has to appear in the index.
+    let events = [
+        event(
+            3,
+            EventFlags::from_raw(
+                EventFlags::ITEM_CLONED.raw()
+                    | EventFlags::ITEM_IS_FILE.raw()
+                    | EventFlags::ITEM_CREATED.raw(),
+            ),
+            "/root/copy.bin",
+        ),
+        event(
+            4,
+            EventFlags::from_raw(EventFlags::ITEM_CLONED.raw() | EventFlags::ITEM_IS_FILE.raw()),
+            "/root/clone-only.bin",
+        ),
+    ];
+    let batch = coalesce_with(&events, &roots(), |_| false);
+    assert_eq!(batch.changes.len(), 2);
+    assert!(
+        batch
+            .changes
+            .iter()
+            .all(|change| change.action == ChangeAction::Added)
+    );
+}
+
+#[test]
+fn a_rename_with_one_side_outside_the_roots_becomes_an_addition() {
+    // The old name is outside the watched roots, so the move cannot be applied
+    // as a rename; the inside name that appeared is an addition.
+    let events = [
+        identified(event(5, EventFlags::ITEM_RENAMED, "/outside/old.txt"), 9),
+        identified(event(5, EventFlags::ITEM_RENAMED, "/root/new.txt"), 9),
+    ];
+    let batch = coalesce_with(&events, &roots(), probe(&["/root/new.txt"]));
+    assert_eq!(batch.changes.len(), 1);
+    assert_eq!(batch.changes[0].rel, PathBuf::from("new.txt"));
+    assert_eq!(batch.changes[0].action, ChangeAction::Added);
+    assert_eq!(batch.ignored, 1);
+}
+
+#[test]
+fn an_unpaired_rename_of_a_vanished_name_is_a_removal() {
+    let events = [identified(
+        event(5, EventFlags::ITEM_RENAMED, "/root/old.txt"),
+        9,
+    )];
+    let batch = coalesce_with(&events, &roots(), |_| false);
+    assert_eq!(batch.changes.len(), 1);
+    assert_eq!(batch.changes[0].action, ChangeAction::Removed);
 }

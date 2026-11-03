@@ -17,13 +17,19 @@
 //! therefore chosen so that applying it is idempotent:
 //!
 //! - only create/modify events → `Added` (an upsert in an idempotent table);
+//! - a clone (`ItemCloned`) → `Added`: APFS `clonefile`/`cp -c` creates a new
+//!   entry sharing the source's data;
 //! - only remove events → `Removed` (a no-op when the path was never known);
-//! - remove then create → `Modified` (the old entry was replaced);
+//! - remove then create → `Modified` (the old entry was replaced at the same
+//!   path: this is the one case where `Modified`'s "path unchanged" contract
+//!   holds);
 //! - create then remove → `Removed` (the end state is absent, and removing an
 //!   unknown path is safe);
 //! - a rename that can be attributed → `Renamed` on the **new** path, carrying
 //!   the file id, so the table can move the existing entry instead of dropping
-//!   and re-adding it.
+//!   and re-adding it;
+//! - an unpaired rename (identity unknown, or one side outside the watched
+//!   roots) → `Added` when the name exists and `Removed` when it vanished.
 //!
 //! ## Renames
 //!
@@ -87,10 +93,15 @@ impl CoalescedBatch {
 /// Coalesces `events` for `roots`, probing the file system for rename
 /// direction.
 ///
-/// The probe is [`Path::exists`]. Tests and callers that already hold a
-/// directory handle use [`coalesce_with`] instead.
+/// The probe is `symlink_metadata(...).is_ok()`, deliberately **not**
+/// `Path::exists`: the latter follows a symlink and would report a dangling or
+/// replaced link as present, which is the opposite of what rename direction
+/// needs. Tests and callers that already hold a directory handle inject their
+/// own probe through [`coalesce_with`].
 pub fn coalesce(events: &[Event], roots: &[PathBuf]) -> CoalescedBatch {
-    coalesce_with(events, roots, Path::exists)
+    coalesce_with(events, roots, |path| {
+        std::fs::symlink_metadata(path).is_ok()
+    })
 }
 
 /// Coalesces `events`, using `exists` to tell a rename's old name from its new
@@ -155,10 +166,14 @@ where
             Kind::Removed => pending.entry(rel).or_default().remove(event),
             Kind::Modified => pending.entry(rel).or_default().modify(event),
             Kind::Renamed => {
-                // An unpaired rename: the path either still exists (this is the
-                // new name) or is gone (this was the old name).
+                // An unpaired rename: the path either still exists (a new name
+                // appeared) or is gone (an old name vanished). The existing
+                // case is a creation from the index's point of view — its
+                // identity may be reused, but nothing here can prove the path
+                // kept its metadata. `Modified` would claim "same path, new
+                // metadata", which is not what happened.
                 if exists(&event.path) {
-                    pending.entry(rel).or_default().modify(event);
+                    pending.entry(rel).or_default().create(event);
                 } else {
                     pending.entry(rel).or_default().remove(event);
                 }
@@ -208,6 +223,11 @@ fn kind_of(flags: EventFlags) -> Option<Kind> {
     }
     if flags.contains(EventFlags::ITEM_RENAMED) {
         return Some(Kind::Renamed);
+    }
+    // A clone (APFS clonefile/cp -c) creates a new entry whose data is shared
+    // with the source; from the index's point of view that is a creation.
+    if flags.contains(EventFlags::ITEM_CLONED) {
+        return Some(Kind::Created);
     }
     let metadata_change = flags.intersects(EventFlags::ITEM_MODIFIED)
         || flags.intersects(EventFlags::ITEM_INODE_META_MOD)

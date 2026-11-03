@@ -226,8 +226,13 @@ impl Event {
 pub struct Batch {
     /// Events in delivery order, with the replay-end sentinel removed.
     pub events: Vec<Event>,
-    /// Highest id seen; persist this and replay from it next time. Equals the
-    /// id the stream was opened with when nothing new arrived.
+    /// Highest id seen; persist this and replay from it next time.
+    ///
+    /// For a replay from a persisted id it equals that id when nothing new
+    /// arrived. For a **live** stream (`SINCE_NOW`) the base is the journal id
+    /// captured when the stream was opened, so an empty live batch still yields
+    /// a persistable id — it never reports the `SINCE_NOW` sentinel, which must
+    /// never be stored as "the last id seen".
     pub latest: EventId,
     /// Whether the historical replay reached its end.
     pub history_done: bool,
@@ -368,6 +373,9 @@ impl EventStream {
     }
 
     /// Highest id seen so far, including replay.
+    ///
+    /// At least the base id the stream was opened with; for a live stream that
+    /// is the journal id captured at [`EventStream::open`], never `SINCE_NOW`.
     pub fn latest_event_id(&self) -> EventId {
         std::cmp::max(self.latest, self.inner.latest_event_id())
     }
