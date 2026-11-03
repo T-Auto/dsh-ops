@@ -92,7 +92,7 @@ silently from its description.
 | node | v24.21.0 |
 | kernel | 6.12.113+deb13-amd64 |
 | cpus / memory | 16 / 15,706 MiB |
-| recorded revision | `4b6d66a4656514ceccd39f10dead81adeb244a91` (G3 base; the report's `revision` field names the checkout HEAD at run time) |
+| recorded revision | `4b6d66a4656514ceccd39f10dead81adeb244a91` (G3 base at measurement; the PR was later rebased onto `00125c6`, a PS3 test-only change that rebuilds to the same worker hash; the report's `revision` field names the checkout HEAD at run time) |
 | worker sha256 | `9de72d53af9196da1cec911799fc33f4c5246f142f26439e279391957877a63e` |
 
 ### Cold first call (ms)
