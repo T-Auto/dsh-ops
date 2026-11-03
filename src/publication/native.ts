@@ -134,9 +134,15 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
         return 'refused'
       }
     }
-    /** Reset the ladder once nothing is owed anymore; a partial pass must keep escalating. */
+    /**
+     * Close the pass: reset the ladder once nothing is owed anymore, keep escalating while a
+     * session still owes its publication, and hand the pass boundary to the shared aggregator
+     * either way — a burst that settles while every session is already published must still flush
+     * its closing summary (#579).
+     */
     const settle = (): void => {
-      if (![...entries.values()].some(entry => entry.owed)) cooling.succeeded()
+      if ([...entries.values()].some(entry => entry.owed)) cooling.deferred()
+      else cooling.succeeded()
     }
     /**
      * One deferred pass over the sessions that still owe a publication.
@@ -200,7 +206,11 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
       // Owed publications are driven by the shared cooldown timer. The only extra trigger is a
       // cover flip (a preset/ownership change restored an owed session): one coalesced pass, and
       // never while the cooldown is running.
-      if (!cooling.cooled() && [...entries.values()].some(entry => entry.owed)) queueResume()
+      const owed = [...entries.values()].some(entry => entry.owed)
+      if (!cooling.cooled() && owed) queueResume()
+      // A pass with nothing left to publish is a completed pass: it is also the boundary where a
+      // settled burst flushes its closing summary, so it must not be skipped (#579).
+      else if (!owed) cooling.succeeded()
     }
     ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
       if (isPresentationProbe(context)) return next()
