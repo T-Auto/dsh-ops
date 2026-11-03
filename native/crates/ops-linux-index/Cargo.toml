@@ -14,3 +14,12 @@ ops-index = { path = "../ops-index" }
 # lstat work. Exact pin per #584's dependency whitelist (1.12.0, published
 # 2026-04-14, MSRV 1.80).
 rayon = "=1.12.0"
+# L2: RecommendedWatcher + PollWatcher fallback and the watch-limit policy.
+# CC0-1.0, MSRV 1.85, published 2026-10-25 (>= 7 days at review time).
+# notify-types 2.2.0 is exactly our MSRV 1.88 floor, so CI keeps --locked.
+notify = "=8.2.1"
+# Constraint pin, not a feature dependency: notify needs log ^0.4.17 and the
+# newest compatible release (0.4.35, 2026-10-30) is inside the seven-day window,
+# so the crate also uses the log facade and pins the last release outside it
+# (0.4.34, 2026-08-22). Remove the pin once 0.4.35 has aged seven days.
+log = "=0.4.34"
