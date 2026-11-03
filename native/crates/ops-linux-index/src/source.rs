@@ -8,16 +8,16 @@
 //!
 //! [`Phase`] is the extension point the later slices fill:
 //!
-//! | Phase | `SourceState` | Caller behaviour |
-//! | --- | --- | --- |
-//! | [`Phase::Unwatched`] | `Unsupported` | fall back to the walk (L1) |
-//! | [`Phase::CatchingUp`] | `Unavailable` (Offline) | fall back until caught up (L2) |
-//! | [`Phase::Live`] | `Ready` | index-backed answers allowed (L2) |
+//! | Phase | `SourceState` | `changes` | Caller behaviour |
+//! | --- | --- | --- | --- |
+//! | [`Phase::Unwatched`] | `Unsupported` | `Unsupported` | fall back to the walk (L1) |
+//! | [`Phase::CatchingUp`] | `Unavailable` (Offline) | `NotReady` | fall back until caught up (L2) |
+//! | [`Phase::Live`] | `Ready` | `Unsupported` until L2 has a replay buffer | index-backed answers allowed once the buffer exists (L2) |
 //!
 //! `Unsupported` and `Unavailable` are both safe: the caller produces exactly
 //! the output it produces without an index. The dangerous state would be
 //! `Ready` without a caught-up watcher, and the type makes that unconstructible
-//! except through [`LinuxSource::with_phase`].
+//! outside this crate.
 
 use ops_index::source::{CandidateSet, Change, EnumBudget, FsDataSource};
 use ops_index::{SnapshotId, SourceError, SourceState};
@@ -58,11 +58,14 @@ impl LinuxSource {
         Self::default()
     }
 
-    /// A source in an explicit phase.
+    /// A source in an explicit phase, for the watcher slice and its tests.
     ///
-    /// L2/L3 construct `CatchingUp` and `Live` here; tests use it to pin the
-    /// state mapping without a real watcher.
-    pub fn with_phase(phase: Phase) -> Self {
+    /// Deliberately crate-private: a caller outside this crate cannot construct
+    /// `Live` and cannot make an unwatched source look caught up. L2's watcher
+    /// is the first production caller; until then only tests use it, hence the
+    /// dead-code allowance.
+    #[allow(dead_code)]
+    pub(crate) fn with_phase(phase: Phase) -> Self {
         Self { phase }
     }
 
@@ -92,10 +95,14 @@ impl FsDataSource for LinuxSource {
     }
 
     fn changes(&self, _root: &Path, _since: SnapshotId) -> Result<Vec<Change>, SourceError> {
-        // L1 has no event stream. Returning an empty list would claim "nothing
-        // changed", which is exactly the dishonest answer the boundary forbids;
-        // NotReady makes the caller fall back to the walk.
-        Err(SourceError::NotReady)
+        match self.phase {
+            // L2 maps "temporarily not caught up" to NotReady.
+            Phase::CatchingUp => Err(SourceError::NotReady),
+            // L1 has no event stream at all, and even a `Live` phase has no
+            // replay buffer until L2. Returning an empty list would claim
+            // "nothing changed"; Unsupported makes the caller fall back.
+            Phase::Unwatched | Phase::Live { .. } => Err(SourceError::Unsupported),
+        }
     }
 }
 

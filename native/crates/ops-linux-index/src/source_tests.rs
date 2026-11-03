@@ -95,21 +95,25 @@ fn enumerate_delegates_to_the_cold_walk() {
 }
 
 #[test]
-fn changes_are_not_ready_without_a_watcher() {
+fn changes_report_unsupported_without_a_watcher_and_not_ready_while_catching_up() {
     let root = Path::new("/");
-    let phases = [
-        Phase::Unwatched,
-        Phase::CatchingUp,
-        Phase::Live {
-            snapshot: SnapshotId::new(2),
-            consistent_at_ms: 5,
-        },
-    ];
-    for phase in phases {
-        assert_eq!(
-            LinuxSource::with_phase(phase).changes(root, SnapshotId::new(0)),
-            Err(SourceError::NotReady),
-            "L1 has no event stream and must not claim an empty change set"
-        );
-    }
+    let live = Phase::Live {
+        snapshot: SnapshotId::new(2),
+        consistent_at_ms: 5,
+    };
+    assert_eq!(
+        LinuxSource::new().changes(root, SnapshotId::new(0)),
+        Err(SourceError::Unsupported),
+        "no watcher means no change source at all"
+    );
+    assert_eq!(
+        LinuxSource::with_phase(Phase::CatchingUp).changes(root, SnapshotId::new(0)),
+        Err(SourceError::NotReady),
+        "catching up is temporary, not unsupported"
+    );
+    assert_eq!(
+        LinuxSource::with_phase(live).changes(root, SnapshotId::new(0)),
+        Err(SourceError::Unsupported),
+        "even a Live phase has no replay buffer until L2"
+    );
 }
