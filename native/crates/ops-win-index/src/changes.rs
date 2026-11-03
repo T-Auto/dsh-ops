@@ -94,6 +94,7 @@ pub(crate) fn apply_entries(
         let record = entry.fid.as_u64().ok_or(SourceError::Unsupported)?;
         let parent = entry.parent_fid.as_u64().ok_or(SourceError::Unsupported)?;
         let parsed = parsed_record(entry)?;
+        let mut counted = false;
         for op in ops_for(&parsed).as_slice() {
             match op {
                 UsnOp::Upsert { is_dir, .. } => {
@@ -114,15 +115,19 @@ pub(crate) fn apply_entries(
                                 modified_ns: None,
                             },
                         );
-                    } else if !seed.known.contains(&parent) {
+                    } else if !counted && !seed.known.contains(&parent) {
                         // The parent is not anywhere in this volume's MFT, so
                         // the path cannot be reconstructed: never guess it.
+                        // Count the record once, not once per operation class.
                         skipped = skipped.saturating_add(1);
+                        counted = true;
                     }
                 }
                 UsnOp::Delete { .. } => {
-                    if paths.remove(&record).is_none() && !seed.known.contains(&parent) {
+                    if paths.remove(&record).is_none() && !counted && !seed.known.contains(&parent)
+                    {
                         skipped = skipped.saturating_add(1);
+                        counted = true;
                     }
                     candidates.remove(&FileKey::new(volume_serial, record));
                 }
@@ -157,12 +162,16 @@ pub(crate) fn changes_for_entries(
         let key = FileKey::new(volume_serial, record);
         let parent = entry.parent_fid.as_u64().ok_or(SourceError::Unsupported)?;
         let parsed = parsed_record(entry)?;
+        let mut counted = false;
         for op in ops_for(&parsed).as_slice() {
             match op {
                 UsnOp::Upsert { .. } => {
                     let Some(rel) = child_path(&paths, entry) else {
-                        if !seed.known.contains(&parent) {
+                        // Count a dangling record at most once, not once per
+                        // operation class (FILE_CREATE is Upsert plus StatDirty).
+                        if !counted && !seed.known.contains(&parent) {
                             report.skipped = report.skipped.saturating_add(1);
+                            counted = true;
                         }
                         continue;
                     };
@@ -186,8 +195,9 @@ pub(crate) fn changes_for_entries(
                             key,
                             action: ChangeAction::Removed,
                         });
-                    } else if !seed.known.contains(&parent) {
+                    } else if !counted && !seed.known.contains(&parent) {
                         report.skipped = report.skipped.saturating_add(1);
+                        counted = true;
                     }
                 }
                 UsnOp::LinkDirty { .. } | UsnOp::StatDirty { .. } => {
@@ -198,8 +208,9 @@ pub(crate) fn changes_for_entries(
                             key,
                             action: ChangeAction::Modified,
                         });
-                    } else if !seed.known.contains(&parent) {
+                    } else if !counted && !seed.known.contains(&parent) {
                         report.skipped = report.skipped.saturating_add(1);
+                        counted = true;
                     }
                 }
                 UsnOp::RenameOldSeen { .. } => {
