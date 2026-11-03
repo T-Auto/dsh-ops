@@ -16,6 +16,8 @@
 //!   POSIX `(dev, ino)`). `FileKey` is 16 bytes so ReFS' 128-bit file ids
 //!   fit; `EntryId`/`NameId` stay 4 bytes because they index this crate's
 //!   own arrays, not the file system.
+//! - [`snapshot`]: self-contained on-disk image of a root and its atomic store.
+//! - [`snapshot`]: self-contained on-disk image of a root and its atomic store.
 //! - [`source`]: the [`source::FsDataSource`] trait plus [`source::NullSource`]
 //!   (always `Unsupported`) and [`source::MemorySource`] (deterministic test
 //!   injection). Sources report whether their snapshot may be trusted before a
@@ -28,6 +30,7 @@
 
 pub mod error;
 pub mod ids;
+pub mod snapshot;
 pub mod source;
 
 pub use error::{Error, Result};
