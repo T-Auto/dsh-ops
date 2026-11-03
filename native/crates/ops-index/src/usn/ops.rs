@@ -42,6 +42,7 @@ use super::record::{
 };
 use crate::ids::RecordId;
 use std::array::IntoIter;
+use std::fmt;
 use std::iter::Take;
 use std::ops::Deref;
 
@@ -130,7 +131,7 @@ pub enum UsnOp<'a> {
 ///
 /// At most [`MAX_OPS_PER_RECORD`], so the list lives inline and normalization
 /// does not allocate. It dereferences to a slice and iterates by value.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct OpList<'a> {
     items: [UsnOp<'a>; MAX_OPS_PER_RECORD],
     len: usize,
@@ -146,8 +147,17 @@ impl<'a> OpList<'a> {
         }
     }
 
+    /// Appends one op.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the decision table tries to append more than
+    /// [`MAX_OPS_PER_RECORD`] ops. The bound is structural (three cumulative
+    /// rows after the delete short-circuit), so exceeding it is a code defect;
+    /// the panic is a deliberate fail-fast, because silently dropping an op
+    /// would lose an index update and no caller could notice.
     fn push(&mut self, op: UsnOp<'a>) {
-        debug_assert!(
+        assert!(
             self.len < MAX_OPS_PER_RECORD,
             "decision table produced more than {MAX_OPS_PER_RECORD} ops"
         );
@@ -158,6 +168,14 @@ impl<'a> OpList<'a> {
     /// Operations in decision-table order.
     pub fn as_slice(&self) -> &[UsnOp<'a>] {
         &self.items[..self.len]
+    }
+}
+
+impl fmt::Debug for OpList<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Only the live prefix: the unused slots hold a placeholder op and
+        // printing them would put phantom operations into logs.
+        f.debug_list().entries(self.as_slice()).finish()
     }
 }
 
