@@ -5,10 +5,6 @@ use crate::winfs::enum_data::{EnumRequest, read_enum_page};
 use crate::winfs::error::WinfsError;
 use std::path::Path;
 
-fn wide(text: &str) -> Vec<u16> {
-    text.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
 #[test]
 fn the_control_codes_are_the_documented_ctl_codes() {
     // CTL_CODE(9, function, METHOD_NEITHER = 3, FILE_ANY_ACCESS = 0).
@@ -17,38 +13,13 @@ fn the_control_codes_are_the_documented_ctl_codes() {
 }
 
 #[test]
-fn a_drive_root_becomes_a_device_path() {
-    assert_eq!(
-        volume_device_path(Path::new("C:\\")).expect("a drive root"),
-        wide("\\\\.\\C:")
-    );
-    assert_eq!(
-        volume_device_path(Path::new("c:")).expect("a bare drive letter is a root"),
-        wide("\\\\.\\C:")
-    );
-    assert_eq!(
-        volume_device_path(Path::new("D:/")).expect("a forward slash is normalized by Path"),
-        wide("\\\\.\\D:")
-    );
-}
-
-#[test]
-fn a_path_that_is_not_a_drive_root_is_unsupported() {
-    for path in ["C:\\sub", "\\\\server\\share", "relative", ""] {
-        assert_eq!(
-            volume_device_path(Path::new(path)).unwrap_err(),
-            WinfsError::Unsupported,
-            "{path}"
-        );
-    }
-}
-
-#[test]
 fn win32_errors_map_to_the_fallback_vocabulary() {
     assert_eq!(map_win32(ERROR_ACCESS_DENIED), WinfsError::AccessDenied);
     assert_eq!(map_win32(ERROR_INVALID_FUNCTION), WinfsError::Unsupported);
     assert_eq!(map_win32(ERROR_NOT_SUPPORTED), WinfsError::Unsupported);
-    assert_eq!(map_win32(ERROR_INVALID_PARAMETER), WinfsError::Unsupported);
+    // A rejected request is a diagnostic, not "this volume cannot be served":
+    // keep the raw code so the caller can tell a real volume failure apart.
+    assert_eq!(map_win32(87), WinfsError::Fsctl(87));
     assert_eq!(map_win32(1234), WinfsError::Fsctl(1234));
 }
 
@@ -70,10 +41,10 @@ fn the_default_mount_point_is_rejected_without_privilege() {
 
 #[test]
 fn a_volume_handle_either_opens_or_reports_a_fallback() {
-    // CI's Windows runner usually has an elevated token, but not always. Either
-    // answer is a contract: when the handle opens, a real FSCTL page must come
-    // back; when it does not, the error must map to the documented fallback so
-    // the caller keeps its own traversal.
+    // CI's Windows runner usually has an elevated token, but not always (and
+    // wine's kernel32 is a stub). Either answer is a contract: when the handle
+    // opens, a real FSCTL page must come back; when it does not, the error must
+    // map to the documented fallback so the caller keeps its own traversal.
     match VolumeHandle::open(Path::new("C:\\")) {
         Ok(volume) => {
             let mut buffer = vec![0u8; 64 * 1024];

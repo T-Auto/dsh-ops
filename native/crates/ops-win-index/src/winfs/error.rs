@@ -26,6 +26,9 @@ pub enum WinfsError {
     /// The volume or the request cannot be served through these FSCTLs
     /// (not NTFS, not a volume root, an unsupported control code).
     Unsupported,
+    /// The kernel signalled more data but wrote no bytes: the page is
+    /// truncated and must not be mistaken for a clean end.
+    Incomplete,
     /// Any other Win32 error code, kept verbatim for diagnostics.
     Fsctl(u32),
     /// The returned page failed record parsing in `ops-index`.
@@ -46,7 +49,7 @@ impl WinfsError {
     pub fn source_error(self) -> SourceError {
         match self {
             Self::AccessDenied | Self::Unsupported => SourceError::Unsupported,
-            Self::Malformed(_) => SourceError::Io(ErrorKind::InvalidData),
+            Self::Malformed(_) | Self::Incomplete => SourceError::Io(ErrorKind::InvalidData),
             Self::Io(kind) => SourceError::Io(kind),
             Self::Fsctl(_) => SourceError::Io(ErrorKind::Other),
         }
@@ -60,6 +63,7 @@ impl WinfsError {
             Self::Unsupported => "WINFS_UNSUPPORTED",
             Self::Fsctl(_) => "WINFS_FSCTL",
             Self::Malformed(_) => "WINFS_MALFORMED_PAGE",
+            Self::Incomplete => "WINFS_INCOMPLETE_PAGE",
         }
     }
 }
@@ -72,8 +76,13 @@ impl fmt::Display for WinfsError {
             Self::Unsupported => f.write_str("volume cannot be served through raw FSCTLs"),
             Self::Fsctl(code) => write!(f, "raw FSCTL failed with Win32 error {code}"),
             Self::Malformed(error) => write!(f, "USN page is malformed: {error}"),
+            Self::Incomplete => f.write_str("USN page was truncated before it could be read"),
         }
     }
 }
 
 impl std::error::Error for WinfsError {}
+
+#[cfg(test)]
+#[path = "error_tests.rs"]
+mod error_tests;
