@@ -21,11 +21,22 @@ use unicode_normalization::UnicodeNormalization;
 
 /// Folds `bytes` and appends the result to `out` (which is never cleared).
 pub fn fold_into(bytes: &[u8], out: &mut Vec<u8>) {
+    let mut scratch = Vec::new();
+    fold_into_with_scratch(bytes, out, &mut scratch);
+}
+
+/// Folds `bytes` and appends the result to `out`, reusing `scratch`.
+///
+/// The scratch buffer is cleared before use and left empty afterwards. Hot
+/// callers (name interning, a query's inner loop) keep one scratch buffer per
+/// thread instead of allocating a `Vec<char>` per name; the result is identical
+/// to [`fold_into`].
+pub fn fold_into_with_scratch(bytes: &[u8], out: &mut Vec<u8>, scratch: &mut Vec<char>) {
     if bytes.is_ascii() {
         out.extend(bytes.iter().map(|byte| byte.to_ascii_lowercase()));
         return;
     }
-    fold_non_ascii(bytes, out);
+    fold_non_ascii(bytes, out, scratch);
 }
 
 /// Slow path: canonical decompose, one-to-one lowercase, canonical compose.
@@ -33,8 +44,8 @@ pub fn fold_into(bytes: &[u8], out: &mut Vec<u8>) {
 /// Kept out of line so the ASCII fast path does not pay for the scratch buffer
 /// it never uses.
 #[inline(never)]
-fn fold_non_ascii(bytes: &[u8], out: &mut Vec<u8>) {
-    let mut run: Vec<char> = Vec::with_capacity(16);
+fn fold_non_ascii(bytes: &[u8], out: &mut Vec<u8>, run: &mut Vec<char>) {
+    run.clear();
     for code in wtf8::CodePoints::new(bytes) {
         match char::from_u32(code) {
             Some(character) => {
@@ -43,12 +54,12 @@ fn fold_non_ascii(bytes: &[u8], out: &mut Vec<u8>) {
                 });
             }
             None => {
-                compose_into(&mut run, out);
+                compose_into(run, out);
                 wtf8::encode_code_point(code, out);
             }
         }
     }
-    compose_into(&mut run, out);
+    compose_into(run, out);
 }
 
 /// Composes a decomposed run and appends it, then empties the run.

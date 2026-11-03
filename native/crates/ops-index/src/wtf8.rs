@@ -39,6 +39,10 @@ pub fn from_utf16(units: &[u16], out: &mut Vec<u8>) -> bool {
 /// the byte length is even; a trailing odd byte is ignored rather than guessed
 /// at. Returns `true` when the encoded bytes are not valid UTF-8.
 pub fn from_utf16_le(bytes: &[u8], out: &mut Vec<u8>) -> bool {
+    debug_assert!(
+        bytes.len().is_multiple_of(2),
+        "from_utf16_le needs an even byte length; callers validate the field first"
+    );
     encode_units(
         bytes
             .as_chunks::<2>()
