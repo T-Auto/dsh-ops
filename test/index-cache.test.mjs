@@ -91,10 +91,12 @@ await test('a symlinked cache path is refused and nothing is sent', () => {
   try {
     const linkType = process.platform === 'win32' ? 'junction' : 'dir'
     fs.mkdirSync(path.join(root, 'dsh-ops'), { recursive: true })
+    fs.chmodSync(outside, 0o755)
     const linked = path.join(root, 'dsh-ops', 'index-cache')
     fs.symlinkSync(outside, linked, linkType)
     assert.equal(indexCacheDir({ enabled: true, home: root }), null, 'a symlinked cache entry is not usable')
     assert.deepEqual(indexCacheRequest({ enabled: true, home: root }), {})
+    assert.equal(modeOf(outside), 0o755, 'the link target must not be chmod-ed')
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
     fs.rmSync(outside, { recursive: true, force: true })
@@ -106,11 +108,24 @@ await test('a symlinked dsh-ops directory is refused', () => {
   const outside = home('symlink-parent-target')
   try {
     const linkType = process.platform === 'win32' ? 'junction' : 'dir'
+    fs.chmodSync(outside, 0o755)
     fs.symlinkSync(outside, path.join(root, 'dsh-ops'), linkType)
     assert.equal(indexCacheDir({ enabled: true, home: root }), null, 'a symlinked parent is not usable')
+    assert.equal(modeOf(outside), 0o755, 'the link target must not be chmod-ed')
+    assert.equal(fs.existsSync(path.join(outside, 'index-cache')), false, 'nothing is created behind the link')
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
     fs.rmSync(outside, { recursive: true, force: true })
+  }
+})
+
+await test('a regular file where the cache directory belongs is refused', () => {
+  const root = home('file-collision')
+  try {
+    fs.writeFileSync(path.join(root, 'dsh-ops'), 'not a directory')
+    assert.equal(indexCacheDir({ enabled: true, home: root }), null)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
   }
 })
 
