@@ -7,7 +7,7 @@ version, its crates.io publication date (checked against the crates.io API on 20
 the reason it is needed. Full license texts are in
 [`licenses/index/THIRD-PARTY-NOTICES.txt`](../licenses/index/THIRD-PARTY-NOTICES.txt).
 
-## Runtime dependencies (2)
+## Runtime dependencies (3)
 
 | Crate | Pin | Published (UTC) | License | Why |
 | --- | --- | --- | --- | --- |
