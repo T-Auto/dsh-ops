@@ -20,6 +20,8 @@
 //!   (always `Unsupported`) and [`source::MemorySource`] (deterministic test
 //!   injection). Sources report whether their snapshot may be trusted before a
 //!   query touches it.
+//! - [`snapshot`]: the self-contained on-disk snapshot format and its atomic
+//!   store. Persisting a snapshot does not itself make an index trusted.
 //!
 //! Every identifier is a newtype so a waypoint count and a name id cannot be
 //! swapped by accident. The library is `#![forbid(unsafe_code)]`, contains no
@@ -29,6 +31,17 @@
 pub mod error;
 pub mod ids;
 pub mod source;
+
+/// Durable snapshot format and its atomic store.
+///
+/// The format is self-contained: it stores the compact entry records and the
+/// interned name bytes, so a snapshot means the same thing in a new process.
+/// Loading a structurally valid snapshot is not evidence that it still
+/// describes the current tree; the caller must also match its identity.
+pub mod snapshot {
+    pub mod format;
+    pub mod store;
+}
 
 pub use error::{Error, Result};
 pub use ids::{EntryId, FileKey, NameId, RecordId, SnapshotId, VolumeId};
