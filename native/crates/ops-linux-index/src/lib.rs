@@ -10,8 +10,8 @@
 //!
 //! L1 scope, deliberately:
 //!
-//! - cold enumeration (`walk`), kernel/polling watch sessions (`watch`) and the
-//!   freshness state machine (`source`);
+//! - cold enumeration (`walk`), kernel/polling watch sessions (`watch`), the
+//!   watch-state machine (`state`) and the freshness state (`source`);
 //! - inotify limits and the polling-degradation policy (`limits`); a session
 //!   that cannot attribute events reports that a rescan is required instead of
 //!   replaying them onto a stale snapshot;
@@ -26,5 +26,6 @@
 
 pub mod limits;
 pub mod source;
+pub mod state;
 pub mod walk;
 pub mod watch;
