@@ -55,7 +55,7 @@
 ## 许可证义务
 
 六个 crate 均为 `MIT OR Apache-2.0` 双许可。完整许可证文本收录在
-`licenses/linux-index/THIRD-PARTY-NOTICES`；dsh-ops 自身仍为 MIT，无需修改 NOTICE。
+`licenses/linux-index/THIRD-PARTY-NOTICES.txt`；dsh-ops 自身仍为 MIT，无需修改 NOTICE。
 
 ## 安全公告核对
 
