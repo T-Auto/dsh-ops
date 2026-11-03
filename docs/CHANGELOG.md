@@ -7,8 +7,10 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-- Prepare an optional private index cache (`indexCache`, off by default): when enabled the host creates `<DSH_HOME>/dsh-ops/index-cache` with mode `0700` and passes it to the worker as a hint; searches try the matching platform index source only when the hint is present, and a non-ready source, a missing cache or an unusable cache falls back to the live walk with identical output (#613).
-- 新增可选的私有索引缓存（`indexCache`，默认关闭）：开启时宿主创建 `<DSH_HOME>/dsh-ops/index-cache`（0700）并以提示字段传给 worker；搜索仅在提示存在时尝试对应平台的索引 source，未 Ready、缓存缺失或不可用一律回退 live walk，输出逐字节不变（#613）。
+- Prepare an optional private index cache (`indexCache`, off by default): when enabled the host creates `<DSH_HOME>/dsh-ops/index-cache` (mode `0700` on POSIX; on Windows the directory inherits the `%USERPROFILE%` ACL because Node cannot set one), refuses a symlinked cache path, and passes it to the worker as a hint; only `glob` requests try the matching platform index source when the hint is present, and a non-ready source, a missing cache or an unusable cache falls back to the live walk with identical output (#613).
+- 新增可选的私有索引缓存（`indexCache`，默认关闭）：开启时宿主创建 `<DSH_HOME>/dsh-ops/index-cache`（POSIX 上 0700；Windows 上继承 `%USERPROFILE%` 的 ACL，因为 Node 无法设置 ACL），拒绝符号链接的缓存路径，并以提示字段传给 worker；只有 `glob` 请求在提示存在时尝试对应平台的索引 source，未 Ready、缓存缺失或不可用一律回退 live walk，输出逐字节不变（#613）。
+- Accept an optional trusted `cache_dir` request field for the shared name-index cache: it must be an absolute, host-created directory private to the user (0700 on POSIX, for example `<DSH_HOME>/dsh-ops/index-cache`); absence disables the index and an unusable or corrupt directory falls back to the walk without changing output. Uninstall cleanup removes the snapshot store and keeps the host's `dsh-ops` directory (#601).
+- 新增可选可信 `cache_dir` 请求字段，用于共享名字索引缓存：必须是宿主创建、仅当前用户可访问（POSIX 上 0700，例如 `<DSH_HOME>/dsh-ops/index-cache`）的绝对目录；缺省关闭索引，不可用或损坏时回退 walk 且不改变输出。卸载清理删除快照存储并保留宿主的 `dsh-ops` 目录（#601）。
 - Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
 - 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。
 - Report PowerShell ConstrainedLanguage before workspace ACL preparation and preserve a named diagnostic without changing security policy (#458). / 工作区 ACL 准备前明确报告 PowerShell ConstrainedLanguage，并保留具名诊断，不改变安全策略（#458）。
