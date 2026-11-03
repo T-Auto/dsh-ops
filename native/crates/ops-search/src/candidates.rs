@@ -32,7 +32,7 @@
 
 use crate::file_path;
 use cap_fs_ext::{DirExt, MetadataExt};
-use cap_std::fs::Metadata;
+use cap_std::fs::{Dir, Metadata};
 use ops_index::{
     Candidate, EntryKind, EnumBudget, FileKey, FsDataSource, SnapshotId, SourceError, SourceState,
 };
@@ -384,18 +384,23 @@ fn revalidate(
     if ancestors.iter().any(|name| excluded_name(name)) {
         return Verdict::Fallback(FallbackKind::Unverified);
     }
-    let inspected = inspect.leaf(parent, leaf);
     if candidate.kind == EntryKind::Dir {
         // Directories are how the walk reaches items, not items themselves,
         // but they are still checked live: the walk's gap/count semantics
         // depend on what happened to them.
-        return classify_directory(candidate, inspected);
+        return classify_directory(candidate, inspect.leaf(parent, leaf), inspect, parent, leaf);
     }
-    match inspected {
+    match inspect.leaf(parent, leaf) {
         Ok(metadata) => classify(candidate, metadata),
         Err(InspectError::Stale) => Verdict::Stale,
         Err(InspectError::Invalid) => Verdict::Skip(SkipReason::InvalidPath),
+        // A leaf that cannot be stat'ed is the walk's `unreadable-entry` gap.
+        // An *ancestor* that cannot be opened is the walk's
+        // `unreadable-directory` gap, which only a walk can account for: it
+        // records one gap for the directory, not one per child, so a
+        // per-candidate skip would over-count.
         Err(InspectError::Unreadable) => Verdict::Skip(SkipReason::Unreadable),
+        Err(InspectError::ParentUnreadable) => Verdict::Fallback(FallbackKind::DirectoryUnreadable),
         Err(InspectError::AncestorLink) => Verdict::Fallback(FallbackKind::AncestorLink),
         Err(InspectError::Unverified) => Verdict::Fallback(FallbackKind::Unverified),
     }
@@ -436,29 +441,51 @@ fn classify(candidate: &Candidate, metadata: Metadata) -> Verdict {
 /// - different `(dev, ino)` while still a directory -> a different directory
 ///   now owns the path, so the children resolve under an identity the snapshot
 ///   never saw.
-fn classify_directory(candidate: &Candidate, inspected: Result<Metadata, InspectError>) -> Verdict {
-    match inspected {
-        Ok(metadata) => {
-            if file_path::link(&metadata) {
-                return Verdict::Fallback(FallbackKind::AncestorLink);
-            }
-            if metadata.is_dir() {
-                let actual = FileKey::new(metadata.dev(), metadata.ino());
-                if actual != candidate.key {
-                    return Verdict::Fallback(FallbackKind::IdDrift);
-                }
-                return Verdict::Directory;
-            }
-            if metadata.is_file() {
-                return Verdict::Fallback(FallbackKind::KindChanged);
-            }
+fn classify_directory(
+    candidate: &Candidate,
+    inspected: Result<Metadata, InspectError>,
+    inspect: &dyn Inspect,
+    parent: &Path,
+    leaf: &str,
+) -> Verdict {
+    let metadata = match inspected {
+        Ok(metadata) => metadata,
+        Err(error) => return directory_error(error),
+    };
+    if file_path::link(&metadata) {
+        return Verdict::Fallback(FallbackKind::AncestorLink);
+    }
+    if !metadata.is_dir() {
+        return if metadata.is_file() {
+            Verdict::Fallback(FallbackKind::KindChanged)
+        } else {
             Verdict::Fallback(FallbackKind::Unverified)
+        };
+    }
+    let actual = FileKey::new(metadata.dev(), metadata.ino());
+    if actual != candidate.key {
+        return Verdict::Fallback(FallbackKind::IdDrift);
+    }
+    // A directory can be stat'ed without being listable: `chmod 000` leaves
+    // `symlink_metadata` working while the walk's `open_dir_nofollow` (and its
+    // `read_dir`) fail. The walk records one `unreadable-directory` gap there,
+    // so fall back and let it do that instead of accepting the directory and
+    // counting an `unreadable-entry` gap per child.
+    match inspect.directory(parent, leaf) {
+        Ok(()) => Verdict::Directory,
+        Err(error) => directory_error(error),
+    }
+}
+
+fn directory_error(error: InspectError) -> Verdict {
+    match error {
+        InspectError::Stale => Verdict::Stale,
+        InspectError::Unreadable | InspectError::ParentUnreadable => {
+            Verdict::Fallback(FallbackKind::DirectoryUnreadable)
         }
-        Err(InspectError::Stale) => Verdict::Stale,
-        Err(InspectError::Unreadable) => Verdict::Fallback(FallbackKind::DirectoryUnreadable),
-        Err(InspectError::Invalid) => Verdict::Fallback(FallbackKind::Unverified),
-        Err(InspectError::AncestorLink) => Verdict::Fallback(FallbackKind::AncestorLink),
-        Err(InspectError::Unverified) => Verdict::Fallback(FallbackKind::Unverified),
+        InspectError::Invalid => Verdict::Fallback(FallbackKind::Unverified),
+        InspectError::AncestorLink => Verdict::Fallback(FallbackKind::AncestorLink),
+        InspectError::Unverified => Verdict::Fallback(FallbackKind::Unverified),
     }
 }
 
@@ -500,6 +527,10 @@ fn invalid_name(name: &str, request: &Request) -> bool {
 trait Inspect {
     /// Stats `name` inside `parent`, which is opened without following links.
     fn leaf(&self, parent: &Path, name: &str) -> Result<Metadata, InspectError>;
+
+    /// Opens `name` as a directory, which is how the walk proves that a
+    /// directory is listable, not just stat-able.
+    fn directory(&self, parent: &Path, name: &str) -> Result<(), InspectError>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -508,8 +539,13 @@ enum InspectError {
     Stale,
     /// A component is not a legal path name.
     Invalid,
-    /// The path exists but cannot be read.
+    /// The leaf exists but cannot be read (stat failed).
     Unreadable,
+    /// One of the ancestors exists but cannot be opened as a directory.
+    ///
+    /// The walk records this as its single `unreadable-directory` gap, so the
+    /// caller must fall back instead of counting a skip per descendant.
+    ParentUnreadable,
     /// One of the ancestors is a link or another special object.
     AncestorLink,
     /// An I/O failure that cannot be classified safely.
@@ -520,20 +556,59 @@ struct HostInspect;
 
 impl Inspect for HostInspect {
     fn leaf(&self, parent: &Path, name: &str) -> Result<Metadata, InspectError> {
-        let raw = parent.to_str().ok_or(InspectError::Invalid)?;
-        let target = file_path::checked(raw).map_err(failure_to_inspect)?;
-        let directory = target
-            .parent
-            .open_dir_nofollow(&target.name)
-            .map_err(io_to_inspect)?;
-        directory.symlink_metadata(name).map_err(io_to_inspect)
+        let directory = open_parent(parent)?;
+        match directory.symlink_metadata(name) {
+            Ok(metadata) => Ok(metadata),
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                // The leaf stat never needs the leaf's own permission, so EACCES
+                // means an ancestor refused traversal. The parent's listability
+                // is what separates the walk's two answers: an unreadable
+                // parent is one `unreadable-directory` gap (fall back), while a
+                // readable parent over an unsearchable one is an
+                // `unreadable-entry` gap for this child (skip).
+                match directory.entries() {
+                    Ok(_) => Err(InspectError::Unreadable),
+                    Err(_) => Err(InspectError::ParentUnreadable),
+                }
+            }
+            Err(error) => Err(leaf_io_to_inspect(error)),
+        }
+    }
+
+    fn directory(&self, parent: &Path, name: &str) -> Result<(), InspectError> {
+        let directory = open_parent(parent)?
+            .open_dir_nofollow(name)
+            .map_err(parent_io_to_inspect)?;
+        // The walk proves a directory is usable by reading its entries, not by
+        // opening it: on Linux a cap-std handle opens with `O_PATH`, which
+        // succeeds on a `chmod 000` directory while `entries()` fails. Mirror
+        // the walk so the same directory produces the same gap.
+        directory.entries().map_err(parent_io_to_inspect)?;
+        Ok(())
     }
 }
 
-fn failure_to_inspect(error: Failure) -> InspectError {
+/// Opens the directory that contains a candidate leaf, no-follow at every
+/// component, and returns it.
+///
+/// Every failure here happens *above* the leaf, so it is a parent-directory
+/// failure: an unreadable ancestor is the walk's `unreadable-directory` gap,
+/// not an `unreadable-entry` gap for each child below it.
+fn open_parent(parent: &Path) -> Result<Dir, InspectError> {
+    let raw = parent.to_str().ok_or(InspectError::Invalid)?;
+    let target = file_path::checked(raw).map_err(parent_failure_to_inspect)?;
+    target
+        .parent
+        .open_dir_nofollow(&target.name)
+        .map_err(parent_io_to_inspect)
+}
+
+fn parent_failure_to_inspect(error: Failure) -> InspectError {
     match error.code.as_str() {
         "NOT_FOUND" => InspectError::Stale,
-        "ACCESS_DENIED" => InspectError::Unreadable,
+        // `checked` walks the ancestors component by component, so an access
+        // denial here is an ancestor that cannot be opened.
+        "ACCESS_DENIED" => InspectError::ParentUnreadable,
         "PATH_RESTRICTED" => InspectError::AncestorLink,
         "INVALID_ARGUMENT" => InspectError::Invalid,
         // `Failure` maps ENOTDIR/EIO and the rest to IO_ERROR without keeping
@@ -542,7 +617,15 @@ fn failure_to_inspect(error: Failure) -> InspectError {
     }
 }
 
-fn io_to_inspect(error: io::Error) -> InspectError {
+fn parent_io_to_inspect(error: io::Error) -> InspectError {
+    match error.kind() {
+        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory => InspectError::Stale,
+        io::ErrorKind::PermissionDenied => InspectError::ParentUnreadable,
+        _ => InspectError::Unverified,
+    }
+}
+
+fn leaf_io_to_inspect(error: io::Error) -> InspectError {
     match error.kind() {
         io::ErrorKind::NotFound | io::ErrorKind::NotADirectory => InspectError::Stale,
         io::ErrorKind::PermissionDenied => InspectError::Unreadable,
