@@ -13,6 +13,7 @@ import { onToolChange } from './changes.js'
 import type { ResolvedConfig } from '../config.js'
 import { ownScopes } from './ownership.js'
 import { failure } from '../execution/files.js'
+import { createReentryCooling, safeMessage } from './reentry.js'
 import type { PublicationGate } from './types.js'
 
 type ResidentName = Parameters<NativeFileTools['definition']>[0]
@@ -25,6 +26,8 @@ interface Entry {
   owned: Set<string>
   disposers: (() => void)[]
   ready: Promise<void>
+  /** A publication still owed after a cooldown-deferred refusal (#579). */
+  owed?: boolean
 }
 
 /** The names, guidance and eligibility supplied by one composition. */
@@ -54,8 +57,16 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
     let stopped = false, mutating = false
     const ownership = await ownScopes(ctx, 'native-files', () => reconcile(), gate.allows)
     const native = new Map<Agent, boolean>()
+    // The host's append window is process-global, so one cooldown serves every session of this
+    // row: a refusal stops the pass and the expiry re-runs only the owed publications (#579).
+    const cooling = createReentryCooling({
+      label: `${mode} native`,
+      report: message => ctx.logger.warn(message),
+      retry: () => { void resumeOwed() },
+    })
     const clear = (entry: Entry): void => {
       entry.owned.clear()
+      entry.owed = false
       for (const dispose of entry.disposers.splice(0)) {
         try { dispose() } catch (error) { ctx.logger.warn(`dsh-ops: ${mode} native publication cleanup failed: ${String(error)}`) }
       }
@@ -83,20 +94,76 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
       for (const definition of definitions) entry.owned.add(definition.name)
     }
     const cover = (agent: Agent): boolean => gate.allows(agent) && ownership.owns(agent)
+    /**
+     * Try to publish one session's resident tools.
+     *
+     * A classified host refusal is no longer terminal: the entry records that it still owes its
+     * publication and the shared cooldown schedules exactly one deferred pass (#579). Any other
+     * failure keeps the old shape — one warn, no retry — because only the append window is
+     * transient by construction. Never rejects.
+     * @param agent - the session's agent scope.
+     * @param entry - its publication entry.
+     * @returns resolves once this attempt settled.
+     */
+    const attempt = async (agent: Agent, entry: Entry): Promise<void> => {
+      if (stopped || entries.get(agent) !== entry || !entry.ctx || entry.owned.size > 0) return
+      if (!cover(agent)) return
+      // Inside the cooldown the registry must not be touched at all — but the publication is
+      // still owed, so a session that arrives during the cooldown is queued instead of dropped.
+      if (cooling.cooled()) { entry.owed = true; return }
+      if (native.get(agent) === false) return
+      if (!await isNativePresentation(prompt, agent).catch(() => false)) return
+      if (stopped || entries.get(agent) !== entry || entry.owned.size > 0 || !cover(agent)) return
+      if (cooling.cooled()) { entry.owed = true; return }
+      try {
+        publish(agent, entry)
+        entry.owed = false
+        cooling.succeeded()
+      } catch (error) {
+        if (!cooling.classify(error)) {
+          entry.owed = false
+          ctx.logger.warn(`dsh-ops: ${mode} mode publication failed: ${safeMessage(error)}`)
+          return
+        }
+        entry.owed = true
+        cooling.failed(error)
+      }
+    }
+    /**
+     * One deferred pass over the sessions that still owe a publication.
+     *
+     * Serial on purpose: the refusal is process-global, so the first one ends the pass and the
+     * cost of a locked window stays one touch per cooldown step instead of one per session.
+     * @returns resolves when the pass ended (also when a cooldown stopped it).
+     */
+    let resuming = false
+    const resumeOwed = async (): Promise<void> => {
+      if (stopped || resuming) return
+      resuming = true
+      try {
+        for (const [agent, entry] of entries) {
+          if (stopped || cooling.cooled()) return
+          if (!entry.owed || !cover(agent)) continue
+          await attempt(agent, entry)
+        }
+      } finally { resuming = false }
+    }
     const attach = (agent: Agent): void => {
       if (stopped || entries.has(agent) || !agent?.ctx) return
       const entry: Entry = { agent, runtime: new NativeFileTools({ ctx, config: { workerPath: worker, required: config.required, denyCredentialReads: config.denyCredentialReads } }),
-        owned: new Set(), disposers: [], ready: Promise.resolve() }
+        owned: new Set(), disposers: [], ready: Promise.resolve(), owed: false }
       entries.set(agent, entry)
       entry.fiber = agent.ctx.plugin({ inject: ['tools'], apply(scoped) { entry.ctx = scoped } })
-      entry.ready = Promise.resolve(entry.fiber).then(() => {
+      entry.ready = Promise.resolve(entry.fiber).then(async () => {
         if (stopped || entries.get(agent) !== entry || !entry.ctx) return
-        return entry.runtime.start([]).then(async () => {
-          if (native.get(agent) === false || !await isNativePresentation(prompt, agent).catch(() => false)) return
-          if (stopped || entries.get(agent) !== entry || !cover(agent)) return
-          publish(agent, entry)
-        })
-      }).catch(error => ctx.logger.warn(`dsh-ops: ${mode} mode publication failed: ${String(error)}`))
+        await entry.runtime.start([])
+        await attempt(agent, entry)
+      }).catch(error => {
+        // The startup chain itself failed (fiber or worker start). A refusal is still an owed
+        // publication; anything else keeps its single line and no retry.
+        if (cooling.classify(error)) { entry.owed = true; cooling.failed(error) }
+        else ctx.logger.warn(`dsh-ops: ${mode} mode publication failed: ${safeMessage(error)}`)
+      })
     }
     const detach = (agent: Agent): void => {
       const entry = entries.get(agent)
@@ -112,6 +179,9 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
         for (const [agent, entry] of entries) if (!cover(agent)) detach(agent)
         for (const agent of ctx.get('agents')?.list?.() ?? []) if (cover(agent)) attach(agent)
       } finally { mutating = false }
+      // Ownership or preset changes may have restored cover for a session that still owes its
+      // publication; the cooldown still gates every registry touch.
+      if ([...entries.values()].some(entry => entry.owed) && !cooling.cooled()) void resumeOwed()
     }
     ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
       if (isPresentationProbe(context)) return next()
@@ -160,6 +230,7 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
     }
     ctx.effect(() => () => {
       stopped = true
+      cooling.dispose()
       for (const agent of [...entries.keys()]) detach(agent)
       ownership.dispose()
     }, `dsh-ops: ${mode} native lifecycle`)
