@@ -20,7 +20,7 @@ fn identified(mut event: Event, file_id: u64) -> Event {
     event
 }
 
-fn probe(present: &[&str]) -> impl Fn(&Path) -> bool + '_ {
+fn probe(present: &[&str]) -> impl Fn(&Path) -> bool {
     let present: Vec<PathBuf> = present.iter().map(PathBuf::from).collect();
     move |path: &Path| present.iter().any(|candidate| candidate == path)
 }
@@ -117,14 +117,8 @@ fn paths_are_relative_to_the_longest_root() {
 #[test]
 fn a_rename_pair_with_a_file_id_becomes_one_renamed_change() {
     let events = [
-        identified(
-            event(5, EventFlags::ITEM_RENAMED, "/root/old.txt"),
-            9,
-        ),
-        identified(
-            event(5, EventFlags::ITEM_RENAMED, "/root/new.txt"),
-            9,
-        ),
+        identified(event(5, EventFlags::ITEM_RENAMED, "/root/old.txt"), 9),
+        identified(event(5, EventFlags::ITEM_RENAMED, "/root/new.txt"), 9),
     ];
     let batch = coalesce_with(&events, &roots(), probe(&["/root/new.txt"]));
     assert_eq!(
@@ -149,13 +143,13 @@ fn a_rename_pair_without_a_file_id_falls_back_to_remove_and_add() {
     let removed = batch
         .changes
         .iter()
-        .find(|change| change.rel == PathBuf::from("old.txt"))
+        .find(|change| change.rel.as_path() == Path::new("old.txt"))
         .expect("the vanished name is a removal");
     assert_eq!(removed.action, ChangeAction::Removed);
     let added = batch
         .changes
         .iter()
-        .find(|change| change.rel == PathBuf::from("new.txt"))
+        .find(|change| change.rel.as_path() == Path::new("new.txt"))
         .expect("the existing name is a modification");
     assert_eq!(added.action, ChangeAction::Modified);
 }
@@ -168,7 +162,11 @@ fn an_ambiguous_rename_falls_back_to_existence_per_path() {
         identified(event(5, EventFlags::ITEM_RENAMED, "/root/old.txt"), 9),
         identified(event(5, EventFlags::ITEM_RENAMED, "/root/new.txt"), 9),
     ];
-    let batch = coalesce_with(&events, &roots(), probe(&["/root/old.txt", "/root/new.txt"]));
+    let batch = coalesce_with(
+        &events,
+        &roots(),
+        probe(&["/root/old.txt", "/root/new.txt"]),
+    );
     assert_eq!(batch.changes.len(), 2);
     assert!(
         batch
@@ -193,13 +191,13 @@ fn a_recreated_old_name_cancels_the_rename_suppression() {
     let renamed = batch
         .changes
         .iter()
-        .find(|change| change.rel == PathBuf::from("new.txt"))
+        .find(|change| change.rel.as_path() == Path::new("new.txt"))
         .expect("the new name is the rename");
     assert_eq!(renamed.action, ChangeAction::Renamed);
     let recreated = batch
         .changes
         .iter()
-        .find(|change| change.rel == PathBuf::from("old.txt"))
+        .find(|change| change.rel.as_path() == Path::new("old.txt"))
         .expect("the recreated old name is a change again");
     assert_eq!(recreated.action, ChangeAction::Added);
 }
@@ -234,7 +232,7 @@ fn events_under_a_time_machine_mount_are_excluded() {
     let roots = vec![PathBuf::from("/"), PathBuf::from("/root")];
     let batch = coalesce_with(&events, &roots, |_| false);
     assert_eq!(batch.changes.len(), 1);
-    assert_eq!(batch.changes[0].rel, PathBuf::from("root/a.txt"));
+    assert_eq!(batch.changes[0].rel, PathBuf::from("a.txt"));
     assert_eq!(batch.excluded, 1);
 }
 

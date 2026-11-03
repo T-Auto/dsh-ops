@@ -368,3 +368,7 @@ impl Pending {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "coalesce_tests.rs"]
+mod coalesce_tests;
