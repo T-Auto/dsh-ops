@@ -63,7 +63,7 @@ whitelists `rayon 1.12.0` for this purpose.
 ## License obligations
 
 All six crates are dual-licensed `MIT OR Apache-2.0`. Their full license texts are reproduced in
-`licenses/linux-index/THIRD-PARTY-NOTICES`; dsh-ops itself remains MIT and needs no NOTICE change.
+`licenses/linux-index/THIRD-PARTY-NOTICES.txt`; dsh-ops itself remains MIT and needs no NOTICE change.
 
 ## Advisory check
 
