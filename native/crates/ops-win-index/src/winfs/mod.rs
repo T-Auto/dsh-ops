@@ -27,11 +27,11 @@
 //!
 //! ## Unsafe isolation
 //!
-//! The crate root denies `unsafe_code`; only `sys` is allowed to break it;
-//! `unsafe_op_in_unsafe_fn` is denied, so every raw call sits in a block with a
-//! SAFETY comment naming its invariant. No other module in this crate names a
-//! raw Win32 type, and `cfg(any(...))` branches stay absent: the whole crate is
-//! `cfg(windows)`.
+//! The crate root denies `unsafe_code`; only `sys` and W4's `links` are
+//! allowed to break it; `unsafe_op_in_unsafe_fn` is denied, so every raw call
+//! sits in a block with a SAFETY comment naming its invariant. No other module
+//! in this crate names a raw Win32 type, and `cfg(any(...))` branches stay
+//! absent: the whole crate is `cfg(windows)`.
 
 #[allow(unsafe_code)]
 mod sys;
@@ -43,6 +43,15 @@ pub mod enum_data;
 pub mod error;
 pub mod journal;
 pub mod volume_path;
+
+/// W4 hard-link name enumeration (FindFirstFileNameW/FindNextFileNameW).
+///
+/// This submodule owns its own FFI bridge and carries a scoped
+/// `allow(unsafe_code)` of its own, so a future reader can see exactly which
+/// W4 code needs it even though the rest of `winfs` already has its own
+/// islands.
+#[allow(unsafe_code)]
+pub mod links;
 
 pub use enum_data::{EnumPage, EnumRequest, read_enum_page};
 

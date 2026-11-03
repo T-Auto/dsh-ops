@@ -516,6 +516,7 @@ version = "0.5.0-alpha3"
 dependencies = [
  "ops-index",
  "usn-journal-rs",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
