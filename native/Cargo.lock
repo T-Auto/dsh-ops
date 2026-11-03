@@ -443,6 +443,7 @@ dependencies = [
 name = "ops-index"
 version = "0.5.0-alpha3"
 dependencies = [
+ "memchr",
  "proptest",
  "unicode-normalization",
 ]
