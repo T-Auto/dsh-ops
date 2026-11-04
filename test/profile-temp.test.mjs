@@ -244,10 +244,15 @@ await test('the launcher receives an install spec verbatim, and the cmd line ref
           /cannot receive an argument/, 'a preview must refuse ' + JSON.stringify(spec))
         assert.throws(() => capture(() => profileCommand('install', { profile: 'tui', dshCli: file })),
           /cannot receive an argument/, 'the cmd line must refuse ' + JSON.stringify(spec))
+        assert.equal(fs.existsSync(receipt), false, 'nothing may run for ' + JSON.stringify(spec))
       } else {
+        // POSIX hands the launcher an argv array with no `cmd.exe` in between, so `&`, `|`, `<`,
+        // `>` and `%` are ordinary characters: the spec arrives as one argument and no second
+        // command can start. Refusing it here would be the bug.
         assert.equal(capture(() => profileCommand('install', { profile: 'tui', dshCli: file })).status, 0)
+        assert.deepEqual(JSON.parse(fs.readFileSync(receipt, 'utf8')), ['plugin', '--profile', 'dsh-tui', 'add', spec],
+          'the launcher must receive ' + JSON.stringify(spec) + ' as one argument')
       }
-      assert.equal(fs.existsSync(receipt), false, 'nothing may run for ' + JSON.stringify(spec))
     }
   })
 })
