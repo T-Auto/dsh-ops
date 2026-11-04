@@ -5,6 +5,13 @@ All notable changes to this package are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Declare DSH 0.2.2-rc.1 in the bounded host compatibility range (`>=0.2.0-rc.2 <0.2.2-0 || 0.2.2-rc.1`) after validating the published 0.4.4 bundle in a real 0.2.2-rc.1 desktop profile and an isolated headless AgentLoop run. Later 0.2.2 prereleases and 0.2.2 final remain outside the range until tested.
+- 在真实 DSH 0.2.2-rc.1 桌面 profile 与隔离 headless AgentLoop 运行中验证已发布的 0.4.4 包后，将 DSH 0.2.2-rc.1 纳入有界宿主兼容范围（`>=0.2.0-rc.2 <0.2.2-0 || 0.2.2-rc.1`）。后续 0.2.2 预发布版本与 0.2.2 正式版在测试前仍不在范围内。
+
 ## [0.4.4] — 2026-10-27 — Cross-platform packaging repair
 
 ### Fixed
