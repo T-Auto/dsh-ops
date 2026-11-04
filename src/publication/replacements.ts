@@ -1,14 +1,18 @@
 /** Scoped replacement controller. Missing counterparts always leave official tools available. */
-import type { Context } from '../adapter/dsh/types.js'
-import type { Agent } from '../adapter/dsh/types.js'
-import type { ToolGuard } from '../adapter/dsh/types.js'
+import type { Agent, AssembleContext, Context, ToolGuard } from '../adapter/dsh/types.js'
 import type {} from '../adapter/dsh/types.js'
 import { onToolChange, withToolChange } from './changes.js'
+import { isPresentationProbe } from './presentation.js'
 import { visibleNames } from './surface.js'
 import { loadScopes } from '../adapter/dsh/host.js'
 import type { PublicationGate } from './types.js'
 
-interface Entry { lifts: (() => void)[]; deny: string[] }
+interface Entry {
+  lifts: (() => void)[]
+  deny: string[]
+  /** Names the last assembled request carried, when one has been seen. */
+  admitted?: Set<string>
+}
 
 /** Product-independent mapping; publication and replacement remain separate choices. */
 export interface ReplacementPublication {
@@ -187,13 +191,36 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
     // an unconditional call makes every assembly (and therefore every new
     // session's first request) cost O(live sessions), which is exactly the cost
     // this controller must not add.
-    ctx.on('system-prompt/assemble', async (_assembly, _context, next) => { flush(); return next() })
+    //
+    // The same pass remembers the surface this request actually carries. The mask is
+    // registry state and the request is a snapshot taken before it, so across the change
+    // the two can name different halves of one swap; the guard answers for the snapshot
+    // (#578). A presentation probe publishes nothing and is not the model's surface.
+    ctx.on('system-prompt/assemble', async (assembly, context, next) => {
+      flush()
+      if (!isPresentationProbe(context as AssembleContext)) {
+        const agent = (context as { scope?: Agent } | undefined)?.scope
+        const carried = (assembly as { tools?: unknown } | undefined)?.tools
+        if (agent !== undefined && Array.isArray(carried)) {
+          const entry = entries.get(agent)
+          if (entry && matches(agent) && !stopped) {
+            const admitted = new Set<string>()
+            for (const tool of carried as { name?: unknown }[]) if (typeof tool?.name === 'string') admitted.add(tool.name)
+            entry.admitted = admitted
+          }
+        }
+      }
+      return next()
+    })
     const refusal: ToolGuard = exec => {
       if (stopped || keepOfficial()) return undefined
       const agent = exec?.agent
       if (!agent || !matches(agent)) return undefined
       const counterpart = targets.get(String(exec.name ?? ''))
       if (counterpart === undefined) return undefined
+      // Same authority as the mask: a counterpart the last assembled request did not carry is not
+      // callable, so refusing the official tool would leave the model with nothing (#578).
+      if (entries.get(agent)?.admitted?.has(counterpart) === false) return undefined
       if (!visibleNames(tools, agent).includes(counterpart)) return undefined
       return `dsh-ops ${mode} mode replaced the official tool ${String(exec.name)} with ${counterpart}; call ${counterpart}, or turn off that replacement in the dsh-ops row settings.`
     }
