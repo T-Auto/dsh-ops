@@ -154,9 +154,11 @@ export function profileCommand(operation: ProfileOperation, { profile, dshCli, d
   }
   command = preflightCli(command, prefix[0])
   // Built before the dry-run return so a preview refuses exactly what a run refuses. `command` is
-  // already checked by `preflightCli`; only its quotes are added here.
+  // already checked by `preflightCli`; only its quotes are added here. `prefix` travels with `args`
+  // so the line and the printed command cannot disagree: a launcher reached through a Node entry
+  // point would otherwise drop the entry silently.
   const launcherLine = process.platform === 'win32' && /\.(cmd|bat)$/i.test(command)
-    ? `"${quoteCliArg(command)} ${args.map(quoteCliArg).join(' ')}"`
+    ? `"${quoteCliArg(command)} ${[...prefix, ...args].map(quoteCliArg).join(' ')}"`
     : undefined
   console.log(`Target: ${target} (${directory})`)
   console.log(`Official CLI: ${command}; ${[...prefix, ...args].join(' ')}`)

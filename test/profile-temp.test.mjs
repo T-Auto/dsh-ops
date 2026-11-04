@@ -199,6 +199,26 @@ await test('session temp identity is stable, isolated, idempotent and refuses fi
     if (process.platform !== 'win32') assert.equal(fs.statSync(first).mode & 0o777, 0o700)
   })
 })
+await test('a launcher path carrying a caret is refused, while a caret in the spec is not', async () => {
+  // The two guards differ by exactly one character: `preflightCli` refuses `^` in a launcher path,
+  // `quoteCliArg` keeps it for install specs, where it is a version range. Pinning both sides is
+  // what makes that difference deliberate rather than a drift.
+  await profileFixture(({ root, entry, receipt }) => {
+    const caretPath = launcher(path.join(root, 'CLI with ^ caret', launcherName), entry)
+    process.env.DSH_OPS_INSTALL_SPEC = 'dsh-ops@^1.0.0'
+    if (process.platform === 'win32') {
+      assert.throws(() => capture(() => profileCommand('install', { profile: 'tui', dshCli: caretPath })),
+        /Unsafe CLI path/, 'a launcher path with ^ must be refused before anything runs')
+      assert.equal(fs.existsSync(receipt), false)
+    } else {
+      assert.equal(capture(() => profileCommand('install', { profile: 'tui', dshCli: caretPath })).status, 0)
+    }
+    const plain = launcher(path.join(root, 'CLI plain', launcherName), entry)
+    assert.equal(capture(() => profileCommand('install', { profile: 'tui', dshCli: plain })).status, 0)
+    assert.deepEqual(JSON.parse(fs.readFileSync(receipt, 'utf8')), ['plugin', '--profile', 'dsh-tui', 'add', 'dsh-ops@^1.0.0'],
+      'the same caret stays literal in the spec')
+  })
+})
 await test('the launcher receives an install spec verbatim, and the cmd line refuses what it cannot carry', async () => {
   // A `.cmd` launcher is reached through `cmd /d /s /c` with `windowsVerbatimArguments`, so the
   // spec is a command-line fragment unless it is quoted. These four are legal npm specs whose
