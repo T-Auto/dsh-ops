@@ -22,6 +22,26 @@ import { REPO_ROOT } from '../lib/env.mjs'
 // plugin's documented verification path; otherwise the candidate arm publishes no tools and
 // every OPS call fails as `unknown tool "ops_<name>"`.
 process.env.DSH_OPS_LEGACY_ROWS = process.env.DSH_OPS_LEGACY_ROWS ?? '1'
+/**
+ * Mount the timeout policy the timeout arm needs, naming it when it is absent.
+ *
+ * Loaded on demand rather than at module scope: it is a devDependency a checkout without a
+ * complete `npm ci` may not have installed, and only the timeout arm asks for it — a static
+ * import fails every benchmark with an opaque ERR_MODULE_NOT_FOUND, including the ones that never
+ * touch the policy. The loader is a parameter so the missing-dependency path is testable without
+ * breaking the installed tree.
+ * @param ctx - the host context to mount the policy on.
+ * @param load - the module loader; defaults to a dynamic import by package name.
+ * @returns nothing; throws a named error when the package is missing.
+ */
+export async function mountTimeoutPolicy(ctx, load = spec => import(spec)) {
+  let policy
+  try { policy = await load('@deepseek-ai/dsh-tool-call-timeout-policy') }
+  catch (error) {
+    throw new Error(`the timeout arm needs @deepseek-ai/dsh-tool-call-timeout-policy (a declared devDependency): run \`npm ci\`, or drop the arm from this run — ${error?.code ?? error?.message}`)
+  }
+  await ctx.plugin({ inject: policy.inject, apply: policy.apply })
+}
 let identity = 0
 const textOf = content => content.filter(block => block.type === 'text').map(block => block.text).join('\n')
 
@@ -101,20 +121,7 @@ export async function boot({ root, worker, baselineSource, projection = 'candida
   }
   // The real bundles always mount this: a tool's declared `timeoutMs` becomes a cooperative
   // deadline on `exec.signal`. Mounted after our listener, so our span still contains the timeout.
-  //
-  // Loaded here rather than at module scope: it is a devDependency that a checkout without a
-  // complete `npm ci` may not have installed, and only the timeout arm needs it. A static
-  // import fails every benchmark with an opaque ERR_MODULE_NOT_FOUND, including the ones that
-  // never ask for the policy.
-  if (toolTimeout) {
-    let policy
-    try { policy = await import('@deepseek-ai/dsh-tool-call-timeout-policy') }
-    catch (error) {
-      throw new Error('the timeout arm needs @deepseek-ai/dsh-tool-call-timeout-policy (a declared '
-        + 'devDependency): run `npm ci`, or drop the arm from this run — ' + (error?.code ?? error?.message))
-    }
-    await ctx.plugin({ inject: policy.inject, apply: policy.apply })
-  }
+  if (toolTimeout) await mountTimeoutPolicy(ctx)
   await ctx.plugin(Loop, { agents: [], maxParallelToolCalls: 3 })
   async function agent(mode = 'workspace-write', parentAgent) {
     const { agent } = await ctx.get('agents').create({ sessionId: 'benchmark-' + ++identity, meta: { cwd: root }, parentAgent,
