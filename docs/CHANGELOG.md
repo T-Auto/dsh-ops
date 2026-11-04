@@ -7,8 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-- Keep a replaced official tool callable while the assembled request still carries it: the replacement guard now answers for the tool surface that request was assembled with instead of the registry's current view, so a replacement that landed after the request was captured can no longer leave a session holding neither the official tool nor its counterpart (#578).
-- 当已组装的请求仍携带被替换的官方工具时保持其可调用：替换守卫改为按该请求组装时的工具面判定，而不是注册表当前视图；在请求快照之后才落地的替换不再会让会话两头都没有工具（#578）。
+- Stop refusing a replaced official tool on behalf of a request that never carried its replacement: the guard now answers for the tool surface that request was assembled with instead of the registry's current view, so a replacement that landed after the request was captured is no longer enforced against the call the model can actually make (#578).
+- 不再因某次请求从未携带替换而拒绝被替换的官方工具：替换守卫改为按该请求组装时的工具面判定，而不是注册表当前视图；在请求快照之后才落地的替换，不再被用来拒绝模型实际能发出的那次调用（#578）。
 - Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
 - 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。
 - Report PowerShell ConstrainedLanguage before workspace ACL preparation and preserve a named diagnostic without changing security policy (#458). / 工作区 ACL 准备前明确报告 PowerShell ConstrainedLanguage，并保留具名诊断，不改变安全策略（#458）。

@@ -259,10 +259,10 @@ assembly. Ownership changes are rechecked even when the schema bytes stay unchan
 created by the OPS PTC adapter retain their tracked ownership. Disabling a consumer or its
 replacement switch restores the corresponding official tool.
 
-A refusal answers for the request that produced the call, not for the registry's current state.
-When a request was assembled before its replacement became visible, the official name it still
-carries stays callable rather than refused, so a session never holds neither half of a swap
-(#578).
+A refusal answers for the surface the last assembled request carried, not for the registry's
+current state. When a request was assembled before its replacement became visible, the official
+name it still carries is not refused, so a session is never told to call a tool that request was
+never given (#578).
 
 The resident `ops_read_files` is not the counterpart for `read`; Standard and Cordis publish
 `ops_inspect_local_file`, `ops_glob` and `ops_grep` as the reviewed counterparts.

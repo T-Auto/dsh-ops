@@ -218,8 +218,9 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
       if (!agent || !matches(agent)) return undefined
       const counterpart = targets.get(String(exec.name ?? ''))
       if (counterpart === undefined) return undefined
-      // Same authority as the mask: a counterpart the last assembled request did not carry is not
-      // callable, so refusing the official tool would leave the model with nothing (#578).
+      // Same authority as the mask: the refusal answers for the surface the request was assembled
+      // with, so a call the model could only make with the official tool is not refused on behalf
+      // of a replacement that request never carried (#578).
       if (entries.get(agent)?.admitted?.has(counterpart) === false) return undefined
       if (!visibleNames(tools, agent).includes(counterpart)) return undefined
       return `dsh-ops ${mode} mode replaced the official tool ${String(exec.name)} with ${counterpart}; call ${counterpart}, or turn off that replacement in the dsh-ops row settings.`
