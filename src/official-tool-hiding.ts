@@ -10,6 +10,7 @@ import { isPresentationProbe } from './publication/presentation.js'
 import { resolveHidingConfig } from './config.js'
 export { resolveHidingConfig } from './config.js'
 import { OFFICIAL_REPLACEMENTS } from './official-tool-catalog.js'
+import { readableSurface, surfaceOf, visibleNames } from './publication/surface.js'
 import { safeDispose } from './teardown.js'
 import { retired as retiredLegacyRow } from './settings/legacy.js'
 
@@ -59,7 +60,7 @@ export function apply(root: Context, raw?: unknown): void {
       })
     }
     const prepare = (agent: object, entry: Entry): Plan => {
-      const names = typeof tools.schemas === 'function' ? tools.schemas(agent).map(schema => schema.name) : []
+      const names = readableSurface(tools) ? visibleNames(tools, agent) : []
       const hidden = names.filter(hideable)
       const ready = readiness(agent)
       const missing = replaceTools.flatMap((tool, index) => {
@@ -79,8 +80,11 @@ export function apply(root: Context, raw?: unknown): void {
     // Compare public surfaces before touching masks. Other components also
     // reconcile tools/change; emitting a fresh restriction for an unchanged
     // surface would otherwise cause a publication/withdrawal feedback loop.
-    // Schema bytes alone cannot detect a foreign tool shadowing an OPS definition.
-    const snapshot = (): string => JSON.stringify([tools.schemas(), ...[...entries.keys()].map(agent => [tools.schemas(agent), readiness(agent)])])
+    // Names alone cannot detect a foreign tool shadowing an OPS definition, so each entry is
+    // paired with the identity of the definition it currently resolves to — one view read,
+    // no schema projection: the guard runs before every dispatch and this waterfall twice
+    // per prompt, so a key that deep-copied the catalogue would cost more than it saves.
+    const snapshot = (): string => JSON.stringify([surfaceOf(tools), ...[...entries.keys()].map(agent => [surfaceOf(tools, agent), readiness(agent)])])
     const reconcile = () => {
       if (stopped || mutating) return
       try { if (snapshot() === lastSurface) return } catch { /* reported by per-agent verification below */ }
@@ -104,7 +108,7 @@ export function apply(root: Context, raw?: unknown): void {
             // One restriction per complete plan; never partially hide when a
             // single required replacement is absent.
             if (plan.deny.length) entry.lifts.push(entry.context.tools.restrict({ deny: plan.deny }))
-            const leaked = tools.schemas(agent).map(schema => schema.name).filter(hideable)
+            const leaked = visibleNames(tools, agent).filter(hideable)
             if (leaked.length) throw new Error(`host scoped restriction cannot hide own-scope tools: ${leaked.join(', ')}`)
             entry.error = undefined
           } catch (error) { clear(entry); entry.error = blocked(message(error)) }

@@ -63,13 +63,13 @@ const identityOf = (definition: unknown): number => {
  * than the assembly it skips turns the memo into a slowdown. `schemas()` survives only as
  * the fallback for a host whose view is not reachable, where correctness outranks the cost.
  * @param tools - the tool registry.
- * @param agent - the scope to read.
+ * @param scope - the scope to read, or `undefined` for the global layer.
  * @returns per-entry `name\u0001identity` joined by NUL, usable as a memo key.
  */
-export const surfaceOf = (tools: Pick<ToolRuntime, 'schemas'>, agent: Agent): string => {
+export const surfaceOf = (tools: Pick<ToolRuntime, 'schemas'>, scope?: object): string => {
   // Duck-typed rather than `instanceof Map`: a host may serve the view through a subclass
   // or a proxy, and a failed instanceof would silently take the expensive branch forever.
-  const visible = (tools as unknown as Viewable).view?.(agent)?.visible
+  const visible = (tools as unknown as Viewable).view?.(scope)?.visible
   if (typeof visible?.entries === 'function') {
     const parts: string[] = []
     for (const [name, definition] of visible.entries()) parts.push(`${name}\u0001${identityOf(definition)}`)
@@ -78,7 +78,12 @@ export const surfaceOf = (tools: Pick<ToolRuntime, 'schemas'>, agent: Agent): st
   // A view that publishes names only still beats a projection: a mode flip moves names even
   // where a same-named swap cannot be seen.
   if (typeof visible?.keys === 'function') return [...visible.keys()].join('\u0000')
-  return tools.schemas(agent).map(schema => schema.name).join('\u0000')
+  // A host without a reachable view still has to describe the surface. Pairing each name with
+  // the description it projects costs one concat rather than a copy — `schemaOf` already
+  // detached the parameters, and this description is the original reference — which is enough
+  // to see a same-named swap that ships a different description, without a second pass over
+  // the tree. Names alone would have missed it; a content fingerprint would have paid for it.
+  return tools.schemas(scope as Agent).map(schema => `${schema.name}\u0001${schema.description ?? ''}`).join('\u0000')
 }
 
 /**
@@ -111,3 +116,16 @@ export const visibleNames = (tools: Pick<ToolRuntime, 'schemas'>, scope?: object
   if (typeof visible?.keys === 'function') return [...visible.keys()]
   return tools.schemas(scope as Agent).map(schema => schema.name)
 }
+
+/**
+ * Whether this registry can describe a surface at all.
+ *
+ * Both readers above try the view first and fall back to the projection, so a registry that
+ * offers either one can answer. Testing only `schemas` — as the replacement planner used to —
+ * refuses a host that serves a view alone, which is exactly the shape the cheap path prefers,
+ * and reports every selected replacement as absent instead of planning it.
+ * @param tools - the tool registry.
+ * @returns whether at least one surface reader is callable.
+ */
+export const readableSurface = (tools: Pick<ToolRuntime, 'schemas'>): boolean =>
+  typeof tools.schemas === 'function' || typeof (tools as unknown as Viewable).view === 'function'

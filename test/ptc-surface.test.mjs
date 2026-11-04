@@ -12,7 +12,7 @@
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { assert, test, report } from './lib/harness.mjs'
-import { surfaceOf, surfaceNames } from '../lib/surface.js'
+import { readableSurface, surfaceOf, surfaceNames } from '../lib/surface.js'
 
 /** A registered tool whose schema is big enough that a deep copy is measurable. */
 const tool = name => ({
@@ -111,6 +111,12 @@ await test('a host without a reachable view still names the surface', () => with
   const projected = tools.schemas(key).map(schema => schema.name)
   const noView = { schemas: scope => tools.schemas(scope) }
   assert.deepEqual(surfaceNames(surfaceOf(noView, key)), projected, 'the fallback names exactly what schemas() projects')
+  // The projection has already detached every parameter schema, so the fallback pairs each
+  // name with the description it already holds: a concat, not a copy. That is enough to see a
+  // same-named swap that ships a new description, without a second pass over the tree.
+  const swapped = { schemas: scope => tools.schemas(scope).map(schema => ({ ...schema, description: `swapped ${schema.name}` })) }
+  assert.notEqual(surfaceOf(swapped, key), surfaceOf(noView, key), 'a same-named swap with a new description moves the fallback key')
+  assert.deepEqual(surfaceNames(surfaceOf(noView, key)), projected, 'the description suffix never leaks into a name')
 }))
 
 /**
@@ -145,5 +151,21 @@ async function withScope (body) {
     await body({ ctx, tools, key, agent: scope.ctx, calls: countSchemas(tools), views: countViews(tools) })
   } finally { await shutdown(ctx) }
 }
-
+await test('a surface read without a scope describes the global layer', () => withScope(async ({ tools, calls }) => {
+  // The memo key is also read for the global layer (official-tool-hiding does that before
+  // any agent exists), so the optional scope must reach the same cheap view path instead of
+  // falling back to a projection for the largest surface of all.
+  calls.count = 0
+  const surface = surfaceOf(tools)
+  assert.equal(calls.count, 0, 'the global layer must be read through the view as well')
+  assert.deepEqual(surfaceNames(surface).sort(), ['alpha', 'beta'], 'a scope-less read names the global registrations')
+}))
+await test('a registry that serves a view alone is still readable', () => withScope(async ({ tools }) => {
+  // The replacement planner used to gate its whole name list on `schemas` being callable, so a
+  // host serving a view without the projection had every selected replacement reported absent
+  // instead of planned. Either reader is enough: both fall back to the other one.
+  const viewOnly = { view: scope => tools.view(scope) }
+  assert.equal(readableSurface(viewOnly), true, 'a view without the projection can describe a surface')
+  assert.equal(readableSurface({}), false, 'a registry that offers neither cannot be planned against')
+}))
 report('ptc-surface')

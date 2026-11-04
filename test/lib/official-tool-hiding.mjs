@@ -60,6 +60,26 @@ const assemble = (ctx, agent) => ctx.get('systemPrompt').assemble({ scope: agent
 const execute = (ctx, agent, name) => ctx.get('tools').execute({ agent, name, arguments: {}, callId: 'hide-test', signal: new AbortController().signal })
 
 export async function officialToolHidingMountChecks() {
+  await test('a guarded dispatch reconciles through the view, not a schema projection', async () => {
+    // The snapshot key, the readiness plan and the post-restrict leak check all read the
+    // visible surface. Built from `schemas()` they deep-copy every definition before every
+    // dispatch; a revert to `tools.schemas` makes `projected` non-zero here.
+    const { ctx } = await bootHost()
+    try {
+      await replacements(ctx)
+      for (const name of ['read', 'glob', 'grep', 'foreign']) ctx.tools.register(tool(name))
+      const agent = await mint(ctx, 'reconcile-cost-agent')
+      await mount(ctx)
+      const tools = ctx.get('tools')
+      let projected = 0
+      const original = tools.schemas
+      tools.schemas = function (...args) { ++projected; return original.apply(this, args) }
+      try {
+        await execute(ctx, agent, 'foreign')
+        assert.equal(projected, 0, 'the guard must reconcile through view identities; a schemas() projection here is the copy the memo exists to skip')
+      } finally { tools.schemas = original }
+    } finally { await shutdown(ctx) }
+  })
   await test('selected replacements remove official schemas and dispatch, preserves unrelated scopes, and lifts on unload', async () => {
     const { ctx } = await bootHost()
     try {

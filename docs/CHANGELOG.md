@@ -7,6 +7,11 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Key the hidden-surface snapshot by view identity instead of projecting every schema, so the replacement guard and the assemble waterfall stop deep-copying the whole catalog on every pass; the optional scope now reaches the same cheap path and a scope-less read describes the global layer.
+- 隐藏面快照改用视图条目身份作键，不再为每个定义投影 schema；替换守卫与装配瀑布因此不再每次检查都深拷贝整个工具目录，可选作用域走同一条低价路径，无作用域读取描述全局层。
+- Read the discovery guidance's callable set from the view instead of `schemas()`, removing one schema projection per prompt assembly.
+- 渐进披露指引的可调用集合改从视图读取，不再每条提示词装配投影一次 `schemas()`。
+
 - Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
 - 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。
 - Report PowerShell ConstrainedLanguage before workspace ACL preparation and preserve a named diagnostic without changing security policy (#458). / 工作区 ACL 准备前明确报告 PowerShell ConstrainedLanguage，并保留具名诊断，不改变安全策略（#458）。
