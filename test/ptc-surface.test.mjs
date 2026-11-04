@@ -75,6 +75,17 @@ await test('a surface read does not re-read the view once per name', () => withS
   assert.equal(surfaceNames(surface).length, 2, 'the surface still describes every visible tool')
 }))
 
+await test('reading many scopes costs one view each, not one per name', () => withScope(async ({ ctx, tools, key, views }) => {
+  // The hidden-surface snapshot reads every tracked scope once per dispatch, so the per-scope
+  // cost is what decides whether dispatch stays cheap as agents accumulate. One view per scope
+  // keeps the cost linear in scopes; a per-name read would make it scopes times names, which is
+  // the O(scopes × tools) shape this test refuses to let back in.
+  const scopes = [key, createScope(ctx, { id: 'scope-b' }).ctx, createScope(ctx, { id: 'scope-c' }).ctx]
+  views.count = 0
+  for (const scope of scopes) surfaceOf(tools, scope)
+  assert.equal(views.count, scopes.length, 'one view read per scope, independent of how many tools it names')
+}))
+
 await test('a surface read agrees with schemas() for the same scope', () => withScope(async ({ tools, key }) => {
   const projected = tools.schemas(key).map(schema => schema.name)
   assert.deepEqual(surfaceNames(surfaceOf(tools, key)), projected, 'the memo key must name exactly what schemas() projects, in the same order')
