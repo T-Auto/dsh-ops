@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Stop attempting an inherited-tool restriction for a Bash this consumer published into the Agent's own layer, which `restrict()` never masks: a preset that does not own the publication no longer reports `inherited bash restriction failed: tools.restrict() names unknown global tool "ops_bash"` on every reconcile (#652).
+- 不再对注册在 Agent 自有层的 Bash 尝试继承工具限制（`restrict()` 本就不遮蔽自有层注册）：不持有该发布的 preset 不再在每一轮 reconcile 重复报告 `inherited bash restriction failed: tools.restrict() names unknown global tool "ops_bash"`（#652）。
+
 - Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
 - 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。
 - Report PowerShell ConstrainedLanguage before workspace ACL preparation and preserve a named diagnostic without changing security policy (#458). / 工作区 ACL 准备前明确报告 PowerShell ConstrainedLanguage，并保留具名诊断，不改变安全策略（#458）。
