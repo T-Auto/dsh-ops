@@ -165,6 +165,11 @@ export const surfaceNames = (surface: string): string[] =>
  */
 export const visibleNames = (tools: Pick<ToolRuntime, 'schemas'>, scope?: object): string[] => {
   const visible = viewOf(tools, scope)
+  // Entries first, exactly as `surfaceOf` reads them: a view that publishes entries publishes the
+  // names with them, and answering from `keys()` alone would report "no names" for that host while
+  // the key built from the same read carries them — the two readers would describe different
+  // surfaces, and the planner would call every selected replacement absent.
+  if (typeof visible?.entries === 'function') return [...visible.entries()].map(([name]) => name)
   if (typeof visible?.keys === 'function') return [...visible.keys()]
   // Same reason as `surfaceOf`: a view that publishes no names leaves nothing to project, and
   // a registry with no projection either has nothing to fall back on — naming nothing beats

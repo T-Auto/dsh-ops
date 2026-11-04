@@ -60,7 +60,10 @@ export function apply(root: Context, raw?: unknown): void {
       })
     }
     const prepare = (agent: object, entry: Entry): Plan => {
-      const names = typeof tools.schemas === 'function' ? visibleNames(tools, agent) : []
+      // No capability guard here: `visibleNames` already answers for a registry with no
+      // projection, and gating it on `schemas` a second time reported every selected replacement
+      // as absent on a host that serves a view without one — the plan then hid nothing.
+      const names = visibleNames(tools, agent)
       const hidden = names.filter(hideable)
       const ready = readiness(agent)
       const missing = replaceTools.flatMap((tool, index) => {

@@ -177,8 +177,14 @@ await test('a registry with no projection answers without throwing', () => withS
   // dispatch path is not.
   assert.deepEqual(visibleNames({}), [], 'no reader names nothing')
   assert.equal(surfaceOf({}), '', 'and describes an empty surface')
-  const entriesOnly = { view: () => ({ visible: { entries: () => [] } }) }
-  assert.deepEqual(visibleNames(entriesOnly), [], 'a view that publishes no keys() falls back to nothing, not to a throw')
+  const empty = { view: () => ({ visible: { entries: () => [] } }) }
+  assert.deepEqual(visibleNames(empty), [], 'a view that publishes neither reader names nothing')
+  // `entries()` carries the names. Answering from `keys()` alone reported an empty surface for
+  // such a host while `surfaceOf` built its key from those same entries — two readers describing
+  // two different surfaces.
+  const entriesOnly = { view: () => ({ visible: { entries: () => [['alpha', {}], ['beta', {}]] } }) }
+  assert.deepEqual(visibleNames(entriesOnly), ['alpha', 'beta'], 'names come from entries when the view publishes them')
+  assert.deepEqual(surfaceNames(surfaceOf(entriesOnly)), ['alpha', 'beta'], 'and both readers describe the same surface')
 }))
 await test('a description carrying a separator cannot forge an entry', () => withScope(async ({ tools, key }) => {
   // Entries are NUL-joined and a name is split from its payload with SOH. Off the view path the
