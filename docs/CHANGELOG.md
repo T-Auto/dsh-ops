@@ -13,6 +13,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 渐进披露指引的可调用集合改从视图读取，不再每条提示词装配投影一次 `schemas()`。
 - Keep a forged entry out of the surface key: the projection fallback pairs each name with the description it already holds, so both separator characters are escaped before they enter the key, and a description that is not a string cannot throw on a dispatch path.
 - 防止表面键被伪造条目：投影兜底把每个名字与它已有的描述并列，因此两个分隔符在进入键之前先转义，非字符串的描述也不会在派发路径上抛错。
+- Read a scope's visible names from the entries its view publishes, not only from `keys()`: a view that offers entries without keys now reports its names, so the replacement planner stops treating every selected counterpart as absent there.
+- 作用域的可见名字改从视图条目读取，不再只认 `keys()`：只发布条目、不发布键的视图现在也能报出名字，替换计划不再把每个已选对应项当成缺失。
 
 - Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
 - 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。
