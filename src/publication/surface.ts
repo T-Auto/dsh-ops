@@ -89,6 +89,29 @@ const flatten = (text: unknown): string =>
   String(text ?? '').replaceAll('\\', '\\\\').replaceAll('\u0000', '\\0').replaceAll('\u0001', '\\1')
 
 /**
+ * Undo {@link flatten} for a name read back out of a key.
+ *
+ * `surfaceNames` splits the key on the separators, so a name carrying one of them has to be
+ * written escaped and read back unescaped, or a host that registers such a name reports more
+ * tools than it has. Backslashes go first in both directions so the mapping stays single-valued.
+ * @param text - one escaped name segment from a key.
+ * @returns the name the host registered.
+ */
+const unescape = (text: string): string => {
+  let out = ''
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]!
+    if (char !== '\\') { out += char; continue }
+    const next = text[index + 1]
+    if (next === '\\') { out += '\\'; index++ }
+    else if (next === '0') { out += '\u0000'; index++ }
+    else if (next === '1') { out += '\u0001'; index++ }
+    else out += char
+  }
+  return out
+}
+
+/**
  * The surface of one agent, the memo key a presentation probe is cached under.
  *
  * Two things move a `ptcOnly`/`native` verdict, and the key must see both:
@@ -118,12 +141,12 @@ export const surfaceOf = (tools: Pick<ToolRuntime, 'schemas'>, scope?: object): 
   const visible = viewOf(tools, scope)
   if (typeof visible?.entries === 'function') {
     const parts: string[] = []
-    for (const [name, definition] of visible.entries()) parts.push(`${name}\u0001${identityOf(definition)}`)
+    for (const [name, definition] of visible.entries()) parts.push(`${flatten(name)}\u0001${identityOf(definition)}`)
     return parts.join('\u0000')
   }
   // A view that publishes names only still beats a projection: a mode flip moves names even
   // where a same-named swap cannot be seen.
-  if (typeof visible?.keys === 'function') return [...visible.keys()].join('\u0000')
+  if (typeof visible?.keys === 'function') return [...visible.keys()].map(flatten).join('\u0000')
   // A host without a reachable view still has to describe the surface. Pairing each name with
   // the description it projects costs one concat rather than a copy — `schemaOf` already
   // detached the parameters, and this description is the original reference — which is enough
@@ -135,7 +158,7 @@ export const surfaceOf = (tools: Pick<ToolRuntime, 'schemas'>, scope?: object): 
   // key beats throwing on a dispatch path.
   const projected = project(tools, scope)
   if (!projected) return ''
-  return projected.map(schema => `${schema.name}\u0001${flatten(schema.description)}`).join('\u0000')
+  return projected.map(schema => `${flatten(schema.name)}\u0001${flatten(schema.description)}`).join('\u0000')
 }
 
 /**
@@ -147,7 +170,7 @@ export const surfaceOf = (tools: Pick<ToolRuntime, 'schemas'>, scope?: object): 
  * @returns the names, in the order the view reported them.
  */
 export const surfaceNames = (surface: string): string[] =>
-  surface === '' ? [] : surface.split('\u0000').map(entry => entry.split('\u0001')[0]!)
+  surface === '' ? [] : surface.split('\u0000').map(entry => unescape(entry.split('\u0001')[0]!))
 
 /**
  * The visible tool names of one scope, without copying any schema.

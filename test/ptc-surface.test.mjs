@@ -80,10 +80,13 @@ await test('reading many scopes costs one view each, not one per name', () => wi
   // cost is what decides whether dispatch stays cheap as agents accumulate. One view per scope
   // keeps the cost linear in scopes; a per-name read would make it scopes times names, which is
   // the O(scopes × tools) shape this test refuses to let back in.
-  const scopes = [key, createScope(ctx, { id: 'scope-b' }).ctx, createScope(ctx, { id: 'scope-c' }).ctx]
+  // `scope.ctx` is not a key: passing it silently reads the global layer, so every entry in this
+  // list has to be the opaque key itself or the test only proves three global reads.
+  const keys = [key, { id: 'scope-b' }, { id: 'scope-c' }]
+  for (const extra of keys.slice(1)) createScope(ctx, extra)
   views.count = 0
-  for (const scope of scopes) surfaceOf(tools, scope)
-  assert.equal(views.count, scopes.length, 'one view read per scope, independent of how many tools it names')
+  for (const scopedKey of keys) surfaceOf(tools, scopedKey)
+  assert.equal(views.count, keys.length, 'one view read per scope key, independent of how many tools it names')
 }))
 
 await test('a surface read agrees with schemas() for the same scope', () => withScope(async ({ tools, key }) => {
@@ -202,6 +205,19 @@ await test('a description carrying a separator cannot forge an entry', () => wit
     const stand = { schemas: () => tools.schemas(key).map(schema => ({ ...schema, description })) }
     assert.doesNotThrow(() => surfaceOf(stand, key), 'a non-string description must not throw: ' + String(description))
     assert.deepEqual(surfaceNames(surfaceOf(stand, key)).sort(), ['alpha', 'beta'], 'and the names survive')
+  }
+}))
+await test('a name carrying a separator cannot forge an entry either', () => withScope(async ({ tools, key }) => {
+  // `tools.register()` validates the output schema and the timeout, not the name, so a host can
+  // hand over a name carrying NUL or SOH. Names are escaped on the way into the key and unescaped
+  // on the way out, otherwise `surfaceNames` reads one registration back as two.
+  for (const name of ['forge\u0000two', 'split\u0001payload', 'plain', 'back\\slash']) {
+    const entries = { view: () => ({ visible: { entries: () => [[name, {}]] } }) }
+    assert.deepEqual(surfaceNames(surfaceOf(entries)), [name], 'entries path: ' + JSON.stringify(name))
+    const only = { view: () => ({ visible: { keys: () => [name] } }) }
+    assert.deepEqual(surfaceNames(surfaceOf(only)), [name], 'keys path: ' + JSON.stringify(name))
+    const projected = { schemas: () => [{ name, description: 'ignored' }] }
+    assert.deepEqual(surfaceNames(surfaceOf(projected)), [name], 'projection path: ' + JSON.stringify(name))
   }
 }))
 report('ptc-surface')
