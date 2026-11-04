@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Keep `turn` on projected `tool/call` and `tool/result` records. A step number restarts at 1 in every turn, so a log row that carried only `step` could not be attributed to the turn it happened in (#644).
+- 投影后的 `tool/call` 与 `tool/result` 记录保留 `turn`。step 编号在每个 turn 都从 1 重来，只带 `step` 的日志行无法归到它实际发生的那个 turn（#644）。
 - Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
 - 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。
 - Report PowerShell ConstrainedLanguage before workspace ACL preparation and preserve a named diagnostic without changing security policy (#458). / 工作区 ACL 准备前明确报告 PowerShell ConstrainedLanguage，并保留具名诊断，不改变安全策略（#458）。
