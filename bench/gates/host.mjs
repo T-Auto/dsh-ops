@@ -16,7 +16,6 @@ import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import FileSystem from '@deepseek-ai/dsh-fs-local'
 import * as OfficialTools from '@deepseek-ai/dsh-tool-fs'
 import * as OfficialSearch from '@deepseek-ai/dsh-tool-fs-search'
-import * as TimeoutPolicy from '@deepseek-ai/dsh-tool-call-timeout-policy'
 import { REPO_ROOT } from '../lib/env.mjs'
 // The shipped bundle mounts one `dsh-ops` row and retires the legacy per-component rows
 // (`file`, `shell`, `ptc`). This harness mounts those rows directly, so it opts into the
@@ -102,7 +101,20 @@ export async function boot({ root, worker, baselineSource, projection = 'candida
   }
   // The real bundles always mount this: a tool's declared `timeoutMs` becomes a cooperative
   // deadline on `exec.signal`. Mounted after our listener, so our span still contains the timeout.
-  if (toolTimeout) await ctx.plugin({ inject: TimeoutPolicy.inject, apply: TimeoutPolicy.apply })
+  //
+  // Loaded here rather than at module scope: it is a devDependency that a checkout without a
+  // complete `npm ci` may not have installed, and only the timeout arm needs it. A static
+  // import fails every benchmark with an opaque ERR_MODULE_NOT_FOUND, including the ones that
+  // never ask for the policy.
+  if (toolTimeout) {
+    let policy
+    try { policy = await import('@deepseek-ai/dsh-tool-call-timeout-policy') }
+    catch (error) {
+      throw new Error('the timeout arm needs @deepseek-ai/dsh-tool-call-timeout-policy (a declared '
+        + 'devDependency): run `npm ci`, or drop the arm from this run — ' + (error?.code ?? error?.message))
+    }
+    await ctx.plugin({ inject: policy.inject, apply: policy.apply })
+  }
   await ctx.plugin(Loop, { agents: [], maxParallelToolCalls: 3 })
   async function agent(mode = 'workspace-write', parentAgent) {
     const { agent } = await ctx.get('agents').create({ sessionId: 'benchmark-' + ++identity, meta: { cwd: root }, parentAgent,
