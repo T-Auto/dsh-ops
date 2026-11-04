@@ -41,6 +41,25 @@ const identityOf = (definition: unknown): number => {
 }
 
 /**
+ * Escape the two characters a key uses as separators.
+ *
+ * Entries are joined with NUL and a name is split from its payload with SOH, so a payload that
+ * carried either one would forge an entry: a description reading `before\u0000after` makes
+ * `surfaceNames` report three tools for two registrations. Backslashes escape first so the
+ * mapping stays single-valued, and names are never passed through here — they are what callers
+ * read back out.
+ *
+ * The argument is `unknown` on purpose: `tools.register()` validates the output schema and the
+ * timeout but not the type of `description` (`dsh-tools` `index.js`), and `schemaOf` forwards it
+ * unchanged, so a host can hand this a value that is not a string. Coercing keeps the key total
+ * instead of throwing on a dispatch path.
+ * @param text - the payload to make separator-safe.
+ * @returns the text with NUL and SOH written as two-character escapes.
+ */
+const flatten = (text: unknown): string =>
+  String(text ?? '').replaceAll('\\', '\\\\').replaceAll('\u0000', '\\0').replaceAll('\u0001', '\\1')
+
+/**
  * The surface of one agent, the memo key a presentation probe is cached under.
  *
  * Two things move a `ptcOnly`/`native` verdict, and the key must see both:
@@ -83,7 +102,8 @@ export const surfaceOf = (tools: Pick<ToolRuntime, 'schemas'>, scope?: object): 
   // detached the parameters, and this description is the original reference — which is enough
   // to see a same-named swap that ships a different description, without a second pass over
   // the tree. Names alone would have missed it; a content fingerprint would have paid for it.
-  return tools.schemas(scope as Agent).map(schema => `${schema.name}\u0001${schema.description ?? ''}`).join('\u0000')
+  // The payload is escaped so a description carrying a separator cannot forge an entry.
+  return tools.schemas(scope as Agent).map(schema => `${schema.name}\u0001${flatten(schema.description)}`).join('\u0000')
 }
 
 /**

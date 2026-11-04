@@ -168,4 +168,22 @@ await test('a registry that serves a view alone is still readable', () => withSc
   assert.equal(readableSurface(viewOnly), true, 'a view without the projection can describe a surface')
   assert.equal(readableSurface({}), false, 'a registry that offers neither cannot be planned against')
 }))
+await test('a description carrying a separator cannot forge an entry', () => withScope(async ({ tools, key }) => {
+  // Entries are NUL-joined and a name is split from its payload with SOH. Off the view path the
+  // description is the only payload `schemas()` hands over, so it is the only place one of those
+  // characters could smuggle in and make two registrations read back as three names.
+  for (const description of ['before\u0000after', 'x\u0000y\u0001z', 'plain', '\\u0000 literal']) {
+    const stand = { schemas: () => tools.schemas(key).map(schema => ({ ...schema, description })) }
+    assert.deepEqual(surfaceNames(surfaceOf(stand, key)).sort(), ['alpha', 'beta'],
+      'a separator in the description stays inside its own entry: ' + JSON.stringify(description))
+  }
+  // `tools.register()` validates the output schema and the timeout, not the type of
+  // `description`, and `schemaOf` forwards it unchanged: this key is read on the dispatch path,
+  // so a host that hands over a number must not turn it into a throw.
+  for (const description of [42, null, { toString: () => 'object description' }]) {
+    const stand = { schemas: () => tools.schemas(key).map(schema => ({ ...schema, description })) }
+    assert.doesNotThrow(() => surfaceOf(stand, key), 'a non-string description must not throw: ' + String(description))
+    assert.deepEqual(surfaceNames(surfaceOf(stand, key)).sort(), ['alpha', 'beta'], 'and the names survive')
+  }
+}))
 report('ptc-surface')
