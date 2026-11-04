@@ -19,6 +19,35 @@ interface ScopeView {
 }
 type Viewable = { view?: (scope?: object) => ScopeView | undefined }
 
+/**
+ * The visible entries a scope's view publishes, or `undefined` when this host serves no `view()`.
+ *
+ * The single place this module reaches past `schemas()` for the private `view()`: both readers
+ * go through it, so the duck-typed read and its assertions exist once. Duck-typed rather than
+ * `instanceof Map` because a host may serve the view through a subclass or a proxy, and a failed
+ * `instanceof` would silently take the expensive branch forever.
+ * @param tools - the tool registry.
+ * @param scope - the scope to read, or `undefined` for the global layer.
+ * @returns the visible entries, or `undefined` when the host does not expose them.
+ */
+const viewOf = (tools: Pick<ToolRuntime, 'schemas'>, scope?: object): ScopeView['visible'] =>
+  (tools as unknown as Viewable).view?.(scope)?.visible
+
+/**
+ * The schemas this registry projects for a scope, or `undefined` when it cannot project at all.
+ *
+ * The fallback both readers share, so the "can this run at all" test is written once: two
+ * independent `typeof tools.schemas` tests would drift, and only one of the two paths would
+ * notice. `ToolRuntime.schemas()` is declared over `Agent` while the assemble waterfall hands out
+ * an opaque scope key, so this is also the one place the module widens it back — the same widening
+ * the host's own `schemas()` performs internally.
+ * @param tools - the tool registry.
+ * @param scope - the scope to project, or `undefined` for the global layer.
+ * @returns the projected schemas, or `undefined` when the registry has no projection.
+ */
+const project = (tools: Pick<ToolRuntime, 'schemas'>, scope?: object) =>
+  typeof tools.schemas === 'function' ? tools.schemas(scope as Agent) : undefined
+
 /** Stable per-definition identities, so a swapped definition cannot reuse its predecessor's. */
 const identities = new WeakMap<object, number>()
 let sequence = 0
@@ -86,9 +115,7 @@ const flatten = (text: unknown): string =>
  * @returns per-entry `name\u0001identity` joined by NUL, usable as a memo key.
  */
 export const surfaceOf = (tools: Pick<ToolRuntime, 'schemas'>, scope?: object): string => {
-  // Duck-typed rather than `instanceof Map`: a host may serve the view through a subclass
-  // or a proxy, and a failed instanceof would silently take the expensive branch forever.
-  const visible = (tools as unknown as Viewable).view?.(scope)?.visible
+  const visible = viewOf(tools, scope)
   if (typeof visible?.entries === 'function') {
     const parts: string[] = []
     for (const [name, definition] of visible.entries()) parts.push(`${name}\u0001${identityOf(definition)}`)
@@ -106,8 +133,9 @@ export const surfaceOf = (tools: Pick<ToolRuntime, 'schemas'>, scope?: object): 
   // A caller may still hold a registry whose view publishes no `keys()` and which offers no
   // projection at all — a test stand-in, or a host this module was never told about: an empty
   // key beats throwing on a dispatch path.
-  if (typeof tools.schemas !== 'function') return ''
-  return tools.schemas(scope as Agent).map(schema => `${schema.name}\u0001${flatten(schema.description)}`).join('\u0000')
+  const projected = project(tools, scope)
+  if (!projected) return ''
+  return projected.map(schema => `${schema.name}\u0001${flatten(schema.description)}`).join('\u0000')
 }
 
 /**
@@ -136,11 +164,12 @@ export const surfaceNames = (surface: string): string[] =>
  * @returns the visible tool names, in view order.
  */
 export const visibleNames = (tools: Pick<ToolRuntime, 'schemas'>, scope?: object): string[] => {
-  const visible = (tools as unknown as Viewable).view?.(scope)?.visible
+  const visible = viewOf(tools, scope)
   if (typeof visible?.keys === 'function') return [...visible.keys()]
   // Same reason as `surfaceOf`: a view that publishes no names leaves nothing to project, and
   // a registry with no projection either has nothing to fall back on — naming nothing beats
   // throwing here.
-  if (typeof tools.schemas !== 'function') return []
-  return tools.schemas(scope as Agent).map(schema => schema.name)
+  const projected = project(tools, scope)
+  if (!projected) return []
+  return projected.map(schema => schema.name)
 }
