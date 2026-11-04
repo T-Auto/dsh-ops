@@ -199,4 +199,36 @@ await test('session temp identity is stable, isolated, idempotent and refuses fi
     if (process.platform !== 'win32') assert.equal(fs.statSync(first).mode & 0o777, 0o700)
   })
 })
+await test('the launcher receives an install spec verbatim, and the cmd line refuses what it cannot carry', async () => {
+  // A `.cmd` launcher is reached through `cmd /d /s /c` with `windowsVerbatimArguments`, so the
+  // spec is a command-line fragment unless it is quoted. These four are legal npm specs whose
+  // characters (`^ ~ # +` and a space) must survive unchanged.
+  await profileFixture(({ root, entry, receipt }) => {
+    const file = launcher(path.join(root, 'CLI with spaces', launcherName), entry)
+    for (const spec of ['dsh-ops@^1.0.0', 'dsh-ops@~1.2', 'git+https://example.com/x#semver:^1.0.0', 'pkg name@1.0']) {
+      process.env.DSH_OPS_INSTALL_SPEC = spec
+      fs.rmSync(receipt, { force: true })
+      assert.equal(capture(() => profileCommand('install', { profile: 'tui', dshCli: file })).status, 0)
+      assert.deepEqual(JSON.parse(fs.readFileSync(receipt, 'utf8')), ['plugin', '--profile', 'dsh-tui', 'add', spec],
+        'the launcher must receive ' + JSON.stringify(spec) + ' as one argument')
+    }
+    // `&`, `|`, `<` and `>` separate again inside the launcher's own `%*` expansion, and `%`
+    // expands even inside quotes: none of them can be carried by this line.
+    for (const spec of ['dsh-ops@1.0.8 & echo INJECTED', 'a|b', 'pkg@%PATH%', 'a"b', 'a<b', 'a>b', 'a!b']) {
+      process.env.DSH_OPS_INSTALL_SPEC = spec
+      fs.rmSync(receipt, { force: true })
+      if (process.platform === 'win32') {
+        // The preview refuses the same input as the run: a dry-run that reports success for a
+        // spec the real invocation rejects is worse than no preview at all.
+        assert.throws(() => capture(() => profileCommand('install', { profile: 'tui', dshCli: file, dryRun: true })),
+          /cannot receive an argument/, 'a preview must refuse ' + JSON.stringify(spec))
+        assert.throws(() => capture(() => profileCommand('install', { profile: 'tui', dshCli: file })),
+          /cannot receive an argument/, 'the cmd line must refuse ' + JSON.stringify(spec))
+      } else {
+        assert.equal(capture(() => profileCommand('install', { profile: 'tui', dshCli: file })).status, 0)
+      }
+      assert.equal(fs.existsSync(receipt), false, 'nothing may run for ' + JSON.stringify(spec))
+    }
+  })
+})
 report('profile-temp')
