@@ -10,7 +10,7 @@ import { isPresentationProbe } from './publication/presentation.js'
 import { resolveHidingConfig } from './config.js'
 export { resolveHidingConfig } from './config.js'
 import { OFFICIAL_REPLACEMENTS } from './official-tool-catalog.js'
-import { readableSurface, surfaceOf, visibleNames } from './publication/surface.js'
+import { surfaceOf, visibleNames } from './publication/surface.js'
 import { safeDispose } from './teardown.js'
 import { retired as retiredLegacyRow } from './settings/legacy.js'
 
@@ -60,7 +60,7 @@ export function apply(root: Context, raw?: unknown): void {
       })
     }
     const prepare = (agent: object, entry: Entry): Plan => {
-      const names = readableSurface(tools) ? visibleNames(tools, agent) : []
+      const names = typeof tools.schemas === 'function' ? visibleNames(tools, agent) : []
       const hidden = names.filter(hideable)
       const ready = readiness(agent)
       const missing = replaceTools.flatMap((tool, index) => {

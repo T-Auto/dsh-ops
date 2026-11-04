@@ -103,6 +103,10 @@ export const surfaceOf = (tools: Pick<ToolRuntime, 'schemas'>, scope?: object): 
   // to see a same-named swap that ships a different description, without a second pass over
   // the tree. Names alone would have missed it; a content fingerprint would have paid for it.
   // The payload is escaped so a description carrying a separator cannot forge an entry.
+  // A caller may still hold a registry whose view publishes no `keys()` and which offers no
+  // projection at all — a test stand-in, or a host this module was never told about: an empty
+  // key beats throwing on a dispatch path.
+  if (typeof tools.schemas !== 'function') return ''
   return tools.schemas(scope as Agent).map(schema => `${schema.name}\u0001${flatten(schema.description)}`).join('\u0000')
 }
 
@@ -134,18 +138,9 @@ export const surfaceNames = (surface: string): string[] =>
 export const visibleNames = (tools: Pick<ToolRuntime, 'schemas'>, scope?: object): string[] => {
   const visible = (tools as unknown as Viewable).view?.(scope)?.visible
   if (typeof visible?.keys === 'function') return [...visible.keys()]
+  // Same reason as `surfaceOf`: a view that publishes no names leaves nothing to project, and
+  // a registry with no projection either has nothing to fall back on — naming nothing beats
+  // throwing here.
+  if (typeof tools.schemas !== 'function') return []
   return tools.schemas(scope as Agent).map(schema => schema.name)
 }
-
-/**
- * Whether this registry can describe a surface at all.
- *
- * Both readers above try the view first and fall back to the projection, so a registry that
- * offers either one can answer. Testing only `schemas` — as the replacement planner used to —
- * refuses a host that serves a view alone, which is exactly the shape the cheap path prefers,
- * and reports every selected replacement as absent instead of planning it.
- * @param tools - the tool registry.
- * @returns whether at least one surface reader is callable.
- */
-export const readableSurface = (tools: Pick<ToolRuntime, 'schemas'>): boolean =>
-  typeof tools.schemas === 'function' || typeof (tools as unknown as Viewable).view === 'function'

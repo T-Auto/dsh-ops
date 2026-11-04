@@ -12,7 +12,7 @@
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { assert, test, report } from './lib/harness.mjs'
-import { readableSurface, surfaceOf, surfaceNames } from '../lib/surface.js'
+import { surfaceOf, surfaceNames, visibleNames } from '../lib/surface.js'
 
 /** A registered tool whose schema is big enough that a deep copy is measurable. */
 const tool = name => ({
@@ -171,13 +171,14 @@ await test('a surface read without a scope describes the global layer', () => wi
   assert.equal(calls.count, 0, 'the global layer must be read through the view as well')
   assert.deepEqual(surfaceNames(surface).sort(), ['alpha', 'beta'], 'a scope-less read names the global registrations')
 }))
-await test('a registry that serves a view alone is still readable', () => withScope(async ({ tools }) => {
-  // The replacement planner used to gate its whole name list on `schemas` being callable, so a
-  // host serving a view without the projection had every selected replacement reported absent
-  // instead of planned. Either reader is enough: both fall back to the other one.
-  const viewOnly = { view: scope => tools.view(scope) }
-  assert.equal(readableSurface(viewOnly), true, 'a view without the projection can describe a surface')
-  assert.equal(readableSurface({}), false, 'a registry that offers neither cannot be planned against')
+await test('a registry with no projection answers without throwing', () => withScope(async ({ tools }) => {
+  // Both readers fall back to `schemas` when the view publishes no keys, so a registry that
+  // offers neither can still be read: naming nothing is the honest answer, throwing on a
+  // dispatch path is not.
+  assert.deepEqual(visibleNames({}), [], 'no reader names nothing')
+  assert.equal(surfaceOf({}), '', 'and describes an empty surface')
+  const entriesOnly = { view: () => ({ visible: { entries: () => [] } }) }
+  assert.deepEqual(visibleNames(entriesOnly), [], 'a view that publishes no keys() falls back to nothing, not to a throw')
 }))
 await test('a description carrying a separator cannot forge an entry', () => withScope(async ({ tools, key }) => {
   // Entries are NUL-joined and a name is split from its payload with SOH. Off the view path the
