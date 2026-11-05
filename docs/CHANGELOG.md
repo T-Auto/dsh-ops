@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Fix the `internal/update` listener assuming the cordis <= 4.0.5 `(config, noSave, next)` arity; the continuation is now taken as the last argument so `settings.update` no longer aborts with `next is not a function` on cordis >= 4.0.6-alpha / 4.1.x runtimes.
+- 修复 `internal/update` 监听器写死 cordis <= 4.0.5 的 `(config, noSave, next)` 参数；现在以最后一个参数取续体，在 cordis >= 4.0.6-alpha / 4.1.x 运行时上 `settings.update` 不再因 `next is not a function` 中断。
+
 - Accept package-manager hardlinks only in rehashed Niubash source payloads while requiring exclusive execution copies; cover a real offline pnpm hardlink consumer and keep gate orchestration fixtures independent of a host Git Bash installation.
 - Niubash 源载荷逐字节校验后兼容包管理器硬链接，执行副本仍要求独占文件；增加真实离线 pnpm 硬链接消费者验证，并让门禁编排测试不依赖宿主 Git Bash 安装。
 

@@ -27,6 +27,12 @@ import { observeSelection } from './observations.js'
 import { scopedReconciliation, scopeFamilies } from '../publication/reconciliation.js'
 import { visibleNames } from '../publication/surface.js'
 
+/** Continuation argument of an `internal/update` waterfall across cordis lines:
+ * <= 4.0.5 emits (config, noSave, next) while >= 4.0.6-alpha drops noSave, so
+ * the continuation is always the last argument after config. */
+export const updateContinuation = (rest: readonly unknown[]): (() => void) | undefined =>
+  rest[rest.length - 1] as (() => void) | undefined
+
 export interface DiscoveryGate {
   allows(agent: Agent): boolean; watch?(notify: () => void): () => void; guidance?: boolean; extraGuidance?: string
   /** True only when this agent's assembled prompt has another live section owning this guidance. */
@@ -421,8 +427,11 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
     if (gate.watch) ctx.effect(() => gate.watch!(refresh), 'dsh-ops: discovery integration observer')
     // Observe in-place hooks and the default asynchronous Fiber.restart().
     // Await the runtime result even though the pinned next() type says void.
-    ctx.on('internal/update', async (_config, _noSave, next) => {
-      try { return await next() } finally { refresh() }
+    // cordis <= 4.0.5 emits (config, noSave, next) while >= 4.0.6-alpha drops
+    // noSave; the continuation is always the last argument either way.
+    ctx.on('internal/update', async (_config, ...rest: unknown[]) => {
+      const next = updateContinuation(rest)
+      try { return await next?.() } finally { refresh() }
     }, { global: true, prepend: true })
     // This optional service is not an injection prerequisite: native agents
     // work without it, while failed PTC probes must recover when it arrives.
