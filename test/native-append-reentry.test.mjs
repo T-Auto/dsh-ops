@@ -28,7 +28,8 @@ import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import { assert, report, skipSuite, test } from './lib/harness.mjs'
 import { PACKAGE_ROOT } from './lib/harness.mjs'
 
-const WORKER = path.join(PACKAGE_ROOT, 'runtime', 'win32-x64', 'dsh-ops-worker.exe')
+const WORKER = path.join(PACKAGE_ROOT, 'runtime', `${process.platform}-${process.arch}`,
+  process.platform === 'win32' ? 'dsh-ops-worker.exe' : 'dsh-ops-worker')
 const HOST_REFUSAL = 'session append cannot reenter while another append is being published'
 const HOME = process.env.DSH_HOME
 const tick = ms => new Promise(resolve => setTimeout(resolve, ms))
