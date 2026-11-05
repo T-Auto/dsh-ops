@@ -84,6 +84,26 @@ function preflightCli(command: string, entry?: string): string {
   return resolved
 }
 
+/**
+ * Quote one argument for the `cmd.exe /s /c` line a `.cmd` launcher needs.
+ *
+ * `windowsVerbatimArguments` hands the line to `cmd` untouched, so nothing else escapes it: an
+ * argument carrying `&` or `|` becomes a second command, and one carrying a space splits in two.
+ * Quoting fixes the first parse. It cannot reach the second one — a `.cmd` launcher expands `%*`
+ * onto its own command line — where `&`, `|`, `<`, `>` and `!` separate again, and `%` expands even
+ * inside quotes. So this refuses everything `preflightCli` refuses for a launcher path, minus `^`:
+ * that one is a version-range character (`dsh-ops@^1.0.0`) and stays literal inside quotes, which
+ * the profile-temp suite pins on both sides.
+ * @param value - one argv element for the official CLI.
+ * @returns the value wrapped in quotes.
+ */
+function quoteCliArg(value: string): string {
+  if (/["\r\n&|<>%!]/.test(value)) throw new Error(`The official CLI cannot receive an argument containing a quote, a newline, % or a cmd metacharacter: ${JSON.stringify(value)}`)
+  // cmd preserves these slashes; the Node CLI's Windows argv parser pairs them before the
+  // closing quote. Double only the trailing run so the launcher delivers the original bytes.
+  return `"${value.replace(/\\+$/, slashes => slashes + slashes)}"`
+}
+
 export function profileCommand(operation: ProfileOperation, { profile, dshCli, dryRun = false }: ProfileCommandOptions): number {
   if (!(SUPPORTED_TARGETS[process.platform] ?? []).includes(process.arch)) throw new Error(`Supported targets: ${PLATFORMS.join(', ')}; unsupported host ${process.platform}-${process.arch}.`)
   const aliases = { desktop: 'desktop', web: 'web', tui: 'dsh-tui', 'dsh-tui': 'dsh-tui' }
@@ -135,12 +155,21 @@ export function profileCommand(operation: ProfileOperation, { profile, dshCli, d
     }
   }
   command = preflightCli(command, prefix[0])
+  // Built before the dry-run return so a preview refuses exactly what a run refuses. `command` is
+  // already checked by `preflightCli`; only its quotes are added here. `prefix` travels with `args`
+  // so the line and the printed command cannot disagree: a launcher reached through a Node entry
+  // point would otherwise drop the entry silently.
+  const launcherLine = process.platform === 'win32' && /\.(cmd|bat)$/i.test(command)
+    ? `"${quoteCliArg(command)} ${[...prefix, ...args].map(quoteCliArg).join(' ')}"`
+    : undefined
   console.log(`Target: ${target} (${directory})`)
   console.log(`Official CLI: ${command}; ${[...prefix, ...args].join(' ')}`)
   if (dryRun) return 0
   let result
-  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(command)) {
-    result = spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `""${command}" ${args.join(' ')}"`], { stdio: 'inherit', windowsHide: true, windowsVerbatimArguments: true })
+  if (launcherLine !== undefined) {
+    // `verbatim` means this line reaches `cmd` exactly as written: every argument is quoted here
+    // or not at all, and `quoteCliArg` has already refused what quoting cannot carry.
+    result = spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', launcherLine], { stdio: 'inherit', windowsHide: true, windowsVerbatimArguments: true })
   } else result = spawnSync(command, [...prefix, ...args], { stdio: 'inherit', windowsHide: true })
   if (result.error) throw result.error
   if (result.status !== 0) return result.status ?? 1
