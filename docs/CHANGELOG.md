@@ -31,6 +31,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Keep zero-byte ERROR_MORE_DATA completions incomplete instead of treating them as end-of-data.
+- ERROR_MORE_DATA 零字节完成保留不完整状态，不再误报数据结束。
 - Preserve PTC paging of session-owned legacy snapshots and batch audits through the shared result adapter, while Native still accepts only ref:// references. Refuse result storage when the active PTC parent's presentation changes or its inspection fails before cache IO. Await shared publication readiness and roll back permanent delayed initialization failures.
 - 共享 result 适配器保留 PTC 对会话自有旧快照与 batch 审计的分页，Native 仍仅接受 ref:// 引用；活动 PTC 父调用的展示变化或检查失败时，在缓存 IO 前拒绝存储。等待共享发布就绪，并回滚延迟初始化的永久失败。
 
@@ -93,7 +95,6 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 拒绝 Windows 启动器行承载不了的 install spec：配置档安装器给交给 `cmd.exe /s /c` 的每个参数加引号，并拒绝会被 `.cmd` 再次展开的 cmd 元字符，`DSH_OPS_INSTALL_SPEC` 里的 `&` 或 `|` 不再能变成第二条命令。`--dry-run` 预览与真跑拒绝同一批输入，不再报告成功。
 - Enforce zero-entry MFT result budgets before appending and report exact-fit results as complete.
 - MFT 结果预算在追加前检查，零预算不返回条目，恰好容纳的结果不再误报截断。
-
 - Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
 - 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。
 - Report PowerShell ConstrainedLanguage before workspace ACL preparation and preserve a named diagnostic without changing security policy (#458). / 工作区 ACL 准备前明确报告 PowerShell ConstrainedLanguage，并保留具名诊断，不改变安全策略（#458）。

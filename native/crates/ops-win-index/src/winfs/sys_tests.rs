@@ -62,3 +62,51 @@ fn a_volume_handle_either_opens_or_reports_a_fallback() {
         ),
     }
 }
+
+#[test]
+fn partial_zero_byte_completion_is_not_a_clean_end() {
+    assert_eq!(
+        completed_page(Some(ERROR_MORE_DATA), 0, 65536),
+        Ok(PageOutcome::Wrote(0))
+    );
+    assert_eq!(completed_page(None, 0, 65536), Ok(PageOutcome::EndOfData));
+    assert_eq!(
+        completed_page(Some(ERROR_HANDLE_EOF), 0, 65536),
+        Ok(PageOutcome::EndOfData)
+    );
+    assert_eq!(
+        completed_page(Some(ERROR_MORE_DATA), 16, 65536),
+        Ok(PageOutcome::Wrote(16))
+    );
+    assert_eq!(
+        completed_page(Some(ERROR_MORE_DATA), 17, 16),
+        Err(WinfsError::Io(ErrorKind::InvalidData))
+    );
+    assert_eq!(
+        completed_page(Some(ERROR_ACCESS_DENIED), 0, 65536),
+        Err(WinfsError::AccessDenied)
+    );
+}
+
+#[test]
+fn a_partial_zero_byte_kernel_completion_is_rejected_by_the_page_reader() {
+    struct PartialCompletion;
+    impl VolumeIo for PartialCompletion {
+        fn device_io_control(
+            &self,
+            _: u32,
+            _: &[u8],
+            output: &mut [u8],
+        ) -> Result<PageOutcome, WinfsError> {
+            completed_page(Some(ERROR_MORE_DATA), 0, output.len())
+        }
+    }
+    assert_eq!(
+        read_enum_page(
+            &PartialCompletion,
+            EnumRequest::from_start(0),
+            &mut [0; 65536]
+        ),
+        Err(WinfsError::Incomplete),
+    );
+}
