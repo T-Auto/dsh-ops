@@ -230,6 +230,14 @@ pub(crate) fn assemble(
                 truncated = true;
                 continue;
             }
+            // Only report truncation when a candidate actually exceeds the cap.
+            // Checking before push also keeps a zero-entry budget empty.
+            if entries.len() >= budget.max_entries {
+                return Ok(ColdBatch {
+                    entries,
+                    truncated: true,
+                });
+            }
             let rel = base.join(&node.name);
             // FileKey.file is the low 48-bit record number, the same value
             // cap-std reports as ino() on NTFS; the sequence number stays in
@@ -244,10 +252,6 @@ pub(crate) fn assemble(
                 len: 0,
                 modified_ns: None,
             });
-            if entries.len() >= budget.max_entries {
-                truncated = true;
-                return Ok(ColdBatch { entries, truncated });
-            }
             queue.push((child_fid, rel, child_depth));
         }
     }

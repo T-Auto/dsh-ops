@@ -223,3 +223,22 @@ fn invalid_mount_points_are_unsupported() {
         SourceError::Unsupported
     );
 }
+
+#[test]
+fn assemble_enforces_zero_one_and_exact_entry_budgets() {
+    let nodes = vec![node(5, 5, "root", DIRECTORY), node(10, 5, "a.txt", NORMAL)];
+    for (limit, count, truncated) in [(0, 0, true), (1, 1, false), (2, 1, false)] {
+        let budget = EnumBudget::new(limit, 64, Instant::now() + Duration::from_secs(30));
+        let batch = assemble(&nodes, &[], &budget).expect("assembly");
+        assert_eq!(batch.entries.len(), count, "limit={limit}");
+        assert_eq!(batch.truncated, truncated, "limit={limit}");
+    }
+    let empty = assemble(
+        &nodes[..1],
+        &[],
+        &EnumBudget::new(0, 64, Instant::now() + Duration::from_secs(30)),
+    )
+    .expect("empty root");
+    assert!(empty.entries.is_empty());
+    assert!(!empty.truncated);
+}
