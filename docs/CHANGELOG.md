@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Widen the bounded DSH host compatibility range to `>=0.2.0-rc.2 <0.2.3-0`, which accepts the entire DSH 0.2.2 line (0.2.2 prereleases and the 0.2.2 stable release) while still rejecting 0.2.3 and later; the formal host-metadata suite and the manifest gate now assert the same accepted/rejected set, including the `0.2.3-0` upper bound.
+- 将 DSH 宿主兼容范围放宽为 `>=0.2.0-rc.2 <0.2.3-0`：接受整条 DSH 0.2.2 线（含 0.2.2 各预发布版本与 0.2.2 正式版），仍拒绝 0.2.3 及以后；正式 host-metadata 套件与 manifest 门禁现在断言同一组接受/拒绝版本，并覆盖 `0.2.3-0` 上界。
+
 - Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
 - 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。
 - Report PowerShell ConstrainedLanguage before workspace ACL preparation and preserve a named diagnostic without changing security policy (#458). / 工作区 ACL 准备前明确报告 PowerShell ConstrainedLanguage，并保留具名诊断，不改变安全策略（#458）。

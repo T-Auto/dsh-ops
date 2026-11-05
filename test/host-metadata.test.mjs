@@ -20,13 +20,29 @@ const patch = parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'cordis.patch.yml'),
 await test(`explicit host compatibility is consistent and bounded (${boot.getDshRuntimeVersion()})`, () => {
   assert.equal(typeof pkg.engines.dsh, 'string')
   assert.equal(pkg.engines.dsh, pkg.peerDependencies['@deepseek-ai/dsh'])
-  // Exercise each declared range through the actual host evaluator. Older hosts
-  // read peers, newer hosts prefer engines, so test both independently.
+  // The host evaluator satisfies each declared range with `includePrerelease: true`, so widening
+  // the upper bound to `<0.2.3-0` admits the entire 0.2.2 line: every 0.2.2 prerelease (alpha,
+  // beta, rc) and the 0.2.2 stable release. Pin that exact semantic on both range spellings —
+  // older hosts read peers, newer hosts prefer engines — and pin both boundaries.
+  const accepted = [
+    '0.2.0-rc.2',
+    '0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.4', '0.2.1-rc.5', '0.2.1',
+    '0.2.2-alpha.2', '0.2.2-beta.1', '0.2.2-rc.0', '0.2.2-rc.1', '0.2.2-rc.2', '0.2.2',
+  ]
+  // `0.2.3-0` is the exclusive upper bound; `0.2.3` and `0.3.0` sit above it. `0.2.0-rc.1` is
+  // below the floor.
+  const rejected = ['0.2.0-rc.1', '0.2.3-0', '0.2.3', '0.3.0']
   for (const range of [pkg.engines.dsh, pkg.peerDependencies['@deepseek-ai/dsh']]) {
     const candidate = { name: pkg.name, version: pkg.version, engines: { dsh: range }, peerDependencies: { '@deepseek-ai/dsh': range } }
-    for (const version of ['0.2.0-rc.2', '0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.4', '0.2.1-rc.5']) assert.equal(boot.evaluatePluginCompatibility(candidate, {}, version), undefined)
-    for (const version of ['0.2.0-rc.1', '0.2.2-rc.1', '0.3.0']) assert.ok(boot.evaluatePluginCompatibility(candidate, {}, version), `must not claim ${version}`)
+    for (const version of accepted) assert.equal(boot.evaluatePluginCompatibility(candidate, {}, version), undefined, `must claim ${version}`)
+    for (const version of rejected) assert.ok(boot.evaluatePluginCompatibility(candidate, {}, version), `must not claim ${version}`)
   }
+  // Discriminator: the previous `<0.2.2-0` cap rejected 0.2.2-rc.1 and accepted 0.2.1-rc.5, so this
+  // pair fails if the lists above ever stop tracking the actual range change.
+  const previous = '>=0.2.0-rc.2 <0.2.2-0'
+  const previousCandidate = { name: pkg.name, version: pkg.version, engines: { dsh: previous }, peerDependencies: { '@deepseek-ai/dsh': previous } }
+  assert.ok(boot.evaluatePluginCompatibility(previousCandidate, {}, '0.2.2-rc.1'), 'the previous cap must reject 0.2.2-rc.1')
+  assert.equal(boot.evaluatePluginCompatibility(previousCandidate, {}, '0.2.1-rc.5'), undefined, 'the previous cap accepted 0.2.1-rc.5')
 })
 
 await test('component resources resolve and the host reads bilingual text plus icon bytes', () => {
