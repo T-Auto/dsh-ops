@@ -16,8 +16,25 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Embed the complete frozen official Niubash v1.5.0 Windows x64 payload as the default shell backend; verify source and per-call execution trees, include preparation in cancellation/deadlines, preserve results on cleanup failure, and integrate managed install/status/select/removal. Missing payloads never switch implicitly to ambient Bash; explicit Git Bash and POSIX system Bash remain supported. This full-package-first choice does not rule out rubash-only later.
 - Windows x64 默认 Shell 改为固定官方 Niubash v1.5.0 完整载荷；校验源树及每调用执行树，准备阶段纳入取消/超时，清理失败不覆盖结果，并接通托管安装/状态/选择/卸载。缺载荷不隐式切换环境 Bash，保留显式 Git Bash 与 POSIX 系统 Bash。这是先完整包的阶段选择，不否定后续 rubash-only。
 
+- Give an Electron self-runner Node mode instead of refusing every confined Bash call: a confined Windows sandbox runs the Desktop executable itself as the Node runner, so `ops_bash` could answer every command in `read-only` and `workspace-write` with `EXECUTOR_UNAVAILABLE`. Only a self-runner (a prepared argv whose first element is the Desktop executable) gains `ELECTRON_RUN_AS_NODE=1`; sandbox, policy and command are unchanged (#574).
+- 让 Electron 自跑 runner 进入 Node 模式，而不是拒绝所有受限档位的 Bash 调用：Windows 受限沙箱会把 Desktop 可执行文件自身当作 Node runner，导致 `read-only` 与 `workspace-write` 下 `ops_bash` 对任何命令都回答 `EXECUTOR_UNAVAILABLE`。现在只有自跑 runner（准备阶段 argv 的第一个元素即 Desktop 可执行文件）会补上 `ELECTRON_RUN_AS_NODE=1`，沙箱、策略与命令本身不变（#574）。
 - Give the discovery routing sentence an evaluable document condition — a `.pdf`, `.docx`, `.csv` or `.tsv` file whose reader is absent from the tool table — and state that creating, editing, rendering or exporting Office documents belongs to the host office skill, with a failed document read falling back to that skill instead of retrying the reader. Formats are named, never unpublished tool names; adds 279 characters (64 cl100k_base tokens) to the discovery-enabled prompt and changes no tool schema, so the pinned schema budgets stay valid.
 - 发现路由句改为可判定的文档条件：读取器不在工具表中的 `.pdf`、`.docx`、`.csv` 或 `.tsv` 文件；并写明创建、编辑、渲染或导出 Office 文档归宿主 office 技能，读取失败时回退到该技能而不是重试读取器。只写格式、不写未发布的工具名；发现开启时提示词增加 279 字符（64 个 cl100k_base token），工具 schema 未变，已固定的 schema 预算仍然有效。
+- Preserve trailing backslashes in install specs delegated through Windows cmd launchers without relaxing injection refusal. / Windows cmd 启动器委派安装参数时保留末尾反斜杠，且不放宽注入拒绝。
+
+- Key the hidden-surface snapshot by view identity instead of projecting every schema, so the replacement guard and the assemble waterfall stop deep-copying the whole catalog on every pass; the optional scope now reaches the same cheap path and a scope-less read describes the global layer.
+- 隐藏面快照改用视图条目身份作键，不再为每个定义投影 schema；替换守卫与装配瀑布因此不再每次检查都深拷贝整个工具目录，可选作用域走同一条低价路径，无作用域读取描述全局层。
+- Read the discovery guidance's callable set from the view instead of `schemas()`, removing one schema projection per prompt assembly.
+- 渐进披露指引的可调用集合改从视图读取，不再每条提示词装配投影一次 `schemas()`。
+- Read a scope's surface without throwing when the host publishes no projection: both readers answer empty, so a dispatch path never turns a missing `schemas()` into an exception.
+- 宿主不发布投影时，作用域表面读取不再抛错：两个读者都返回空，派发路径不会把缺失的 `schemas()` 变成异常。
+- Keep a forged entry out of the surface key: the projection fallback pairs each name with the description it already holds, so both separator characters are escaped before they enter the key, and a description that is not a string cannot throw on a dispatch path.
+- 防止表面键被伪造条目：投影兜底把每个名字与它已有的描述并列，因此两个分隔符在进入键之前先转义，非字符串的描述也不会在派发路径上抛错。
+- Read a scope's visible names from the entries its view publishes, not only from `keys()`: a view that offers entries without keys now reports its names, so the replacement planner stops treating every selected counterpart as absent there.
+- 作用域的可见名字改从视图条目读取，不再只认 `keys()`：只发布条目、不发布键的视图现在也能报出名字，替换计划不再把每个已选对应项当成缺失。
+- Refuse an install spec the Windows launcher line cannot carry: the profile installer quotes every argument it hands to `cmd.exe /s /c` and rejects the cmd metacharacters a `.cmd` expands again, so an `&` or `|` in `DSH_OPS_INSTALL_SPEC` can no longer become a second command. A `--dry-run` preview refuses the same input as the real run instead of reporting success.
+- 拒绝 Windows 启动器行承载不了的 install spec：配置档安装器给交给 `cmd.exe /s /c` 的每个参数加引号，并拒绝会被 `.cmd` 再次展开的 cmd 元字符，`DSH_OPS_INSTALL_SPEC` 里的 `&` 或 `|` 不再能变成第二条命令。`--dry-run` 预览与真跑拒绝同一批输入，不再报告成功。
+
 - Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
 - 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。
 - Report PowerShell ConstrainedLanguage before workspace ACL preparation and preserve a named diagnostic without changing security policy (#458). / 工作区 ACL 准备前明确报告 PowerShell ConstrainedLanguage，并保留具名诊断，不改变安全策略（#458）。

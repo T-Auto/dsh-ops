@@ -137,16 +137,22 @@ an empty false-success result is a separate problem (#374 and #373).
 
 `ops_bash` uses host approval for a strictly wider `sandbox_permissions` mode. Supply a non-empty `justification` for that exact command. A rejection or missing approval service prevents execution; do not retry through another shell. Approval does not repair an incompatible restricted Bash runtime.
 
-### Desktop returns an empty successful Bash result
+### Desktop runs Bash without Node mode
 
-An Electron host can return its Desktop executable as the Node sandbox runner.
-Without an explicit Node-mode environment, this launches the application again;
-the single-instance handler may exit 0 without running Bash (#484). OPS now stops
-this argv shape before spawning and reports `EXECUTOR_UNAVAILABLE`, with no command
-effects. The host must provide a supported runner or explicitly prepared Electron
-Node mode. OPS does not guess private Desktop entry points or enable Node mode on
-the host's behalf. This guard diagnoses the integration error; it does not repair
-the host runner. A legitimate command that exits 0 with no output remains successful.
+A confined Windows sandbox wraps the command as `[process.execPath, …/runner.js, …argv]`, so an
+Electron host hands OPS its own Desktop executable as the Node runner. Without
+`ELECTRON_RUN_AS_NODE=1` that relaunches the single-instance application, which can exit 0 without
+running Bash (#484). For a self-runner — a prepared argv whose first element resolves to the
+Desktop executable — OPS now supplies the variable before spawning: argv, policy and sandbox are
+unchanged, and only a self-runner is given Node mode (#574). OPS recognises that shape by
+`argv[0]`, not by the runner's file name, so a self-runner argv that is not a Node entry now runs
+as Node instead of being refused as before; the sandbox provider is the only producer of that
+argv, and for a confined call the alternative is Bash that never starts.
+An unconfined call is not touched, a host that supplies a real Node runner keeps its own
+environment, and an explicit `ELECTRON_RUN_AS_NODE=1` is never duplicated. The variable is inherited
+by the command's own children, so an Electron application started from a confined `ops_bash` also
+runs in Node mode; the sandboxed host process tree already behaves that way, so the exposure does
+not grow. A command that legitimately exits 0 with no output remains successful.
 
 ### Windows reports exit code 3221225794 or -1073741502
 
