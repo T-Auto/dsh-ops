@@ -253,7 +253,7 @@ impl NameStore {
     /// lowercase can lengthen a name, so the raw bound alone is not enough), or
     /// when one arena would exceed 2 GiB.
     pub fn intern(&mut self, bytes: &[u8]) -> NameId {
-        debug_assert!(!bytes.contains(&0), "names cannot contain NUL");
+        assert!(!bytes.contains(&0), "names cannot contain NUL");
         assert!(
             bytes.len() <= usize::from(u16::MAX),
             "name is longer than 65535 bytes"
