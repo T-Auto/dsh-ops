@@ -229,7 +229,8 @@ async function main() {
 
   // The artifact, not just the build. `npm pack` honours `files`, and a package that silently drops
   // `runtime/` installs fine and then fails in the user's profile — so check the thing users get.
-  const failures = [...stepFailures]
+  // Share the collection: --keep-going artifact failures must reach the final verdict too.
+  const failures = stepFailures
   const packDir = mkdtempSync(path.join(tmpdir(), 'dsh-ops-pack-'))
   await run('pack the release artifact', 'npm', ['pack', '--pack-destination', packDir])
   const tarball = readdirSync(packDir).find(entry => entry.endsWith('.tgz'))
