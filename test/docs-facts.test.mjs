@@ -1,8 +1,10 @@
 /** Current user-facing docs mirror catalogue facts; keep the current surface from drifting again. */
 import fs from 'node:fs'
 import path from 'node:path'
-import { CAPABILITIES, FILE_TOOLS } from '../lib/capabilities/registry.js'
+import { getEncoding } from 'js-tiktoken'
+import { CAPABILITIES, FILE_TOOLS, capability } from '../lib/capabilities/registry.js'
 import { DISCOVERY_TERMS } from '../lib/capabilities/discovery.js'
+import { publicToolName } from '../lib/policy.js'
 import { assert, test, report, PACKAGE_ROOT } from './lib/harness.mjs'
 
 const read = name => fs.readFileSync(path.join(PACKAGE_ROOT, name), 'utf8')
@@ -48,6 +50,20 @@ await test('the discovery allowedTools example is exactly the discoverable catal
     const body = line.slice(line.indexOf('allowedTools:') + 'allowedTools:'.length)
     const names = body.replace(/^[^[]*\[/u, '').replace(/\].*$/u, '').split(',').map(name => name.trim()).filter(Boolean)
     assert.deepEqual([...new Set(names)].sort(), DISCOVERABLE, `${file} diverges from DISCOVERY_TERMS`)
+  }
+})
+
+// #408: always-loaded document readers are the documented alternative to a discovery
+// round, so the docs' cost figure is derived from the catalogue here instead of being
+// hand-copied; a reader schema or an always-loaded switch changing re-opens both docs.
+await test('the documented always-loaded document trio cost matches the catalogue', () => {
+  const wire = JSON.stringify(['read_pdf', 'read_docx', 'read_table'].map(raw => {
+    const entry = capability(raw)
+    return { name: publicToolName(raw), description: entry.description, parameters: entry.parameters }
+  }))
+  const measured = `${getEncoding('cl100k_base').encode(wire).length} tokens / ${Buffer.byteLength(wire)}`
+  for (const file of ['docs/discovery.md', 'docs/工具发现.md']) {
+    assert.ok(read(file).includes(measured), `${file} no longer states the measured ${measured} for the trio`)
   }
 })
 
