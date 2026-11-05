@@ -224,9 +224,9 @@ export async function invokeAst(tool: string, ctx: Context, args: unknown, exec:
       return { ...value, status: 'error', error: { code: 'POLICY_CHANGED', phase: 'execute', effectState: value.effectState, retryable: false,
         message: 'The sandbox was narrowed to read-only while this call was running. Files listed in filesApplied are already committed.',
         nextAction: 'Inspect filesApplied before retrying; the rewrite is not fully applied.' },
-        sandbox: { mode: confirmed.mode, enforcement: 'policy', boundary: 'in-process-ast' } }
+        }
     }
-    return { ...canonical(value, mayWrite), sandbox: { mode: policy.mode, enforcement: 'policy', boundary: 'in-process-ast' } }
+    return canonical(value, mayWrite)
   } catch (error) {
     return failure('RESULT_UNKNOWN', `AST engine failed: ${errorText(error).slice(0, 400)}`, 'unknown')
   }

@@ -200,7 +200,7 @@ function loadIndex(root: string, skipKey: string): { dirs: Record<string, IndexE
 interface DiscoverResult { files: string[]; total: number; truncated: boolean; truncatedBy: 'deadline' | 'page' | null; continuation: string | null; reusedDirs: number; scannedDirs: number; ms: number }
 
 /** Bounded enumeration with continuation. A directory whose mtime is unchanged skips readdir. */
-async function discover(roots: string[], exts: ReadonlySet<string>, opts: { offset?: number; cap?: number; budgetMs?: number; index?: { dirs: Record<string, IndexEntry> } | null; skip?: ReadonlySet<string>; deny?: readonly string[]; cache?: boolean; signal?: AbortSignal } = {}): Promise<DiscoverResult> {
+async function discover(roots: string[], exts: ReadonlySet<string>, opts: { offset?: number; cap?: number; budgetMs?: number; index?: { dirs: Record<string, IndexEntry> } | null; skip?: ReadonlySet<string>; deny?: readonly string[]; cache?: boolean; signal?: AbortSignal; roots?: readonly string[] } = {}): Promise<DiscoverResult> {
   const t0 = performance.now()
   const skip = opts.skip ?? SKIP_DIRS
   const skipKey = [...skip].sort().join(',')
@@ -209,7 +209,15 @@ async function discover(roots: string[], exts: ReadonlySet<string>, opts: { offs
   const deadline = t0 + (opts.budgetMs ?? BUDGET_MS)
   const prior = opts.index?.dirs ?? {}
   const deny = opts.deny ?? []
-  const denied = (target: string): boolean => deny.length > 0 && deny.some((root) => resolvedInside(target, [root]) !== null)
+  // One realpath per candidate, not one per deny root:  already resolves the target
+  // and caches the roots, so calling it inside the loop cost 13 realpaths per file.
+  // The walk refuses a denied directory before entering it, so a walked file can only be denied by
+  // being a link into one. lstat is far cheaper than the 200 realpaths an unconditional resolve cost.
+  const denied = (target: string): boolean => {
+    if (deny.length === 0) return false
+    try { if (!lstatSync(target).isSymbolicLink()) return false } catch { return false }
+    return resolvedInside(target, deny) !== null
+  }
 
   const files: string[] = []
   let reusedDirs = 0
@@ -245,7 +253,13 @@ async function discover(roots: string[], exts: ReadonlySet<string>, opts: { offs
       scannedDirs++
     }
     nextDirs[key] = { mtimeMs, dirs: subdirs, files: names }
-    for (const name of subdirs) stack.push(join(dir, name))
+    for (const name of subdirs) {
+      const child = join(dir, name)
+      let link = false
+      try { link = lstatSync(child).isSymbolicLink() } catch { continue }
+      if (link && opts.roots !== undefined && resolvedInside(child, opts.roots) === null) continue
+      stack.push(child)
+    }
     for (const name of names) if (exts.has(extname(name).toLowerCase()) && !denied(join(dir, name))) files.push(join(dir, name))
   }
   files.sort()
@@ -299,7 +313,10 @@ export function resolvedInside(file: string, roots: readonly string[]): string |
   }
   return null
 }
-const anchored = (file: string, roots: readonly string[]): boolean => resolvedInside(file, roots) !== null
+const anchored = (file: string, roots: readonly string[]): boolean => {
+  try { if (!lstatSync(file).isSymbolicLink()) return true } catch { return false }
+  return resolvedInside(file, roots) !== null
+}
 
 /** Roots must stay inside the declared bounds; otherwise `roots:['..']` is scope:'global' renamed. */
 function rootGuard(roots: readonly string[], bounds: readonly string[]): string | null {
@@ -465,10 +482,14 @@ async function candidatesOf(req: LocateRequest, cwd: string, opts: EngineOptions
   const roots = (req.roots ?? [cwd]).map((r) => resolve(cwd, r))
   const outside = rootGuard(roots, opts.bounds ?? [cwd])
   if (outside) return { error: `root ${outside} is outside cwd` }
-  if (req.file) return { files: [resolve(cwd, req.file)], roots, discover: { total: 1, truncated: false } }
+  if (req.file) {
+    const named = resolve(cwd, req.file)
+    if (opts.deny && opts.deny.length > 0 && resolvedInside(named, opts.deny) !== null) return { error: `${req.file} is a credential location` }
+    return { files: [named], roots, discover: { total: 1, truncated: false } }
+  }
   const skip = Array.isArray(req.skipDirs) && req.skipDirs.length ? new Set([...SKIP_DIRS, ...req.skipDirs]) : undefined
   const skipKey = skip ? [...skip].sort().join(',') : [...SKIP_DIRS].sort().join(',')
-  const d = await discover(roots, extsOf(req), { offset: req.continuation ? Number(req.continuation) : 0, index: opts.cache === false ? null : loadIndex(roots[0], skipKey), skip, deny: opts.deny, cache: opts.cache, signal: opts.signal })
+  const d = await discover(roots, extsOf(req), { offset: req.continuation ? Number(req.continuation) : 0, index: opts.cache === false ? null : loadIndex(roots[0], skipKey), skip, deny: opts.deny, cache: opts.cache, signal: opts.signal, roots })
   const unique = d.files.filter((file, index, all) => all.indexOf(file) === index)
   const { files: _raw, ...stats } = d
   return { files: unique, roots, discover: stats.continuation === null ? { ...stats, continuation: undefined } : stats }
@@ -490,7 +511,9 @@ export async function locate(req: LocateRequest, cwd: string = process.cwd(), op
     const cand = await openCandidates(req, cwd, opts)
     if ('error' in cand) return { ...out, status: 'error', code: cand.code, message: cand.error, ...(cand.continuation ? { continuation: cand.continuation } : {}) }
     const { files, roots, discover: d } = cand
-    out.discover = d
+    // Only what a caller acts on: the walk's own bookkeeping (reused dirs, elapsed ms) is noise in
+    // a receipt that rides in every conversation turn.
+    out.discover = { total: d.total, truncated: d.truncated, ...(d.continuation ? { continuation: d.continuation } : {}) }
 
     const pool = req.file ? files.map((file) => srcOf(file)) : await prefilterAsync(files, req.symbol, opts.signal)
     const ordered = req.file ? pool : rankCandidates(pool, req.symbol)
@@ -503,7 +526,9 @@ export async function locate(req: LocateRequest, cwd: string = process.cwd(), op
       return { ...out, status: 'error', code: 'E_NO_MATCH', message: `symbol ${req.symbol} not found${next}`, ...(d.continuation ? { continuation: d.continuation } : {}) }
     }
 
-    const wantBody = req.body !== false && req.body !== 0
+    // A signature answers "where is it defined"; the whole node is opt-in, because it rides in
+    // every later turn of the conversation.
+    const wantBody = req.body === true || (typeof req.body === 'number' && req.body > 0)
     const budget = typeof req.body === 'number' && req.body > 0 ? Math.min(req.body, BODY_BUDGET * 4) : BODY_BUDGET
     let used = 0
     for (const c of scanning) {
@@ -627,7 +652,9 @@ export async function refactor(req: RefactorRequest, cwd: string = process.cwd()
     const c = await openCandidates(req, cwd, opts)
     if ('error' in c) return { ...out, status: 'error', code: c.code, message: c.error, applied: false, ...(c.continuation ? { continuation: c.continuation } : {}) }
     const { files, roots, discover: d } = c
-    out.discover = d
+    // Only what a caller acts on: the walk's own bookkeeping (reused dirs, elapsed ms) is noise in
+    // a receipt that rides in every conversation turn.
+    out.discover = { total: d.total, truncated: d.truncated, ...(d.continuation ? { continuation: d.continuation } : {}) }
 
     /* Phase 1 plans only. Writing as we go leaves an unexplained half-applied tree when file two fails. */
     const plans: Plan[] = []

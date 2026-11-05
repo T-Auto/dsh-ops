@@ -14,7 +14,7 @@ const locateArgs: Record<string, JsonSchemaNode> = {
   roots: { type: 'array', description: 'Search roots relative to the session cwd, each inside it; default the cwd.', items: string },
   ext: { type: 'array', description: 'Extensions, e.g. ["ts","py"]; default every registered language.', items: string },
   limit: count(5),
-  body: { description: 'Body text: false for the signature alone, true for the whole node, or a line count.', oneOf: [{ type: 'boolean' }, { type: 'integer' }] },
+  body: { description: 'Off by default: the signature alone. true returns the whole node, a number returns that many lines.', oneOf: [{ type: 'boolean' }, { type: 'integer' }] },
   continuation: { ...string, description: 'Opaque cursor from a truncated scan; keep every other argument unchanged.' },
   skipDirs: { type: 'array', description: 'Directory names never descended into, e.g. ["dist","vendor"].', items: string },
 }
