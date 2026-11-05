@@ -23,6 +23,27 @@ import { modeOf } from '../modes/detect.js'
 import { residentTools } from '../modes/plan.js'
 import { enabledModes, onModesChange } from '../modes/registry.js'
 
+/**
+ * Continuation argument of the `internal/update` waterfall across cordis lines.
+ * cordis <= 4.0.5 dispatches `(config, noSave, next)`; >= 4.0.6-alpha dropped
+ * `noSave` and dispatches `(config, next)`. The continuation is the last
+ * argument either way, so read it there instead of by position.
+ */
+const updateContinuation = (rest: readonly unknown[]): (() => void) | undefined =>
+  rest[rest.length - 1] as (() => void) | undefined
+
+/**
+ * Build the `internal/update` observer. Reading `next` by position made every
+ * `settings.update` abort with `next is not a function` on cordis >= 4.0.6-alpha,
+ * because this listener is registered `{ global: true, prepend: true }` and runs
+ * before the rest of the waterfall.
+ */
+export const onInternalUpdate = (refresh: () => void) =>
+  async (_config: unknown, ...rest: unknown[]): Promise<unknown> => {
+    const next = updateContinuation(rest)
+    try { return await next?.() } finally { refresh() }
+  }
+
 interface Entry {
   ctx?: Context
   fiber?: Fiber
@@ -247,9 +268,7 @@ export function apply(root: Context, raw: unknown): void {
     ctx.effect(() => onModesChange(ctx, refresh), 'dsh-ops: discovery mode observer')
     // Observe in-place hooks and the default asynchronous Fiber.restart().
     // Await the runtime result even though the pinned next() type says void.
-    ctx.on('internal/update', async (_config, _noSave, next) => {
-      try { return await next() } finally { refresh() }
-    }, { global: true, prepend: true })
+    ctx.on('internal/update', onInternalUpdate(refresh), { global: true, prepend: true })
     // This optional service is not an injection prerequisite: native agents
     // work without it, while failed PTC probes must recover when it arrives.
     ctx.inject(['ptcRuntime'], inner => {

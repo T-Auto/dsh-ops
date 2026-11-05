@@ -12,6 +12,11 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Declare DSH 0.2.2-rc.1 in the bounded host compatibility range (`>=0.2.0-rc.2 <0.2.2-0 || 0.2.2-rc.1`) after validating the published 0.4.4 bundle in a real 0.2.2-rc.1 desktop profile and an isolated headless AgentLoop run (host/tool surface; the client/UI surface was not exercised). Later 0.2.2 prereleases and 0.2.2 final remain outside the range until tested.
 - 在真实 DSH 0.2.2-rc.1 桌面 profile 与隔离 headless AgentLoop 运行中验证已发布的 0.4.4 包后，将 DSH 0.2.2-rc.1 纳入有界宿主兼容范围（`>=0.2.0-rc.2 <0.2.2-0 || 0.2.2-rc.1`），验证覆盖宿主/工具面，client/UI 面未验证。后续 0.2.2 预发布版本与 0.2.2 正式版在测试前仍不在范围内。
 
+### Fixed
+
+- Read the `internal/update` continuation as the last dispatch argument instead of the third parameter. cordis <= 4.0.5 emits `(config, noSave, next)` while cordis >= 4.0.6-alpha (including the 4.1.0 shipped in DSH 0.2.2-rc.1) dropped `noSave` and emits `(config, next)`, so the pinned third parameter was `undefined` and every `settings.update` in the profile aborted with `next is not a function`. Approach ported from #673; `release/0.4.4` keeps this listener in `src/discovery/index.ts`.
+- 将 `internal/update` 的续体改为取派发的最后一个参数，而不是写死第三个形参。cordis <= 4.0.5 派发 `(config, noSave, next)`，而 cordis >= 4.0.6-alpha（含 DSH 0.2.2-rc.1 内置的 4.1.0）去掉了 `noSave`、只派发 `(config, next)`，导致第三个形参恒为 `undefined`，profile 内所有 `settings.update` 以 `next is not a function` 中断。该修法移植自 #673；`release/0.4.4` 的这条监听位于 `src/discovery/index.ts`。
+
 ## [0.4.4] — 2026-10-27 — Cross-platform packaging repair
 
 ### Fixed
