@@ -73,13 +73,13 @@ export function projectEvent(event: unknown, config: PanelConfig = PANEL_DEFAULT
     }
     case 'tool/call':
       return {
-        ...base, callId: string(data.callId), name: string(data.name) ?? '(unnamed)', step: integer(data.step),
+        ...base, callId: string(data.callId), name: string(data.name) ?? '(unnamed)', turn: integer(data.turn), step: integer(data.step),
         arguments: clamp(typeof data.arguments === 'string' ? data.arguments : '', config.textLimit),
       }
     case 'tool/result':
       return {
         ...base, callId: string(field(field(data.message, 'source'), 'callId')) ?? string(field(data.message, 'toolCallId')),
-        isError: field(data.message, 'isError') === true, errorCode: string(field(data.error, 'code')), step: integer(data.step),
+        isError: field(data.message, 'isError') === true, errorCode: string(field(data.error, 'code')), turn: integer(data.turn), step: integer(data.step),
         payload: clamp(joined(data.message, 'text'), config.textLimit),
       }
     case 'turn/start': case 'turn/end': case 'step/start': case 'step/end':
