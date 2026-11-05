@@ -14,6 +14,7 @@ import { ownScopes } from './ownership.js'
 import { failure } from '../execution/files.js'
 import { acquireSharedFile, isSharedFileApi } from './scope-owner.js'
 import type { PublicationGate } from './types.js'
+import { publicationRegistration } from './reentry.js'
 
 type ResidentName = Parameters<NativeFileTools['definition']>[0]
 
@@ -86,8 +87,8 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
       })
       const registration = (name: string) => definitions.find(definition => definition.name === name)
       const dispose = registerNativeProviderAtScope(entry.ctx, scope, definitions,
-        tool => entry.ctx!.tools.register(tool, { when: async activation => activation.agent === agent && cover(agent)
-          && !await activationIsPtc(prompt, activation) }), { inheritable: false, priority: 10 })
+        tool => publicationRegistration(entry.ctx!, () => entry.ctx!.tools.register(tool, { when: async activation => activation.agent === agent && cover(agent)
+          && !await activationIsPtc(prompt, activation) })), { inheritable: false, priority: 10 })
       entry.disposers.push(dispose)
       for (const definition of definitions) entry.owned.add(definition.name)
     }

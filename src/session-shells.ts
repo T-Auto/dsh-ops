@@ -12,6 +12,7 @@ import { BashArgumentError } from './shells/argument-error.js'
 import { MODES } from './permissions.js'
 import { hostBashDefinition } from './shells/host-tool.js'
 import { withToolChange } from './publication/changes.js'
+import { publicationRegistration } from './publication/reentry.js'
 import { startSessionBash } from './shells/session-execution.js'
 import { resolveSessionDirectory } from './adapter/dsh/working-directory.js'
 
@@ -210,14 +211,14 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
     // with no bash tool at all (#30). `entry.definition` survives `clear()`, so it holds the last
     // definition registered successfully for this entry.
     try {
-      entry.dispose = withToolChange([entry.agent], () => entry.ctx!.tools.register(definition))
+      entry.dispose = publicationRegistration(entry.ctx, () => withToolChange([entry.agent], () => entry.ctx!.tools.register(definition)))
       entry.definition = definition
       bashOwners.set(entry.agent, { entry, allowed: () => allowed(entry.agent), clear: () => clear(entry) })
     } catch (error) {
       ctx.logger?.warn?.(`dsh-ops: bash publication failed: ${errorMessage(error)}`)
       if (entry.definition === undefined) return
       try {
-        entry.dispose = withToolChange([entry.agent], () => entry.ctx!.tools.register(entry.definition!))
+        entry.dispose = publicationRegistration(entry.ctx, () => withToolChange([entry.agent], () => entry.ctx!.tools.register(entry.definition!)))
         bashOwners.set(entry.agent, { entry, allowed: () => allowed(entry.agent), clear: () => clear(entry) })
       }
       catch (restoreError) { ctx.logger?.warn?.(`dsh-ops: bash restoration failed: ${errorMessage(restoreError)}`) }
@@ -255,7 +256,7 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
       // Bash a host does expose in `restrictableNames` keeps the mask below.
       if (!tools?.view?.(agent)?.restrictableNames?.has?.(BASH_TOOL)) continue
       if (tools.get?.(BASH_TOOL, agent)) {
-        try { entry.dispose = withToolChange([agent], () => entry.ctx!.tools.restrict({ deny: [BASH_TOOL] })); entry.published = false }
+        try { entry.dispose = publicationRegistration(entry.ctx, () => withToolChange([agent], () => entry.ctx!.tools.restrict({ deny: [BASH_TOOL] }))); entry.published = false }
         catch (error) { ctx.logger?.warn?.(`dsh-ops: inherited bash restriction failed: ${errorMessage(error)}`) }
       }
     }

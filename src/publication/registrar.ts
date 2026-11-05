@@ -2,6 +2,7 @@
 import type { Agent, Context, ToolDefinition, ToolRunContext, ToolActivationContext } from '../adapter/dsh/types.js'
 import type { Outcome } from '../kernel/outcome.js'
 import { loadScopes } from '../adapter/dsh/host.js'
+import { publicationRegistration } from './reentry.js'
 
 export interface PublicationGrant {
   readonly consumer: object
@@ -32,6 +33,12 @@ interface Entry {
   lease(ctx: Context): PublicationLease
 }
 const roots = new WeakMap<object, Map<object | undefined, Map<string, Entry>>>()
+const published = new WeakMap<ToolDefinition, { root: object; current(): boolean }>()
+/** Exact live source identity; a matching name or output contract grants nothing. */
+export function ownsPublication(ctx: Context, tool: ToolDefinition): boolean {
+  const owner = published.get(tool)
+  return owner?.root === (ctx.root ?? ctx) && owner.current()
+}
 
 /**
  * Acquire under a stable plugin-owned scoped context, whose lifetime must cover
@@ -147,12 +154,13 @@ export async function acquire(ctx: Context, scope: object | undefined, name: str
       } }
       owned.add(next)
       definition = next
-      unregister = tools.register(next, { when: async activation => {
+      published.set(next, { root, current: () => definition === next && !closed && !retired })
+      unregister = publicationRegistration(ctx, () => tools.register(next, { when: async activation => {
         const matching = eligible(activation.agent)
         if (!matching.length || matching.some(grant => grant.dispatch !== matching[0].dispatch)) return false
         for (const grant of matching) if (!grant.present || await grant.present(activation)) return true
         return false
-      } })
+      } }))
       // Registration emits synchronously; recheck after its guarded notification.
       if (sourceExists()) { retired = true; withdraw() }
     } catch (error) {

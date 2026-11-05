@@ -7,6 +7,7 @@ import { definition } from './contract.js'
 import { NATIVE_FILE_TOOLS } from '../../capabilities/registry.js'
 import { resultDefinition, invokeResult } from './result.js'
 import { registerNativeProvider } from '../../publication/providers.js'
+import { publicationRegistration } from '../../publication/reentry.js'
 import { safeDisposeAll } from '../../teardown.js'
 import { invoke, failure } from '../../execution/files.js'
 import { InvocationLifetime, InvocationNotStarted } from '../../lifecycle/invocations.js'
@@ -52,7 +53,7 @@ export class NativeFileTools {
     const definitions = names.map(rawName => this.definition(rawName))
     // Discovery starts a worker without a resident surface. Do not emit a
     // registry change for an empty provider on every newly attached agent.
-    if (definitions.length) this.unregisterProvider = await registerNativeProvider(this.ctx, definitions, tool => this.ctx.tools.register(tool))
+    if (definitions.length) this.unregisterProvider = await registerNativeProvider(this.ctx, definitions, tool => publicationRegistration(this.ctx, () => this.ctx.tools.register(tool)))
     return names.map(publicToolName)
   }
 

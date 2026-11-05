@@ -13,6 +13,8 @@ import { OFFICIAL_REPLACEMENTS } from './official-tool-catalog.js'
 import { surfaceOf, visibleNames } from './publication/surface.js'
 import { safeDispose } from './teardown.js'
 import { retired as retiredLegacyRow } from './settings/legacy.js'
+import { publicationRegistration, publicationPending } from './publication/reentry.js'
+import { ownsPublication } from './publication/registrar.js'
 
 interface Entry { context: Context; lifts: (() => void)[]; cleanupError?: string; error?: string; reported?: string
   /** Set from the assembled surface: this scope presents one program entry, so its
@@ -52,19 +54,31 @@ export function apply(root: Context, raw?: unknown): void {
     }
     // Readiness examines the unmasked scope. It never accepts ops_<same-name>
     // as an equivalence claim, nor uses run_code as a native replacement.
-    const readiness = (agent: object): boolean[] => {
+    const readiness = (agent: object, toolSet?: import('./adapter/dsh/types.js').ResolvedToolSet): boolean[] => {
       const owned = new Set(typeof tools.get === 'function' ? nativeProviders(ctx, agent).map(provider => provider.definition) : [])
       return replaceTools.map(tool => {
-        const visible = typeof tools.get === 'function' ? tools.get(OFFICIAL_REPLACEMENTS[tool], agent) : undefined
-        return visible !== undefined && owned.has(visible)
+        const counterpart = OFFICIAL_REPLACEMENTS[tool]
+        const visible = toolSet ? tools.executable(counterpart, agent, toolSet)
+          : typeof tools.get === 'function' ? tools.get(counterpart, agent) : undefined
+        return visible !== undefined && (owned.has(visible) || ownsPublication(ctx, visible))
       })
+    }
+    const maskable = (agent: object): Set<string> => {
+      const owned = new Set(nativeProviders(ctx, agent).map(provider => provider.definition))
+      return new Set(replaceTools.filter(tool => {
+        const counterpart = tools.executable(OFFICIAL_REPLACEMENTS[tool], agent)
+        return counterpart !== undefined && owned.has(counterpart)
+      }))
     }
     const prepare = (agent: object, entry: Entry): Plan => {
       // No capability guard here: `visibleNames` already answers for a registry with no
       // projection, and gating it on `schemas` a second time reported every selected replacement
       // as absent on a host that serves a view without one — the plan then hid nothing.
       const names = visibleNames(tools, agent)
-      const hidden = names.filter(hideable)
+      // A conditional counterpart cannot justify an unconditional restriction.
+      // Its official schema stays visible; the captured step decides dispatch.
+      const masks = maskable(agent)
+      const hidden = names.filter(name => masks.has(name))
       const ready = readiness(agent)
       const missing = replaceTools.flatMap((tool, index) => {
         const replacement = OFFICIAL_REPLACEMENTS[tool]
@@ -90,6 +104,9 @@ export function apply(root: Context, raw?: unknown): void {
     const snapshot = (): string => JSON.stringify([surfaceOf(tools), ...[...entries.keys()].map(agent => [surfaceOf(tools, agent), readiness(agent)])])
     const reconcile = () => {
       if (stopped || mutating) return
+      // A deferred restriction emits tools/change before its returned undo can
+      // be stored. Do not revoke that in-flight mask from its own notification.
+      if ([...entries.values()].some(entry => entry.lifts.some(publicationPending))) return
       try { if (snapshot() === lastSurface) return } catch { /* reported by per-agent verification below */ }
       mutating = true
       try {
@@ -110,8 +127,10 @@ export function apply(root: Context, raw?: unknown): void {
           try {
             // One restriction per complete plan; never partially hide when a
             // single required replacement is absent.
-            if (plan.deny.length) entry.lifts.push(entry.context.tools.restrict({ deny: plan.deny }))
-            const leaked = visibleNames(tools, agent).filter(hideable)
+            if (plan.deny.length) entry.lifts.push(publicationRegistration(entry.context, () => entry.context.tools.restrict({ deny: plan.deny })))
+            if (entry.lifts.some(publicationPending)) continue
+            const masks = maskable(agent)
+            const leaked = visibleNames(tools, agent).filter(name => masks.has(name))
             if (leaked.length) throw new Error(`host scoped restriction cannot hide own-scope tools: ${leaked.join(', ')}`)
             entry.error = undefined
           } catch (error) { clear(entry); entry.error = blocked(message(error)) }
@@ -151,6 +170,7 @@ export function apply(root: Context, raw?: unknown): void {
       // promise is that they never execute, in any presentation.
       const transport = entry?.collapsed === true && exec.name === RUN_CODE
       if (entry?.error && !transport) return entry.error
+      if (!transport && !readiness(exec.agent, exec.toolSet).every(Boolean)) return blocked('selected OPS counterparts are not admitted for the captured step')
       return hideable(exec.name)
         ? blocked(`official tool ${exec.name} is selected for replacement`) : undefined
     }
@@ -177,8 +197,12 @@ export function apply(root: Context, raw?: unknown): void {
         if (!collapsed) throw new Error(entry.error)
         clear(entry); entry.error = undefined
       }
+      if (!collapsed && !readiness(context.scope, context.toolSet).every(Boolean)) {
+        throw block(context.scope, 'selected OPS counterparts are not admitted for the captured step')
+      }
       // Restrictions affect future admission; inspect this step's captured set.
-      const leaked = collapsed ? [] : tools.definitions(context.scope, context.toolSet).map(tool => tool.name).filter(hideable)
+      const masks = maskable(context.scope)
+      const leaked = collapsed ? [] : tools.definitions(context.scope, context.toolSet).map(tool => tool.name).filter(name => masks.has(name))
       if (leaked.length) throw block(context.scope, `assembled surface still contains hidden official tools: ${leaked.join(', ')}`)
       return result
     })

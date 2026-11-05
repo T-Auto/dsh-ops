@@ -33,7 +33,7 @@ if (!bash.available) {
 const signal = () => new AbortController().signal
 
 await test('Bash follows live cwd without changing the header and exposes its base through the registry', async () => {
-  const { ctx } = await bootHost()
+  const { ctx } = await bootHost({ withWorkingDirectory: false })
   try {
     await withTempDir('bash-live-cwd', async root => {
       const live = path.join(root, 'tools'); fs.mkdirSync(live)

@@ -35,6 +35,7 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-config-editor'
 import type {} from '@deepseek-ai/dsh-typert-registry'
+import type {} from '@deepseek-ai/dsh-tool-executor-ptc'
 
 /** Narrow runtime shapes consumed by the profile carrier. */
 export type BootApi = Pick<typeof import('@deepseek-ai/dsh-app-boot'),

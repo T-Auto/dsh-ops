@@ -21,6 +21,7 @@ import { nativeProviders } from '../publication/providers.js'
 import { observeSelection } from './observations.js'
 import { acquireSharedFile, isSharedFileApi } from '../publication/scope-owner.js'
 import type { PublicationLease } from '../publication/registrar.js'
+import { publicationReady, publicationRegistration } from '../publication/reentry.js'
 
 export interface DiscoveryGate {
   allows(agent: Agent): boolean
@@ -125,8 +126,8 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
           return failure('RESULT_UNKNOWN', 'External invocation did not settle; effects may be unknown.', 'execute', 'unknown')
         }
       } }
-      const dispose = entry.ctx.tools.register(definition, { when: async activation => activation.agent === agent
-        && entries.get(agent) === entry && selected(agent, entry, source.name, provider) && !await activationIsPtc(prompt, activation) })
+      const dispose = publicationRegistration(entry.ctx, () => entry.ctx!.tools.register(definition, { when: async activation => activation.agent === agent
+        && entries.get(agent) === entry && selected(agent, entry, source.name, provider) && !await activationIsPtc(prompt, activation) }))
       entry.registrations.set(source.name, { definition, dispose, provider })
     }
     const syncExternal = (agent: Agent, entry: Entry): void => {
@@ -171,8 +172,11 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
         calls: new InvocationLifetime(), selected: new Set(), pending: new Set(), externalSelected: new Set(), externalPending: new Set(), registrations: new Map(), files: new Map(), ready: Promise.resolve() }
       entries.set(agent, entry); ownership?.track(agent)
       entry.releaseObservation = observeSelection(ctx, agent, entry.externalPending)
-      entry.fiber = agent.ctx.plugin({ inject: ['tools'], apply(scoped) { entry.ctx = scoped } })
-      entry.ready = Promise.resolve(entry.fiber).then(async () => {
+      entry.ready = Promise.resolve().then(async () => {
+        if (!owns(agent) || entries.get(agent) !== entry) return
+        entry.fiber = agent.ctx!.plugin({ inject: ['tools'], apply(scoped) { entry.ctx = scoped } })
+        await entry.fiber
+        if (!owns(agent) || entries.get(agent) !== entry || !entry.ctx) return
         await entry.runtime.start([])
         if (!owns(agent) || entries.get(agent) !== entry || !entry.ctx) return
         if (config.enabled) publish(agent, entry, discover(agent, entry))
@@ -188,29 +192,46 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
         if (!owns(agent) || entries.get(agent) !== entry) return
         rotateFiles(agent, entry)
         syncExternal(agent, entry)
+        await Promise.all([...entry.registrations.values()].map(registration => publicationReady(registration.dispose)))
+      }).catch(async error => {
+        // This is ready's own rejection path: cleanup must never await ready,
+        // replace the original error, or remove a newer attachment.
+        try { if (entries.get(agent) === entry) await detach(agent) }
+        catch { ctx.logger.warn('dsh-ops: discovery attachment cleanup failed') }
+        throw error
       })
       return entry.ready
     }
     const detach = async (agent: Agent): Promise<void> => {
       const entry = entries.get(agent)
       if (!entry) return
-      entries.delete(agent); ownership?.forget(agent); entry.releaseObservation?.()
-      entry.pending.clear(); entry.externalPending.clear(); entry.runtime.cancel('Consumer withdrawn'); entry.calls.cancel('Consumer withdrawn')
-      for (const registration of entry.registrations.values()) registration.dispose()
+      const errors: unknown[] = []
+      const attempt = (action: () => unknown) => { try { action() } catch (error) { errors.push(error) } }
+      const settle = async (action: () => unknown) => { try { await action() } catch (error) { errors.push(error) } }
+      entries.delete(agent); ownership?.forget(agent)
+      attempt(() => entry.releaseObservation?.())
+      entry.pending.clear(); entry.externalPending.clear()
+      attempt(() => entry.runtime.cancel('Consumer withdrawn'))
+      attempt(() => entry.calls.cancel('Consumer withdrawn'))
+      for (const registration of entry.registrations.values()) attempt(() => registration.dispose())
       entry.registrations.clear()
-      for (const file of entry.files.values()) file.lease.dispose()
+      for (const file of entry.files.values()) attempt(() => file.lease.dispose())
       entry.files.clear()
-      await entry.runtime.stop()
-      const pending = await entry.calls.stop('Discovery consumer disposed', false)
-      if (pending) ctx.logger.warn('dsh-ops: external calls were cancelled but may still be running; effects are unknown. No operation was replayed.')
-      await entry.fiber?.dispose()
+      await settle(() => entry.runtime.stop())
+      await settle(async () => {
+        if (await entry.calls.stop('Discovery consumer disposed', false)) ctx.logger.warn('dsh-ops: external calls were cancelled but may still be running; effects are unknown. No operation was replayed.')
+      })
+      await settle(() => entry.fiber?.dispose())
+      if (errors.length) throw new AggregateError(errors, 'Discovery detach failed')
     }
     const refresh = (): void => {
       for (const [agent, entry] of entries) {
-        if (!owns(agent)) void detach(agent)
+        if (!owns(agent)) void detach(agent).catch(() => ctx.logger.warn('dsh-ops: background discovery detach failed'))
         else { rotateFiles(agent, entry); syncExternal(agent, entry) }
       }
-      for (const agent of ctx.get('agents')?.list() ?? []) if (owns(agent)) void attach(agent)
+      for (const agent of ctx.get('agents')?.list() ?? []) if (owns(agent)) void attach(agent).catch(() => {
+        ctx.logger.warn('dsh-ops: background discovery attachment failed')
+      })
     }
     ownership = await ownScopes(ctx, 'discovery', refresh, gate.allows)
     ctx.on('agent/created', async ({ agent }) => { await attach(agent) })

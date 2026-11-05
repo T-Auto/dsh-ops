@@ -1,3 +1,9 @@
+import { selectExecutor, executeCall } from './lib/executor.mjs'
+import { createScope } from '@deepseek-ai/dsh-scope'
+import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
+import Subprocess from '@deepseek-ai/dsh-subprocess-local'
+import Sandbox from '@deepseek-ai/dsh-sandbox-local'
+import FileSystem from '@deepseek-ai/dsh-fs-local'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { getEncoding } from 'js-tiktoken'
@@ -98,32 +104,31 @@ await test('published host definition prepares content after foreground executio
 await test('real host registry applies Native projection and preserves nested SDK content and values', async () => {
   await withTempDir('json-digest-registry', async dir => {
     const file = path.join(dir, 'stdout.log'); await fs.writeFile(file, raw)
-    const { ctx, tools } = await bootHost(), agent = { session: { id: 'digest-registry', header: { cwd: dir } } }
+    let nested
+    const { ctx, tools } = await bootHost(), agent = { id: 'digest-registry', session: { id: 'digest-registry', header: { cwd: dir }, read() { return [] }, append(type, data) { if (type === 'tool/ptc-dispatch' && data.name === 'ops_bash') nested = data } } }
+    agent.ctx = createScope(ctx, agent).ctx
     try {
       const original = value(file), base = bashToolDefinition({ file: process.execPath, source: 'config' })
       const shellCtx = { get: name => name === 'sandboxPolicy' ? { resolve: () => ({ mode: 'danger-full-access' }) } : undefined }
       const definition = hostBashDefinition(shellCtx, base, async () => ({ started: true, result: async () => original }), () => dir)
-      let nested
-      await ctx.plugin({ inject: ['tools'], apply(inner) {
-        inner.tools.register(definition)
-        inner.tools.register({ name: 'digest_transport_fixture', description: 'Nested execution fixture',
-          parameters: { type: 'object', properties: {} }, output: { schema: { type: 'object' }, render: () => [] },
-          async execute(_args, exec) {
-            nested = await tools.execute({ agent, name: definition.name, callId: 'nested-digest', parent: exec.token,
-              arguments: { command: 'produce-json', description: 'Produce a large JSON result' }, signal: exec.signal })
-            return {}
-          },
-        })
-      } })
-      const result = await tools.execute({ agent, name: definition.name, callId: 'native-digest',
+      await ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.register(definition) } })
+      const call = request => executeCall(ctx, request)
+      const result = await call({ agent, name: definition.name, callId: 'native-digest',
         arguments: { command: 'produce-json', description: 'Produce a large JSON result' }, signal: new AbortController().signal })
       assert.equal(result.isError, false)
       assert.deepEqual(result.value, original)
       assert.match(result.content[0].text, /JSON summary/)
-      const transport = await tools.execute({ agent, name: 'digest_transport_fixture', callId: 'outer-digest', arguments: {}, signal: new AbortController().signal })
-      assert.equal(transport.isError, false); assert.equal(nested.isError, false)
-      assert.deepEqual(nested.value, original)
+      await ctx.plugin(Subprocess); await ctx.plugin(FileSystem); await ctx.plugin(Sandbox)
+      ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: dir, sessionId: agent.session.id }) })
+      await ctx.plugin(NodePtc)
+      await new Promise(resolve => setImmediate(resolve))
+      let lift, executorContext
+      await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { executorContext = inner; lift = selectExecutor(inner, 'ptc') } })
+      const transport = await call({ agent, name: 'run_code', callId: 'outer-digest', arguments: { description: 'Read a nested Bash JSON result', code: `return await tools.ops_bash({ command: 'produce-json', description: 'Produce a large JSON result' });` }, signal: new AbortController().signal })
+      assert.equal(transport.isError, false, JSON.stringify(transport)); assert.equal(nested.isError, false)
+      assert.deepEqual(transport.value.result, original)
       assert.equal(nested.content[0].text, renderHostBash(original))
+      lift(); selectExecutor(executorContext, 'native')
       for (const [decision, expected] of [
         [{ kind: 'accept', content: [{ type: 'text', text: 'policy redacted' }] }, 'policy redacted'],
         [{ kind: 'accept', value: { ...original, stdout: { text: 'policy replaced value', truncated: false } } }, 'policy replaced value'],
@@ -131,7 +136,7 @@ await test('real host registry applies Native projection and preserves nested SD
       ]) {
         const stop = ctx.on('tools/post-execute', async () => decision)
         try {
-          const result = await tools.execute({ agent, name: definition.name, callId: `policy-${expected}`,
+          const result = await call({ agent, name: definition.name, callId: `policy-${expected}`,
             arguments: { command: 'produce-json', description: 'Produce a large JSON result' }, signal: new AbortController().signal })
           assert.ok(result.content[0].text.includes(expected))
           assert.doesNotMatch(result.content[0].text, /JSON summary/)

@@ -1,15 +1,13 @@
-import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
-/** A real host hook that never answers must not serialize unrelated roots. */
+/** Conditional admission is read-only and independent across concurrent host resolves. */
 import { createScope, scopeChainOf } from '@deepseek-ai/dsh-scope'
 import * as ptcModule from '../lib/ptc/index.js'
 import * as discoveryModule from '../lib/discovery/index.js'
 import { isPresentationProbe } from '../lib/presentation.js'
 import { bootHost, shutdown } from './lib/host.mjs'
-import { assert, test, report, TEST_HOME } from './lib/harness.mjs'
+import { selectExecutor, prepareStep } from './lib/executor.mjs'
+import { assert, test, report, TEST_HOME, waitFor } from './lib/harness.mjs'
 import { legacyComponent } from './lib/legacy-component.mjs'
-const ptc = legacyComponent(ptcModule)
-const discovery = legacyComponent(discoveryModule)
-
+const ptc = legacyComponent(ptcModule), discovery = legacyComponent(discoveryModule)
 const flush = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)) }
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 async function bounded(promise, label) {
@@ -19,220 +17,169 @@ async function bounded(promise, label) {
 }
 function mint(ctx, id, parent) {
   const agent = { id, session: { id, mode: 'danger-full-access', header: { cwd: TEST_HOME } } }
-  agent.ctx = createScope(ctx, agent, parent ? { parent } : undefined).ctx
+  agent.ctx = createScope(parent?.ctx ?? ctx, agent, parent ? { parent } : undefined).ctx
   return agent
 }
-for (const [mode, plugins] of [['native', [discovery]], ['ptc', [ptc]], ['native', [discovery, ptc]], ['ptc', [discovery, ptc]]]) await test(`unanswered ${mode} probe with ${plugins.length} component(s) does not block another root or unload (#359)`, async () => {
-  const { ctx, tools, prompt } = await bootHost({ toolsMode: mode })
-  const held = deferred(), entered = deferred()
-  let blocker, blocked = true, components = [], creation
+async function services(ctx) {
+  await ctx.plugin(inner => {
+    inner.provide('subprocess', { spawn() { throw new Error('admission test must not execute a worker') } })
+    inner.provide('sandboxPolicy', { resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: TEST_HOME, sessionId: session.id }) })
+    inner.provide('ptcRuntime', { language: 'typescript' })
+  })
+}
+async function names(ctx, agent) {
+  const captured = await prepareStep(ctx, agent)
+  try { return ctx.tools.schemas(agent, captured.toolSet).map(tool => tool.name) } finally { captured.dispose() }
+}
+const resolve = (ctx, agent, signal = new AbortController().signal) => ctx.tools.resolve({ agent, signal, modelSelection: { provider: 'fixture', model: 'scripted' } })
+for (const [mode, plugins] of [['native', [discovery]], ['ptc', [ptc]], ['native', [discovery, ptc]], ['ptc', [discovery, ptc]]]) await test(`unanswered ${mode} resolve with ${plugins.length} component(s) leaves unrelated roots and teardown independent`, async () => {
+  const { ctx } = await bootHost({ toolsMode: mode })
+  const held = deferred(), entered = deferred(), controller = new AbortController()
+  let blocker, resolving, blocked = true
   try {
-    await ctx.plugin(inner => {
-      inner.provide('subprocess', { spawn() { throw new Error('publication test must not execute a worker') } })
-      inner.provide('sandboxPolicy', { resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: TEST_HOME, sessionId: session.id }) })
-      inner.provide('ptcRuntime', { language: 'typescript' })
-    })
-    // This is the public production waterfall, not a replaced assemble method.
-    // It deliberately ignores the cancellation signal, like an uncooperative plugin.
+    await services(ctx)
+    const components = []
+    for (const plugin of plugins) components.push(await ctx.plugin(plugin, { binaryPath: process.execPath, required: true }))
+    await flush()
+    blocker = mint(ctx, 'unanswered')
+    await bounded(ctx.serial('agent/created', { agent: blocker }), 'creation must not probe presentation')
     ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
       if (blocked && context.scope === blocker && isPresentationProbe(context)) { entered.resolve(); await held.promise }
       return next()
     })
-    for (const plugin of plugins) components.push(await ctx.plugin(plugin, { binaryPath: process.execPath, required: true }))
-    blocker = mint(ctx, 'unanswered')
-    creation = ctx.serial('agent/created', { agent: blocker })
-    await bounded(entered.promise, 'the controlled host probe was not reached')
+    resolving = resolve(ctx, blocker, controller.signal)
+    const rejected = assert.rejects(resolving, /cancelled|abort/i)
+    await bounded(entered.promise, 'the controlled admission probe was not reached')
     const healthy = mint(ctx, 'healthy')
-    await bounded(ctx.serial('agent/created', { agent: healthy }), 'one unanswered probe blocked an independent root')
+    await bounded(ctx.serial('agent/created', { agent: healthy }), 'one unanswered resolve blocked independent creation')
     const ownName = mode === 'ptc' ? 'ops_load_sdk' : 'ops_discover_tools'
-    assert.ok(tools.get(ownName, healthy), 'the unrelated root publishes its own capability')
-    assert.equal(tools.get(ownName, blocker), undefined, 'an unanswered initial probe grants no capability')
-    await bounded(prompt.assemble({ scope: healthy }), 'the unrelated root cannot assemble')
-    const retained = tools.get(ownName, healthy)
+    assert.ok((await bounded(names(ctx, healthy), 'independent resolve blocked')).includes(ownName))
+    const retained = ctx.tools.get(ownName, healthy)
     healthy.session.mode = 'unsupported'
-    ctx.emit('session/event', healthy.session, { type: 'sandbox/mode' })
-    await flush()
-    await bounded(prompt.assemble({ scope: healthy }), 'authority reconciliation waits on the blocked root')
-    if (mode === 'native') assert.equal(tools.get(ownName, healthy), undefined, 'authority downgrade withdraws Native publication')
-    await bounded(ctx.serial('agent/disposed', { agent: healthy }), 'the unrelated root cannot dispose')
-    const result = await bounded(retained.execute({}, { agent: healthy, signal: new AbortController().signal }), 'a retired callback waits on the blocked root')
-    assert.equal(result.status, 'rejected')
-    await bounded(ctx.serial('agent/disposed', { agent: blocker }), 'disposal must cancel its own unanswered probe wait')
-    await bounded(creation, 'cancelled creation cannot settle')
-    // A second hung creation is cancelled by component unload, not by its host hook.
-    blocker = mint(ctx, 'unload-unanswered')
-    creation = ctx.serial('agent/created', { agent: blocker })
-    await flush()
-    await bounded(Promise.all(components.map(component => component.dispose())), 'unload waits forever for a host hook')
-    await bounded(creation, 'unloaded creation cannot settle')
-    blocked = false; held.resolve(); await flush()
-    assert.equal(tools.get(ownName, blocker), undefined, 'a late host result cannot publish after unload')
-    assert.equal(tools.get(ownName, healthy), undefined)
-  } finally { blocked = false; held.resolve(); await creation; await shutdown(ctx) }
+    await ctx.serial('session/event', healthy.session, { type: 'sandbox/mode' })
+    assert.equal((await bounded(names(ctx, healthy), 'authority reconciliation blocked')).includes(ownName), false)
+    await bounded(ctx.serial('agent/disposed', { agent: healthy }), 'independent disposal blocked')
+    assert.equal((await retained.execute({}, { agent: healthy, signal: new AbortController().signal })).status, 'rejected')
+    await bounded(ctx.serial('agent/disposed', { agent: blocker }), 'disposal waited for a foreign prompt handler')
+    await bounded(Promise.all(components.map(component => component.dispose())), 'unload waited for a foreign prompt handler')
+    controller.abort(new Error('cancelled resolve')); blocked = false; held.resolve()
+    await rejected; await flush()
+    assert.equal(ctx.tools.get(ownName, blocker), undefined, 'late admission cannot resurrect an unloaded registration')
+  } finally { controller.abort(); blocked = false; held.resolve(); await resolving?.catch(() => {}); await shutdown(ctx) }
 })
-for (const [mode, plugin, ownName] of [['native', discovery, 'ops_discover_tools'], ['ptc', ptc, 'ops_load_sdk']]) await test(`late ${mode} probe cannot overwrite a newer presentation`, async () => {
-  const { ctx, tools, prompt } = await bootHost({ toolsMode: mode })
+for (const [mode, plugin, ownName] of [['native', discovery, 'ops_discover_tools'], ['ptc', ptc, 'ops_load_sdk']]) await test(`late ${mode} admission cannot overwrite a fresh executor selection`, async () => {
+  const { ctx } = await bootHost({ toolsMode: mode })
   const held = deferred(), entered = deferred()
-  let first = true, agent, creation
+  let agent, first = true, old
   try {
-    await ctx.plugin(inner => {
-      inner.provide('subprocess', { spawn() { throw new Error('publication test must not execute a worker') } })
-      inner.provide('sandboxPolicy', { resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: TEST_HOME }) })
-      inner.provide('ptcRuntime', { language: 'typescript' })
-    })
+    await services(ctx); await ctx.plugin(plugin, { binaryPath: process.execPath, required: true })
+    await flush()
+    agent = mint(ctx, 'changed-during-resolve'); await ctx.serial('agent/created', { agent })
+    const definition = ctx.tools.get(ownName, agent)
     ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
       const result = await next()
-      if (first && context.scope === agent && isPresentationProbe(context)) {
-        first = false; entered.resolve(); await held.promise
-      }
+      if (first && context.scope === agent && isPresentationProbe(context)) { first = false; entered.resolve(); await held.promise }
       return result
     })
-    await ctx.plugin(plugin, { binaryPath: process.execPath, required: true })
-    agent = mint(ctx, 'changed-during-probe')
-    creation = ctx.serial('agent/created', { agent })
-    await bounded(entered.promise, 'the old probe did not capture its presentation')
-    await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, mode === 'ptc' ? 'native' : 'ptc') } })
-    // A real configuration notification cancels the old generation. The new
-    // generation must complete without releasing the obsolete host response.
-    ctx.emit('tools/change')
-    await bounded(creation, 'new presentation still waits on the obsolete host response')
-    await bounded(prompt.assemble({ scope: agent }), 'new presentation cannot settle')
-    assert.equal(tools.get(ownName, agent), undefined)
-    held.resolve(); await flush()
-    assert.equal(tools.get(ownName, agent), undefined, 'the obsolete presentation must not republish its tools')
-  } finally { held.resolve(); await creation; await shutdown(ctx) }
+    old = resolve(ctx, agent)
+    await bounded(entered.promise, 'the old admission did not enter')
+    let lift
+    await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { lift = selectExecutor(inner, mode === 'ptc' ? 'native' : 'ptc') } })
+    assert.equal((await bounded(names(ctx, agent), 'fresh admission waited on an obsolete response')).includes(ownName), false)
+    held.resolve(); (await old).dispose(); await flush()
+    assert.equal((await names(ctx, agent)).includes(ownName), false)
+    assert.equal(ctx.tools.get(ownName, agent), definition, 'read-only admission never republishes stable definitions')
+    lift()
+    await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, mode) } })
+    assert.ok((await names(ctx, agent)).includes(ownName))
+  } finally { held.resolve(); (await old)?.dispose(); await shutdown(ctx) }
 })
-for (const [mode, plugin, ownName] of [['native', discovery, 'ops_discover_tools'], ['ptc', ptc, 'ops_load_sdk']]) await test(`cancelled ${mode} assembly cannot withdraw a newer publication`, async () => {
-  const { ctx, tools, prompt } = await bootHost({ toolsMode: mode })
-  const held = deferred(), entered = deferred()
-  let agent, first = true
+for (const [mode, plugin, ownName] of [['native', discovery, 'ops_discover_tools'], ['ptc', ptc, 'ops_load_sdk']]) await test(`cancelled ${mode} admission cannot withdraw newer authorization`, async () => {
+  const { ctx } = await bootHost({ toolsMode: mode })
+  const held = deferred(), entered = deferred(), controller = new AbortController()
+  let first = true, pending
   try {
-    await ctx.plugin(inner => {
-      inner.provide('subprocess', { spawn() { throw new Error('publication test must not execute a worker') } })
-      inner.provide('sandboxPolicy', { resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: TEST_HOME }) })
-      inner.provide('ptcRuntime', { language: 'typescript' })
-    })
-    await ctx.plugin(plugin, { binaryPath: process.execPath, required: true })
-    agent = mint(ctx, 'late-withdrawal')
-    await ctx.serial('agent/created', { agent })
-    await prompt.assemble({ scope: agent })
-    assert.ok(tools.get(ownName, agent))
-    // Install inside the component's withdrawal guard: its await next() must
-    // reject obsolete authority as well as the reconciliation commit itself.
+    await services(ctx); await ctx.plugin(plugin, { binaryPath: process.execPath, required: true })
+    await flush()
+    const agent = mint(ctx, 'late-withdrawal'); await ctx.serial('agent/created', { agent })
+    assert.ok((await names(ctx, agent)).includes(ownName))
+    const original = ctx.tools.get(ownName, agent)
     ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
       const result = await next()
-      if (first && context.scope === agent && isPresentationProbe(context)) {
-        first = false; entered.resolve(); await held.promise
-      }
+      if (first && context.scope === agent && isPresentationProbe(context)) { first = false; entered.resolve(); await held.promise }
       return result
     })
-    const switched = await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, mode === 'ptc' ? 'native' : 'ptc') } })
-    await bounded(entered.promise, 'the old withdrawal was not reached')
-    await switched.dispose()
-    ctx.emit('tools/change')
-    await bounded(prompt.assemble({ scope: agent }), 'restored presentation still waits on obsolete withdrawal')
-    const restored = tools.get(ownName, agent)
-    assert.ok(restored)
-    held.resolve(); await flush()
-    assert.equal(tools.get(ownName, agent), restored, 'the cancelled waterfall must not clear the current registration')
-  } finally { held.resolve(); await shutdown(ctx) }
+    pending = resolve(ctx, agent, controller.signal)
+    const rejected = assert.rejects(pending, /cancelled/)
+    await bounded(entered.promise, 'the cancelled admission was not reached')
+    controller.abort(new Error('cancelled admission'))
+    assert.ok((await bounded(names(ctx, agent), 'fresh authorization waited on cancelled admission')).includes(ownName))
+    held.resolve(); await rejected
+    assert.equal(ctx.tools.get(ownName, agent), original)
+    assert.ok((await names(ctx, agent)).includes(ownName))
+  } finally { held.resolve(); await pending?.catch(() => {}); await shutdown(ctx) }
 })
-for (const [mode, plugin, ownName] of [['native', discovery, 'ops_discover_tools'], ['ptc', ptc, 'ops_load_sdk']]) await test(`${mode} inheritance family waits together without blocking another root`, async () => {
-  const { ctx, tools, prompt } = await bootHost({ toolsMode: mode })
-  let child, gate, creation
-  const releases = []
+for (const [mode, plugin, ownName] of [['native', discovery, 'ops_discover_tools'], ['ptc', ptc, 'ops_load_sdk']]) await test(`${mode} parent and child resolve independently and late child admission cannot restore disposed grants`, async () => {
+  const { ctx } = await bootHost({ toolsMode: mode })
+  const held = deferred(), entered = deferred()
+  let child, pending, blocked = true
   try {
-    await ctx.plugin(inner => {
-      inner.provide('subprocess', { spawn() { throw new Error('publication test must not execute a worker') } })
-      inner.provide('sandboxPolicy', { resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: TEST_HOME }) })
-      inner.provide('ptcRuntime', { language: 'typescript' })
-    })
-    await ctx.plugin(plugin, { binaryPath: process.execPath, required: true })
-    const parent = mint(ctx, 'parent')
-    await ctx.serial('agent/created', { agent: parent }); await prompt.assemble({ scope: parent })
-    const previous = tools.get(ownName, parent)
-    assert.ok(previous)
+    await services(ctx); await ctx.plugin(plugin, { binaryPath: process.execPath, required: true })
+    await flush()
+    const parent = mint(ctx, 'parent'); await ctx.serial('agent/created', { agent: parent })
+    child = mint(ctx, 'child', parent); await ctx.serial('agent/created', { agent: child })
+    assert.deepEqual(scopeChainOf(child), [child, parent])
+    const retained = ctx.tools.get(ownName, child)
     ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
-      if (gate && context.scope === child && isPresentationProbe(context)) {
-        const current = gate; current.entered.resolve(); await current.held.promise
-      }
+      if (blocked && context.scope === child && isPresentationProbe(context)) { entered.resolve(); await held.promise }
       return next()
     })
-    const hold = () => { gate = { held: deferred(), entered: deferred() }; releases.push(gate.held.resolve); return gate }
-    const first = hold()
-    child = mint(parent.ctx, 'child', parent)
-    assert.deepEqual(scopeChainOf(child), [child, parent], 'the production host sees the intended dependency')
-    creation = ctx.serial('agent/created', { agent: child })
-    await bounded(first.entered.promise, 'the child probe did not enter')
-    let parentReady = false
-    const waitingParent = prompt.assemble({ scope: parent }).then(() => { parentReady = true })
-    const other = mint(ctx, 'independent')
-    await bounded(ctx.serial('agent/created', { agent: other }), 'dependent family blocked independent creation')
-    const independent = tools.get(ownName, other)
-    assert.ok(independent)
-    await flush()
-    assert.equal(parentReady, false, 'a parent must await its dependent family publication')
-    assert.equal(tools.get(ownName, parent), previous, 'the family has not partially republished')
-    gate = undefined; first.held.resolve()
-    await bounded(Promise.all([creation, waitingParent]), 'the released family did not commit')
-    const childOwned = tools.get(ownName, child)
-    assert.ok(childOwned)
-    const second = hold()
-    child.session.mode = 'read-only'
-    ctx.emit('session/event', child.session, { type: 'sandbox/mode' })
-    await bounded(second.entered.promise, 'the child revalidation did not enter')
-    const retiringFamily = prompt.assemble({ scope: parent })
-    await bounded(ctx.serial('agent/disposed', { agent: child }), 'child disposal did not cancel the dependent family wait')
-    await bounded(retiringFamily, 'the surviving parent cannot settle after child disposal')
-    const afterDisposal = tools.get(ownName, child)
-    assert.notEqual(afterDisposal, childOwned, 'the disposed child loses its own definition')
-    gate = undefined; second.held.resolve(); await flush()
-    assert.equal(tools.get(ownName, child), afterDisposal, 'a late child response cannot resurrect owned tools')
-    const denied = await childOwned.execute({}, { agent: child, signal: new AbortController().signal })
-    assert.equal(denied.error.code, 'POLICY_DENIED', 'an inherited parent definition does not authorize a retired child')
-    assert.ok(tools.get(ownName, parent))
-    assert.equal(tools.get(ownName, other), independent, 'family cancellation preserves the unrelated root definition')
-  } finally { gate = undefined; for (const release of releases) release(); await creation; await shutdown(ctx) }
+    pending = resolve(ctx, child)
+    await bounded(entered.promise, 'child admission did not enter')
+    assert.ok((await bounded(names(ctx, parent), 'a blocked child serialized parent admission')).includes(ownName))
+    const other = mint(ctx, 'independent'); await ctx.serial('agent/created', { agent: other })
+    assert.ok((await bounded(names(ctx, other), 'a blocked child serialized independent admission')).includes(ownName))
+    await bounded(ctx.serial('agent/disposed', { agent: child }), 'child disposal waited for its prompt response')
+    blocked = false; held.resolve(); const obsolete = await pending
+    assert.equal(ctx.tools.executable(ownName, child, obsolete), undefined); obsolete.dispose()
+    assert.equal((await retained.execute({}, { agent: child, signal: new AbortController().signal })).error.code, 'POLICY_DENIED')
+    assert.ok((await names(ctx, parent)).includes(ownName)); assert.ok((await names(ctx, other)).includes(ownName))
+  } finally { blocked = false; held.resolve(); (await pending)?.dispose(); await shutdown(ctx) }
 })
-for (const [mode, plugin, ownName] of [['native', discovery, 'ops_discover_tools'], ['ptc', ptc, 'ops_load_sdk']]) await test(`${mode} aborted fresh probes cannot consume selections or queue new ones`, async () => {
-  const { ctx, tools, prompt } = await bootHost({ toolsMode: mode })
-  let gate, agent
+for (const [mode, plugin, ownName] of [['native', discovery, 'ops_discover_tools'], ['ptc', ptc, 'ops_load_sdk']]) await test(`${mode} aborted admission preserves pending selection and aborted calls never queue new selection`, async () => {
+  const { ctx } = await bootHost({ toolsMode: mode })
+  let gate, pending
   const releases = []
-  const step = signal => ctx.waterfall('agent/pre-step', { agent, messages: [], turn: 1, step: 1, signal }, async () => ({ kind: 'continue' }))
-  const request = name => mode === 'ptc' ? { tools: [name] } : { query: 'select:ops_' + name }
   try {
-    await ctx.plugin(inner => {
-      inner.provide('subprocess', { spawn() { throw new Error('publication test must not execute a worker') } })
-      inner.provide('sandboxPolicy', { resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: TEST_HOME }) })
-      inner.provide('ptcRuntime', { language: 'typescript' })
-    })
-    await ctx.plugin(plugin, { binaryPath: process.execPath, required: true })
-    agent = mint(ctx, 'abort-fresh')
-    await ctx.serial('agent/created', { agent }); await prompt.assemble({ scope: agent })
-    const entry = tools.get(ownName, agent)
-    assert.equal((await entry.execute(request('stat'), { agent, signal: new AbortController().signal })).status, 'completed')
+    await services(ctx); await ctx.plugin(plugin, { binaryPath: process.execPath, required: true })
+    await flush()
+    const agent = mint(ctx, 'abort-fresh'); await ctx.serial('agent/created', { agent })
+    const request = name => mode === 'ptc' ? { tools: [name] } : { query: 'select:ops_' + name }
+    const initial = await prepareStep(ctx, agent)
+    const entry = ctx.tools.executable(ownName, agent, initial.toolSet)
+    assert.equal((await entry.execute(request('stat'), { agent, toolSet: initial.toolSet, signal: new AbortController().signal })).status, 'completed')
+    initial.dispose()
     ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
       if (gate && context.scope === agent && isPresentationProbe(context)) {
         const current = gate
-        assert.equal(context.signal, current.controller.signal, 'fresh probes forward the active turn/call signal')
+        assert.equal(context.signal, current.controller.signal)
         current.entered.resolve(); await current.held.promise
       }
       return next()
     })
-    const hold = () => { gate = { held: deferred(), entered: deferred(), controller: new AbortController() }; releases.push(gate.held.resolve); return gate }
-    const pendingStep = hold(), stepping = step(pendingStep.controller.signal)
-    await bounded(pendingStep.entered.promise, 'the fresh step probe was not reached')
-    pendingStep.controller.abort(); gate = undefined; pendingStep.held.resolve(); await stepping
-    await prompt.assemble({ scope: agent })
-    assert.equal(tools.get('ops_stat', agent), undefined, 'an aborted step does not publish a queued selection')
-    await step(new AbortController().signal); await prompt.assemble({ scope: agent })
-    assert.ok(tools.get('ops_stat', agent), 'the next valid step can consume the preserved selection')
-    const pendingCall = hold(), calling = tools.get(ownName, agent).execute(request('grep'), { agent, signal: pendingCall.controller.signal })
-    await bounded(pendingCall.entered.promise, 'the fresh call probe was not reached')
-    pendingCall.controller.abort(); gate = undefined; pendingCall.held.resolve()
-    assert.equal((await calling).error.code, 'POLICY_DENIED')
-    await step(new AbortController().signal); await prompt.assemble({ scope: agent })
-    assert.equal(tools.get('ops_grep', agent), undefined, 'an aborted call never queues a new selection')
-  } finally { gate = undefined; for (const release of releases) release(); await shutdown(ctx) }
+    gate = { held: deferred(), entered: deferred(), controller: new AbortController() }; releases.push(gate.held.resolve)
+    pending = resolve(ctx, agent, gate.controller.signal)
+    const rejected = assert.rejects(pending, /cancelled/)
+    await bounded(gate.entered.promise, 'fresh admission did not enter')
+    gate.controller.abort(new Error('cancelled admission')); gate.held.resolve(); gate = undefined; await rejected
+    assert.equal((await names(ctx, agent)).includes('ops_stat'), false, 'aborted resolve and later diagnostics cannot commit selection')
+    await ctx.serial('session/event', agent.session, { type: 'step/end' })
+    assert.ok((await names(ctx, agent)).includes('ops_stat'), 'committed step consumes the preserved selection')
+    const captured = await prepareStep(ctx, agent), cancelled = new AbortController(); cancelled.abort()
+    const outcome = await ctx.tools.executable(ownName, agent, captured.toolSet).execute(request('grep'), { agent, toolSet: captured.toolSet, signal: cancelled.signal })
+    assert.equal(outcome.status, 'rejected'); captured.dispose()
+    await ctx.serial('session/event', agent.session, { type: 'step/end' })
+    assert.equal((await names(ctx, agent)).includes('ops_grep'), false, 'aborted call never queues a new selection')
+  } finally { gate = undefined; for (const release of releases) release(); await pending?.catch(() => {}); await shutdown(ctx) }
 })
 report('probe-isolation')

@@ -26,6 +26,11 @@ await test('measure PTC enhancement separately from the existing file/shell decl
       inner.provide('subprocess', { spawn() { throw new Error('cost probe must never spawn') } })
     })
     const agents = []
+    const initialText = []
+    ctx.on('system-prompt/assemble', async (assembly, context, next) => {
+      initialText.push({ agent: context.scope, text: assembly.sections.map(section => section.text).join('\n') })
+      return next()
+    })
     for (const mode of ['native', 'ptc']) {
       const agent = { id: `cost-${mode}`, session: { id: `cost-${mode}`, header: { cwd: process.cwd() } } }
       const scope = createScope(ctx, agent); scopes.push(scope); agent.ctx = scope.ctx
@@ -38,7 +43,7 @@ await test('measure PTC enhancement separately from the existing file/shell decl
         const assembly = prepared.assembly
         prepared.dispose()
         const sections = assembly.sections.map(({ name, text }) => ({ name, chars: text.length, bytes: Buffer.byteLength(text) }))
-        const text = assembly.sections.filter(section => section.text.length > 0 && (section.name === 'tools:sdk' || section.name === 'tools:ptc-only' || section.name.startsWith('dsh-ops:repository-tooling'))).map(section => section.text).join('\n\n')
+        const text = assembly.sections.filter(section => section.text.length > 0).map(section => section.text).join('\n\n')
         const wire = JSON.stringify(assembly.tools)
         samples.push({ stage, mode, promptChars: text.length, promptBytes: Buffer.byteLength(text), wireBytes: Buffer.byteLength(wire),
           promptSha256: createHash('sha256').update(text).digest('hex'), wireSha256: createHash('sha256').update(wire).digest('hex'), sections })
@@ -61,6 +66,14 @@ await test('measure PTC enhancement separately from the existing file/shell decl
       await new Promise(resolve => setTimeout(resolve, 10))
     }
     await capture('file-shell-and-ptc')
+    assert.ok(initialText.filter(row => row.agent === agents[0][1]).every(row => !row.text.includes('OPS APIs return typed Outcome values.')),
+      'Native text waterfall must never receive PTC guidance before presentation is known')
+    const ptcStep = await prepareStep(ctx, pure)
+    try {
+      assert.ok(ptcStep.assembly.sections.some(section => section.text.includes('OPS APIs return typed Outcome values.')))
+      assert.ok(ptcStep.assembly.sections.some(section => section.name === 'tools:sdk' && section.text.includes('ops_read_files')),
+        'authoritative PTC assembly retains the admitted SDK')
+    } finally { ptcStep.dispose() }
     const deltas = agents.map(([mode]) => {
       const before = samples.find(row => row.stage === 'file-and-shell' && row.mode === mode)
       const after = samples.find(row => row.stage === 'file-shell-and-ptc' && row.mode === mode)

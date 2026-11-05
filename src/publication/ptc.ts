@@ -20,6 +20,7 @@ import { mountWorkspacePreparation } from '../workspace-preparation.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
 import { activationIsPtc, inspectPresentation, isPresentationProbe } from './presentation.js'
 import { visibleNames } from './surface.js'
+import { publicationRegistration, publicationReady } from './reentry.js'
 import { retired as retiredLegacyRow } from '../settings/legacy.js'
 export { resolvePtcConfig } from '../config.js'
 export const name = 'dsh-ops-ptc'
@@ -60,6 +61,8 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     mountResultLifecycle(ctx)
     const entries = new Map<Agent, Entry>(), retired = new WeakSet<Agent>()
     let stopped = false
+    let presentationRevision = 0
+    ctx.on('system-prompt/change', () => { ++presentationRevision })
     let ownership: Awaited<ReturnType<typeof ownPtcScopes>> | undefined
     const resident = new Set<ApiName>(gate.resident === false ? [] : [...PTC_RESIDENT_TOOLS, ...config.alwaysLoaded])
     const pool = new Set<ApiName>([...resident, ...config.allowedTools, 'result'])
@@ -80,8 +83,11 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         && assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
     }
     const execute = (entry: Entry, api: ApiName | 'load_sdk'): ToolDefinition['execute'] => async (args, exec) => {
+      // The public assembly may finish after its executor sections changed.
+      // Refuse that stale verdict rather than dispatching under the old text.
+      const revision = presentationRevision
       const current = () => entries.get(entry.agent) === entry && exec.agent === entry.agent && !exec.signal.aborted
-        && permitted(entry.agent, api) && selected(entry, api)
+        && revision === presentationRevision && permitted(entry.agent, api) && selected(entry, api)
         && (capability(api)?.component === 'file' || tools.executable(publicToolName(api), entry.agent, exec.toolSet) === entry.definitions.get(publicToolName(api)))
       if (!current() || !await isPtc(entry.agent, exec.signal).catch(() => false) || !current()) {
         return failure('POLICY_DENIED', 'This API must be admitted for the calling PTC scope; no action executed.')
@@ -139,9 +145,9 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         if (!owns(agent) || entries.get(agent) !== entry || !entry.ctx) return
         const publish = (api: ApiName | 'load_sdk', def: ToolDefinition): void => {
           entry.definitions.set(def.name, def)
-          entry.disposers.push(entry.ctx!.tools.register(def, { when: async activation =>
+          entry.disposers.push(publicationRegistration(entry.ctx!, () => entry.ctx!.tools.register(def, { when: async activation =>
             activation.agent === agent && permitted(agent, api) && selected(entry, api)
-              && await activationIsPtc(prompt, activation) }))
+              && await activationIsPtc(prompt, activation) })))
         }
         for (const api of pool) {
           const def = definition(api, execute(entry, api))
@@ -160,6 +166,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         if (!owns(agent) || entries.get(agent) !== entry) return
         rotateFiles(entry)
         if (gate.dynamic !== false) publish('load_sdk', sdkDefinition(loadable, execute(entry, 'load_sdk')))
+        await Promise.all(entry.disposers.map(publicationReady))
       }).catch(async error => {
         // Do not await ready here: this is its own rejection path. Preserve the
         // original failure for agent/created while observing teardown failures.
@@ -194,17 +201,19 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     ctx.on('agent/disposed', async ({ agent }) => { retired.add(agent); await detach(agent) })
     ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
       const result = await next()
+      // Sections are evaluated before the public presentation waterfall. Shared
+      // file names are callable in both executors, so they cannot select PTC text.
+      const ptc = result.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
       if (!isPresentationProbe(context)) {
         const entry = entries.get(context.scope as Agent)
-        const ptc = result.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
         if (entry && !ptc) {
           entry.pending.clear(); entry.calls.cancel('PTC presentation withdrawn')
         }
-        // The host adds tools after this text-only waterfall. Its executor-owned
-        // section is authoritative here; shared callable names are not a mode.
-        if (!ptc) return { ...result, sections: result.sections.filter(section => section.name !== ownership!.sectionName(PTC_SECTION)) }
       }
-      return result
+      const name = ownership!.sectionName(PTC_SECTION)
+      return { ...result, sections: ptc
+        ? result.sections.map(section => section.name === name ? { ...section, text: renderGuidance(context.scope as Agent, context.toolSet) } : section)
+        : result.sections.filter(section => section.name !== name) }
     })
     ctx.on('session/event', (session, event) => {
       if ((event as { type: string }).type === 'agent-preset/selected') { refresh(); return }
@@ -220,16 +229,17 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       }
     })
     if (gate.watch) ctx.effect(() => gate.watch!(refresh), 'dsh-ops: PTC consumer observer')
-    ctx.effect(() => prompt.section({ name: ownership!.sectionName(PTC_SECTION), order: 3252, interpolate: false, text: context => {
-      const agent = context.scope as Agent, entry = entries.get(agent)
+    const renderGuidance = (agent: Agent, toolSet?: import('../adapter/dsh/types.js').ResolvedToolSet): string => {
+      const entry = entries.get(agent)
       if (gate.guidance === false || !entry || !owns(agent)) return ''
-      const callable = new Set(visibleNames(tools, agent, context.toolSet))
+      const callable = new Set(visibleNames(tools, agent, toolSet))
       const active = [...entry.definitions.keys()].some(name => callable.has(name))
       if (!active) return ''
       const guidance = 'OPS APIs return typed Outcome values. Inspect status before data; preserve partial coverage and continuation. Process results locally in run_code and return only needed summaries. References do not grant authority.'
       const directory = callable.has(publicToolName('load_sdk')) ? renderSdkDirectory(allowedApis(agent), callable) : ''
       return guidance + (directory ? '\n\n' + directory : '')
-    } }), 'dsh-ops: progressive PTC guidance')
+    }
+    ctx.effect(() => prompt.section({ name: ownership!.sectionName(PTC_SECTION), order: 3252, interpolate: false, text: '' }), 'dsh-ops: progressive PTC guidance')
     ctx.effect(() => async () => {
       stopped = true
       const results = await Promise.allSettled([...entries.keys()].map(detach))

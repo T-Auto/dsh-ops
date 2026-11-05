@@ -17,6 +17,12 @@ Late foreign ancestor sources retain their exact definitions, conditions and res
 
 In 0.5, enabling official-tool replacement does not guarantee that a conditional official tool disappears from the model's tool table. When the OPS counterpart has conditional admission, OPS keeps the official registration visible and guards its dispatch only when the same captured step toolSet admits the counterpart and the consumer still has current authority. An absent, revoked or not-yet-ready counterpart cannot disable the official tool as well. Safe unconditional resident replacements may still use host restrictions. OPS never wraps official definitions or hides tools from inside admission conditions or prompt assembly.
 
+The host can refuse a registry write while publishing a session append. OPS shares one cooldown per host root (25, 100, 400, then 1000 ms), stops at the first refusal, and keeps both pending registration and withdrawal work. Recovery does not require another session event. Deferred tools are unavailable until registered; current execution guards still reject withdrawn authority. Ordinary configuration errors are not retried. Warnings retain suppressed counts and report recovery; unloading a scope cancels its pending registration.
+
+The retained explicit `hide-official` row remains strict: each selected counterpart must be an exact live OPS definition admitted by that step. A same-name foreign definition cannot satisfy readiness. Deferred permanent initialization errors reject awaited readiness and trigger attachment rollback; they do not become retry loops.
+
+PTC guidance is filled only after the public text waterfall confirms the executor's `tools:ptc-only` section. Shared callable file names do not establish presentation. Enabling the PTC row must leave the complete Native prompt and wire tool list unchanged, while the PTC assembly keeps its admitted SDK.
+
 ## Source ownership
 
 `src/presets/` owns built-in preset defaults. `src/consumer/` assembles built-in and external

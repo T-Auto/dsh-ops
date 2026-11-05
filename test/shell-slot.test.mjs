@@ -15,7 +15,7 @@ import { BASH_PROMPT_SECTION, renderBashGuidance } from '../lib/shells/prompt.js
 import { readRowValues, changedFields } from '../lib/client/row-schema.js'
 import { mountDshOpsBridge } from './fixtures/shell-slot-pwsh7/dsh-ops-bridge.mjs'
 import { bootHost, shutdown, scopedToolNames } from './lib/host.mjs'
-import { assert, report, test, withTempDir } from './lib/harness.mjs'
+import { assert, report, test, withTempDir, waitFor } from './lib/harness.mjs'
 
 const off = { enabled: false }
 const minimalOnly = { standard: off, ptc: off, cordis: off, discovery: off }
@@ -224,6 +224,7 @@ await test('two agents, permission withdrawal, reload and dispose preserve the h
     await row.dispose(); await new Promise(resolve => setImmediate(resolve))
     assert.equal(bashSections(await assemble(own)).length, 0)
     row = await ctx.plugin(integration({ preset: 'bash-only', profile: 'shell' }))
+    await waitFor(() => ctx.get('tools').get(BASH_TOOL, own) !== undefined, { what: 'remounted Bash publication for the existing agent' })
     assert.equal(bashSections(await assemble(own)).length, 1)
     assert.equal(bashSections(await assemble(sibling)).length, 0)
     assert.equal((await assemble(own)).sections.find(section => section.name === 'tool:pwsh').text, pwshText)

@@ -24,8 +24,7 @@ await officialToolHidingMountChecks()
 const EXPECTED = NATIVE_RESIDENT_FILE_TOOLS.map(publicToolName).sort()
 async function admittedCall(ctx, name, args, signal, agent) {
   const result = await executeCall(ctx, { name, arguments: args, signal, agent })
-  return { ...result, value: result.value?.data ?? result.value, text: result.content?.filter(b => b.type === 'text').map(b => b.text).join('
-') ?? '' }
+  return { ...result, value: result.value?.data ?? result.value, text: result.content?.filter(b => b.type === 'text').map(b => b.text).join('\n') ?? '' }
 }
 const FILE_SECTION = `${TOOLING_SECTION}:file`
 const SHELL_SECTION = `${TOOLING_SECTION}:shell`
@@ -148,7 +147,7 @@ await test('PTC batch/result mount only in pure PTC scopes and withdraw on prese
     lift(); selectExecutor(pure.ctx, 'native')
     const restored = await prepareStep(ctx, pure)
     try { assert.equal(Boolean(ctx.tools.executable('ops_result', pure, restored.toolSet)), false) } finally { restored.dispose() }
-    assert.equal((await stale.execute({ action: 'page', id: 'unused' }, { agent: pure, signal: new AbortController().signal })).error.code, 'POLICY_DENIED')
+    assert.equal((await stale.execute({ action: 'page', id: 'unused' }, { agent: pure, signal: new AbortController().signal })).error.code, 'PUBLICATION_DENIED')
     await component.dispose()
     assert.equal((await sections(ctx, pure)).has('tools:ptc-only'), false)
     assert.equal(registryHasOwnRegister(ctx), false)
@@ -190,12 +189,18 @@ await test('native file paths resolve from session cwd and enforce workspace-wri
       try {
         const read = await admittedCall(ctx, publicToolName('inspect_local_file'), { path: outside }, undefined, workspace)
         assert.equal(read.value.status, 'completed')
+        const held = await prepareStep(ctx, workspace)
         workspace.session.mode = 'read-only'
         const readonly = workspace
         const denied = await admittedCall(ctx, publicToolName('replace'), { path: outside, pattern: 'outside', replacement: 'changed' }, undefined, readonly)
-        assert.equal(denied.value.error.code, 'POLICY_DENIED')
-        assert.match(denied.value.error.message, /User authorization/)
-        assert.match(denied.value.error.nextAction, /Ask the user/)
+        assert.equal(denied.isError, true, 'fresh read-only admission excludes mutating tools')
+        try {
+          const retained = await executeCall(ctx, { name: publicToolName('replace'), arguments: { path: outside, pattern: 'outside', replacement: 'changed' }, agent: readonly, toolSet: held.toolSet })
+          assert.equal(retained.value.error.code, 'POLICY_DENIED', JSON.stringify(retained))
+          assert.equal(retained.value.error.effectState, 'none')
+          assert.match(retained.value.error.message, /User authorization/)
+          assert.match(retained.value.error.nextAction, /Ask the user/)
+        } finally { held.dispose() }
         assert.equal(fs.readFileSync(outside, 'utf8'), 'outside\n')
       } finally { fs.rmSync(outside, { force: true }) }
     })
