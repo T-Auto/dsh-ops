@@ -183,4 +183,28 @@ await test('the hot path keeps a bounded attempt rate while the window stays ope
   } finally { state.open = false; fixture.restore(); await shutdown(ctx) }
 })
 
+for (const initiallyAvailable of [false, true]) {
+  await test('jobs ' + (initiallyAvailable ? 'removal' : 'arrival') + ' during cooldown refreshes live A and cold B without another host event', async () => {
+    const fixture = await setup()
+    const { ctx, state, tools, mint } = fixture
+    let provider
+    const addJobs = async () => { provider = ctx.plugin(inner => { inner.provide('jobs', { run() { throw new Error('must not execute') } }) }); await provider }
+    const background = agent => !!tools.get('ops_bash', agent)?.parameters?.properties?.run_in_background
+    try {
+      if (initiallyAvailable) await addJobs()
+      const a = await mint('jobs-a')
+      assert.equal(background(a), initiallyAvailable)
+      state.open = true
+      const b = await mint('jobs-b')
+      assert.equal(fixture.published('jobs-b'), false)
+      if (initiallyAvailable) { await provider.dispose(); provider = undefined } else await addJobs()
+      await flush()
+      state.open = false
+      await waitFor(() => fixture.allPublished(), { timeoutMs: 3000, what: 'cooled jobs publication' })
+      assert.equal(background(a), !initiallyAvailable, 'the live definition must refresh too')
+      assert.equal(background(b), !initiallyAvailable, 'the cold definition must use current jobs')
+    } finally { state.open = false; await provider?.dispose(); fixture.restore(); await shutdown(ctx) }
+  })
+}
+
 report('shells-append-reentry')

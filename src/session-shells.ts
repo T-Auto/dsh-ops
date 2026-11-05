@@ -239,7 +239,7 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
       return false
     }
   }
-  const reconcile = (refreshDefinitions = false): boolean => {
+  const reconcile = (): boolean => {
     // `reconcile` must not touch the registry during a cooldown: the host is still publishing the
     // append that refused the last attempt, so any register or dispose from a pass would be another
     // refusal (#579). The debt is remembered and one pass runs at expiry.
@@ -247,7 +247,9 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
     // A session destroyed inside the window still owes its withdrawal: retry it as early as the
     // cooldown allows, before any republication work, and stop the pass if refused again (#579).
     for (const entry of owedClear) if (clear(entry)) return false
-    if (refreshDefinitions) ++generation
+    // Consume definition debt only after both early deferrals have cleared. A timer-only retry
+    // must still refresh live siblings when jobs arrived or left during the refused window.
+    if (refreshPending) { ++generation; refreshPending = false }
     // Resolve live authority cheaply, but never withdraw an unrelated, unchanged layer.
     // Publish ancestors before adding masks, so a newly available parent is also hidden
     // from already tracked restricted children. Existing masks remain authoritative.
@@ -294,9 +296,8 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
     scheduled = setImmediate(() => {
       scheduled = undefined
       const pass = pending, done = settle; settle = undefined
-      const refresh = refreshPending; refreshPending = false
       let completed = false
-      try { if (!stopped) completed = reconcile(refresh) }
+      try { if (!stopped) completed = reconcile() }
       finally { if (pending === pass) pending = undefined; done?.() }
       reentryOwed = !completed
       if (completed) cooling.succeeded()

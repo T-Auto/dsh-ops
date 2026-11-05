@@ -522,4 +522,29 @@ await test('a backward Date.now jump costs one extra pass and never wedges the c
   } finally { fixture.state.open = false; fixture.restore(); await shutdown(fixture.ctx) }
 })
 
+await test('an owed-clear refusal retains jobs definition debt independently of cooldown', async () => {
+  const fixture = await setup({ refuseDispose: true })
+  let provider
+  try {
+    const a = await fixture.mint('owed-live'), retired = await fixture.mint('owed-retired')
+    const clock = installClock()
+    try {
+      fixture.state.open = true
+      await drain(clock, fixture.ctx.serial('agent/disposed', { agent: retired }))
+      assert.equal(fixture.state.dispose, 1, 'retirement leaves a refused withdrawal')
+      // Advance only wall time, not timers: the jobs pass is not cooled, but its owed clear fails.
+      clock.rollback(-2000)
+      provider = fixture.ctx.plugin(inner => { inner.provide('jobs', { run() { throw new Error('must not execute') } }) })
+      await drain(clock, provider)
+      await clock.pump()
+      assert.ok(fixture.state.dispose >= 2, 'the refresh reached the owed-clear refusal')
+      fixture.state.open = false
+      await clock.advance(2000)
+      assert.ok(fixture.tools.get('ops_bash', a)?.parameters?.properties?.run_in_background,
+        'the timer-only recovery must refresh the live sibling after the owed clear')
+      assert.equal(fixture.tools.get('ops_bash', retired), undefined)
+    } finally { clock.uninstall() }
+  } finally { fixture.state.open = false; await provider?.dispose(); fixture.restore(); await shutdown(fixture.ctx) }
+})
+
 report('shells-append-reentry-edges')

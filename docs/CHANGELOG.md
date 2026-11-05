@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Preserve Bash definition-refresh debt through cooldown and refused withdrawals so live sessions converge when jobs arrive or leave. / 冷却及撤销拒绝期间保留 Bash 定义刷新债务，确保 jobs 到达或移除后现存会话仍能收敛。
+
 - Stop retrying a host append-reentry refusal inside the same microtask on every publication row: bash, PTC and native now share one classifier and one cooled retry (25/100/400/1000 ms, reset on success), so a held append window costs a bounded number of registry attempts instead of one burst per tracked session. A jittery host - one short window per new session - is reported at most twice a second, with the folded refusal count still readable in the line or its recovery summary. Seven other registry-write points are not covered here (#579).
 - 宿主发布 append 期间的重入拒绝不再在同一微任务内重试：bash、PTC 与 native 三条发布路径共用同一分类器与同一次冷却重试（25/100/400/1000 ms，成功即复位），因此一个被持有的 append 窗口只产生有界的少量注册表尝试，而不再按受跟踪会话数放大。抖动型宿主（每个新会话一次短窗）也最多每秒两条告警，且被折叠的拒绝次数仍能从告警行或恢复汇总里读到。其余七个注册表写入点不在本 PR 范围内（#579）。
 - Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
