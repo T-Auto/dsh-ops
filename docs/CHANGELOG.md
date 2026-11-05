@@ -7,8 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-- Add `ops_ast_locate`, `ops_ast_refactor` and `ops_ast_audit`: in-process Tree-sitter symbol lookup, structural rewrite and format-only audit. They answer without spawning the native worker, run the same session-policy, credential and anchor fences as the worker path, default to preview, and publish on the Native presentation only.
-- 新增 `ops_ast_locate`、`ops_ast_refactor`、`ops_ast_audit`：进程内的 Tree-sitter 符号定位、结构化重写与格式化审计。不启动 native worker，与 worker 路径共用会话策略、凭证与路径锚定围栏，重写默认预览，仅发布在 Native 呈现面上。
+- Add `ops_ast_locate`, `ops_ast_refactor` and `ops_ast_audit`: in-process Tree-sitter symbol lookup, structural rewrite and format-only audit. They answer without spawning the native worker, run the same session-policy, credential and anchor fences as the worker path, default to preview, and publish on the Native presentation only (#666).
+- 新增 `ops_ast_locate`、`ops_ast_refactor`、`ops_ast_audit`：进程内的 Tree-sitter 符号定位、结构化重写与格式化审计。不启动 native worker，与 worker 路径共用会话策略、凭证与路径锚定围栏，重写默认预览，仅发布在 Native 呈现面上（#666）。
 
 - Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
 - 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。
