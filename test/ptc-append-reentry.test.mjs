@@ -136,6 +136,13 @@ await test('a held window during cold start costs a bounded touch count, not one
     fixture.release()
     await waitFor(fixture.allPublished, { timeoutMs: 3000, what: 'every session to publish after the window' })
     assert.equal(fixture.names(fixture.agents[2]).length, 2, 'the last session holds its two resident APIs')
+    // The summary is written at the first pass boundary *after* a full quiet window, so the burst has
+    // to be closed the way a live session closes it: a pause and then one more ordinary pass.
+    // Asserting straight after the release made the outcome depend on how quickly the host let go of
+    // the lock relative to the last refusal — green on Windows, and on Linux the release landed
+    // inside the window, no further pass ran, and the folded count was never reported.
+    await tick(1100)
+    await fixture.drive(1)
     assert.equal(fixture.recovery().length, 1,
       `the suppressed refusals are summarised once on recovery: ${JSON.stringify(fixture.warns)}`)
     assert.equal(fixture.warns.length, 2, `exactly two lines for the whole window: ${JSON.stringify(fixture.warns)}`)

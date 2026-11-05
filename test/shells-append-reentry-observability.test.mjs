@@ -50,8 +50,12 @@ import { NATIVE_RESIDENT_RAW } from '../lib/capabilities/profiles.js'
 
 /** The host message the plugin classifies (it lives outside this repository). */
 const HOST_REFUSAL = 'session append cannot reenter while another append is being published'
-/** The staged worker; the controllers only build definitions, they do not spawn here. */
-const WORKER = fileURLToPath(new URL('../runtime/win32-x64/dsh-ops-worker.exe', import.meta.url))
+/** The staged worker for *this* host; the controllers only build definitions, they do not spawn here.
+ *  Naming `win32-x64` here made the sibling-path rows fail on the Linux and macOS legs instead of
+ *  measuring them — the gate stages `runtime/<platform>-<arch>/` on every leg. */
+const WORKER = fileURLToPath(new URL(
+  `../runtime/${process.platform}-${process.arch}/${process.platform === 'win32' ? 'dsh-ops-worker.exe' : 'dsh-ops-worker'}`,
+  import.meta.url))
 /** A jittery burst: this many sessions, one short window each, all inside one fake second. */
 const JITTER_SESSIONS = 20
 const EPISODE_STEP_MS = 20
