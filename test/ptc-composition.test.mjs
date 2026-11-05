@@ -140,4 +140,50 @@ if (process.platform === 'win32') await test('replace keeps already-applied file
     } finally { fs.chmodSync(second, 0o666) }
   })
 })
+await test('two files read in one run_code edit each with its own revision and both receipts match disk bytes', async () => {
+  await withTempDir('ptc-compose-per-file', async root => {
+    const aBefore = 'alpha one\n', bBefore = 'bravo one\n', cBefore = 'untouched\n'
+    fs.writeFileSync(path.join(root, 'a.txt'), aBefore)
+    fs.writeFileSync(path.join(root, 'b.txt'), bBefore)
+    fs.writeFileSync(path.join(root, 'c.txt'), cBefore)
+    await fixture(root, async call => {
+      const result = await call(`
+        const name = item => String(item.path).split(/[\\\\/]/).pop();
+        const read = await tools.ops_read_files({files:[{path:'a.txt'},{path:'b.txt'}]});
+        if (read.status !== 'completed' || read.data.status !== 'completed') return {read};
+        // Attribute by path, not by array position: each receipt carries its own absolute path.
+        const byName = Object.fromEntries(read.data.items.map(item => [name(item), item]));
+        const a = byName['a.txt'], b = byName['b.txt'];
+        if (!a || !b || !a.revision || !b.revision) return {read,names:Object.keys(byName)};
+        const editA = await tools.ops_edit_file({path:'a.txt',expectedRevision:a.revision,
+          edits:[{oldText:'alpha',newText:'ALPHA'}]});
+        const editB = await tools.ops_edit_file({path:'b.txt',expectedRevision:b.revision,
+          edits:[{oldText:'bravo',newText:'BRAVO'}]});
+        return {read,aRevision:a.revision,bRevision:b.revision,
+          aComplete:a.complete,bComplete:b.complete,aPath:name(a),bPath:name(b),editA,editB};`)
+      assert.equal(result.read.status, 'completed', JSON.stringify(result.read))
+      // Both files came back whole: `failed` lives on the result payload and must be exactly zero.
+      assert.equal(result.read.data.failed, 0)
+      assert.equal(result.aPath, 'a.txt')
+      assert.equal(result.bPath, 'b.txt')
+      assert.equal(result.aComplete, true)
+      assert.equal(result.bComplete, true)
+      // Each read receipt describes its own file, so it must match that file's bytes - and the two
+      // baselines therefore have to differ without needing a separate comparison.
+      assert.equal(result.aRevision, hash(aBefore))
+      assert.equal(result.bRevision, hash(bBefore))
+      assert.equal(result.editA.status, 'completed', JSON.stringify(result.editA))
+      assert.equal(result.editB.status, 'completed', JSON.stringify(result.editB))
+      assert.equal(result.editA.data.items[0].revisionBefore, result.aRevision)
+      assert.equal(result.editB.data.items[0].revisionBefore, result.bRevision)
+      const aAfter = 'ALPHA one\n', bAfter = 'BRAVO one\n'
+      assert.equal(result.editA.data.items[0].revision, hash(aAfter))
+      assert.equal(result.editB.data.items[0].revision, hash(bAfter))
+      assert.equal(fs.readFileSync(path.join(root, 'a.txt'), 'utf8'), aAfter)
+      assert.equal(fs.readFileSync(path.join(root, 'b.txt'), 'utf8'), bAfter)
+      // A file that was never read or edited must not be touched by either edit.
+      assert.equal(fs.readFileSync(path.join(root, 'c.txt'), 'utf8'), cBefore)
+    })
+  })
+})
 report('ptc-composition')
