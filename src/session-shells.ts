@@ -12,6 +12,7 @@ import { BashArgumentError } from './shells/argument-error.js'
 import { MODES } from './permissions.js'
 import { hostBashDefinition } from './shells/host-tool.js'
 import { withToolChange } from './tool-changes.js'
+import { isPresentationProbe } from './presentation.js'
 import { startSessionBash } from './shells/session-execution.js'
 
 /**
@@ -134,6 +135,11 @@ interface Entry {
   published?: boolean; generation?: number
 }
 
+// Preset consumers share an Agent's own registry layer. A newly eligible
+// consumer can run before the previous consumer's deferred cleanup (#489).
+// Track only this module's exact registrations, never foreign Bash providers.
+const bashOwners = new WeakMap<Agent, { entry: Entry; allowed(): boolean; clear(): void }>()
+
 /** A row's per-Agent permission to publish its bash layer. */
 export interface BashGate {
   /** Whether the row owns this Agent's mode. */
@@ -177,6 +183,7 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
     } catch (error) {
       ctx.logger?.warn?.(`dsh-ops: bash tool teardown failed; continuing with the remaining sessions: ${errorMessage(error)}`)
     } finally {
+      if (bashOwners.get(entry.agent)?.entry === entry) bashOwners.delete(entry.agent)
       entry.dispose = undefined
       entry.published = undefined
       entry.generation = undefined
@@ -184,16 +191,22 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
   }
   const publish = (entry: Entry, definition: HostShellDefinition) => {
     if (!entry.ctx) return
+    const previous = bashOwners.get(entry.agent)
+    if (previous && previous.entry !== entry && !previous.allowed()) previous.clear()
     // A failed publication must leave the session with the definition that last worked rather than
     // with no bash tool at all (#30). `entry.definition` survives `clear()`, so it holds the last
     // definition registered successfully for this entry.
     try {
       entry.dispose = withToolChange([entry.agent], () => entry.ctx!.tools.register(definition))
       entry.definition = definition
+      bashOwners.set(entry.agent, { entry, allowed: () => allowed(entry.agent), clear: () => clear(entry) })
     } catch (error) {
       ctx.logger?.warn?.(`dsh-ops: bash publication failed: ${errorMessage(error)}`)
       if (entry.definition === undefined) return
-      try { entry.dispose = withToolChange([entry.agent], () => entry.ctx!.tools.register(entry.definition!)) }
+      try {
+        entry.dispose = withToolChange([entry.agent], () => entry.ctx!.tools.register(entry.definition!))
+        bashOwners.set(entry.agent, { entry, allowed: () => allowed(entry.agent), clear: () => clear(entry) })
+      }
       catch (restoreError) { ctx.logger?.warn?.(`dsh-ops: bash restoration failed: ${errorMessage(restoreError)}`) }
     }
   }
@@ -211,7 +224,8 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
       if (!publishable) continue
       const base = bashToolDefinition({ file: bash.file, source: bash.source, subprocess: ctx.get('subprocess') })
       const definition = hostBashDefinition(ctx, base,
-        (args, exec, standing, policy, dshEnv, options) => startSessionBash({ ctx, bash, active: () => exec.agent !== undefined && entries.has(exec.agent) && allowed(exec.agent) },
+        (args, exec, standing, policy, dshEnv, options) => startSessionBash({ ctx, bash, active: () => entry.published === true && entry.definition === definition
+          && exec.agent !== undefined && entries.has(exec.agent) && allowed(exec.agent) },
           args, exec, standing, policy, dshEnv, options), sessionWorkdir, jobs)
       publish(entry, definition)
       if (entry.dispose) { entry.published = true; entry.generation = generation }
@@ -287,8 +301,10 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
   ctx.inject(['systemPrompt'], promptCtx => {
     const prompt = promptCtx.get('systemPrompt')!
     promptCtx.on('system-prompt/assemble', async (_assembly, options, next) => {
-      if (!pending) return next()
-      while (pending) await pending
+      if (isPresentationProbe(options)) return next()
+      const pass = pending
+      if (!pass) return next()
+      await pass
       // Schemas were collected before this hook. Rebuild after publication.
       return prompt.assemble(options)
     })

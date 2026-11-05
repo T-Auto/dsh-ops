@@ -5,7 +5,7 @@ import type { ToolDefinition, ToolRunContext } from '../adapter/dsh/types.js'
 import type {} from '../adapter/dsh/types.js'
 import type { PromptAssembly } from '../adapter/dsh/types.js'
 import { loadScopes } from '../adapter/dsh/host.js'
-import { inspectPresentation, isPresentationProbe } from '../presentation.js'
+import { claimPresentationRebuild, inspectPresentation, isPresentationProbe } from '../presentation.js'
 import { WORKER_TIMEOUT_MS } from '../worker-protocol.js'
 import { FILE_TOOLS, PTC_TOOLS } from '../capabilities/registry.js'
 import { PTC_SECTION, definition } from './contract.js'
@@ -85,6 +85,13 @@ export function apply(root: Context, rawConfig: unknown, gate: PtcGate = { allow
         try { withToolChange([entry.agent], dispose) } catch (error) { ctx.logger.warn('dsh-ops: PTC teardown failed; continuing:', error) }
       }
     }
+    /**
+     * Duck-typed access to the registry's private `modeFor` — same pattern as
+     * `surfaceOf`'s `view()`. It walks the scope chain and returns the resolved
+     * presentation without assembling a prompt: microseconds against the full
+     * assembly a probe pays.
+     */
+    const modeOf = (agent: Agent): string | undefined => (tools as unknown as { modeFor?: (scope: object) => string }).modeFor?.(agent)
     const ptcOnly = async (agent: Agent, signal?: AbortSignal): Promise<boolean> => Boolean(ctx.get('ptcRuntime')) && isPtc(await inspectPresentation(prompt, agent, signal))
     const abortOwner = (agent: Agent, reason: string) => {
       for (const [controller, work] of active) if (work.owner === agent) controller.abort(new Error(reason))
@@ -124,7 +131,7 @@ export function apply(root: Context, rawConfig: unknown, gate: PtcGate = { allow
     }
     /** Probe changed scopes, then rebuild only their inheritance dependency family. */
     const queued = new Map<Agent, boolean>()
-    const reconcile = (force = false, targets?: ReadonlySet<Agent>): Promise<void> => {
+    const reconcile = (force = false, targets?: ReadonlySet<Agent>, verifyVerdict = true): Promise<void> => {
       if (stopped || mutating) return Promise.resolve()
       for (const agent of targets ?? entries.keys()) {
         const entry = entries.get(agent)
@@ -149,6 +156,16 @@ export function apply(root: Context, rawConfig: unknown, gate: PtcGate = { allow
           const fresh = requests.get(agent) === true
           if (!fresh && entry.surface === surface) { if (entry.ptc) ready.add(agent); continue }
           if (entry.surface !== surface || fresh) { dirty = true; changed.add(agent) }
+          // A deferred change still republishes when the surface moved — that is the
+          // only part of a publish that depends on the registry — but it keeps the
+          // verdict it holds instead of paying an assembly to re-derive a mode that a
+          // `tools/change` cannot have moved. The next probe confirms it at pre-step.
+          if (!verifyVerdict) { if (entry.ptc) ready.add(agent); continue }
+          // A scope whose registry mode is not `ptc` cannot present PTC-only: the
+          // collapsed section renders empty for every other mode, and `modeFor` is
+          // the same source that section reads. Answering from the scope chain
+          // skips an assembly that can only ever return the verdict already held.
+          if (modeOf(agent) === 'native' && !entry.ptc) { continue }
           probedBefore.add(agent)
           const next = gate.allows(agent) && await task.wait(ptcOnly(agent, task.signal)).catch(() => false)
           if (next !== entry.ptc) { dirty = true; changed.add(agent) }
@@ -260,36 +277,85 @@ export function apply(root: Context, rawConfig: unknown, gate: PtcGate = { allow
       // Only a departed scope's inheritance family can depend on its projection.
       await entry.fiber?.dispose(); await reconcile(true, affected)
     })
-    // A registry change only owes a republish when some agent's probed surface moved,
-    // so the change listener probes and lets the dirty check decide.
+    // `presentAs(mode)` registers or drops the collapsed and SDK prompt sections, so a
+    // prompt change is the only evidence that a presentation mode may have flipped while
+    // the registry change that follows it stays unattributed. The evidence is a version
+    // rather than a one-shot flag: the registry change can trail it by several turns of
+    // the event loop, and a consumed flag would strand the flipped session until its next
+    // real assembly.
+    let promptEpoch = 0, rederivedEpoch = 0
+    ctx.on('system-prompt/change', () => { if (!stopped) ++promptEpoch })
     onToolChange(ctx, scopes => {
       if (mutating || ownership?.publishing()) {
         if (!scopes?.length) foreignDuringPublish = true
         return
       }
-      const targets = scopes?.length ? new Set([...entries.keys()].filter(agent => scopes.some(scope => scopeChainOf(agent).includes(scope)))) : undefined
-      // A host presentation change carries no affected scope. Probe every entry
-      // because its visible names may stay identical while ptcOnly changes.
-      // OPS-owned changes can still be narrowed to their scope descendants.
-      for (const [agent, entry] of entries) if ((!targets || targets.has(agent)) && !entry.ptc) queued.set(agent, true)
-      void reconcile(false, targets)
+      // Nothing is attributable here: the official host emits `tools/change` with no
+      // payload. A bare registration cannot move a presentation mode — the collapsed
+      // section text and the wire projection depend on the mode alone — so re-deriving
+      // the verdict per session is one wasted assembly each. Only a prompt change since
+      // the last re-derivation can have flipped one. The republish itself is never
+      // skipped: a restriction or a scoped shadow moves what a Native session sees
+      // without moving the mode, and `surfaceOf` cannot see it.
+      if (!scopes?.length) {
+        // A probe a superseded round still owes must not be dropped here: a publish that
+        // was in flight keeps its request queued, and the deferred path is the only
+        // remaining chance to spend it. Spending it does not consume the prompt evidence,
+        // which no round has re-derived yet. `test/preset-integration.test.mjs` locks this
+        // through a preset switch back to a PTC label: the owed probe is the only thing
+        // that republishes the SDK the withdrawn scope lost.
+        const moved = promptEpoch > rederivedEpoch
+        const verifyVerdict = moved || [...queued.values()].some(owed => owed)
+        if (moved) rederivedEpoch = promptEpoch
+        for (const [agent, entry] of entries) if (!entry.ptc) queued.set(agent, true)
+        void reconcile(false, undefined, verifyVerdict)
+        return
+      }
+      const targets = new Set([...entries.keys()].filter(agent => scopes.some(scope => scopeChainOf(agent).includes(scope))))
+      for (const agent of targets) {
+        const entry = entries.get(agent)
+        if (!entry?.ptc) queued.set(agent, true)
+        else if (entry.surface === surfaceOf(agent) && queued.get(agent) !== true) targets.delete(agent)
+      }
+      if (targets.size) void reconcile(false, targets)
     })
     ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
       // The pinned host assembles BEFORE agent/pre-step. Wait for publication
       // queued by the previous committed step, then obtain a fresh public assembly.
-      if (!isPresentationProbe(context)) {
-        const agent = context.scope as Agent, entry = entries.get(agent), before = reconciliation.version(agent)
+      const agent = context.scope as Agent
+      const probing = isPresentationProbe(context)
+      if (!probing) {
+        const entry = entries.get(agent), published = entry?.published
+        // Sections and SDK declarations are rendered before this hook. A changed
+        // publication generation means this request observed the previous one;
+        // merely waiting for an unchanged generation does not require a rebuild.
         await entry?.ready
-        if (await reconciliation.drain(agent) || before !== reconciliation.version(agent)) return prompt.assemble(context)
+        await reconciliation.drain(agent)
+        if (entry?.ptc && entry.published !== published) return prompt.assemble(context)
       }
-      const entry = entries.get(context.scope as Agent), heldPtc = Boolean(entry?.ptc && entry.owned.size)
+      const entry = entries.get(agent), heldPtc = Boolean(entry?.ptc && entry.owned.size)
       const result = await next()
-      if (!entry || context.signal?.aborted || entries.get(context.scope as Agent) !== entry || !heldPtc || isPtcPresentation(result)) return result
-      mutating = true
-      try { entry.ptc = false; entry.surface = undefined; entry.pending.clear(); abortOwner(context.scope as Agent, 'PTC presentation withdrawn'); clear(entry) }
-      finally { mutating = false }
-      void reconcile(true, new Set([context.scope as Agent]))
-      return prompt.assemble(context)
+      // A probe assembly already carries its own verdict; re-entering here would
+      // publish from inside the very assembly whose cost the probe is measuring.
+      if (probing || !entry || context.signal?.aborted || entries.get(agent) !== entry) return result
+      const presented = isPtcPresentation(result)
+      if (heldPtc && !presented) {
+        mutating = true
+        try { entry.ptc = false; entry.surface = undefined; entry.pending.clear(); abortOwner(agent, 'PTC presentation withdrawn'); clear(entry) }
+        finally { mutating = false }
+        void reconcile(true, new Set([agent]))
+        return claimPresentationRebuild(context) ? prompt.assemble(context) : result
+      }
+      // The symmetric guard. An unattributed change is deferred to this assembly, so
+      // the prompt can present PTC-only before OPS has published the APIs it promises.
+      // Publish once, then re-assemble so the codes see a surface that matches the
+      // instructions. A scope the gate or ownership excludes keeps the plain result,
+      // which is also what stops this from retrying the same refused upgrade forever.
+      if (!entry.ptc && presented && gate.allows(agent) && Boolean(ownership?.owns(agent))) {
+        await reconcile(true, new Set([agent]))
+        if (entries.get(agent) === entry && entry.ptc) return prompt.assemble(context)
+      }
+      return result
     })
     ctx.on('session/event', (session, event) => {
       if ((event as { type: string }).type === 'agent-preset/selected') { void reconcile(true); return }
