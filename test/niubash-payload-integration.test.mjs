@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process'
 import { PACKAGE_ROOT, TEST_HOME, assert, report, test, withTempDir, skipSuite } from './lib/harness.mjs'
 import { NIUBASH_PIN, NIUBASH_PACKAGE_PATH, NIUBASH_HOME_PATH, stageNiubashArchive,
 verifyNiubashTree } from '../lib/cli/niubash-payload.js'
+import { managedBashInventory, removeManagedBash, selectBashRuntime } from '../lib/shells/manager.js'
 import { provisionNiubash } from '../lib/cli/provision-shells.js'
 import { tar } from '../scripts/lib/build/tar-modes.js'
 import { checkNiubashTarball } from '../scripts/lib/build/niubash-tar.mjs'
@@ -43,6 +44,14 @@ await test('default provision uses fixed Niubash home, verifies reuse, rejects c
   assert.equal(provisionNiubash({ force: false, dryRun: false }), false)
   assert.equal(provisionNiubash({ force: true, dryRun: false }), true)
   verifyNiubashTree(target)
+  const inventory = managedBashInventory()
+  assert.equal(inventory.find(entry => entry.backend === 'niubash')?.owned, true)
+  const selected = selectBashRuntime('managed', { platform: 'win32', arch: 'x64' })
+  assert.equal(selected.file, path.join(target, 'niu.exe')); assert.equal(selected.restricted.compatible, true)
+  assert.equal(removeManagedBash().action, 'preview'); assert.equal(fs.existsSync(target), true)
+  removeManagedBash({ yes: true })
+  assert.equal(fs.existsSync(target), false); assert.deepEqual(managedBashInventory(), [])
+  assert.throws(() => selectBashRuntime('managed', { platform: 'win32', arch: 'x64' }), /install/)
 })
 await test('npm pack carries every frozen file; consumer verifies and runs Niubash and bundled tools', async () => withTempDir('niu-pack', async root => {
   const source = path.join(root, 'source'), runtime = path.join(source, NIUBASH_PACKAGE_PATH)
@@ -58,18 +67,16 @@ await test('npm pack carries every frozen file; consumer verifies and runs Niuba
   const deployed = path.join(consumer, 'package', NIUBASH_PACKAGE_PATH)
   const executable = verifyNiubashTree(deployed)
   if (process.platform === 'win32') {
-    const execution = path.join(root, 'execution')
-    fs.cpSync(deployed, execution, { recursive: true })
-    const executionExe = verifyNiubashTree(execution)
-    const command = 'printf "niu-ok\\n"; printf "hello\\n" | grep hello; printf "2\\n" | awk \'{print $1+1}\'; find . -name provenance.json'
-    const run = spawnSync(executionExe, ['-c', command], { cwd: execution, encoding: 'utf8', timeout: 30000, windowsHide: true })
-    assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`)
-    assert.match(run.stdout, /niu-ok/); assert.match(run.stdout, /hello/); assert.match(run.stdout, /3/); assert.match(run.stdout, /provenance.json/)
-    assert.throws(() => verifyNiubashTree(execution), /Unknown Niubash directory: winuxcmd\/dev/)
-    const again = spawnSync(executionExe, ['-c', 'printf second-ok'], { cwd: execution, encoding: 'utf8', timeout: 30000 })
-    assert.equal(again.status, 0, again.stderr); assert.equal(again.stdout, 'second-ok')
-    const generated = fs.readdirSync(path.join(execution, 'winuxcmd/dev'), { withFileTypes: true })
-    console.log(`  Niubash generated winuxcmd/dev: ${generated.map(e => `${e.name}:${e.isFile() ? 'file' : e.isDirectory() ? 'dir' : 'other'}`).join(', ') || '(empty)'}`)
+    const { prepareNiubash } = await import('../lib/niubash/runtime.js')
+    for (let n = 0; n < 2; n++) {
+      const execution = await prepareNiubash(executable, '', new AbortController().signal)
+      try {
+        const run = spawnSync(execution.file, ['-c', "printf 'niu-ok\n'; printf '2\n' | awk '{print $1+1}'; printf packed | cat"], { cwd: root, env: { ...process.env, ...execution.env }, encoding: 'utf8', timeout: 30000, windowsHide: true })
+        assert.equal(run.status, 0, `${run.stdout}
+${run.stderr}`)
+        assert.match(run.stdout, /niu-ok/); assert.match(run.stdout, /3/); assert.match(run.stdout, /packed/)
+      } finally { await execution.dispose() }
+    }
     verifyNiubashTree(deployed)
   }
 }))
