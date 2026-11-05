@@ -224,6 +224,9 @@ fn walk_records(buffer: &[u8]) -> Result<(Vec<ParsedUsnRecord>, SkipCounts), Wal
         if length == 0 {
             return Err(WalkError::ZeroRecordLength { offset });
         }
+        if length < USN_COMMON_HEADER_LEN {
+            return Err(WalkError::TruncatedHeader { offset });
+        }
         let end = offset
             .checked_add(length)
             .filter(|end| *end <= buffer.len())
