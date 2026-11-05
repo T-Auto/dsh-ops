@@ -67,12 +67,18 @@ await test('npm pack carries every frozen file; consumer verifies and runs Niuba
   stageNiubashArchive(archive, runtime)
   fs.writeFileSync(path.join(source, 'package.json'), JSON.stringify({ name: 'niubash-payload-test', version: '1.0.0', files: ['runtime'] }))
   const result = npm(['pack', '--ignore-scripts', '--json', '--pack-destination', root], { cwd: source })
-  const packed = JSON.parse(result.stdout)[0]
-  checkNiubashTarball(path.join(root, packed.filename))
-  const listed = new Set(packed.files.map(entry => entry.path))
+  assert.equal(result.status, 0, result.stderr)
+  // npm's JSON report differs across versions. Inspect the one fresh artifact
+  // and its actual members, retaining the full frozen-byte verification.
+  const artifacts = fs.readdirSync(root).filter(name => name.endsWith('.tgz'))
+  assert.equal(artifacts.length, 1, result.stdout)
+  const artifact = path.join(root, artifacts[0])
+  checkNiubashTarball(artifact)
+  const listed = new Set()
+  tar.list({ file: artifact, sync: true, strict: true, onentry(entry) { listed.add(entry.path.replace(/^package\//u, '')) } })
   for (const name of Object.keys(NIUBASH_PIN.files)) assert(listed.has(`${NIUBASH_PACKAGE_PATH}/${name}`), name)
   const consumer = path.join(root, 'consumer'); fs.mkdirSync(consumer)
-  await tar.x({ file: path.join(root, packed.filename), cwd: consumer, strict: true })
+  await tar.x({ file: artifact, cwd: consumer, strict: true })
   const deployed = path.join(consumer, 'package', NIUBASH_PACKAGE_PATH)
   const executable = verifyNiubashTree(deployed)
   if (process.platform === 'win32') {

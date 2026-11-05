@@ -15,6 +15,7 @@ const consumerRoot = process.env.DSH_OPS_NIUBASH_CONSUMER
 const moduleAt = relative => import(consumerRoot ? pathToFileURL(path.join(consumerRoot, relative)).href : new URL(`../${relative}`, import.meta.url).href)
 const { mountSessionBash } = await moduleAt('lib/session-shells.js')
 const { startSessionBash } = await moduleAt('lib/shells/session-execution.js')
+const { DEFAULT_BASH_TIMEOUT_MS } = await moduleAt('lib/shells/constants.js')
 
 // Opt-in upstream fixture, never a developer profile or installer. The exact full-tree pin is
 // still enforced; this variable cannot bless alternate bytes. CI can supply its frozen artifact.
@@ -34,7 +35,7 @@ await ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { mountSessio
 await ctx.serial('agent/created', { agent })
 await waitFor(() => ctx.get('tools').get('ops_bash', agent), { what: 'Niubash tool publication' })
 const tool = ctx.get('tools').get('ops_bash', agent)
-const call = (command, overrides = {}, signal = new AbortController().signal) => tool.execute({ description: 'Verify Niubash confinement', command, timeoutMs: 15000, graceMs: 100, workdir: root, ...overrides }, { agent, signal })
+const call = (command, overrides = {}, signal = new AbortController().signal) => tool.execute({ description: 'Verify Niubash confinement', command, graceMs: 100, workdir: root, ...overrides }, { agent, signal })
 const quote = text => `'${text.replaceAll("'", "'\\''")}'`
 // Use native script files: Niubash pipeline reparsing of nested quotes is an upstream
 // language difference, not evidence that the OPS sandbox denied a filesystem operation.
@@ -60,15 +61,15 @@ try {
     assert.equal(fs.readFileSync(path.join(root, 'allowed.txt'), 'utf8'), 'allowed')
     for (const command of ['printf denied > forbidden.txt', node("require('fs').writeFileSync('native-forbidden.txt','bad')")]) {
       const value = await call(command, { workdir: outside })
-      assert.notEqual(value.exitCode, 0, JSON.stringify(value))
+      assert.equal(value.timedOut, false, JSON.stringify(value)); assert.notEqual(value.exitCode, 0, JSON.stringify(value))
     }
     assert.equal(fs.existsSync(path.join(outside, 'forbidden.txt')), false)
     assert.equal(fs.existsSync(path.join(outside, 'native-forbidden.txt')), false)
     agent.session.mode = 'read-only'
     const denied = await call('printf denied > read-only.txt')
-    assert.notEqual(denied.exitCode, 0, JSON.stringify(denied)); assert.equal(fs.existsSync(path.join(root, 'read-only.txt')), false)
+    assert.equal(denied.timedOut, false, JSON.stringify(denied)); assert.notEqual(denied.exitCode, 0, JSON.stringify(denied)); assert.equal(fs.existsSync(path.join(root, 'read-only.txt')), false)
     const native = await call(node("require('fs').writeFileSync('native-read-only.txt','bad')"))
-    assert.notEqual(native.exitCode, 0, JSON.stringify(native)); assert.equal(fs.existsSync(path.join(root, 'native-read-only.txt')), false)
+    assert.equal(native.timedOut, false, JSON.stringify(native)); assert.notEqual(native.exitCode, 0, JSON.stringify(native)); assert.equal(fs.existsSync(path.join(root, 'native-read-only.txt')), false)
     agent.session.mode = 'workspace-write'
     ok(await call('printf restored > restored.txt'))
   })
@@ -116,13 +117,17 @@ try {
       const marker = path.join(root, cancel ? 'cancel-child.txt' : 'timeout-child.txt')
       const ready = path.join(root, cancel ? 'cancel-ready.txt' : 'timeout-ready.txt')
       const controller = new AbortController()
-      const command = node(`const fs=require('fs');fs.writeFileSync(${JSON.stringify(ready)},'ready');setTimeout(()=>fs.writeFileSync(${JSON.stringify(marker)},'escaped'),30000);setInterval(()=>{},1000)`)
-      const pending = call(command, { timeoutMs: cancel ? 60000 : 20000 }, controller.signal)
-      if (cancel) { await waitFor(() => fs.existsSync(ready), { what: 'native child readiness', timeoutMs: 30000 }); controller.abort(new Error('security test cancellation')) }
+      // The deadline includes full verified staging. Schedule the timeout marker
+      // past that absolute deadline so variable preparation cannot make it fire early.
+      const deadline = Date.now() + DEFAULT_BASH_TIMEOUT_MS
+      const markerDelay = cancel ? '30000' : `Math.max(0, ${deadline + 2000} - Date.now())`
+      const command = node(`const fs=require('fs');fs.writeFileSync(${JSON.stringify(ready)},'ready');setTimeout(()=>fs.writeFileSync(${JSON.stringify(marker)},'escaped'),${markerDelay});setInterval(()=>{},1000)`)
+      const pending = call(command, { timeoutMs: DEFAULT_BASH_TIMEOUT_MS }, controller.signal)
+      if (cancel) { await waitFor(() => fs.existsSync(ready), { what: 'native child readiness', timeoutMs: DEFAULT_BASH_TIMEOUT_MS }); controller.abort(new Error('security test cancellation')) }
       const value = await pending
       assert.equal(cancel ? value.cancelled : value.timedOut, true, JSON.stringify(value))
       assert.equal(fs.existsSync(ready), true, 'child actually started')
-      await new Promise(resolve => setTimeout(resolve, 30200))
+      await new Promise(resolve => setTimeout(resolve, cancel ? 30200 : Math.max(0, deadline + 2200 - Date.now())))
       assert.equal(fs.existsSync(marker), false, 'no live child remains after host Job termination')
     }
     agent.session.mode = 'workspace-write'
@@ -142,7 +147,7 @@ try {
         return ctx.get(name)
       } }
       const execution = startSessionBash({ ctx: guarded, bash, active: () => true },
-        { command: 'printf MUST_NOT_START', workdir: root, timeoutMs: 15000 }, { agent }, policy, policy, {}, {})
+        { command: 'printf MUST_NOT_START', workdir: root }, { agent }, policy, policy, {}, {})
       const value = await execution.result()
       assert.match(value.error, changed ? /AUTHORITY_CHANGED/ : /EXECUTOR_UNAVAILABLE/)
       if (!changed) assert.equal(value.sandbox.runnerFailed, true)
@@ -156,15 +161,15 @@ try {
     await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, 'ptc') } })
     const ptc = async (command, workdir = root) => {
       const result = await executeCall(ctx, { name: 'run_code', callId: 'niu-ptc', agent, signal: new AbortController().signal,
-        arguments: { description: 'Verify Niubash PTC authority', code: `return await tools.ops_bash(${JSON.stringify({ description: 'Verify PTC confinement', command, workdir, timeoutMs: 15000 })});` } })
+        arguments: { description: 'Verify Niubash PTC authority', code: `return await tools.ops_bash(${JSON.stringify({ description: 'Verify PTC confinement', command, workdir })});` } })
       assert.notEqual(result.isError, true, JSON.stringify(result)); return result.value.result
     }
     assert.equal(ok(await ptc("printf 'PTC_OK' | cat")).stdout.text, 'PTC_OK')
     const value = await ptc('printf blocked > ptc-outside.txt', outside)
-    assert.notEqual(value.exitCode, 0, JSON.stringify(value)); assert.equal(fs.existsSync(path.join(outside, 'ptc-outside.txt')), false)
+    assert.equal(value.timedOut, false, JSON.stringify(value)); assert.notEqual(value.exitCode, 0, JSON.stringify(value)); assert.equal(fs.existsSync(path.join(outside, 'ptc-outside.txt')), false)
     agent.session.mode = 'read-only'
     const denied = await ptc('printf blocked > ptc-readonly.txt')
-    assert.notEqual(denied.exitCode, 0, JSON.stringify(denied)); assert.equal(fs.existsSync(path.join(root, 'ptc-readonly.txt')), false)
+    assert.equal(denied.timedOut, false, JSON.stringify(denied)); assert.notEqual(denied.exitCode, 0, JSON.stringify(denied)); assert.equal(fs.existsSync(path.join(root, 'ptc-readonly.txt')), false)
     agent.session.mode = 'danger-full-access'
     ok(await call('printf full > full.txt', { workdir: outside }))
     assert.equal(fs.readFileSync(path.join(outside, 'full.txt'), 'utf8'), 'full')

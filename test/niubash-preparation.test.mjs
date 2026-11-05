@@ -85,7 +85,7 @@ if (process.platform === 'win32') {
       process.on('unhandledRejection', listener)
       try {
         const execution = startSessionBash({ ctx, bash: { file: process.env.DSH_OPS_TEST_NIUBASH, source: 'bundled' }, active: () => true },
-          { command: 'printf preserved', workdir: root, timeoutMs: 30000 }, { agent: { session: { id: 'cleanup' } } }, policy, policy, {}, {})
+          { command: 'printf preserved', workdir: root }, { agent: { session: { id: 'cleanup' } } }, policy, policy, {}, {})
         const value = await execution.result()
         assert.equal(value.exitCode, 0); assert.equal(value.stdout.text, 'preserved')
         await execution.done; await delay(10)
