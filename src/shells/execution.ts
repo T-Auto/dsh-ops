@@ -140,6 +140,6 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
     return projected
   }
   const result = run()
-  process.done = result.then(() => undefined)
+  process.done = result.then(() => undefined, () => undefined)
   return process
 }

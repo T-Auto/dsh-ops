@@ -221,6 +221,8 @@ export function resolveShells(config: ShellConfig | undefined, options: ShellRes
           detail: error instanceof Error ? error.message : String(error) }, pwsh }
       }
     }
+    if (config?.bashPath === undefined) return { bash: { available: false, source: 'missing',
+      detail: 'Pinned complete Niubash v1.5.0 is missing or unsupported. Run dsh-ops provision-shells --bash to restore it, or configure an explicit absolute bashPath. No automatic Git Bash or system shell fallback.' }, pwsh }
   }
   const bashBundled = bundledShell({ kind: 'bash', ...probe })
   return {

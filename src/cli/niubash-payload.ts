@@ -1,4 +1,5 @@
 /** Frozen complete Niubash distribution. Receipts describe bytes; only this manifest authorizes them. */
+import { NIUBASH_FACES, NIUBASH_FACE_RULE } from '../niubash/faces.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
@@ -100,36 +101,107 @@ function noLinks(directory: string) {
   }
 }
 
-/** Rehash the entire tree against the compiled inventory, not the untrusted local receipt. */
-export function verifyNiubashTree(directory: string) {
+export const NIUBASH_EXECUTION_DIRECTORIES = ['winuxcmd/usr/local', 'winuxcmd/usr/local/bin', 'winuxcmd/etc', 'winuxcmd/var', 'winuxcmd/dev', 'winuxcmd/dev/shm']
+
+/** Rehash a tree against the compiled inventory, not the untrusted local receipt. */
+function verifyTree(directory: string, allowExecutionState: boolean) {
   noLinks(directory)
+  const expected = { ...files }
+  if (allowExecutionState) for (const face of NIUBASH_FACES) {
+    if (!/^(?:[a-z0-9][a-z0-9-]*|\[)$/u.test(face)) throw Error('Unsafe compiled Niubash face')
+    const name = `winuxcmd/usr/bin/${face}.exe`
+    if (!Object.hasOwn(expected, name)) expected[name] = files['winuxcmd/usr/bin/winuxcmd.exe']
+  }
   const seenFiles = new Set<string>()
   const walk = (relative: string) => {
     for (const entry of fs.readdirSync(path.join(directory, relative), { withFileTypes: true })) {
       const name = relative ? `${relative}/${entry.name}` : entry.name
       const file = path.join(directory, name)
       if (entry.isDirectory()) {
-        if (!manifest.directories.includes(name)) throw Error(`Unknown Niubash directory: ${name}`)
+        if (!manifest.directories.includes(name)
+          && !(allowExecutionState && NIUBASH_EXECUTION_DIRECTORIES.some(allowed => allowed === name || allowed.startsWith(`${name}/`)))) {
+          throw Error(`Unknown Niubash directory: ${name}`)
+        }
         walk(name)
       }
       else if (!entry.isFile() || (fs.lstatSync(file).isSymbolicLink() || fs.lstatSync(file).nlink !== 1)) throw Error(`Unsafe Niubash tree member: ${name}`)
-      else if (name === NIUBASH_RECEIPT) continue
+      else if (name === NIUBASH_RECEIPT || (allowExecutionState && name === 'execution-provenance.json')) continue
       else {
-        if (!Object.hasOwn(files, name) || fs.statSync(file).size !== sizes[name] || niubashFileHash(file) !== files[name]) throw Error(`Niubash tree checksum mismatch: ${name}`)
+        if (!Object.hasOwn(expected, name) || fs.statSync(file).size !== (sizes[name] ?? sizes['winuxcmd/usr/bin/winuxcmd.exe']) || niubashFileHash(file) !== expected[name]) throw Error(`Niubash tree checksum mismatch: ${name}`)
         seenFiles.add(name)
       }
     }
   }
   walk('')
   // npm omits empty directories; required parents are enforced by the complete file inventory.
-  if (seenFiles.size !== Object.keys(files).length) throw Error('Incomplete Niubash payload tree')
+  if (seenFiles.size !== Object.keys(expected).length) throw Error('Incomplete Niubash payload tree')
   const receipt = JSON.parse(fs.readFileSync(path.join(directory, NIUBASH_RECEIPT), 'utf8')) as Record<string, unknown>
   if (receipt.version !== 1 || receipt.archiveSha256 !== manifest.archiveSha256
     || receipt.executableSha256 !== manifest.executableSha256 || receipt.upstreamVersion !== manifest.upstreamVersion
     || JSON.stringify(receipt.files) !== JSON.stringify(files)
     || JSON.stringify(receipt.sizes) !== JSON.stringify(sizes)) throw Error('Invalid Niubash provenance receipt')
+  if (allowExecutionState) {
+    const derived = JSON.parse(fs.readFileSync(path.join(directory, 'execution-provenance.json'), 'utf8'))
+    if (JSON.stringify(derived) !== JSON.stringify(niubashExecutionReceipt())) throw Error('Invalid Niubash execution receipt')
+  }
   return path.join(directory, manifest.executable)
 }
+
+/** Cancellable per-invocation validation; selection retains the synchronous fail-closed check. */
+export async function verifyNiubashTreeAsync(directory: string, allowExecutionState: boolean, signal: AbortSignal) {
+  signal.throwIfAborted()
+  noLinks(directory)
+  const expected = { ...files }
+  if (allowExecutionState) for (const face of NIUBASH_FACES) {
+    if (!/^(?:[a-z0-9][a-z0-9-]*|\[)$/u.test(face)) throw Error('Unsafe compiled Niubash face')
+    const name = `winuxcmd/usr/bin/${face}.exe`
+    if (!Object.hasOwn(expected, name)) expected[name] = files['winuxcmd/usr/bin/winuxcmd.exe']
+  }
+  const seenFiles = new Set<string>()
+  const walk = async (relative: string): Promise<void> => {
+    for (const entry of await fs.promises.readdir(path.join(directory, relative), { withFileTypes: true })) {
+      const name = relative ? `${relative}/${entry.name}` : entry.name
+      signal.throwIfAborted()
+      const file = path.join(directory, name)
+      if (entry.isDirectory()) {
+        if (!manifest.directories.includes(name)
+          && !(allowExecutionState && NIUBASH_EXECUTION_DIRECTORIES.some(allowed => allowed === name || allowed.startsWith(`${name}/`)))) {
+          throw Error(`Unknown Niubash directory: ${name}`)
+        }
+        await walk(name)
+      }
+      else if (!entry.isFile() || (fs.lstatSync(file).isSymbolicLink() || fs.lstatSync(file).nlink !== 1)) throw Error(`Unsafe Niubash tree member: ${name}`)
+      else if (name === NIUBASH_RECEIPT || (allowExecutionState && name === 'execution-provenance.json')) continue
+      else {
+        if (!Object.hasOwn(expected, name) || fs.statSync(file).size !== (sizes[name] ?? sizes['winuxcmd/usr/bin/winuxcmd.exe']) || digest(await fs.promises.readFile(file, { signal })) !== expected[name]) throw Error(`Niubash tree checksum mismatch: ${name}`)
+        seenFiles.add(name)
+      }
+    }
+  }
+  await walk('')
+  // npm omits empty directories; required parents are enforced by the complete file inventory.
+  if (seenFiles.size !== Object.keys(expected).length) throw Error('Incomplete Niubash payload tree')
+  const receipt = JSON.parse(await fs.promises.readFile(path.join(directory, NIUBASH_RECEIPT), { encoding: 'utf8', signal })) as Record<string, unknown>
+  if (receipt.version !== 1 || receipt.archiveSha256 !== manifest.archiveSha256
+    || receipt.executableSha256 !== manifest.executableSha256 || receipt.upstreamVersion !== manifest.upstreamVersion
+    || JSON.stringify(receipt.files) !== JSON.stringify(files)
+    || JSON.stringify(receipt.sizes) !== JSON.stringify(sizes)) throw Error('Invalid Niubash provenance receipt')
+  if (allowExecutionState) {
+    const derived = JSON.parse(await fs.promises.readFile(path.join(directory, 'execution-provenance.json'), { encoding: 'utf8', signal }))
+    if (JSON.stringify(derived) !== JSON.stringify(niubashExecutionReceipt())) throw Error('Invalid Niubash execution receipt')
+  }
+  return path.join(directory, manifest.executable)
+}
+
+export function niubashExecutionReceipt() {
+  return { rule: NIUBASH_FACE_RULE, sourceArchiveSha256: manifest.archiveSha256,
+    sourceExecutableSha256: files['winuxcmd/usr/bin/winuxcmd.exe'], faces: NIUBASH_FACES }
+}
+
+export function verifyNiubashTree(directory: string) { return verifyTree(directory, false) }
+
+/** Validate a mutable execution copy while allowing only directories created by Niubash itself. */
+export function verifyNiubashExecutionTree(directory: string) { return verifyTree(directory, true) }
 
 /** Build in a fresh sibling, verify before rename, and preserve the previous payload on failure. */
 export function stageNiubashArchive(archive: string, target: string) {
