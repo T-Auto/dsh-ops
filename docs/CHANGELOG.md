@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Accept a Windows workspace that already grants the host's effective WRITE_OWNER prerequisite even when another account (for example BUILTIN\Administrators) owns it, require ownership only when preparation must add that ACE, and report an owner mismatch separately from a missing WRITE_OWNER (#651).
+- Windows 工作区若已具备宿主所需的有效 WRITE_OWNER，即使所有者是 `BUILTIN\Administrators` 等其它账户也直接使用；只有确实需要补该 ACE 时才要求所有者是当前用户，并把「所有者不匹配」与「缺少 WRITE_OWNER」分开报告（#651）。
+
 - Give an Electron self-runner Node mode instead of refusing every confined Bash call: a confined Windows sandbox runs the Desktop executable itself as the Node runner, so `ops_bash` could answer every command in `read-only` and `workspace-write` with `EXECUTOR_UNAVAILABLE`. Only a self-runner (a prepared argv whose first element is the Desktop executable) gains `ELECTRON_RUN_AS_NODE=1`; sandbox, policy and command are unchanged (#574).
 - 让 Electron 自跑 runner 进入 Node 模式，而不是拒绝所有受限档位的 Bash 调用：Windows 受限沙箱会把 Desktop 可执行文件自身当作 Node runner，导致 `read-only` 与 `workspace-write` 下 `ops_bash` 对任何命令都回答 `EXECUTOR_UNAVAILABLE`。现在只有自跑 runner（准备阶段 argv 的第一个元素即 Desktop 可执行文件）会补上 `ELECTRON_RUN_AS_NODE=1`，沙箱、策略与命令本身不变（#574）。
 - Give the discovery routing sentence an evaluable document condition — a `.pdf`, `.docx`, `.csv` or `.tsv` file whose reader is absent from the tool table — and state that creating, editing, rendering or exporting Office documents belongs to the host office skill, with a failed document read falling back to that skill instead of retrying the reader. Formats are named, never unpublished tool names; adds 279 characters (64 cl100k_base tokens) to the discovery-enabled prompt and changes no tool schema, so the pinned schema budgets stay valid.
