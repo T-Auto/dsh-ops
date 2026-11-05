@@ -31,6 +31,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Fail index A/B benchmarks on failed or incomplete cold calls even when both arms return identical bytes; retain cold exit, timeout and completeness evidence.
+- 索引 A/B 基准对冷态失败或不完整调用判失败，即使两臂字节相同；保留冷态退出码、超时与完整性证据。
+
 - Prepare an optional private index cache (`indexCache`, off by default): when enabled the host creates `<DSH_HOME>/dsh-ops/index-cache` (mode `0700` on POSIX; on Windows the directory inherits the `%USERPROFILE%` ACL because Node cannot set one), refuses a symlinked cache path, and passes it to the worker as a hint; only `glob` requests try the matching platform index source when the hint is present, and a non-ready source, a missing cache or an unusable cache falls back to the live walk with identical output (#613).
 - 新增可选的私有索引缓存（`indexCache`，默认关闭）：开启时宿主创建 `<DSH_HOME>/dsh-ops/index-cache`（POSIX 上 0700；Windows 上继承 `%USERPROFILE%` 的 ACL，因为 Node 无法设置 ACL），拒绝符号链接的缓存路径，并以提示字段传给 worker；只有 `glob` 请求在提示存在时尝试对应平台的索引 source，未 Ready、缓存缺失或不可用一律回退 live walk，输出逐字节不变（#613）。
 - Accept an optional trusted `cache_dir` request field for the shared name-index cache: it must be an absolute, host-created directory private to the user (0700 on POSIX, for example `<DSH_HOME>/dsh-ops/index-cache`); absence disables the index and an unusable or corrupt directory falls back to the walk without changing output. Uninstall cleanup removes the snapshot store and keeps the host's `dsh-ops` directory (#601).

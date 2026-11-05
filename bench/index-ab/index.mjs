@@ -4,7 +4,7 @@
  * Both arms send the same envelope and differ only in the trusted cache_dir field, so
  * the measured difference is the host's opt-in index gate, not a different tool. The
  * command never selects a default: it records evidence, and byte identity between the
- * arms is the only pass/fail part.
+ * arms and successful, complete measured results are the pass/fail gates.
  *
  * @module dsh-ops/bench/index-ab
  */
@@ -215,13 +215,29 @@ export async function main(argv, io = {}) {
     const cold = QUERIES.map((query) => {
       const walkRun = coldWalk.walk[query.id][0]
       const indexRun = coldWalk.index[query.id][0]
-      return { id: query.id, patterns: query.patterns, walk: round(walkRun.wallMs, 2), index: round(indexRun.wallMs, 2), delta: round(indexRun.wallMs - walkRun.wallMs, 2), identical: walkRun.stdoutHash === indexRun.stdoutHash }
+      return {
+        id: query.id, patterns: query.patterns,
+        walk: round(walkRun.wallMs, 2), index: round(indexRun.wallMs, 2),
+        delta: round(indexRun.wallMs - walkRun.wallMs, 2), identical: walkRun.stdoutHash === indexRun.stdoutHash,
+        runs: {
+          walk: { status: walkRun.status, timedOut: walkRun.timedOut, failed: walkRun.failed },
+          index: { status: indexRun.status, timedOut: indexRun.timedOut, failed: indexRun.failed },
+        },
+      }
     })
     if (options.warmup > 0) { await phase(worker, corpusRoot, cacheDir, options.warmup, timeoutMs); out('[index-ab] discarded ' + options.warmup + ' warm-up round(s)') }
     const measured = await phase(worker, corpusRoot, cacheDir, options.repeat, timeoutMs)
     const cases = QUERIES.map((query) => compareCase(query, measured.walk[query.id], measured.index[query.id]))
     const failures = []
-    for (const item of cold) if (!item.identical) failures.push('cold ' + item.id + ' output differs')
+    for (const item of cold) {
+      if (!item.identical) failures.push('cold ' + item.id + ' output differs')
+      for (const [arm, run] of Object.entries(item.runs)) {
+        const label = 'cold ' + item.id + ' ' + arm
+        if (run.status !== 0) failures.push(label + ' exit ' + run.status)
+        if (run.timedOut) failures.push(label + ' timed out')
+        if (run.failed) failures.push(label + ' returned a failed/incomplete result')
+      }
+    }
     for (const item of cases) {
       if (!item.identical) failures.push('warm ' + item.id + ' output differs')
       const runs = measured.walk[item.id].concat(measured.index[item.id])
