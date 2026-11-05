@@ -61,6 +61,21 @@ await test('resident-only routing omits unavailable operation hints and includes
   assert.match(discovery, /next model step/)
   for (const name of files) assert.equal(discovery.includes(name), false)
 })
+// #408: the document readers are only reachable through discovery, so the only routing
+// sentence a model sees before selecting them has to state the document case it can
+// evaluate, and has to concede Office authoring to the host skill that competes for it.
+// Naming formats rather than tools keeps an unpublished reader unadvertised.
+await test('discovery routing names the document case and the Office-authoring boundary (#408)', () => {
+  const text = renderToolingPolicy({ published: [publicToolName('discover_tools')], shellComponent: false })
+  assert.match(text, /- Discover a capability when a task needs a reader for a `\.pdf`, `\.docx`, `\.csv` or `\.tsv` file whose reader is absent from the tool table;/)
+  assert.match(text, /next model step and performs no file action/)
+  assert.match(text, /Creating, editing, rendering or exporting Office documents belongs to the host office skill, and a document read that fails falls back to it rather than retrying the reader/)
+  for (const name of ['ops_read_pdf', 'ops_read_docx', 'ops_read_table']) assert.equal(text.includes(name), false, `${name} is a format example, never an advertisement`)
+  // The document case exists only where discovery itself is published.
+  const residentOnly = renderToolingPolicy({ published: [publicToolName('read_files')], shellComponent: false })
+  assert.equal(residentOnly.includes('.pdf'), false)
+  assert.equal(residentOnly.includes('office skill'), false)
+})
 await test('shell routing prefers bash and leaves PowerShell ownership with the host', () => {
   const text = renderToolingPolicy({ published: [BASH_TOOL, 'pwsh'] })
   assert.match(text, new RegExp(`^# Bash command execution: ${BASH_TOOL}`))
