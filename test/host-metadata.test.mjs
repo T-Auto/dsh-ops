@@ -24,8 +24,8 @@ await test(`explicit host compatibility is consistent and bounded (${boot.getDsh
   // read peers, newer hosts prefer engines, so test both independently.
   for (const range of [pkg.engines.dsh, pkg.peerDependencies['@deepseek-ai/dsh']]) {
     const candidate = { name: pkg.name, version: pkg.version, engines: { dsh: range }, peerDependencies: { '@deepseek-ai/dsh': range } }
-    for (const version of ['0.2.0-rc.2', '0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.4', '0.2.1-rc.5']) assert.equal(boot.evaluatePluginCompatibility(candidate, {}, version), undefined)
-    for (const version of ['0.2.0-rc.1', '0.2.2-rc.1', '0.3.0']) assert.ok(boot.evaluatePluginCompatibility(candidate, {}, version), `must not claim ${version}`)
+    for (const version of ['0.2.0-rc.2', '0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.4', '0.2.1-rc.5', '0.2.2-rc.1']) assert.equal(boot.evaluatePluginCompatibility(candidate, {}, version), undefined)
+    for (const version of ['0.2.0-rc.1', '0.3.0']) assert.ok(boot.evaluatePluginCompatibility(candidate, {}, version), `must not claim ${version}`)
   }
 })
 
@@ -61,6 +61,30 @@ await test('the host composes every shipped row and refuses a missing override t
   const override = [{ id: 'upstream', config: { enabled: true } }]
   assert.equal(composeBundle([upstream, patch, override], boot.composeEntries).find(row => row.id === 'upstream').config.enabled, true)
   assert.throws(() => composeBundle([patch, override], boot.composeEntries), /entry.*upstream.*not found/)
+})
+
+await test('no source file hooks the config-parse waterfall or reads its fiber from `this`', () => {
+  // Cordis 4.1.0 (DSH 0.2.2-rc.1) dispatches `internal/config` as
+  // `waterfall("internal/config", fiber, next)`: the fiber is the first argument
+  // and `this` is null. 0.2.9 registered an `internal/config` listener that read
+  // `this.entry`, so every win32 host with a usable pwsh died during load with
+  // "Cannot read properties of null (reading 'entry')" before any tool existed.
+  // The PowerShell hand-over now belongs to the host; keep it that way and keep
+  // the listener contract from creeping back into this plugin.
+  const files = []
+  const walk = (dir) => {
+    for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, item.name)
+      if (item.isDirectory()) walk(full)
+      else if (full.endsWith('.ts')) files.push(full)
+    }
+  }
+  walk(path.join(PACKAGE_ROOT, 'src'))
+  assert.ok(files.length > 0, 'src must contain TypeScript sources')
+  const offenders = files
+    .filter(file => fs.readFileSync(file, 'utf8').includes('internal/config'))
+    .map(file => path.relative(PACKAGE_ROOT, file))
+  assert.deepEqual(offenders, [], 'a source file binds internal/config, whose listener `this` is null on Cordis 4.1.0')
 })
 
 report('host-metadata')

@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Admit DSH `0.2.2-rc.1` by widening the bounded host range to `>=0.2.0-rc.2 <0.2.3-0`. The version is admitted on the load-time contract this plugin uses, not on a full-suite run over that graph: `0.2.2-rc.1` moves Cordis to 4.1.0, whose new `internal/config` waterfall invokes listeners with a null `this` and hands the fiber in as the first argument, while the host half binds only `internal/dispatch` and `internal/update`, both of which 4.1.0 still emits. A new assertion keeps the retired hook from returning: no source file may bind `internal/config`, which is how 0.2.9 read `this.entry` and made every win32 host with a usable pwsh die during load.
+- 把有界宿主范围放宽到 `>=0.2.0-rc.2 <0.2.3-0`，纳入 DSH `0.2.2-rc.1`。纳入依据是本插件实际使用的加载期契约，而非该依赖图上的整套测试：`0.2.2-rc.1` 把 Cordis 升到 4.1.0，其新增的 `internal/config` waterfall 会以 null 作为监听器的 `this`、把 fiber 放在第一个参数里；而本插件宿主半边只挂 `internal/dispatch` 与 `internal/update`，4.1.0 仍会发出这两个事件。新增断言阻止退役的钩子回炉：任何源码文件都不得挂 `internal/config`——0.2.9 正是用它读 `this.entry`，让每个 pwsh 可用的 win32 宿主在加载期直接死亡。
 - Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
 - 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。
 - Report PowerShell ConstrainedLanguage before workspace ACL preparation and preserve a named diagnostic without changing security policy (#458). / 工作区 ACL 准备前明确报告 PowerShell ConstrainedLanguage，并保留具名诊断，不改变安全策略（#458）。
