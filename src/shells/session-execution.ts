@@ -7,6 +7,7 @@ import { confinedBash } from '../bash-ipc.js'
 import { executorUnavailableMessage } from '../bash-runtime-failure.js'
 import { prepareWorkspace } from '../workspace-preparation.js'
 import { executionRestriction } from '../permissions.js'
+import { isNiubashExecutable, verifiedNiubash } from '../niubash/runtime.js'
 
 export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bash: { file: string; source: string }; active(): boolean },
   args: Record<string, unknown>, exec: ShellCall, standing: ShellPolicy, policy: ShellPolicy, dshEnv: NodeJS.ProcessEnv, options: ExecutionOptions): ShellExecution {
@@ -20,8 +21,10 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
   }
   assertAuthority()
   if (!path.isAbsolute(bash.file)) throw new Error('EXECUTOR_UNAVAILABLE: Bash requires a resolved absolute executable path; configure an absolute bashPath. No command executed.')
+  const native = process.platform === 'win32' && isNiubashExecutable(bash.file)
   let runtime: { file: string; env?: NodeJS.ProcessEnv }
-  try { runtime = policy.mode === 'danger-full-access' ? { file: bash.file } : confinedBash(bash.file, { source: bash.source }) }
+  try { runtime = native ? verifiedNiubash(bash.file, dshEnv.PATH ?? dshEnv.Path ?? process.env.PATH)
+    : policy.mode === 'danger-full-access' ? { file: bash.file } : confinedBash(bash.file, { source: bash.source }) }
   catch (error) {
     // Keep the failing stage and its remedy. The parameterless catch this replaced flattened a
     // missing payload, an IPC mismatch and a recoverable staging interruption into one paragraph
@@ -30,7 +33,8 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
   }
   let confinement: ConfinedArgv | undefined
   const definition = bashToolDefinition({ file: runtime.file, source: bash.source,
-    env: { ...runtime.env, ...dshEnv }, subprocess: ctx.get('subprocess'),
+    env: native ? { ...Object.fromEntries(Object.entries(dshEnv).filter(([key]) => !['PATH', 'NIU_ROOT'].includes(key.toUpperCase()))), ...runtime.env }
+      : { ...runtime.env, ...dshEnv }, subprocess: ctx.get('subprocess'),
     prepareArgv: async (argv: string[], signal: AbortSignal) => {
       signal.throwIfAborted()
       assertAuthority()
@@ -44,6 +48,8 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
       }
       signal.throwIfAborted()
       assertAuthority()
+      // Recheck after asynchronous confinement/preparation, immediately before host spawn.
+      if (native) verifiedNiubash(bash.file)
       return confinement?.argv ?? argv
     },
     projectResult: (value: ShellResult) => {
