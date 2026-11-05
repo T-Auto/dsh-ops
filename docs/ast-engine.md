@@ -1,0 +1,98 @@
+# AST engine: `ops_ast_locate`, `ops_ast_refactor`, `ops_ast_audit`
+
+Three tools that read and rewrite source by syntax tree instead of text. They answer **in-process**:
+a Tree-sitter parse over bytes already in memory costs less than spawning the native worker, so no
+subprocess is started and no confinement step is applied.
+
+中文版：[ast-engine.zh.md](ast-engine.zh.md)
+
+## Why in-process
+
+`ops_grep` and `ops_replace` already cover text search and literal replacement. A structural
+tool earns its place only by knowing node kinds — telling a definition from a reference, or telling a
+whitespace change from a semantic one. That work is a parse of a small file, measured at ~0.5 ms; the
+native worker path would add a process spawn (~30–50 ms) on top.
+
+The engine confines nothing itself. Every fence the native worker path runs, these tools run too, in
+the same order:
+
+1. an authoritative session identity and an absolute cwd;
+2. one `sandboxPolicy.resolve()` call, then a whitelist of its mode;
+3. a credential fence and an anchor check for every caller-named path — `file`, `beforeFile`, and
+   each entry of `roots` — with the lexical name judged before the resolved real path;
+4. write intent (`ast_refactor` with `mode: "apply"`) requires `workspace-write`.
+
+`@ast-grep/napi` is loaded on the first `ast_*` call, never at boot. If it cannot load, the tools
+return `EXECUTOR_UNAVAILABLE` and nothing else in the plugin is affected.
+
+## `ops_ast_locate`
+
+Find a symbol definition by exact identifier over the tree below the session cwd. A definition is a
+function, class, method, constructor, or a declaration whose value is a function; a plain
+`const NAME = 1` is not one and returns no hit — that is what `ops_grep` is for.
+
+| Argument | Meaning |
+| --- | --- |
+| `symbol` | Required. Exact identifier, e.g. `locateSymbol`. Definitions rank above references. |
+| `file` | Search one file instead of the tree. |
+| `roots` | Search roots relative to the session cwd, each inside it. Default: the cwd. |
+| `ext` | Extensions, e.g. `["ts","py"]`. Default: every registered language. |
+| `limit` | 1–500 hits, default 5. |
+| `body` | `false` for the signature alone, `true` for the whole node, or a line count. |
+| `continuation` | Opaque cursor from a truncated scan. Keep every other argument unchanged. |
+| `skipDirs` | Directory names never descended into, e.g. `["dist","vendor"]`. |
+
+Returns `hits[]` (`file`, `lang`, `lines`, `signature`, optional `body`) plus `scanned`, `truncated`,
+`pruned` and `continuation`. Only the first 48 candidates are parsed once a prefilter leaves more than
+that; `pruned: true` says so instead of silently reporting a short list.
+
+## `ops_ast_refactor`
+
+Rewrite source structurally with an ast-grep pattern and a rewrite template.
+
+| Argument | Meaning |
+| --- | --- |
+| `pattern` | Required. ast-grep pattern with metavariables, e.g. `console.log($A)`. |
+| `rewrite` | Required. Replacement text; `$A` expands to the matched metavariable. |
+| `mode` | `preview` (default) reports the plan and writes nothing; `apply` writes it. |
+| `detail` | Include the structural delta per file. |
+
+`apply` re-reads each file before committing and refuses a target that changed after the plan was
+built (`E_STALE`, nothing overwritten). One atomic replacement per file, written to a sibling temp file, fsynced, then renamed. The BOM,
+line endings and permission bits are read from the real file at commit time, never taken from the
+caller. **Ownership, ACLs, xattrs and hard links are not preserved**: the rename publishes a new
+inode, and this engine deliberately does not carry the native worker's metadata machinery. A
+failure after the first write reports `effectState: "partial"` together with the files it already
+committed in `filesApplied`, so a retry cannot silently duplicate an edit.
+
+## `ops_ast_audit`
+
+Compare two versions of one file. `file` and `beforeFile` are both required and both relative to the
+session cwd. Returns `formatOnly`, `nodesBefore`, `nodesAfter`, `nodesChanged`.
+
+`formatOnly: true` means the change is **whitespace only**. A comment is a node, so adding or removing
+one counts as structural — the tool reports that instead of guessing at intent. It never writes.
+
+## Errors
+
+Failures are returned values with `error.code`, `error.effectState` and `error.retryable`; they are
+never thrown.
+
+| Code | Meaning | Retryable |
+| --- | --- | --- |
+| `INVALID_ARGUMENT` | A required argument is missing or the name is not an AST tool. | no |
+| `POLICY_DENIED` | `apply` under read-only, or a named path outside the workspace and session cwd. | no |
+| `PATH_RESTRICTED` | A named path resolves (through a junction or symlink) outside the workspace. | no |
+| `CREDENTIAL_DENIED` | A named path matched the credential fence. | no |
+| `EXECUTOR_UNAVAILABLE` | No session identity, no policy service, or `@ast-grep/napi` did not load. | no |
+| `E_STALE` | A file changed between plan and commit; nothing was written. | no |
+| `E_NO_MATCH` | No definition found; `continuation` resumes a truncated scan. | yes, with a different query |
+| `E_BINARY` / `E_ENCODING` | The file is not UTF-8 text. | no |
+| `E_ROOT_OUTSIDE` | A `roots` entry left the session cwd. | no |
+| `RESULT_UNKNOWN` | The engine failed without a settled receipt. Inspect postconditions first. | check first |
+
+## Presentation
+
+These three names publish on the **Native** presentation only. PTC output is read by sandboxed code
+against a strict typed schema, and no PTC projection is declared for them: a caller that reaches
+`ops_ast_*` from PTC code sees no such tool rather than a mistyped one.
