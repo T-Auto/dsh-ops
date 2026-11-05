@@ -434,7 +434,8 @@ try {
   const nonTemp = fs.mkdtempSync(path.join(os.homedir(),'ops-outside-'))
   const externalNonTemp = path.join(nonTemp,'protected.txt'); fs.writeFileSync(externalNonTemp,'keep')
   try {
-    await real.plugin(SystemPrompt, {}); await real.plugin(ToolRuntime, { mode: 'native' })
+    await real.plugin(SystemPrompt, {}); await real.plugin(ToolRuntime, {})
+    await real.plugin(await import('@deepseek-ai/dsh-tool-executor-native'), {})
     await real.plugin(Subprocess)
     await real.plugin(Sandbox, {})
     await real.plugin(FileSystem, {})
