@@ -3,7 +3,7 @@ import { capability } from './registry.js'
 export function normalizeArguments(rawName: string, args: unknown): unknown {
   if (args === null || typeof args !== 'object' || Array.isArray(args)) return args
   const entry = capability(rawName)
-  const schema = entry?.component === 'file' ? entry.parameters : undefined
+  const schema = entry && (entry.component === 'file' || entry.component === 'ast') && 'parameters' in entry ? entry.parameters : undefined
   if (!schema) return { ...args }
   const required = new Set(schema.required)
   const result: Record<string, unknown> = {}

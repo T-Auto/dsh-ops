@@ -1,6 +1,6 @@
 /** Registry migration preserves the complete previously published host definitions. */
 import { createHash } from 'node:crypto'
-import { CAPABILITIES, NATIVE_FILE_TOOLS, NATIVE_RESIDENT_FILE_TOOLS, FILE_CAPABILITIES, PTC_CAPABILITIES, SHELL_CAPABILITIES, capability, capabilitiesFor } from '../lib/capabilities/registry.js'
+import { CAPABILITIES, NATIVE_TOOLS, NATIVE_RESIDENT_FILE_TOOLS, FILE_CAPABILITIES, AST_CAPABILITIES, AST_TOOLS, PTC_CAPABILITIES, SDK_CAPABILITIES, SHELL_CAPABILITIES, DISCOVERY_CAPABILITIES, capability, capabilitiesFor } from '../lib/capabilities/registry.js'
 import { FILE_TOOLS, FILE_MUTATIONS, IN_PROCESS_TOOLS, BASH_TOOL, publicToolName } from '../lib/policy.js'
 import { definition as fileDefinition, PARAMETERS as fileParameters, DESCRIPTIONS as fileDescriptions } from '../lib/file/contract.js'
 import { definition as ptcDefinition, PTC_TOOLS, PARAMETERS as ptcParameters, DESCRIPTIONS as ptcDescriptions } from '../lib/ptc/contract.js'
@@ -10,7 +10,9 @@ import { BASH_TOOL_NAME } from '../lib/shells/constants.js'
 import { assert, test, report } from './lib/harness.mjs'
 
 await test('the catalogue covers every owned file, PTC and shell tool exactly once', () => {
-  assert.equal(CAPABILITIES.length, 20)
+  assert.equal(CAPABILITIES.length, 23)
+  assert.deepEqual(AST_TOOLS, ['ast_locate', 'ast_refactor', 'ast_audit'])
+  assert.deepEqual(AST_CAPABILITIES.map(entry => entry.component), ['ast', 'ast', 'ast'])
   assert.equal(new Set(CAPABILITIES.map(item => item.rawName)).size, CAPABILITIES.length)
   assert.deepEqual(FILE_TOOLS, ['inspect_local_file', 'grep', 'glob', 'replace', 'write_file', 'edit_file', 'diff', 'stat', 'copy', 'move', 'remove', 'read_files', 'read_table', 'read_docx', 'read_pdf'])
   assert.deepEqual(FILE_MUTATIONS, ['replace', 'write_file', 'edit_file', 'copy', 'move', 'remove'])
@@ -26,7 +28,7 @@ await test('the catalogue covers every owned file, PTC and shell tool exactly on
       assert.equal(entry.description, descriptions[entry.rawName])
     }
   }
-  for (const component of ['file', 'ptc', 'shell', 'discovery']) assert.deepEqual(capabilitiesFor(component), CAPABILITIES.filter(item => item.component === component))
+  for (const component of ['file', 'ast', 'ptc', 'shell', 'discovery']) assert.deepEqual(capabilitiesFor(component), CAPABILITIES.filter(item => item.component === component))
   for (const name of ['unknown', 'toString', '__proto__']) assert.equal(capability(name), undefined)
 })
 
@@ -38,7 +40,7 @@ await test('metadata separates the Native resident core from discoverable capabi
   assert.deepEqual(FILE_CAPABILITIES.filter(entry => entry.availability === 'discoverable').map(entry => entry.rawName).sort(), DISCOVERABLE_TOOLS.filter(name => name !== 'result').sort())
   for (const entry of CAPABILITIES) {
     assert.equal(entry.availability, entry.component === 'file' && entry.rawName !== 'read_files' ? 'discoverable' : 'resident')
-    assert.equal(entry.concurrencySafe, entry.component === 'file' && !entry.mutates)
+    assert.equal(entry.concurrencySafe, entry.component === 'ast' ? entry.rawName === 'ast_locate' || entry.rawName === 'ast_audit' : entry.component === 'file' && !entry.mutates, entry.rawName)
   }
 })
 
@@ -86,8 +88,8 @@ await test('native registration consumes the catalogue while execute values stay
   const runtime = new NativeFileTools({ ctx: { tools: { register(definition) {
     registered.push(definition); return () => disposed.push(definition.name)
   } } }, config: { workerPath: 'fixture-worker' } })
-  assert.deepEqual(await runtime.start(), NATIVE_FILE_TOOLS.map(publicToolName))
-  assert.deepEqual(registered.map(item => item.name), NATIVE_FILE_TOOLS.map(publicToolName))
+  assert.deepEqual(await runtime.start(), NATIVE_TOOLS.map(publicToolName))
+  assert.deepEqual(registered.map(item => item.name), NATIVE_TOOLS.map(publicToolName))
   const canonical = { status: 'completed', items: [{ path: '/file', line: 1, text: 'text' }], complete: false }
   for (const [names, definition] of [[FILE_TOOLS, fileDefinition], [PTC_TOOLS, ptcDefinition]]) {
     for (const name of names) {

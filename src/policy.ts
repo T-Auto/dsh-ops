@@ -1,4 +1,4 @@
-import { FILE_TOOLS, NATIVE_FILE_TOOLS, IN_PROCESS_TOOLS, DISCOVERY_TOOL_NAME } from './capabilities/registry.js'
+import { FILE_TOOLS, NATIVE_TOOLS, IN_PROCESS_TOOLS, DISCOVERY_TOOL_NAME } from './capabilities/registry.js'
 export { FILE_TOOLS, FILE_MUTATIONS, IN_PROCESS_TOOLS } from './capabilities/registry.js'
 
 /** Model-facing routing, kept in one section. No shared registry mutation. */
@@ -25,7 +25,7 @@ export const BASH_TOOL = publicToolName(IN_PROCESS_TOOLS[0])
 export function ladderLevels({ published, pwsh = false }: { published: Iterable<string>, pwsh?: boolean }) {
   const names = new Set(published)
   return {
-    files: NATIVE_FILE_TOOLS.some(name => names.has(publicToolName(name))),
+    files: NATIVE_TOOLS.some(name => names.has(publicToolName(name))),
     bash: names.has(BASH_TOOL),
     pwsh: pwsh === true && names.has('pwsh'),
   }
@@ -42,11 +42,11 @@ interface ToolingPolicyOptions {
 /** A single compact table; absent tools never get advertised. */
 export function renderToolingPolicy({ published, mounted, levels, shellComponent = true, extraGuidance = '' }: ToolingPolicyOptions) {
   const names = new Set(published ?? (mounted || levels?.files
-    ? [...NATIVE_FILE_TOOLS, ...(levels?.bash ? IN_PROCESS_TOOLS : [])].map(publicToolName) : []))
+    ? [...NATIVE_TOOLS, ...(levels?.bash ? IN_PROCESS_TOOLS : [])].map(publicToolName) : []))
   if (levels?.pwsh) names.add('pwsh')
   if (!shellComponent) names.delete('pwsh')
   const hasDiscovery = names.has(publicToolName(DISCOVERY_TOOL_NAME))
-  const hasFiles = NATIVE_FILE_TOOLS.some(name => names.has(publicToolName(name)))
+  const hasFiles = NATIVE_TOOLS.some(name => names.has(publicToolName(name)))
   const hasBash = names.has(BASH_TOOL)
   const hasPwsh = shellComponent && names.has('pwsh')
   if (!hasFiles && !hasBash && !hasPwsh && !hasDiscovery) return ''
@@ -65,6 +65,9 @@ export function renderToolingPolicy({ published, mounted, levels, shellComponent
   if (hasFiles && names.has('read_image')) lines.push('| Images | read_image (host) |')
   row('grep', 'Search contents')
   row('glob', 'Find paths')
+  row('ast_locate', 'AST symbol definition by exact identifier')
+  row('ast_refactor', 'AST structural rewrite (preview unless apply)')
+  row('ast_audit', 'AST diff: format-only or structural')
   row('replace', 'Batch literal replacement')
   row('write_file', 'Create / full UTF-8 write (CAS)')
   row('edit_file', 'Precise original-text patch (CAS)')

@@ -4,7 +4,7 @@ import type { FileToolName } from '../../capabilities/registry.js'
 import { WORKER_TIMEOUT_MS } from '../../execution/protocol.js'
 import { publicToolName } from '../../policy.js'
 import { definition } from './contract.js'
-import { NATIVE_FILE_TOOLS } from '../../capabilities/registry.js'
+import { NATIVE_TOOLS } from '../../capabilities/registry.js'
 import { resultDefinition, invokeResult } from './result.js'
 import { registerNativeProvider } from '../../publication/providers.js'
 import { safeDisposeAll } from '../../teardown.js'
@@ -37,7 +37,7 @@ export class NativeFileTools {
     this.readDedup = createNativeReadDedup(ctx)
   }
 
-  async start(names: readonly NativeToolName[] = NATIVE_FILE_TOOLS as readonly NativeToolName[]): Promise<string[]> {
+  async start(names: readonly NativeToolName[] = NATIVE_TOOLS as readonly NativeToolName[]): Promise<string[]> {
     this.file = this.config.workerPath
     if (!this.file) {
       if (this.config.required) throw new Error('Native file worker path is unavailable.')

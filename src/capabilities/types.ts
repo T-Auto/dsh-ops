@@ -1,6 +1,6 @@
 import type { JsonSchemaNode, ObjectJsonSchema, ToolPresentationMode } from '../adapter/dsh/types.js'
 
-export type Component = 'file' | 'ptc' | 'shell' | 'discovery'
+export type Component = 'file' | 'ptc' | 'shell' | 'discovery' | 'ast'
 export type ParameterSchema = ObjectJsonSchema & Record<string, unknown> & {
   properties: Record<string, JsonSchemaNode>
   required: string[]
@@ -10,6 +10,8 @@ export type ParameterSchema = ObjectJsonSchema & Record<string, unknown> & {
 export interface CapabilityMetadata {
   readonly rawName: string
   readonly component: Component
+  /** Who answers this name. Absent means the native worker. */
+  readonly executor?: 'ast-inproc'
   readonly presentations: readonly ToolPresentationMode[]
   readonly availability: 'resident' | 'discoverable'
   /** PTC publication is independent of the Native tier. */

@@ -6,7 +6,7 @@ import { startupAssessment } from '../bench/gates/integrity.mjs'
 import * as fileModule from '../lib/components/file/index.js'
 import { publicToolName } from '../lib/policy.js'
 import { NativeFileTools } from '../lib/file/runtime.js'
-import { NATIVE_FILE_TOOLS } from '../lib/capabilities/registry.js'
+import { NATIVE_TOOLS } from '../lib/capabilities/registry.js'
 import { DISCOVERABLE_TOOLS } from '../lib/discovery/config.js'
 import { bashToolDefinition } from '../lib/shells/tool.js'
 import { hostBashDefinition } from '../lib/shells/host-tool.js'
@@ -74,7 +74,7 @@ await test('gate the approved file/discovery budget and separately retain full s
     assert.deepEqual(assembly.tools.map(tool => tool.name).sort(), [READ, DISCOVER].sort())
     const core = measure(assembly.tools)
     const discovery = assembly.tools.find(tool => tool.name === DISCOVER)
-    const full = measure([...NATIVE_FILE_TOOLS.map(raw => new NativeFileTools({ctx:{},config:{}}).definition(raw)), discovery])
+    const full = measure([...NATIVE_TOOLS.map(raw => new NativeFileTools({ctx:{},config:{}}).definition(raw)), discovery])
     const base = bashToolDefinition({ file: 'fixture', source: 'test', subprocess: {} })
     const shell = hostBashDefinition({ get: () => undefined }, base,
       () => { throw new Error('Schema measurement must not execute a command') }, () => dir, {})
