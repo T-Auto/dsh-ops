@@ -186,7 +186,7 @@ Routing: **toolkit → bash → host PowerShell**. Every enabled mode replaces t
 (`pwsh`/`pwsh_persistent`) with `ops_bash` while that counterpart is visible; POSIX sessions already
 run the host's own bash.
 
-On Windows x64 the install carries the pinned Bash payload as an optional dependency of the main package (`@dsh-ops/bash-win32-x64@0.2.1`, PortableGit `v2.56.0.windows.2`, GNU bash 5.3.15); `bashPath` can select Git Bash instead, and `dsh-ops bash-runtime install` repairs or installs a managed copy when the payload is absent. POSIX hosts use the system Bash and ship no payload. PowerShell stays host-selected.
+On Windows x64 the package embeds the complete official Niubash v1.5.0 portable payload (rubash and WinuxCmd plus all upstream bundled tools/licenses). Each invocation verifies the immutable source and uses a fresh verified execution copy. `dsh-ops bash-runtime install` installs this same pinned archive into DSH_HOME; `status`, `managed` and confirmed `remove --yes` manage that copy. `bashPath` may explicitly select Git Bash; missing or corrupt Niubash never falls back to ambient Bash, even with `allowSystemShellFallback: true`. Restricted calls still require the host sandbox (Windows reports partial enforcement); incompatible custom MSYS is rejected. POSIX hosts execute the system Bash. PowerShell stays host-selected. This is a staged distribution choice, not a claim that rubash-only is unusable.
 
 - `ops_bash`: the preferred general command executor. Use `command` for short commands and `script_path` for long scripts.
   Cancellation also stops pending sandbox preparation; a late preparation result cannot start the command. When cancellation races a timeout, the first cause is reported.

@@ -1,8 +1,8 @@
 /**
  * The shell component on a POSIX host: the machine's own bash, and nothing unrestricted.
  *
- * This is the POSIX rung of `dsh-ops/shell`. Windows keeps its pinned, digest-checked payload and
- * the `allowSystemShellFallback` gate around it; a Linux host has a distribution-maintained bash
+ * This is the POSIX rung of `dsh-ops/shell`. Windows uses its pinned Niubash payload;
+ * a Linux host has a distribution-maintained bash
  * whose ABI is tied to that distribution, so the plugin resolves that one instead of provisioning a
  * second copy (`lib/shells.js`, `POSIX_BASH_WELL_KNOWN`). The route was designed in WTStarMark's PR
  * #40 as its own `dsh-ops-linux` component; this suite covers the same capability merged into the
@@ -11,9 +11,8 @@
  * What this locks in:
  *
  * - On `linux`, the resolver answers from `config.bashPath` -> `PATH` -> the well-known locations,
- *   **without** `allowSystemShellFallback`; that flag is the Windows gate on reaching past a pinned
- *   payload and there is no pinned payload on POSIX.
- * - Windows behaviour is unchanged: same config, `platform: 'win32'`, still `disabled`.
+ *   without `allowSystemShellFallback`; Windows does not implicitly fall back either.
+ * - Simulated Windows without a bundled/provisioned Niubash reports `missing`.
  * - The POSIX candidates are POSIX paths (no drive letter, no backslash) even when the suite runs on
  *   another host, and PowerShell 7 has no POSIX rung here.
  * - `ops_bash` really runs on this host: the tool is published and a command's stdout comes back.
@@ -95,7 +94,7 @@ await test('linux resolves the host bash without the Windows fallback flag', () 
     'discovery falls through to the well-known locations rather than giving up after PATH')
 })
 
-await test('the POSIX rung is bash-only and does not change the Windows answer', () => {
+await test('the POSIX rung is bash-only and missing Windows Niubash does not use ambient Bash', async () => {
   assert.ok(POSIX_BASH_WELL_KNOWN.includes('/bin/bash'))
   assert.ok(POSIX_BASH_WELL_KNOWN.includes('/opt/homebrew/bin/bash'))
   for (const candidate of POSIX_BASH_WELL_KNOWN) {
@@ -105,12 +104,16 @@ await test('the POSIX rung is bash-only and does not change the Windows answer',
   // PowerShell 7 has no POSIX rung: the bundled overlay and the pwsh-sandbox row are Windows facts.
   const linux = resolveShells({}, { platform: 'linux', arch: 'x64', env: { PATH: '/usr/bin:/bin' } })
   assert.equal(linux.pwsh.available, false, JSON.stringify(linux.pwsh))
-  // The Windows contract is untouched: no payload, flag off, still disabled and still pointed at the
-  // pinned copy rather than at PATH.
-  const windows = resolveShells({}, { platform: 'win32', arch: 'x64', env: { PATH: 'C:\\Windows\\System32' } }).bash
-  assert.equal(windows.available, false)
-  assert.equal(windows.source, 'disabled')
-  assert.match(windows.detail, /allowSystemShellFallback is false/)
+  // Isolate both source locations: the release gate stages the Windows payload even on POSIX
+  // so the host checkout is not a valid "missing Windows payload" fixture.
+  await withTempDir('posix-windows-missing', async root => {
+    const windows = resolveShells({}, { platform: 'win32', arch: 'x64', bundleRoot: root,
+      env: { PATH: 'C:\\Windows\\System32', DSH_HOME: path.join(root, 'home') } }).bash
+    assert.equal(windows.available, false)
+    assert.equal(windows.source, 'missing')
+    assert.match(windows.detail, /Niubash/)
+    assert.match(windows.detail, /No automatic Git Bash or system shell fallback/)
+  })
 })
 
 await test('the POSIX rung is decided by the platform alone, and an explicit path still wins', () => {

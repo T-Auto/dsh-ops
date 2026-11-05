@@ -23,6 +23,59 @@ import { bootHost, shutdown } from './lib/host.mjs'
 import { mountSessionBash } from '../lib/session-shells.js'
 import { bashRuntimeFailure, executorUnavailableMessage, isRetryableBashRuntimeFailure } from '../lib/bash-runtime-failure.js'
 import { withLifecycleLock, recoverBashLifecycleLock } from '../lib/bash-ipc-lifecycle.js'
+import { bashToolDefinition } from '../lib/shells/tool.js'
+import { hostForeground } from '../lib/shells/host-contract.js'
+
+await test('preparation preserves runtime and authority codes; spawn errors and command exits stay distinct', async () => {
+  for (const message of ['EXECUTOR_UNAVAILABLE: verified payload is missing', 'AUTHORITY_CHANGED: no command executed']) {
+    let spawned = 0
+    const definition = bashToolDefinition({ file: process.execPath, source: 'config',
+      prepareArgv: async () => { throw new Error(message) },
+      subprocess: { spawn() { spawned++; throw new Error('unexpected spawn') } },
+    })
+    const execution = definition.start({ command: 'unused' })
+    const value = hostForeground(await execution.result(), execution.started ? 'unknown' : 'none')
+    assert.equal(value.error, message)
+    assert.equal(value.failure.code, message.split(':')[0])
+    assert.equal(value.failure.effectState, 'none')
+    assert.equal(spawned, 0)
+  }
+  const spawn = bashToolDefinition({ file: process.execPath, source: 'config',
+    prepareArgv: async argv => argv,
+    subprocess: { spawn() { throw Object.assign(new Error('missing executable'), { code: 'ENOENT' }) } },
+  })
+  const failedSpawn = hostForeground(await spawn.execute({ command: 'unused' }), 'none')
+  assert.match(failedSpawn.error, /bash executable is unavailable \(ENOENT\)/)
+  assert.equal(failedSpawn.failure.code, 'COMMAND_FAILED', 'spawn failures keep their own routed remedy')
+  const empty = { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) }
+  const command = bashToolDefinition({ file: process.execPath, source: 'config',
+    subprocess: { spawn() { return { done: Promise.resolve({ exitCode: 7 }), collected: { stdout: empty, stderr: empty } } } },
+  })
+  const failedCommand = hostForeground(await command.execute({ command: 'unused' }), 'unknown')
+  assert.equal(failedCommand.failure.code, 'EXIT_CODE')
+  assert.equal(failedCommand.failure.effectState, 'unknown')
+})
+
+await test('synchronous preparation cannot outlive the absolute deadline and then spawn', async () => {
+  let spawned = 0
+  const definition = bashToolDefinition({ file: process.execPath, source: 'config',
+    prepareArgv: async argv => {
+      // Hold the event loop past the budget: its timer cannot deliver until after preparation.
+      const end = performance.now() + 30
+      while (performance.now() < end) { /* deterministic synchronous preparation */ }
+      return argv
+    },
+    subprocess: { spawn() { spawned++; throw new Error('unexpected spawn') } },
+  })
+  const execution = definition.start({ command: 'unused', timeoutMs: 5 })
+  const value = hostForeground(await execution.result(), execution.started ? 'unknown' : 'none')
+  assert.equal(value.timedOut, true)
+  assert.equal(value.timeoutMs, 5)
+  assert.equal(value.failure.code, 'TIMEOUT')
+  assert.equal(value.failure.effectState, 'none')
+  assert.equal(execution.started, false)
+  assert.equal(spawned, 0)
+})
 
 await test('a staging interruption says retry; an unfixable payload keeps its own remedy', () => {
   const staging = executorUnavailableMessage(bashRuntimeFailure('bash-staging-failed', 'the private copy was interrupted (EPERM)'))
@@ -112,7 +165,9 @@ await test('a restricted bash that cannot run reports which bash and why, not a 
       // The old paragraph hid the stage and forbade retrying; neither may come back.
       assert.doesNotMatch(value.error, /the restricted Bash runtime is unavailable or incompatible/)
       assert.doesNotMatch(value.error, /Do not retry or bypass confinement/)
+      assert.match(value.error, /^EXECUTOR_UNAVAILABLE:/)
       assert.equal(value.failure.code, 'EXECUTOR_UNAVAILABLE')
+      assert.equal(value.failure.effectState, 'none')
     } finally {
       await scope.dispose()
       await shutdown(ctx)

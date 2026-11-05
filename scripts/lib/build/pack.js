@@ -7,6 +7,8 @@
  * @module dsh-ops/build/lib/pack
  */
 
+import { NIUBASH_PACKAGE_PATH, verifyNiubashTree, NIUBASH_PIN } from '../../../lib/cli/niubash-payload.js'
+import { checkNiubashTarball } from './niubash-tar.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fixUnixWorkerModes } from './tar-modes.js'
@@ -22,11 +24,13 @@ import {
  */
 export async function packDirectory(directory, dist) {
   const manifest = readJsonIfExists(path.join(directory, 'package.json'))
+  if (manifest.name === 'dsh-ops') verifyNiubashTree(path.join(directory, NIUBASH_PACKAGE_PATH))
   const result = npm(['pack', '--ignore-scripts', '--pack-destination', dist, '--json'], { cwd: directory })
   const reported = parseNpmPackReport(result.stdout, `npm pack in ${directory}`, manifest)
   const tarball = path.join(dist, reported.filename)
   if (manifest.name === 'dsh-ops') {
     await fixUnixWorkerModes(tarball)
+    checkNiubashTarball(tarball)
   }
   return {
     tarball: reported.filename,
@@ -127,6 +131,7 @@ export async function writeReleaseRecords(context, assembled) {
         },
     },
     packages,
+    niubash: context.backend === 'git-bash' ? undefined : { ...NIUBASH_PIN, path: NIUBASH_PACKAGE_PATH },
     tarballs: files,
   })
   const plan = readJsonIfExists(path.join(dist, 'publish-plan.json')) ?? {}

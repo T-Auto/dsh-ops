@@ -7,6 +7,20 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Accept package-manager hardlinks only in rehashed Niubash source payloads while requiring exclusive execution copies; cover a real offline pnpm hardlink consumer and keep gate orchestration fixtures independent of a host Git Bash installation.
+- Niubash 源载荷逐字节校验后兼容包管理器硬链接，执行副本仍要求独占文件；增加真实离线 pnpm 硬链接消费者验证，并让门禁编排测试不依赖宿主 Git Bash 安装。
+
+- Repin the rebuilt official Niubash 1.5.0 Windows x64 archive after checking its GitHub asset digest, published SHA256SUMS and complete member inventory; keep strict archive and per-file validation.
+- 核对 GitHub 资产摘要、官方 SHA256SUMS 与完整成员清单后，重新固定官方重建的 Niubash 1.5.0 Windows x64 归档；保留严格归档与逐文件校验。
+
+- Document binary locations and ownership for npm/marketplace/CLI updates, fixed-directory replacement, disposable execution copies, explicit legacy cleanup and shared-store limits; do not add unsafe automatic uninstall hooks.
+- 说明 npm/市场/CLI 更新的二进制位置与归属、固定目录替换、临时执行副本、显式旧载荷清理和共享缓存边界；不添加不安全的自动卸载钩子。
+
+- Preserve preparation-time Bash runtime and authority error codes separately from spawn diagnostics; recheck the absolute monotonic deadline before spawning even when synchronous legacy MSYS preparation blocks its timer. Preparation can still exceed the budget, but an expired call never starts a command.
+- 保留 Bash 准备阶段的运行时与权限错误码，与实际 spawn 诊断分开；即使同步 legacy MSYS 准备阻塞计时器，也在 spawn 前复核单调时钟绝对 deadline。准备本身仍可能超出预算，但已超时调用不会启动命令。
+
+- Embed the complete frozen official Niubash v1.5.0 Windows x64 payload as the default shell backend; verify source and per-call execution trees, include preparation in cancellation/deadlines, preserve results on cleanup failure, and integrate managed install/status/select/removal. Missing payloads never switch implicitly to ambient Bash; explicit Git Bash and POSIX system Bash remain supported. This full-package-first choice does not rule out rubash-only later.
+- Windows x64 默认 Shell 改为固定官方 Niubash v1.5.0 完整载荷；校验源树及每调用执行树，准备阶段纳入取消/超时，清理失败不覆盖结果，并接通托管安装/状态/选择/卸载。缺载荷不隐式切换环境 Bash，保留显式 Git Bash 与 POSIX 系统 Bash。这是先完整包的阶段选择，不否定后续 rubash-only。
 - Stop attempting an inherited-tool restriction for a Bash this consumer published into the Agent's own layer, which `restrict()` never masks: a preset that does not own the publication no longer reports `inherited bash restriction failed: tools.restrict() names unknown global tool "ops_bash"` on every reconcile (#652).
 - 不再对注册在 Agent 自有层的 Bash 尝试继承工具限制（`restrict()` 本就不遮蔽自有层注册）：不持有该发布的 preset 不再在每一轮 reconcile 重复报告 `inherited bash restriction failed: tools.restrict() names unknown global tool "ops_bash"`（#652）。
 - Keep `turn` on projected `tool/call` and `tool/result` records. A step number restarts at 1 in every turn, so a log row that carried only `step` could not be attributed to the turn it happened in (#644).
@@ -311,6 +325,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   refused for manual review instead of being rewritten.
 
 ## [Unreleased]
+
+- Embed the complete frozen official Niubash v1.5.0 Windows x64 payload as the default shell backend; verify source and per-call execution trees, include preparation in cancellation/deadlines, preserve results on cleanup failure, and integrate managed install/status/select/removal. Missing payloads never switch implicitly to ambient Bash; explicit Git Bash and POSIX system Bash remain supported. This full-package-first choice does not rule out rubash-only later.
+- Windows x64 默认 Shell 改为固定官方 Niubash v1.5.0 完整载荷；校验源树及每调用执行树，准备阶段纳入取消/超时，清理失败不覆盖结果，并接通托管安装/状态/选择/卸载。缺载荷不隐式切换环境 Bash，保留显式 Git Bash 与 POSIX 系统 Bash。这是先完整包的阶段选择，不否定后续 rubash-only。
 
 - Let `/Prev` and `/XRefStm` be ordinary PDF dictionary keys: they mark an unsupported
   incremental update only as trailer keys, so an outline item's `/Prev` no longer makes the
