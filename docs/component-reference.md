@@ -43,7 +43,7 @@ The shared catalogue has 23 entries. The generated PTC SDK contains 18 APIs: 15 
 | `ops_load_sdk` | Load 1-5 named PTC APIs for the next model step; no file operation runs | PTC-only |
 | Host `pwsh` | Windows-native operations using the host-selected PowerShell | Host policy |
 
-¹ **Fixed file operations use a trusted-operation policy fence, matching DSH fs-sandbox, not arbitrary-code isolation.** OS-readable paths are readable in all modes subject to the credential fence and current scoped authority; read-only rejects replacement, including its dry run; workspace-write permits writes under the workspace and this session's private temporary directory, and full access adds no write fence. The fixed Rust worker uses host subprocess governance plus no-follow traversal, budgets and CAS. Bash/run_code still require OS confinement; no unconfined fallback exists. On Windows, owned workspaces automatically receive directory-only WRITE_OWNER for the host grant prerequisite, with DACL backups; no recursive ACL edits or ownership changes. That preparation runs the package's own script as the current user before sandbox confinement applies, only in workspace-write, with `-ExecutionPolicy Bypass` (Group Policy still wins).
+¹ **Fixed file operations use a trusted-operation policy fence, matching DSH fs-sandbox, not arbitrary-code isolation.** OS-readable paths are readable in all modes subject to the credential fence and current scoped authority; read-only rejects replacement, including its dry run; workspace-write permits writes under the workspace and this session's private temporary directory, and full access adds no write fence. The fixed Rust worker uses host subprocess governance plus no-follow traversal, budgets and CAS. Bash/run_code still require OS confinement; no unconfined fallback exists. On Windows, a workspace whose DACL already grants the effective WRITE_OWNER prerequisite is used as-is whatever its owner; otherwise preparation adds a directory-only WRITE_OWNER ACE, with DACL backups, only when the current user owns the root; no recursive ACL edits or ownership changes (#651). That preparation runs the package's own script as the current user before sandbox confinement applies, only in workspace-write, with `-ExecutionPolicy Bypass` (Group Policy still wins).
 
 ---
 
@@ -186,7 +186,7 @@ Routing: **toolkit → bash → host PowerShell**. Every enabled mode replaces t
 (`pwsh`/`pwsh_persistent`) with `ops_bash` while that counterpart is visible; POSIX sessions already
 run the host's own bash.
 
-On Windows x64 the install carries the pinned Bash payload as an optional dependency of the main package (`@dsh-ops/bash-win32-x64@0.2.1`, PortableGit `v2.56.0.windows.2`, GNU bash 5.3.15); `bashPath` can select Git Bash instead, and `dsh-ops bash-runtime install` repairs or installs a managed copy when the payload is absent. POSIX hosts use the system Bash and ship no payload. PowerShell stays host-selected.
+On Windows x64 the package embeds the complete official Niubash v1.5.0 portable payload (rubash and WinuxCmd plus all upstream bundled tools/licenses). Each invocation verifies the immutable source and uses a fresh verified execution copy. `dsh-ops bash-runtime install` installs this same pinned archive into DSH_HOME; `status`, `managed` and confirmed `remove --yes` manage that copy. `bashPath` may explicitly select Git Bash; missing or corrupt Niubash never falls back to ambient Bash, even with `allowSystemShellFallback: true`. Restricted calls still require the host sandbox (Windows reports partial enforcement); incompatible custom MSYS is rejected. POSIX hosts execute the system Bash. PowerShell stays host-selected. This is a staged distribution choice, not a claim that rubash-only is unusable.
 
 - `ops_bash`: the preferred general command executor. Use `command` for short commands and `script_path` for long scripts.
   Cancellation also stops pending sandbox preparation; a late preparation result cannot start the command. When cancellation races a timeout, the first cause is reported.
@@ -258,6 +258,11 @@ not qualify, and a missing counterpart leaves the official tool exposed instead 
 assembly. Ownership changes are rechecked even when the schema bytes stay unchanged; Native shadows
 created by the OPS PTC adapter retain their tracked ownership. Disabling a consumer or its
 replacement switch restores the corresponding official tool.
+
+A refusal answers for the surface the last assembled request carried, not for the registry's
+current state. When a request was assembled before its replacement became visible, the official
+name it still carries is not refused, so a session is never told to call a tool that request was
+never given (#578).
 
 The resident `ops_read_files` is not the counterpart for `read`; Standard and Cordis publish
 `ops_inspect_local_file`, `ops_glob` and `ops_grep` as the reviewed counterparts.

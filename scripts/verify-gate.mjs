@@ -37,7 +37,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
@@ -69,7 +69,7 @@ const KEEP_GOING = flag('keep-going')
  */
 const ALLOWED_SKIPS = TARGET === 'win32-x64'
   ? ['file-metadata', 'linux-attributes', 'linux-shell']
-  : ['mount', 'result-storage-cache-prep', 'windows-security']
+  : ['mount', 'result-storage-cache-prep', 'windows-security', 'niubash-consumer', 'niubash-security-host']
 
 /**
  * Suites that need an *optional external* checkout (`DSH_OPS_TUI_ROOT`, and for the native one also
@@ -184,40 +184,44 @@ async function main() {
   await run('native worker unit tests', 'cargo', ['test', '--workspace', '--locked', '--manifest-path', 'native/Cargo.toml'])
   await run('build and stage the native worker', 'npm', ['run', 'build:ptc'])
 
-  const runtimeEnv = {}
+  // Every pack (including POSIX packs) carries the frozen Windows payload.
+  const stageArgs = ['run', 'stage:niubash', '--']
+  const archive = process.env.DSH_OPS_NIUBASH_ARCHIVE
+  if (archive) stageArgs.push('--archive', archive)
+  if (process.env.DSH_OPS_OFFLINE === '1') stageArgs.push('--offline')
+  await run('stage complete frozen Niubash payload', 'npm', stageArgs)
+  const { NIUBASH_PIN } = await import('../lib/cli/niubash-payload.js')
+  const runtimeEnv = { DSH_OPS_NIUBASH_ARCHIVE: archive ?? path.join(PACKAGE_ROOT, 'dist/downloads', NIUBASH_PIN.archive),
+    DSH_OPS_SUITE_TIMEOUT_MS: process.env.DSH_OPS_SUITE_TIMEOUT_MS ?? '600000' }
   if (TARGET === 'win32-x64') {
+    const { verifyNiubashTree, NIUBASH_PACKAGE_PATH } = await import('../lib/cli/niubash-payload.js')
+    runtimeEnv.DSH_OPS_TEST_NIUBASH = verifyNiubashTree(path.join(PACKAGE_ROOT, NIUBASH_PACKAGE_PATH))
+    // Compatibility coverage is explicit and separate from the default native backend.
+    // Acquire the committed legacy pin only for the MSYS tests/proxy build.
     const { pinnedBashExecutable } = await import('../lib/shells/pinned.js')
-    // `npm ci` installs the declared @dsh-ops/bash-win32-x64 payload, and a missing payload must
-    // fail the gate rather than be papered over by a download: an optionalDependency that npm
-    // silently skipped is exactly the regression this gate exists to catch. DSH_OPS_TEST_BASH is
-    // the explicit offline escape hatch.
-    const declared = JSON.parse(readFileSync(path.join(PACKAGE_ROOT, 'package.json'), 'utf8')).optionalDependencies?.['@dsh-ops/bash-win32-x64']
     let fixture = process.env.DSH_OPS_TEST_BASH
-    if (!fixture && declared) fixture = pinnedBashExecutable()
     if (!fixture) {
-      const fixtureEnv = { DSH_HOME: mkdtempSync(path.join(tmpdir(), 'dsh-ops-bash-fixture-')) }
-      await run('Acquire optional pinned Bash fixture', 'node', ['bin/dsh-ops.mjs', 'bash-runtime', 'install'], { env: fixtureEnv })
+      const fixtureEnv = { DSH_HOME: mkdtempSync(path.join(tmpdir(), 'dsh-ops-legacy-bash-fixture-')) }
+      const { SHELL_UPSTREAM_PINS } = await import('../lib/shells/pins.js')
+      const pinFile = path.join(fixtureEnv.DSH_HOME, 'legacy-pins.json')
+      writeFileSync(pinFile, JSON.stringify(SHELL_UPSTREAM_PINS.filter(pin => pin.name === 'bash')))
+      await run('Acquire explicit legacy MSYS fixture', 'node', ['bin/dsh-ops.mjs', 'provision-shells', '--bash', '--pin', pinFile], { env: fixtureEnv })
       fixture = pinnedBashExecutable({ env: fixtureEnv })
     }
     runtimeEnv.DSH_OPS_TEST_BASH = pinnedBashExecutable({ file: fixture })
-    await run('Windows IPC payloads', 'npm', ['run', 'build:bash-ipc'], { env: runtimeEnv })
+    await run('Legacy Windows IPC payloads', 'npm', ['run', 'build:bash-ipc'], { env: runtimeEnv })
   }
 
   const manifest = await run('manifest contract', 'npm', ['run', 'validate:manifest'])
   const manifestChecks = parseManifest(manifest.output)
 
-  // `DSH_OPS_REQUIRE_RUNTIME=1` turns *any* skip into a failure (`test/run.mjs`), which is what
-  // makes a silent skip impossible on a POSIX host. It cannot be set on Windows: three suites
-  // skip there by platform (`file-metadata`, `linux-attributes`, `linux-shell`) and the runner
-  // does not tell "this platform cannot answer" apart from "the runtime is missing", so the
-  // script would never be green there. Windows keeps its protection through the skip set below
-  // instead — a skip outside `ALLOWED_SKIPS` fails, and the suites that would betray a worker
-  // that was never built (`permissions`, `ptc`) are not in it.
+  // Require every runtime; only the named platform/external-checkout exceptions below
+  // remain skips. Missing Windows Niubash fixtures are never permission-test success.
   const env = { ...runtimeEnv, DSH_HOME: mkdtempSync(path.join(tmpdir(), 'dsh-ops-gate-')) }
-  if (TARGET !== 'win32-x64') env.DSH_OPS_REQUIRE_RUNTIME = '1'
+  env.DSH_OPS_REQUIRE_RUNTIME = '1'
   // Keep the external-checkout suites as skips: `DSH_OPS_REQUIRE_RUNTIME=1` would otherwise
   // count them as failures and make this gate permanently red on a machine without that checkout.
-  env.DSH_OPS_ALLOW_SKIPS = [...EXTERNAL_SUITE_DEPS, ...(TARGET === 'win32-x64' ? [] : ['result-storage-cache-prep', 'windows-security'])].join(',')
+  env.DSH_OPS_ALLOW_SKIPS = [...EXTERNAL_SUITE_DEPS, ...ALLOWED_SKIPS].join(',')
   const verify = await run('full suite verification', 'npm', ['run', 'verify'], { env })
   const summary = parseSummary(verify.output)
 
@@ -225,6 +229,8 @@ async function main() {
 
   // The artifact, not just the build. `npm pack` honours `files`, and a package that silently drops
   // `runtime/` installs fine and then fails in the user's profile — so check the thing users get.
+  // Share the collection: --keep-going artifact failures must reach the final verdict too.
+  const failures = stepFailures
   const packDir = mkdtempSync(path.join(tmpdir(), 'dsh-ops-pack-'))
   await run('pack the release artifact', 'npm', ['pack', '--pack-destination', packDir])
   const tarball = readdirSync(packDir).find(entry => entry.endsWith('.tgz'))
@@ -238,7 +244,6 @@ async function main() {
   }
 
   // The assertions. Failures here are the point of the script, not a detail of it.
-  const failures = [...stepFailures]
   if (!(typeof manifestChecks === 'number' && manifestChecks >= MANIFEST_CHECK_FLOOR)) failures.push(`manifest checks: expected at least ${MANIFEST_CHECK_FLOOR}, got ${manifestChecks ?? 'none reported'}`)
   if (!summary.reported) failures.push('no suite summary line; the runner did not finish')
   if (summary.failed > 0) failures.push(`the runner reported ${summary.failed} failing suite(s); see its output above for the check names`)

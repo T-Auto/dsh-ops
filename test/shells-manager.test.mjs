@@ -108,7 +108,7 @@ await test('the real CLI previews removal and applies it only with yes', async (
     assert.notEqual(call(['invalid']).status, 0)
     const install = call(['install', '--dry-run'])
     assert.equal(install.status, process.platform === 'win32' ? 0 : 1, install.stderr)
-    if (process.platform === 'win32') assert.match(install.stdout, /dry run: no download, no writes/)
+    if (process.platform === 'win32') assert.match(install.stdout, /would provision complete Niubash/)
   })
 })
 
@@ -140,18 +140,17 @@ await test('bash-runtime status reports the private runtime cache without writin
   })
 })
 
-await test('the Windows Bash payload is a declared, locked and assembled optional dependency', async () => {
+await test('default distribution embeds Niubash and only explicit legacy assembly describes a Bash platform package', async () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'package.json'), 'utf8'))
   const lock = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'package-lock.json'), 'utf8'))
-  assert.equal(manifest.optionalDependencies?.['@dsh-ops/bash-win32-x64'], '0.2.1')
-  assert.equal(lock.packages['']?.optionalDependencies?.['@dsh-ops/bash-win32-x64'], '0.2.1')
-  assert.equal(lock.packages['node_modules/@dsh-ops/bash-win32-x64']?.version, '0.2.1')
+  assert.equal(manifest.optionalDependencies?.['@dsh-ops/bash-win32-x64'], undefined)
+  assert.equal(lock.packages['']?.optionalDependencies?.['@dsh-ops/bash-win32-x64'], undefined)
   const { describePackages } = await import('../scripts/lib/build/assemble.js')
-  const packages = describePackages('win32', 'x64', 'unused')
+  assert.deepEqual(describePackages('win32', 'x64', 'unused'), [])
+  const packages = describePackages('win32', 'x64', 'unused', 'git-bash')
   assert.equal(packages.length, 1)
   assert.equal(packages[0].name, '@dsh-ops/bash-win32-x64')
-  assert.equal(packages[0].kind, 'bash')
-  assert.equal(packages[0].version, '0.2.1', 'the payload version comes from the committed pin, never the main version')
+  assert.equal(packages[0].version, '0.2.1')
 })
 
 report('shells-manager')

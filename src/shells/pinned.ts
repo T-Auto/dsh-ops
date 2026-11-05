@@ -18,7 +18,7 @@ export function pinnedBashExecutable({ file, env = process.env, bundleRoot = PAC
   }
   if (!candidate) {
     if (!required) return undefined
-    throw new Error('Pinned Bash is unavailable. Run dsh-ops bash-runtime install, or set DSH_OPS_TEST_BASH to a previously verified pinned bin/bash.exe for offline validation.')
+    throw new Error('Pinned Bash is unavailable. For legacy MSYS tests, supply the committed SHELL_UPSTREAM_PINS Bash pin using dsh-ops provision-shells --bash --pin <file>, or set DSH_OPS_TEST_BASH to a previously verified pinned bin/bash.exe for offline validation.')
   }
   if (!path.isAbsolute(candidate)) throw new Error('Pinned Bash input must be an absolute executable path')
   const pin = shellUpstreamPin({ kind: 'bash', platform: 'win32', arch: 'x64' })

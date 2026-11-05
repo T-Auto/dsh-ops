@@ -3,22 +3,25 @@ import { Buffer } from 'node:buffer'
 import path from 'node:path'
 import type { SubprocessHandle, SubprocessOutputReader, SubprocessOutputRead } from '../adapter/dsh/types.js'
 import type { ShellExecutorOptions, ShellExecutionSpec, ShellCall, ShellExecution, ShellResult, ShellStream } from './types.js'
+import { errorMessage } from './types.js'
 import { DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_SPILL_BYTES, shellEnvOverrides } from './constants.js'
 import { formatBashSpawnError } from './spawn-error.js'
 
 const emptyRead = (): SubprocessOutputRead => ({ text: '', nextOffset: 0, lossy: false })
 
-class UnadaptedElectronRunner extends Error {}
+const ELECTRON_NODE_MODE = 'ELECTRON_RUN_AS_NODE'
 
-/** The host must adapt its Node runner before returning argv to an Electron caller. */
-function checkElectronRunner(argv: string[], env: NodeJS.ProcessEnv): void {
-  if (!globalThis.process.versions.electron || !argv[0]) return
+/** A confined Windows sandbox runs the Desktop executable itself as the runner; give it Node mode (#574). */
+function adaptElectronRunner(argv: string[], env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (!globalThis.process.versions.electron || !argv[0]) return env
   const normalize = (file: string) => globalThis.process.platform === 'win32' ? path.resolve(file).toLowerCase() : path.resolve(file)
-  if (normalize(argv[0]) !== normalize(globalThis.process.execPath)) return
-  const nodeFlags = Object.entries(env).filter(([key]) => globalThis.process.platform === 'win32'
-    ? key.toUpperCase() === 'ELECTRON_RUN_AS_NODE' : key === 'ELECTRON_RUN_AS_NODE')
-  if (nodeFlags.length === 1 && nodeFlags[0][1] === '1') return
-  throw new UnadaptedElectronRunner('EXECUTOR_UNAVAILABLE: the host returned an unadapted Electron runner. Launching the Desktop application can exit successfully without running Bash. No command was started. The host must supply a supported Node runner or explicitly prepare Electron Node mode; do not bypass confinement or retry through another shell.')
+  if (normalize(argv[0]) !== normalize(globalThis.process.execPath)) return env
+  const keyOf = (key: string) => globalThis.process.platform === 'win32' ? key.toUpperCase() : key
+  const existing = Object.entries(env).filter(([key]) => keyOf(key) === ELECTRON_NODE_MODE)
+  // Windows compares environment names case-insensitively: never leave two spellings behind.
+  if (existing.length === 1 && existing[0][1] === '1') return env
+  const cleaned = Object.fromEntries(Object.entries(env).filter(([key]) => keyOf(key) !== ELECTRON_NODE_MODE))
+  return { ...cleaned, [ELECTRON_NODE_MODE]: '1' }
 }
 
 /** Read the retained stream after settlement, preserving honest truncation facts. */
@@ -79,10 +82,17 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
       executor: { kind: 'subprocess', source },
     } } : {}),
   })
+  const deadline = spec.onExpiry === 'none' ? Infinity : startedAt + spec.timeoutMs
+  const expire = () => {
+    // Synchronous runtime preparation can block the timer; never spawn after its budget expired.
+    if (performance.now() >= deadline) stop('timeout', new Error(`command timed out after ${spec.timeoutMs}ms`))
+  }
+  const assertRunning = () => { expire(); controller.signal.throwIfAborted() }
   const run = async (): Promise<ShellResult> => {
     let value: ShellResult
+    let phase: 'preparation' | 'spawn' = 'preparation'
     try {
-      controller.signal.throwIfAborted()
+      assertRunning()
       const argv = spec.command === undefined ? [file, spec.scriptPath!] : [file, '-c', spec.command]
       // Race preparation so an unavailable provider cannot strand a cancelled job.
       let preparedArgv = argv
@@ -95,10 +105,11 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
         try { preparedArgv = await Promise.race([prepareArgv(argv, controller.signal), cancelled]) }
         finally { controller.signal.removeEventListener('abort', abort) }
       }
-      controller.signal.throwIfAborted()
+      assertRunning()
+      phase = 'spawn'
       if (!subprocess) throw new Error('Host subprocess service is unavailable')
       const childEnv = shellEnvOverrides(globalThis.process.env, env)
-      if (prepareArgv) checkElectronRunner(preparedArgv, childEnv)
+      assertRunning()
       handle = subprocess.spawn({
         argv: preparedArgv,
         // Legacy direct executor callers can omit cwd; scoped host calls resolve it before this seam.
@@ -111,7 +122,7 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
         },
         graceMs: spec.graceMs,
         signal: controller.signal,
-        env: childEnv,
+        env: prepareArgv ? adaptElectronRunner(preparedArgv, childEnv) : childEnv,
       })
       const outcome = await handle.done
       value = {
@@ -122,8 +133,10 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
         stderr: settledStream(handle.collected?.stderr, spec.includeDiagnostics),
       }
     } catch (error) {
+      expire()
       value = {
-        error: error instanceof UnadaptedElectronRunner ? error.message : formatBashSpawnError(error, file, source, spec.workdir),
+        // Preparation owns authority/runtime diagnostics; spawn errors need routing.
+        error: phase === 'preparation' ? errorMessage(error) : formatBashSpawnError(error, file, source, spec.workdir),
         ...flags(),
         stdout: settledStream(handle?.collected?.stdout, spec.includeDiagnostics),
         stderr: settledStream(handle?.collected?.stderr, spec.includeDiagnostics),
@@ -140,6 +153,6 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
     return projected
   }
   const result = run()
-  process.done = result.then(() => undefined)
+  process.done = result.then(() => undefined, () => undefined)
   return process
 }

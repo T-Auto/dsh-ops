@@ -199,4 +199,62 @@ await test('session temp identity is stable, isolated, idempotent and refuses fi
     if (process.platform !== 'win32') assert.equal(fs.statSync(first).mode & 0o777, 0o700)
   })
 })
+await test('a launcher path carrying a caret is refused, while a caret in the spec is not', async () => {
+  // The two guards differ by exactly one character: `preflightCli` refuses `^` in a launcher path,
+  // `quoteCliArg` keeps it for install specs, where it is a version range. Pinning both sides is
+  // what makes that difference deliberate rather than a drift.
+  await profileFixture(({ root, entry, receipt }) => {
+    const caretPath = launcher(path.join(root, 'CLI with ^ caret', launcherName), entry)
+    process.env.DSH_OPS_INSTALL_SPEC = 'dsh-ops@^1.0.0'
+    if (process.platform === 'win32') {
+      assert.throws(() => capture(() => profileCommand('install', { profile: 'tui', dshCli: caretPath })),
+        /Unsafe CLI path/, 'a launcher path with ^ must be refused before anything runs')
+      assert.equal(fs.existsSync(receipt), false)
+    } else {
+      assert.equal(capture(() => profileCommand('install', { profile: 'tui', dshCli: caretPath })).status, 0)
+    }
+    const plain = launcher(path.join(root, 'CLI plain', launcherName), entry)
+    assert.equal(capture(() => profileCommand('install', { profile: 'tui', dshCli: plain })).status, 0)
+    assert.deepEqual(JSON.parse(fs.readFileSync(receipt, 'utf8')), ['plugin', '--profile', 'dsh-tui', 'add', 'dsh-ops@^1.0.0'],
+      'the same caret stays literal in the spec')
+  })
+})
+await test('the launcher receives an install spec verbatim, and the cmd line refuses what it cannot carry', async () => {
+  // A `.cmd` launcher is reached through `cmd /d /s /c` with `windowsVerbatimArguments`, so the
+  // spec is a command-line fragment unless it is quoted. These four are legal npm specs whose
+  // characters (`^ ~ # +` and a space) must survive unchanged.
+  await profileFixture(({ root, entry, receipt }) => {
+    const file = launcher(path.join(root, 'CLI with spaces', launcherName), entry)
+    const localPaths = ['C:\\local', 'C:\\local path'].flatMap(root => [root + '\\', root + '\\\\\\'])
+    for (const spec of ['dsh-ops@^1.0.0', 'dsh-ops@~1.2', 'git+https://example.com/x#semver:^1.0.0', 'pkg name@1.0', ...localPaths]) {
+      process.env.DSH_OPS_INSTALL_SPEC = spec
+      fs.rmSync(receipt, { force: true })
+      assert.equal(capture(() => profileCommand('install', { profile: 'tui', dshCli: file })).status, 0)
+      assert.deepEqual(JSON.parse(fs.readFileSync(receipt, 'utf8')), ['plugin', '--profile', 'dsh-tui', 'add', spec],
+        'the launcher must receive ' + JSON.stringify(spec) + ' as one argument')
+    }
+    // `&`, `|`, `<` and `>` separate again inside the launcher's own `%*` expansion, and `%`
+    // expands even inside quotes: none of them can be carried by this line.
+    for (const spec of ['dsh-ops@1.0.8 & echo INJECTED', 'a|b', 'pkg@%PATH%', 'a"b', 'a<b', 'a>b', 'a!b']) {
+      process.env.DSH_OPS_INSTALL_SPEC = spec
+      fs.rmSync(receipt, { force: true })
+      if (process.platform === 'win32') {
+        // The preview refuses the same input as the run: a dry-run that reports success for a
+        // spec the real invocation rejects is worse than no preview at all.
+        assert.throws(() => capture(() => profileCommand('install', { profile: 'tui', dshCli: file, dryRun: true })),
+          /cannot receive an argument/, 'a preview must refuse ' + JSON.stringify(spec))
+        assert.throws(() => capture(() => profileCommand('install', { profile: 'tui', dshCli: file })),
+          /cannot receive an argument/, 'the cmd line must refuse ' + JSON.stringify(spec))
+        assert.equal(fs.existsSync(receipt), false, 'nothing may run for ' + JSON.stringify(spec))
+      } else {
+        // POSIX hands the launcher an argv array with no `cmd.exe` in between, so `&`, `|`, `<`,
+        // `>` and `%` are ordinary characters: the spec arrives as one argument and no second
+        // command can start. Refusing it here would be the bug.
+        assert.equal(capture(() => profileCommand('install', { profile: 'tui', dshCli: file })).status, 0)
+        assert.deepEqual(JSON.parse(fs.readFileSync(receipt, 'utf8')), ['plugin', '--profile', 'dsh-tui', 'add', spec],
+          'the launcher must receive ' + JSON.stringify(spec) + ' as one argument')
+      }
+    }
+  })
+})
 report('profile-temp')

@@ -183,7 +183,7 @@
   ],
   "scripts": {
     "build": "node scripts/build.mjs",
-    "prepack": "node scripts/build.mjs",
+    "prepack": "node scripts/build.mjs && node scripts/lib/build/niubash.mjs --check",
     "pretest": "node scripts/build.mjs",
     "pretest:ptc": "node scripts/build.mjs",
     "typecheck": "tsc -p . --noEmit",
@@ -202,7 +202,8 @@
     "bench:ab": "node -e \"const fs=require('node:fs');if(!fs.existsSync('bench/cli.mjs')){console.error('bench/ is repository-only and never shipped in the npm package (bench 只存在于仓库,不随包发布); run npm run bench:* from a dsh-ops checkout');process.exit(2)};process.exit(require('node:child_process').spawnSync(process.execPath,['bench/cli.mjs','ab',...process.argv.slice(1)],{stdio:'inherit'}).status??1)\" --",
     "bench:report": "node -e \"const fs=require('node:fs');if(!fs.existsSync('bench/cli.mjs')){console.error('bench/ is repository-only and never shipped in the npm package (bench 只存在于仓库,不随包发布); run npm run bench:* from a dsh-ops checkout');process.exit(2)};process.exit(require('node:child_process').spawnSync(process.execPath,['bench/cli.mjs','report',...process.argv.slice(1)],{stdio:'inherit'}).status??1)\" --",
     "bench:panel": "node -e \"const fs=require('node:fs');if(!fs.existsSync('bench/cli.mjs')){console.error('bench/ is repository-only and never shipped in the npm package (bench 只存在于仓库,不随包发布); run npm run bench:* from a dsh-ops checkout');process.exit(2)};process.exit(require('node:child_process').spawnSync(process.execPath,['bench/cli.mjs','panel',...process.argv.slice(1)],{stdio:'inherit'}).status??1)\" --",
-    "bench:tools": "node -e \"const fs=require('node:fs');if(!fs.existsSync('bench/cli.mjs')){console.error('bench/ is repository-only and never shipped in the npm package (bench 只存在于仓库,不随包发布); run npm run bench:* from a dsh-ops checkout');process.exit(2)};process.exit(require('node:child_process').spawnSync(process.execPath,['bench/cli.mjs','tools',...process.argv.slice(1)],{stdio:'inherit'}).status??1)\" --"
+    "bench:tools": "node -e \"const fs=require('node:fs');if(!fs.existsSync('bench/cli.mjs')){console.error('bench/ is repository-only and never shipped in the npm package (bench 只存在于仓库,不随包发布); run npm run bench:* from a dsh-ops checkout');process.exit(2)};process.exit(require('node:child_process').spawnSync(process.execPath,['bench/cli.mjs','tools',...process.argv.slice(1)],{stdio:'inherit'}).status??1)\" --",
+    "stage:niubash": "node scripts/lib/build/niubash.mjs"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",
@@ -215,9 +216,6 @@
     "@deepseek-ai/dsh": {
       "optional": true
     }
-  },
-  "optionalDependencies": {
-    "@dsh-ops/bash-win32-x64": "0.2.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.4",

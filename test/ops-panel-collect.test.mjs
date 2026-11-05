@@ -328,6 +328,22 @@ await test('the sink refuses cwds and ids it cannot write safely', async () => {
   })
 })
 
+await test('a tool call and its result keep the turn the host event carries', () => {
+  const config = resolvePanelConfig({ capture: true, textLimit: 64 })
+  // A step number restarts at 1 in every turn, so the pair is only unambiguous with both fields.
+  const call = projectEvent({
+    type: 'tool/call', seq: 4, time: 11,
+    data: { turn: 2, step: 3, callId: 'call-1', name: 'ops_grep', arguments: '{}' },
+  }, config)
+  assert.equal(call.turn, 2, 'the projected tool call keeps its turn')
+  assert.equal(call.step, 3, 'the projected tool call keeps its step')
+  const result = projectEvent({
+    type: 'tool/result', seq: 5, time: 12,
+    data: { turn: 2, step: 3, message: { role: 'tool', source: { kind: 'tool', callId: 'call-1' }, isError: false, content: [] } },
+  }, config)
+  assert.equal(result.turn, 2, 'the projected tool result keeps its turn')
+})
+
 await test('projection and fold are pure enough to pin without a filesystem', () => {
   const config = resolvePanelConfig({ capture: true, textLimit: 64 })
   const projected = projectEvent({
