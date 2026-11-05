@@ -268,5 +268,8 @@
   "engines": {
     "node": "^22.19 || >=24",
     "dsh": ">=0.2.0-rc.2 <0.2.2-0"
+  },
+  "dependencies": {
+    "@ast-grep/napi": "0.51.0"
   }
 }
