@@ -111,4 +111,23 @@ await test('reports distinguish the approved subset score from complete startup 
   assert.match(text,/Bash remains resident; full-default readiness is required/)
   assert.match(text,/Whole startup message JSON: 786 tokens/)
 })
+await test('the timeout arm names its missing devDependency instead of failing opaquely', async () => {
+  // The policy is a devDependency only the timeout arm needs, so `boot` loads it there and must
+  // report the package by name. Without this the arm dies with a bare ERR_MODULE_NOT_FOUND that
+  // says nothing about `npm ci` or about dropping the arm from the run.
+  const { mountTimeoutPolicy } = await import('../bench/gates/host.mjs')
+  const mounted = []
+  const ctx = { async plugin(plugin) { mounted.push(plugin) } }
+  await assert.rejects(
+    mountTimeoutPolicy(ctx, async () => { const error = new Error('Cannot find package'); error.code = 'ERR_MODULE_NOT_FOUND'; throw error }),
+    error => /@deepseek-ai\/dsh-tool-call-timeout-policy/.test(error.message) && /npm ci/.test(error.message) && /ERR_MODULE_NOT_FOUND/.test(error.message))
+  assert.deepEqual(mounted, [], 'a missing policy must not leave a half-mounted plugin behind')
+  const policy = { inject: ['tools'], apply() {} }
+  await mountTimeoutPolicy(ctx, async spec => {
+    assert.equal(spec, '@deepseek-ai/dsh-tool-call-timeout-policy', 'the loader is asked for the policy by name')
+    return policy
+  })
+  assert.equal(mounted.length, 1, 'a present policy is mounted once')
+  assert.deepEqual(mounted[0], { inject: policy.inject, apply: policy.apply })
+})
 report('bench-gates')

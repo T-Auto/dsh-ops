@@ -398,6 +398,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ops-index"
+version = "0.5.0-alpha3"
+
+[[package]]
 name = "ops-protocol"
 version = "0.5.0-alpha3"
 dependencies = [

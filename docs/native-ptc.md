@@ -16,9 +16,11 @@ host's full/partial enforcement honestly. Read-only permits existing result page
 but rejects mutations/new audit records. Absolute operation roots are selections,
 not new authority; full access permits external roots without confinement.
 No-follow/protection/no-overwrite remain operation integrity semantics.
-Windows owned Modify-only workspaces receive a backed-up, directory-only
-WRITE_OWNER prerequisite automatically before outer run_code/pwsh launch. This
-is not recursive repair, ownership change, self-escalation or unconfined fallback.
+Windows workspaces that already grant WRITE_OWNER are accepted as-is whatever
+their owner; otherwise an owned Modify-only root receives a backed-up,
+directory-only WRITE_OWNER prerequisite automatically before outer run_code/pwsh
+launch (#651). This is not recursive repair, ownership change, self-escalation or
+unconfined fallback.
 Real Windows provider and pure PTC SDK acceptance is covered in the release gates.
 
 ## Native file component and release scope
@@ -29,9 +31,10 @@ Runtime binaries target Windows x64, Linux x64 and macOS arm64/x64; IPC proxies 
 
 In `workspace-write`, native batch/result operations and their audit records are
 permitted under the selected workspace root through DSH confinement. Read-only
-permits existing result pages only, not new records or mutations. Windows owned
-Modify-only roots are prepared automatically with directory-only WRITE_OWNER,
-not FullControl, before the outer run_code transport starts. Existing DACLs are
+permits existing result pages only, not new records or mutations. Windows roots that
+already grant WRITE_OWNER are used as-is; otherwise an owned Modify-only root is
+prepared automatically with directory-only WRITE_OWNER, not FullControl, before
+the outer run_code transport starts. When an ACE is added, the existing DACL is
 backed up under DSH_HOME/dsh-ops/acl-backups; descendants, owners and explicit
 denials are never rewritten. Matching Windows x64 Bash payloads use a private
 IPC-compatible MSYS copy, with the original DSH token/confinement unchanged.
