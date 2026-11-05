@@ -101,7 +101,7 @@ A regular DSH CLI cannot manage the reserved `desktop` profile; do not confuse i
 
 #### Update
 
-Host compatibility is declared for DSH **0.2.0-rc.2, 0.2.1-rc.2 and 0.2.2-rc.1**; later 0.2.2 prereleases and 0.2.2 final remain unsupported until tested. See
+Host compatibility is declared for DSH **0.2.0-rc.2, 0.2.1-rc.2 and 0.2.2-rc.1**; later 0.2.2 prereleases and 0.2.2 final remain unsupported until tested. The 0.2.2-rc.1 validation covers the host/tool surface (bundle load, `ops_*` tools and the native AgentLoop); the client/UI surface was not exercised. See
 [host versions and display metadata](docs/usage.md#host-compatibility-and-display-metadata)
 for component icon exports, profile refresh and config/schema checks.
 
