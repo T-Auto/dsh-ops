@@ -73,13 +73,13 @@ await test('locate, preview, apply and audit report through one receipt shape', 
   assert.ok(preview.edits >= 1)
   assert.equal(fs.readFileSync(path.join(root, 'b.ts'), 'utf8'), before, 'preview writes nothing')
 
-  // `apply` returns the plan; publishing belongs to the native worker, so nothing is written here.
+  // `apply` plans and then publishes through the file's own descriptor, so the bytes on disk change.
   const applied = await call('ast_refactor', { pattern: "console.log($A)", rewrite: "logger.log($A)", mode: 'apply' }, root)
   assert.equal(applied.status, 'completed')
-  assert.equal(applied.pending, 1)
-  assert.match(applied.files[0].after, /logger\.log/)
-  assert.match(applied.files[0].revision, /^[0-9a-f]{64}$/)
-  assert.equal(fs.readFileSync(path.join(root, 'b.ts'), 'utf8'), before, 'the engine publishes nothing')
+  assert.equal(applied.effectState, 'applied')
+  assert.deepEqual(applied.filesApplied, ['b.ts'])
+  assert.equal(applied.pending, 0, 'nothing is left for a caller to publish')
+  assert.match(fs.readFileSync(path.join(root, 'b.ts'), 'utf8'), /logger\.log/, 'apply publishes in place')
 
   // Whitespace only: a comment would add a node and make the change structural.
   fs.writeFileSync(path.join(root, 'after.ts'), 'export function greet(name: string) {\n\n  return `hi ${name}`\n}\n', 'utf8')

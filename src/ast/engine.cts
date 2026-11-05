@@ -479,7 +479,9 @@ function rankCandidates(pool: readonly Candidate[], symbol: string): Candidate[]
 }
 
 async function candidatesOf(req: LocateRequest, cwd: string, opts: EngineOptions = {}): Promise<{ files: string[]; roots: string[]; discover: DiscoverStats } | { error: string }> {
-  const roots = (req.roots ?? [cwd]).map((r) => resolve(cwd, r))
+  // Deduplicate before walking: `['.', './']` is one directory, and resolving it twice made the
+  // answer depend on whether the two spellings happened to normalise identically on this platform.
+  const roots = [...new Set((req.roots ?? [cwd]).map((r) => resolve(cwd, r)))]
   const outside = rootGuard(roots, opts.bounds ?? [cwd])
   if (outside) return { error: `root ${outside} is outside cwd` }
   if (req.file) {
