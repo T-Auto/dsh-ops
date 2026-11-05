@@ -89,7 +89,7 @@ await test('the receipt says how much work a limit left behind', async () => {
     assert.ok(one.matched >= 1, 'a stopped walk reports the matches it saw, not the whole tree')
     assert.equal(one.remaining, null, 'a stopped walk reports the rest as unknown, not measured')
     const both = await call('ast_refactor', { roots: ['.', './'], pattern: 'console.log($A)', rewrite: 'logger.log($A)', limit: 5 }, ws, ws)
-    assert.equal(both.planned, 2, 'two roots naming one directory plan each file once')
+    assert.equal(both.planned, 2, `two roots naming one directory plan each file once: ${JSON.stringify(both).slice(0, 400)}`)
     assert.equal(both.remaining, 0)
   } finally { fs.rmSync(ws, { recursive: true, force: true }) }
 })
