@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Give the discovery routing sentence an evaluable document condition — a `.pdf`, `.docx`, `.csv` or `.tsv` file whose reader is absent from the tool table — and state that creating, editing, rendering or exporting Office documents belongs to the host office skill, with a failed document read falling back to that skill instead of retrying the reader. Formats are named, never unpublished tool names; adds 279 characters (64 cl100k_base tokens) to the discovery-enabled prompt and changes no tool schema, so the pinned schema budgets stay valid.
+- 发现路由句改为可判定的文档条件：读取器不在工具表中的 `.pdf`、`.docx`、`.csv` 或 `.tsv` 文件；并写明创建、编辑、渲染或导出 Office 文档归宿主 office 技能，读取失败时回退到该技能而不是重试读取器。只写格式、不写未发布的工具名；发现开启时提示词增加 279 字符（64 个 cl100k_base token），工具 schema 未变，已固定的 schema 预算仍然有效。
 - Preserve trailing backslashes in install specs delegated through Windows cmd launchers without relaxing injection refusal. / Windows cmd 启动器委派安装参数时保留末尾反斜杠，且不放宽注入拒绝。
 
 - Key the hidden-surface snapshot by view identity instead of projecting every schema, so the replacement guard and the assemble waterfall stop deep-copying the whole catalog on every pass; the optional scope now reaches the same cheap path and a scope-less read describes the global layer.
