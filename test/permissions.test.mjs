@@ -12,6 +12,7 @@ import { invoke as ptcCall } from '../lib/ptc/worker.js'
 import { tryResolveWorker } from '../lib/ptc/runtime.js'
 import { mountSessionBash } from '../lib/session-shells.js'
 import { resolveShells } from '../lib/shells.js'
+import { confinedBash } from '../lib/bash-ipc.js'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
 import FileSystem from '@deepseek-ai/dsh-fs-local'
@@ -351,6 +352,16 @@ await test('owned Modify-only workspace starts real DSH sandbox; three modes and
       assert.equal(page.items.length,1)
       const shells=resolveShells({allowSystemShellFallback:true,...(process.env.DSH_OPS_TEST_BASH?{bashPath:process.env.DSH_OPS_TEST_BASH}:{})})
       assert.ok(shells.bash.available,'Real bash required for permission matrix')
+      if (process.platform === 'win32' && process.env.DSH_OPS_TEST_BASH) {
+        // Cold legacy staging was measured at 12,708ms, above this matrix's 10s call budget.
+        // Prepare only the verified test runtime, not a command. Every call below still revalidates
+        // through production confinedBash and the real host sandbox with its unchanged deadline.
+        const started = performance.now()
+        const prepared = confinedBash(shells.bash.file, { source: shells.bash.source })
+        assert.ok(path.resolve(prepared.file).startsWith(path.resolve(process.env.DSH_HOME) + path.sep))
+        assert.notEqual(path.resolve(prepared.file), path.resolve(shells.bash.file))
+        console.log(`  legacy fixture pre-stage: ${Math.round(performance.now() - started)}ms (not a command result)`)
+      }
       await ctx.plugin({inject:['tools'],apply(inner){mountSessionBash(inner,{publishBashTool:true},shells)}})
       await ctx.serial('agent/created',{agent})
       let bash

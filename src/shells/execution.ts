@@ -3,6 +3,7 @@ import { Buffer } from 'node:buffer'
 import path from 'node:path'
 import type { SubprocessHandle, SubprocessOutputReader, SubprocessOutputRead } from '../adapter/dsh/types.js'
 import type { ShellExecutorOptions, ShellExecutionSpec, ShellCall, ShellExecution, ShellResult, ShellStream } from './types.js'
+import { errorMessage } from './types.js'
 import { DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_SPILL_BYTES, shellEnvOverrides } from './constants.js'
 import { formatBashSpawnError } from './spawn-error.js'
 
@@ -79,10 +80,17 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
       executor: { kind: 'subprocess', source },
     } } : {}),
   })
+  const deadline = spec.onExpiry === 'none' ? Infinity : startedAt + spec.timeoutMs
+  const expire = () => {
+    // Synchronous runtime preparation can block the timer; never spawn after its budget expired.
+    if (performance.now() >= deadline) stop('timeout', new Error(`command timed out after ${spec.timeoutMs}ms`))
+  }
+  const assertRunning = () => { expire(); controller.signal.throwIfAborted() }
   const run = async (): Promise<ShellResult> => {
     let value: ShellResult
+    let phase: 'preparation' | 'spawn' = 'preparation'
     try {
-      controller.signal.throwIfAborted()
+      assertRunning()
       const argv = spec.command === undefined ? [file, spec.scriptPath!] : [file, '-c', spec.command]
       // Race preparation so an unavailable provider cannot strand a cancelled job.
       let preparedArgv = argv
@@ -95,10 +103,12 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
         try { preparedArgv = await Promise.race([prepareArgv(argv, controller.signal), cancelled]) }
         finally { controller.signal.removeEventListener('abort', abort) }
       }
-      controller.signal.throwIfAborted()
+      assertRunning()
+      phase = 'spawn'
       if (!subprocess) throw new Error('Host subprocess service is unavailable')
       const childEnv = shellEnvOverrides(globalThis.process.env, env)
       if (prepareArgv) checkElectronRunner(preparedArgv, childEnv)
+      assertRunning()
       handle = subprocess.spawn({
         argv: preparedArgv,
         // Legacy direct executor callers can omit cwd; scoped host calls resolve it before this seam.
@@ -122,8 +132,10 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
         stderr: settledStream(handle.collected?.stderr, spec.includeDiagnostics),
       }
     } catch (error) {
+      expire()
       value = {
-        error: error instanceof UnadaptedElectronRunner ? error.message : formatBashSpawnError(error, file, source, spec.workdir),
+        // Preparation already owns its authority/runtime diagnostic; only spawn errors need routing.
+        error: phase === 'preparation' || error instanceof UnadaptedElectronRunner ? errorMessage(error) : formatBashSpawnError(error, file, source, spec.workdir),
         ...flags(),
         stdout: settledStream(handle?.collected?.stdout, spec.includeDiagnostics),
         stderr: settledStream(handle?.collected?.stderr, spec.includeDiagnostics),
