@@ -67,7 +67,7 @@ export class NativeFileTools {
     if (!this.file) return failure('EXECUTOR_UNAVAILABLE', 'Native file worker path is unavailable.')
     try {
       return await this.calls.run(exec?.signal, signal => tool === 'result'
-        ? invokeResult(this.ctx, this.file!, args, exec, signal, this.config, () => this.resultAdmission.allows(exec))
+        ? invokeResult(this.ctx, this.file!, args, exec, signal, this.config, () => this.resultAdmission.authorize({ ...exec, signal }).catch(() => undefined))
         : invoke(this.ctx, this.file!, tool, args, exec, signal, this.config), undefined,
       Math.min(this.config.toolCallTimeoutMs ?? WORKER_TIMEOUT_MS, WORKER_TIMEOUT_MS))
     } catch (error) {

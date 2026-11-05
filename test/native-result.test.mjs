@@ -308,31 +308,42 @@ await test('put rejects Native nested calls, forged parent and stale admission b
   })
 })
 
-for (const mode of ['changed', 'failed']) await test(`PTC put refuses ${mode} presentation inspection before cache IO`, () => withTempDir('ptc-put-presentation', async root => {
+for (const mode of ['changed', 'failed', 'cwd-changed', 'confine-changed']) await test(`PTC put refuses ${mode} preparation before cache IO`, () => withTempDir('ptc-put-presentation', async root => {
   let workerCalls = 0
+  let enter, release = () => {}, armed = true, admissionSeen = false
+  const entered = new Promise(resolve => { enter = resolve })
+  const gate = new Promise(resolve => { release = resolve })
+  const hold = async phase => {
+    if (armed && admissionSeen && mode === phase + '-changed') { armed = false; enter(); await gate }
+  }
   class CountingSubprocess extends Subprocess {
     spawn(spec) {
       if (path.resolve(spec.argv[0]) === path.resolve(WORKER)) ++workerCalls
       return super.spawn(spec)
     }
   }
-  const { ctx } = await bootHost()
-  let step, release = () => {}, remove = () => {}
+  class HeldSandbox extends Sandbox {
+    async confine(...args) { await hold('confine'); return super.confine(...args) }
+  }
+  const { ctx } = await bootHost({ withWorkingDirectory: false })
+  let step, remove = () => {}
   try {
-    for (const plugin of [CountingSubprocess, Sandbox, FileSystem, NodePtc]) await ctx.plugin(plugin)
-    ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'workspace-write', workspaceRoot: root }) })
+    ctx.provide('workingDirectory', {
+      get: session => session.header.cwd,
+      async ensure(owner) { await hold('cwd'); return owner.session.header.cwd },
+    })
+    for (const plugin of [CountingSubprocess, HeldSandbox, FileSystem, NodePtc]) await ctx.plugin(plugin)
+    ctx.provide('sandboxPolicy', { resolve: ({ session } = {}) => ({ mode: 'workspace-write', workspaceRoot: root, sessionId: session?.id }) })
     inventory(ctx)
     await mountNativeCatalogue(ctx, { binaryPath: WORKER, required: true })
     await ctx.plugin(ptc, { binaryPath: WORKER, required: true })
     await new Promise(resolve => setImmediate(resolve))
     const owner = await agent(ctx, root, 'ptc')
     step = await prepareStep(ctx, owner)
-    let enter, armed = true
-    const entered = new Promise(resolve => { enter = resolve })
-    const gate = new Promise(resolve => { release = resolve })
     remove = ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
       const result = await next()
-      if (armed && context.scope === owner && isPresentationProbe(context)) {
+      if (context.scope === owner && isPresentationProbe(context)) admissionSeen = true
+      if (armed && admissionSeen && (mode === 'changed' || mode === 'failed')) {
         armed = false; enter(); await gate
         if (mode === 'failed') throw new Error('presentation fixture unavailable')
       }
@@ -341,15 +352,19 @@ for (const mode of ['changed', 'failed']) await test(`PTC put refuses ${mode} pr
     const work = executeCall(ctx, { name: 'run_code', callId: 'put-presentation', agent: owner, toolSet: step.toolSet,
       arguments: { description: 'Attempt storage across a presentation change', code: `return await tools.${publicToolName('result')}({action:'put',items:[{unsafe:true}]});` } })
     let timer
-    try { await Promise.race([entered, new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error('result admission inspection was not reached')), 5000) })]) }
+    try { await Promise.race([entered,
+      work.then(result => { throw new Error('result operation settled before its controlled preflight: ' + JSON.stringify(result)) }),
+      new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error('result admission inspection was not reached')), 5000) }),
+    ]) }
     finally { clearTimeout(timer) }
-    if (mode === 'changed') {
+    if (mode !== 'failed') {
       owner.liftPresentation()
       await owner.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { owner.liftPresentation = selectExecutor(inner, 'native') } })
     }
     release()
     const result = await work
     assert.equal(result.isError, false, JSON.stringify(result))
+    assert.ok(result.value.result.error, JSON.stringify(result))
     assert.equal(result.value.result.error.code, 'PUBLICATION_DENIED', JSON.stringify(result))
     assert.equal(result.value.result.error.effectState, 'none')
     assert.equal(workerCalls, 0, 'rejected admission must not start result cache IO')

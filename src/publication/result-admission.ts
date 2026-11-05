@@ -2,7 +2,7 @@
 import type { Context, ToolRunContext, ToolExecution } from '../adapter/dsh/types.js'
 import { inspectPresentation } from './presentation.js'
 const owners = new WeakMap<object, { refs: number; active: Map<symbol, ToolExecution>; revision(): number; dispose(): void }>()
-export function acquireResultAdmission(ctx: Context): { allows(exec: ToolRunContext): Promise<boolean>; dispose(): void } {
+export function acquireResultAdmission(ctx: Context): { authorize(exec: ToolRunContext): Promise<(() => boolean) | undefined>; dispose(): void } {
   const root = ctx.root ?? ctx
   let owner = owners.get(root)
   if (!owner) {
@@ -21,19 +21,25 @@ export function acquireResultAdmission(ctx: Context): { allows(exec: ToolRunCont
   ++owned.refs
   let disposed = false
   return {
-    async allows(exec) {
+    async authorize(exec) {
       const parent = exec.parent && owned.active.get(exec.parent)
       if (disposed || !parent || parent.agent !== exec.agent || parent.toolSet !== exec.toolSet
-        || parent.rootCallId !== exec.rootCallId || parent.signal.aborted || exec.signal.aborted) return false
+        || parent.rootCallId !== exec.rootCallId || parent.signal.aborted || exec.signal.aborted) return undefined
       const prompt = ctx.get('systemPrompt')
-      if (!prompt || !exec.agent) return false
+      if (!prompt || !exec.agent) return undefined
       const revision = owned.revision()
+      // Carry the same grant through later asynchronous preflight. A successful
+      // probe is not a permanent authorization to touch result storage.
+      const current = () => !disposed && revision === owned.revision() && owned.active.get(parent.token) === parent
+        && parent.token === exec.parent && parent.agent === exec.agent && parent.toolSet === exec.toolSet
+        && parent.rootCallId === exec.rootCallId && !parent.signal.aborted && !exec.signal.aborted
       let assembly: Awaited<ReturnType<typeof inspectPresentation>>
       try { assembly = await inspectPresentation(prompt, exec.agent, exec.signal) }
-      catch { return false }
-      return !disposed && revision === owned.revision() && owned.active.get(parent.token) === parent && !parent.signal.aborted && !exec.signal.aborted
+      catch { return undefined }
+      return current()
         && assembly.tools.length === 1 && assembly.tools[0]?.name === 'run_code'
         && assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
+        ? current : undefined
     },
     dispose() {
       if (disposed) return

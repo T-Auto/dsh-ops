@@ -192,8 +192,10 @@ await test('same-scope PTC rows also use unique owned sections and restore the p
     await waitFor(async () => (await names(ctx, owner)).includes('ops_stat'))
     const second = await mount('grep')
     await waitFor(async () => (await names(ctx, owner)).includes('ops_grep') && !(await names(ctx, owner)).includes('ops_stat'))
-    const assembled = await ctx.get('systemPrompt').assemble({ scope: owner })
-    assert.equal(assembled.sections.filter(section => section.name.startsWith('dsh-ops:repository-tooling:mode-ptc') && section.text).length, 1)
+    const captured = await prepareStep(ctx, owner)
+    try {
+      assert.equal(captured.assembly.sections.filter(section => section.name.startsWith('dsh-ops:repository-tooling:mode-ptc') && section.text).length, 1)
+    } finally { captured.dispose() }
     await second.dispose()
     await waitFor(async () => (await names(ctx, owner)).includes('ops_stat') && !(await names(ctx, owner)).includes('ops_grep'))
     const restored = await call(ctx, owner, 'run_code', { description: 'Use the restored owner', code: "return await tools.ops_stat({path:'restore.txt'})" })
