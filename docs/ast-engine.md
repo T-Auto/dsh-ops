@@ -20,7 +20,12 @@ the same order:
 2. one `sandboxPolicy.resolve()` call, then a whitelist of its mode;
 3. a credential fence and an anchor check for every caller-named path — `file`, `beforeFile`, and
    each entry of `roots` — with the lexical name judged before the resolved real path;
-4. write intent (`ast_refactor` with `mode: "apply"`) requires `workspace-write`.
+4. **enumeration prunes the credential roots as well.** A per-argument fence cannot see a directory
+   walk, so the walk itself skips those trees and the candidate list is filtered again before any
+   file is read;
+5. write intent (`ast_refactor` with `mode: "apply"`) requires `workspace-write`, and only the
+   workspace may receive a write: the session cwd is a read scope, not a write grant, so a cwd
+   outside the workspace cannot authorise a commit.
 
 `@ast-grep/napi` is loaded on the first `ast_*` call, never at boot. If it cannot load, the tools
 return `EXECUTOR_UNAVAILABLE` and nothing else in the plugin is affected.
@@ -43,7 +48,8 @@ function, class, method, constructor, or a declaration whose value is a function
 | `skipDirs` | Directory names never descended into, e.g. `["dist","vendor"]`. |
 
 Returns `hits[]` (`file`, `lang`, `lines`, `signature`, optional `body`) plus `scanned`, `truncated`,
-`pruned` and `continuation`. Only the first 48 candidates are parsed once a prefilter leaves more than
+`pruned` and `continuation`. A walk stopped by `limit` reports `truncated: true`: the list is then
+not the complete set of matches. Only the first 48 candidates are parsed once a prefilter leaves more than
 that; `pruned: true` says so instead of silently reporting a short list.
 
 ## `ops_ast_refactor`
@@ -57,8 +63,10 @@ Rewrite source structurally with an ast-grep pattern and a rewrite template.
 | `mode` | `preview` (default) reports the plan and writes nothing; `apply` writes it. |
 | `detail` | Include the structural delta per file. |
 
-`apply` re-reads each file before committing and refuses a target that changed after the plan was
-built (`E_STALE`, nothing overwritten). One atomic replacement per file, written to a sibling temp file, fsynced, then renamed. The BOM,
+A receipt carries `matched`, `planned` and `remaining`, so a `limit`-stopped run says how much work
+it left behind instead of looking complete. `apply` opens each target once with `O_NOFOLLOW`, reads the bytes through that descriptor, and
+refuses a target whose inode changed before the rename (`E_STALE`, nothing overwritten). A target
+that became a link is refused rather than followed. One atomic replacement per file, written to a sibling temp file, fsynced, then renamed. The BOM,
 line endings and permission bits are read from the real file at commit time, never taken from the
 caller. **Ownership, ACLs, xattrs and hard links are not preserved**: the rename publishes a new
 inode, and this engine deliberately does not carry the native worker's metadata machinery. A

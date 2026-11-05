@@ -107,6 +107,8 @@ export async function invokeAst(tool: string, ctx: Context, args: unknown, exec:
 
     // Credential fence first: it must see the name the caller asked for, not the anchor result.
     const roots = [canonicalAnchor(policy.workspaceRoot), canonicalAnchor(cwd)]
+    // A read scope is not a write grant: a cwd outside the workspace must not authorise a commit.
+    const writeRoots = [canonicalAnchor(policy.workspaceRoot)]
     const confined = policy.mode !== 'danger-full-access'
     for (const target of named(input)) {
       const resolved = path.isAbsolute(target) ? path.normalize(target) : path.resolve(cwd, target)
@@ -127,11 +129,19 @@ export async function invokeAst(tool: string, ctx: Context, args: unknown, exec:
     }
     signal?.throwIfAborted?.()
 
-    const handler = source[tool.slice('ast_'.length) as 'locate' | 'refactor' | 'audit'] as unknown as (request: unknown, base: string, opts: { bounds?: readonly string[]; deny?: readonly string[]; cache?: boolean; signal?: AbortSignal }) => Promise<unknown> | unknown
+    const handler = source[tool.slice('ast_'.length) as 'locate' | 'refactor' | 'audit'] as unknown as (request: unknown, base: string, opts: { bounds?: readonly string[]; deny?: readonly string[]; cache?: boolean; signal?: AbortSignal; writeRoots?: readonly string[] }) => Promise<unknown> | unknown
     // Scope is the bridge's call: full access lifts the bound, enumeration always skips credentials.
     const bounds = policy.mode === 'danger-full-access' ? undefined : [policy.workspaceRoot, cwd]
-    const value = await handler(input, cwd, { bounds, deny: credentialRoots(), cache: policy.mode !== 'read-only', signal })
+    const value = await handler(input, cwd, { bounds, deny: credentialRoots(), cache: policy.mode !== 'read-only', signal, writeRoots })
     if (!record(value)) return failure('RESULT_UNKNOWN', 'AST engine returned no structured receipt.', mayWrite ? 'unknown' : 'none')
+    // Authority can be narrowed while the rewrite runs: never report an applied write as settled.
+    const confirmed = policyService.resolve({ session })
+    if (confirmed?.mode === 'read-only' && (value.effectState === 'applied' || value.effectState === 'partial')) {
+      return { ...value, status: 'error', error: { code: 'POLICY_CHANGED', phase: 'execute', effectState: value.effectState, retryable: false,
+        message: 'The sandbox was narrowed to read-only while this call was running. Files listed in filesApplied are already committed.',
+        nextAction: 'Inspect filesApplied before retrying; the rewrite is not fully applied.' },
+        sandbox: { mode: confirmed.mode, enforcement: 'policy', boundary: 'in-process-ast' } }
+    }
     return { ...canonical(value, mayWrite), sandbox: { mode: policy.mode, enforcement: 'policy', boundary: 'in-process-ast' } }
   } catch (error) {
     return failure('RESULT_UNKNOWN', `AST engine failed: ${errorText(error).slice(0, 400)}`, 'unknown')

@@ -17,7 +17,10 @@ English: [ast-engine.md](ast-engine.md)
 2. 一次 `sandboxPolicy.resolve()` 调用，随后校验其 mode 是否在白名单内；
 3. 对每个调用者点名的路径——`file`、`beforeFile`，以及 `roots` 的每一项——先过凭证围栏，再过锚定检查；
    先判词法路径，再判解析出的真实路径；
-4. 写意图（`ast_refactor` 且 `mode: "apply"`）要求 `workspace-write`。
+4. **遍历同样剪枝凭证目录**：逐参数围栏看不到目录遍历，所以遍历本身跳过这些树，候选清单在读取任何
+   文件之前再过滤一次；
+5. 写意图（`ast_refactor` 且 `mode: "apply"`）要求 `workspace-write`，且只有工作区可以接收写入：
+   会话 cwd 是读范围而非写授权，工作区之外的 cwd 不能为一次提交背书。
 
 `@ast-grep/napi` 在第一次 `ast_*` 调用时加载，绝不在启动期加载。加载失败时这三个工具返回
 `EXECUTOR_UNAVAILABLE`，插件其余功能不受影响。
@@ -39,7 +42,7 @@ English: [ast-engine.md](ast-engine.md)
 | `skipDirs` | 永不进入的目录名，例如 `["dist","vendor"]`。 |
 
 返回 `hits[]`（`file`、`lang`、`lines`、`signature`，可选 `body`），以及 `scanned`、`truncated`、
-`pruned`、`continuation`。预筛后候选超过 48 个时只解析前 48 个；此时 `pruned: true` 会明说，
+`pruned`、`continuation`。被 `limit` 截断的遍历报 `truncated: true`：此时列表不是完整命中集。预筛后候选超过 48 个时只解析前 48 个；此时 `pruned: true` 会明说，
 而不是悄悄返回一个过短的列表。
 
 ## `ops_ast_refactor`
@@ -53,7 +56,9 @@ English: [ast-engine.md](ast-engine.md)
 | `mode` | `preview`（默认）只回报计划、不写盘；`apply` 才写。 |
 | `detail` | 附带每个文件的结构差异。 |
 
-`apply` 在提交前重新读取每个文件，若目标在计划生成后发生变化则拒绝（`E_STALE`，不覆盖任何内容）。
+回执带 `matched`、`planned`、`remaining`，被 `limit` 截断的运行会说明自己留下了多少工作，而不是看上去做完了。
+`apply` 用 `O_NOFOLLOW` 打开每个目标一次，通过该描述符读取字节，并在 rename 前拒绝 inode 已变化的目标
+（`E_STALE`，不覆盖任何内容）；目标变成链接时拒绝而不是跟随。
 每个文件一次原子替换：写入同目录临时文件、fsync、再 rename。BOM、行尾与权限位在提交时从真实文件
 读取，绝不取自调用方。**属主、ACL、xattr 与硬链接不保留**：rename 发布的是新 inode，本引擎刻意
 不搬 native worker 那套元数据处理。第一次写入成功后

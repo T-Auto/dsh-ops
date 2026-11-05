@@ -8,8 +8,9 @@
  * @module dsh-ops/ast/engine
  */
 
-import { chmodSync, closeSync, existsSync, fsyncSync, mkdirSync, openSync, promises as fsp, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
+import { chmodSync, closeSync, existsSync, fstatSync, fsyncSync, mkdirSync, openSync, promises as fsp, readFileSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
 import { createHash, randomBytes } from 'node:crypto'
+import { constants as fsConstants } from 'node:fs'
 import { dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -64,6 +65,11 @@ export interface RefactorReceipt {
   files?: FileDelta[]
   filesTotal?: number
   filesApplied?: string[]
+  /** Files whose content matched, before `limit` was applied. */
+  matched?: number
+  planned?: number
+  /** Matched but not planned because `limit` stopped the walk: work still outstanding. */
+  remaining?: number
   applied?: boolean
   effectState?: 'none' | 'applied' | 'partial'
   audit?: AuditFacts
@@ -83,6 +89,8 @@ export interface EngineOptions {
   cache?: boolean
   /** Cancels enumeration and prefiltering; a truncation is reported, never a silent success. */
   signal?: AbortSignal
+  /** Where a commit may land. Absent means `bounds`; the session cwd is a read scope, not a write one. */
+  writeRoots?: readonly string[]
 }
 export interface LocateRequest { symbol?: string; file?: string; roots?: string[]; ext?: string[]; limit?: number; body?: number | boolean; continuation?: string; skipDirs?: string[] }
 export interface RefactorRequest extends LocateRequest { pattern?: string; rewrite?: string; mode?: 'preview' | 'apply'; detail?: boolean }
@@ -195,8 +203,7 @@ async function discover(roots: string[], exts: ReadonlySet<string>, opts: { offs
   const deadline = t0 + (opts.budgetMs ?? BUDGET_MS)
   const prior = opts.index?.dirs ?? {}
   const deny = opts.deny ?? []
-  const denied = (target: string): boolean =>
-    deny.some((root) => target === root || target.startsWith(root.endsWith(sep) ? root : root + sep))
+  const denied = (target: string): boolean => deny.length > 0 && deny.some((root) => resolvedInside(target, [root]) !== null)
 
   const files: string[] = []
   let reusedDirs = 0
@@ -450,8 +457,9 @@ async function candidatesOf(req: LocateRequest, cwd: string, opts: EngineOptions
   const skip = Array.isArray(req.skipDirs) && req.skipDirs.length ? new Set([...SKIP_DIRS, ...req.skipDirs]) : undefined
   const skipKey = skip ? [...skip].sort().join(',') : [...SKIP_DIRS].sort().join(',')
   const d = await discover(roots, extsOf(req), { offset: req.continuation ? Number(req.continuation) : 0, index: opts.cache === false ? null : loadIndex(roots[0], skipKey), skip, deny: opts.deny, cache: opts.cache, signal: opts.signal })
-  const { files, ...stats } = d
-  return { files, roots, discover: stats.continuation === null ? { ...stats, continuation: undefined } : stats }
+  const unique = d.files.filter((file, index, all) => all.indexOf(file) === index)
+  const { files: _raw, ...stats } = d
+  return { files: unique, roots, discover: stats.continuation === null ? { ...stats, continuation: undefined } : stats }
 }
 
 /** Shared enumeration gate for both verbs: candidates, root fence, empty result. */
@@ -597,31 +605,53 @@ function auditOf(lang: string, before: string, after: string, beforeRoot?: NapiR
 
 /** Single-file commit: re-read and compare, random tmp with O_EXCL, chmod, same-directory rename. */
 function commitSource(target: string, expectedText: string, nextText: string): void {
-  let freshBuf: Buffer | null = null
-  try { freshBuf = readFileSync(target) } catch { freshBuf = null }
+  // Open the target once, without following a link, and judge the bytes through that descriptor.
+  // Anything swapped in afterwards changes the inode, which the compare-and-swap below refuses.
+  let fd: number
+  try { fd = openSync(target, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW) } catch (e) {
+    throw Object.assign(new Error('the target is no longer a readable regular file; nothing was overwritten'), { code: 'E_STALE', cause: e })
+  }
+  let freshBuf: Buffer, before: ReturnType<typeof fstatSync>
+  try {
+    before = fstatSync(fd)
+    freshBuf = Buffer.alloc(before.size)
+    let read = 0
+    while (read < before.size) {
+      const n = readSync(fd, freshBuf, read, before.size - read, read)
+      if (n <= 0) break
+      read += n
+    }
+    freshBuf = freshBuf.subarray(0, read)
+  } finally { closeSync(fd) }
   let fresh: string | null = null
-  try { fresh = freshBuf ? new TextDecoder('utf-8', { fatal: true }).decode(freshBuf) : null } catch { fresh = null }
+  try { fresh = new TextDecoder('utf-8', { fatal: true }).decode(freshBuf) } catch { fresh = null }
   if (fresh === null || fresh !== expectedText) throw Object.assign(new Error('changed while the rewrite was planned; nothing was overwritten'), { code: 'E_STALE' })
-  const buf = freshBuf as Buffer
-  const bom = buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf
-  const perm = (statSync(target).mode & 0o0777) || 0o644
-  const tmp = join(dirname(target), `.ast-${randomBytes(8).toString('hex')}.tmp`)
+  const bom = freshBuf.length >= 3 && freshBuf[0] === 0xef && freshBuf[1] === 0xbb && freshBuf[2] === 0xbf
+  const perm = (before.mode & 0o0777) || 0o644
+  const dir = dirname(target)
+  const tmp = join(dir, `.ast-${randomBytes(8).toString('hex')}.tmp`)
   try {
     // Write, flush, then rename: a rename alone can publish an empty file after a power loss.
-    const fd = openSync(tmp, 'wx', perm)
+    const out = openSync(tmp, 'wx', perm)
     try {
-      writeSync(fd, (bom ? '\ufeff' : '') + nextText, null, 'utf8')
-      fsyncSync(fd)
-    } finally { closeSync(fd) }
+      writeSync(out, (bom ? '\ufeff' : '') + nextText, null, 'utf8')
+      fsyncSync(out)
+    } finally { closeSync(out) }
     try { chmodSync(tmp, perm) } catch { /* unsupported on this platform */ }
+    // Last look before publishing: same file, same location, or nothing is published.
+    const now = statSync(target)
+    if (now.ino !== before.ino || now.dev !== before.dev) {
+      throw Object.assign(new Error('the target was replaced while the rewrite was staged; nothing was overwritten'), { code: 'E_STALE' })
+    }
     renameSync(tmp, target)
     if (process.platform !== 'win32') {
       // The directory entry is the durability boundary on POSIX; open() on a directory is valid there.
-      try { const dir = openSync(dirname(target), 'r'); try { fsyncSync(dir) } finally { closeSync(dir) } } catch { /* best effort */ }
+      try { const handle = openSync(dir, 'r'); try { fsyncSync(handle) } finally { closeSync(handle) } } catch { /* best effort */ }
     }
     contentCache.delete(target) // the read path has no re-check, so the cache entry must go now
   } catch (e) {
     try { unlinkSync(tmp) } catch { /* already gone */ }
+    if ((e as { code?: string })?.code === 'E_STALE') throw e
     throw Object.assign(e as Error, { code: 'E_WRITE' })
   }
 }
@@ -634,7 +664,7 @@ export async function refactor(req: RefactorRequest, cwd: string = process.cwd()
     if (typeof req.pattern !== 'string' || typeof req.rewrite !== 'string') return { ...out, status: 'error', code: 'E_BAD_ARGS', message: 'pattern and rewrite are required' }
     if (req.pattern.length > 4096 || req.rewrite.length > 4096 || (req.symbol ?? '').length > 512) return { ...out, status: 'error', code: 'E_BAD_ARGS', message: 'pattern / rewrite / symbol too long', applied: false }
     const limit = Math.min(Math.max(Math.trunc(req.limit ?? 1) || 1, 1), 500)
-    const c = await openCandidates(req, cwd)
+    const c = await openCandidates(req, cwd, opts)
     if ('error' in c) return { ...out, status: 'error', code: c.code, message: c.error, applied: false, ...(c.continuation ? { continuation: c.continuation } : {}) }
     const { files, roots, discover: d } = c
     out.discover = d
@@ -645,8 +675,8 @@ export async function refactor(req: RefactorRequest, cwd: string = process.cwd()
     const encSkipped: string[] = []
     let firstMiss: string | null = null
 
-    for (const cand of await prefilterAsync(files, req.symbol ?? literalOf(req.pattern))) {
-      if (plans.length >= limit) break
+    let matched = 0
+    for (const cand of await prefilterAsync(files, req.symbol ?? literalOf(req.pattern), opts.signal)) {
       const file = cand.file
       const lang = langFor(file)
       if (!lang || !anchored(file, roots)) continue
@@ -670,6 +700,9 @@ export async function refactor(req: RefactorRequest, cwd: string = process.cwd()
       }
       const nodes = [...found.values()].sort((a, b) => a.range().start.index - b.range().start.index)
       if (nodes.length === 0) { firstMiss ??= `pattern matched nothing: ${req.pattern}`; continue }
+      // Count every match before honouring the limit, so the receipt can say what was left out.
+      matched++
+      if (plans.length >= limit) { firstMiss ??= `${matched} files match; only the first ${limit} were ${mode === 'apply' ? 'planned' : 'shown'}`; continue }
 
       const after = withEol(root.commitEdits(nodes.map((n) => n.replace(expand(n, req.rewrite as string, src.text as string)))), eolOf(src.text))
       const delta = lineDelta(src.text, after)
@@ -697,15 +730,21 @@ export async function refactor(req: RefactorRequest, cwd: string = process.cwd()
 
     const base: RefactorReceipt = {
       ...out, edits: totalEdits, files: fileSummary, filesTotal: plans.length,
+      matched, planned: plans.length, remaining: Math.max(matched - plans.length, 0),
       ...(d.continuation ? { continuation: d.continuation } : {}),
       ...(plans.length === 1 ? { audit: plans[0].audit } : {}),
     }
     if (mode === 'preview') return { ...base, applied: false, effectState: 'none' }
 
     /* Phase 2 commits file by file; any failure is reported as partial. */
+    const writeRoots = opts.writeRoots ?? opts.bounds ?? [cwd]
     const appliedFiles: string[] = []
     for (const plan of plans) {
       try {
+        if (opts.signal?.aborted) throw Object.assign(new Error('cancelled before commit'), { code: 'E_ABORTED' })
+        if (writeRoots && writeRoots.length > 0 && resolvedInside(plan.target, writeRoots) === null) {
+          throw Object.assign(new Error(`${plan.rel} is outside the write roots`), { code: 'PATH_RESTRICTED' })
+        }
         commitSource(plan.target, plan.text, plan.after)
         appliedFiles.push(plan.rel)
       } catch (e) {
