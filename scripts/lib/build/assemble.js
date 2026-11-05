@@ -38,12 +38,12 @@ export function shellPackageName(kind, platform, arch) {
  * @param {string} dist - the artifact directory.
  * @returns {object[]} one description per package, in publish order.
  */
-export function describePackages(platform, arch, dist) {
+export function describePackages(platform, arch, dist, backend = 'niubash') {
+  if (backend === 'niubash') return []
+  if (backend !== 'git-bash') throw new Error(`Unknown distribution backend: ${backend}`)
   const name = shellPackageName('bash', platform, arch)
-  // The declared optionalDependency is the single source of truth for the payload version.
-  // Building or injecting any other version would create exactly the silent failure the pin prevents.
-  const version = mainManifest().optionalDependencies?.[name]
-  if (typeof version !== 'string' || version.length === 0) throw new Error(`${name} must be declared in package.json optionalDependencies`)
+  // Explicit legacy build only; the default main package never depends on this artifact.
+  const version = '0.2.1'
   return [
     {
       kind: 'bash',

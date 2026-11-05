@@ -7,6 +7,8 @@
  * @module dsh-ops/build/lib/publish-dir
  */
 
+import { NIUBASH_PACKAGE_PATH, verifyNiubashTree } from '../../../lib/cli/niubash-payload.js'
+import { checkNiubash } from './niubash.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { packDirectory, writeReleaseRecords } from './pack.js'
@@ -67,7 +69,8 @@ export async function stepPublishDir(context, assembled) {
   // whitelist in `files` is then checked against it instead of being
   // re-implemented here (globs, always-included files, and ignore rules all
   // come from npm alone).
-  const dryRun = npm(['pack', '--dry-run', '--json'], { cwd: REPO_ROOT })
+  run(process.execPath, [path.join(REPO_ROOT, 'scripts/build.mjs')])
+  const dryRun = npm(['pack', '--dry-run', '--ignore-scripts', '--json'], { cwd: REPO_ROOT })
   const report = parseNpmPackReport(dryRun.stdout, 'npm pack --dry-run', manifest)
   const listed = report.files.map((entry) => entry.path).sort()
   for (const entry of listed) copyEntry(path.join(REPO_ROOT, entry), path.join(directory, entry))
@@ -76,6 +79,13 @@ export async function stepPublishDir(context, assembled) {
   const uncovered = whitelist.filter((entry) => !listed.some((file) => file === entry || file.startsWith(`${entry}/`)))
   if (uncovered.length > 0) {
     throw new Error(`the files whitelist names ${uncovered.join(', ')}, which npm would not publish`)
+  }
+
+  if (context.backend !== 'git-bash') {
+    const target = path.join(directory, NIUBASH_PACKAGE_PATH)
+    fs.rmSync(target, { recursive: true, force: true })
+    fs.cpSync(checkNiubash(context), target, { recursive: true, dereference: false })
+    verifyNiubashTree(target)
   }
 
   const publishable = { ...manifest, optionalDependencies: injectedOptionalDependencies(context) }

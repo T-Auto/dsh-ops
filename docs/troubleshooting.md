@@ -137,16 +137,22 @@ an empty false-success result is a separate problem (#374 and #373).
 
 `ops_bash` uses host approval for a strictly wider `sandbox_permissions` mode. Supply a non-empty `justification` for that exact command. A rejection or missing approval service prevents execution; do not retry through another shell. Approval does not repair an incompatible restricted Bash runtime.
 
-### Desktop returns an empty successful Bash result
+### Desktop runs Bash without Node mode
 
-An Electron host can return its Desktop executable as the Node sandbox runner.
-Without an explicit Node-mode environment, this launches the application again;
-the single-instance handler may exit 0 without running Bash (#484). OPS now stops
-this argv shape before spawning and reports `EXECUTOR_UNAVAILABLE`, with no command
-effects. The host must provide a supported runner or explicitly prepared Electron
-Node mode. OPS does not guess private Desktop entry points or enable Node mode on
-the host's behalf. This guard diagnoses the integration error; it does not repair
-the host runner. A legitimate command that exits 0 with no output remains successful.
+A confined Windows sandbox wraps the command as `[process.execPath, …/runner.js, …argv]`, so an
+Electron host hands OPS its own Desktop executable as the Node runner. Without
+`ELECTRON_RUN_AS_NODE=1` that relaunches the single-instance application, which can exit 0 without
+running Bash (#484). For a self-runner — a prepared argv whose first element resolves to the
+Desktop executable — OPS now supplies the variable before spawning: argv, policy and sandbox are
+unchanged, and only a self-runner is given Node mode (#574). OPS recognises that shape by
+`argv[0]`, not by the runner's file name, so a self-runner argv that is not a Node entry now runs
+as Node instead of being refused as before; the sandbox provider is the only producer of that
+argv, and for a confined call the alternative is Bash that never starts.
+An unconfined call is not touched, a host that supplies a real Node runner keeps its own
+environment, and an explicit `ELECTRON_RUN_AS_NODE=1` is never duplicated. The variable is inherited
+by the command's own children, so an Electron application started from a confined `ops_bash` also
+runs in Node mode; the sandboxed host process tree already behaves that way, so the exposure does
+not grow. A command that legitimately exits 0 with no output remains successful.
 
 ### Windows reports exit code 3221225794 or -1073741502
 
@@ -218,14 +224,15 @@ The `dsh-ops/background` component and its FastCtx-backed tools (`ops_run`, `ops
 
 ### `DSH workspace preparation failed`
 
-Before the first restricted `run_code` / `pwsh` / `bash` / `ops_bash` call in a workspace-write session, dsh-ops gives the workspace root a directory-only `WRITE_OWNER` ACE, which the host sandbox needs. The original DACL is backed up to `<DSH_HOME>/dsh-ops/acl-backups/` first. Later calls take a fast `ready` path.
+Before the first restricted `run_code` / `pwsh` / `bash` / `ops_bash` call in a workspace-write session, dsh-ops accepts an existing effective `WRITE_OWNER` grant as-is, whatever the root's owner, or gives the workspace root a directory-only `WRITE_OWNER` ACE; either way the host sandbox gets the grant it needs. When an ACE is added, the original DACL is backed up to `<DSH_HOME>/dsh-ops/acl-backups/` first. Later calls take a fast `ready` path.
 
 This step runs the package's own `bin/prepare-workspace.ps1` with Windows PowerShell 5.1 **as the current user, before sandbox confinement applies**, only on Windows in workspace-write mode, and changes only the workspace root's own DACL. Read-only and danger-full-access sessions skip it.
 
 The message names the cause:
 
 - `PowerShell execution policy blocked dsh-ops's own preparation script …`: dsh-ops passes `-ExecutionPolicy Bypass` (earlier versions did not, so the Windows client default `Restricted` blocked every shell tool, #66). A refusal now means Group Policy (MachinePolicy/UserPolicy) enforces the policy; `Set-ExecutionPolicy -Scope CurrentUser` cannot override it. Check `powershell.exe -NoProfile -Command Get-ExecutionPolicy -List`, ask an administrator, or use danger-full-access for the session.
-- `the workspace root … does not meet the sandbox prerequisite …`: the folder itself is the problem — it is not owned by the current user, its path goes through a junction or symlink, or `WRITE_OWNER` is explicitly denied or cannot be granted. Fix the folder's owner or permissions, or open a workspace you own. This is not a DSH authorization denial.
+- `the workspace root … is not owned by the current user …`: the folder grants no effective `WRITE_OWNER` and another account owns it, so dsh-ops refuses to add that ACE outside a folder you own. A folder that already grants `WRITE_OWNER` is used as-is whatever its owner (#651). Grant `WRITE_OWNER` on that folder, take ownership of it, or use danger-full-access. This is not a DSH authorization denial.
+- `the workspace root … does not meet the sandbox prerequisite …`: the folder itself is the problem — its path goes through a junction or symlink, `WRITE_OWNER` is explicitly denied, or the ACL write was refused. Fix the folder's permissions, or open a workspace you own. This is not a DSH authorization denial.
 
 - The root DACL is written through its own handle, without Windows' inheritance walk, so the cost no longer grows with the number of files (measured: 18.7 s → 4.3 s for 50,000 files; about 3.9 s for 10 files, mostly PowerShell startup). Earlier versions walked the whole tree and hit a 10 s limit on large workspaces, with nothing after the colon. (#43)
 - `the preparation executor timed out after 120000 ms …`: a 120 s safety net was hit. The ACL state is unknown, so compare the root DACL with the newest receipt in `acl-backups` before retrying. `the preparation executor could not start …` means `powershell.exe` itself could not be launched.

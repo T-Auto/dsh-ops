@@ -4,6 +4,7 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { PACKAGE_ROOT, assert, report, test, withTempDir } from './lib/harness.mjs'
+import { NIUBASH_PACKAGE_PATH } from '../lib/cli/niubash-payload.js'
 import { PLATFORMS, workerName } from '../lib/ptc/runtime.js'
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 function header(target) {
@@ -34,6 +35,13 @@ function fixture(root, targets = PLATFORMS) {
     for(const name of ['opsipc.dll','opsnt.dll']) { fs.writeFileSync(path.join(ipc,name),name); receipt.files[name]=hash(name) }
     for(const name of ['security.h','opsipc.cpp','opsnt.cpp']) { fs.writeFileSync(path.join(source,name),name); receipt.sources[name]=hash(name) }
     fs.writeFileSync(path.join(ipc,'provenance.json'),JSON.stringify(receipt))
+  }
+  // Share the immutable real frozen fixture across synthetic worker headers; never fake its hash.
+  if (targets.includes('win32-x64')) fs.cpSync(path.join(PACKAGE_ROOT, NIUBASH_PACKAGE_PATH), path.join(root, NIUBASH_PACKAGE_PATH), { recursive: true })
+  for (const relative of ['cli/niubash-payload.js', 'cli/niubash-payload-manifest.json', 'niubash/faces.js']) {
+    const target = path.join(root, 'lib', relative)
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    fs.copyFileSync(path.join(PACKAGE_ROOT, 'lib', relative), target)
   }
   return root
 }
@@ -77,7 +85,7 @@ await test('manifest exact targets, npm platform filters and shell pins must agr
   manifest.contributes['x-components'].find(c=>c.id==='dsh-ops').targets.push('win32-arm64')
   fs.writeFileSync(file,JSON.stringify(manifest)); assert.match(run(root).out,/disagree/)
 }))
-await test('release closure requires the pinned Bash payload and refuses a PowerShell dependency', async () => withTempDir('release-shell-dep', root => {
+await test('release closure embeds Niubash and refuses legacy shell dependencies', async () => withTempDir('release-shell-dep', root => {
   fixture(root)
   const file = path.join(root, 'package.json'), pkg = JSON.parse(fs.readFileSync(file, 'utf8'))
   const write = changed => fs.writeFileSync(file, JSON.stringify(changed))
@@ -85,7 +93,6 @@ await test('release closure requires the pinned Bash payload and refuses a Power
   assert.equal(expected.status, 0, expected.out)
   assert.match(expected.out, /Release closure OK/)
   const cases = [
-    { ...pkg, optionalDependencies: {} },
     { ...pkg, optionalDependencies: { ...pkg.optionalDependencies, '@dsh-ops/bash-win32-x64': '9.9.9' } },
     { ...pkg, dependencies: { ...pkg.dependencies, '@dsh-ops/bash-win32-x64': '0.2.1' } },
     { ...pkg, optionalDependencies: { ...pkg.optionalDependencies, '@dsh-ops/pwsh-win32-x64': '0.2.1' } },
@@ -95,7 +102,7 @@ await test('release closure requires the pinned Bash payload and refuses a Power
     write(changed)
     const result = run(root)
     assert.notEqual(result.status, 0, JSON.stringify(changed.optionalDependencies))
-    assert.match(result.out, /must remain the pinned|must be optional|must not be a package dependency|only @dsh-ops optional payload/)
+    assert.match(result.out, /must not be a package dependency/)
   }
 }))
 await test('release rejects a missing, duplicated or legacy component roster', async () => withTempDir('release-roster', root => {

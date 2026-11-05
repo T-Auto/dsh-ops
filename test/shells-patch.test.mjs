@@ -55,7 +55,7 @@ await test('every shipped preset section states the documented shell defaults th
   }
 })
 
-await test('system discovery is opt-in on Windows and is the rung on a POSIX host', async () => {
+await test('Windows never implicitly discovers ambient Bash; POSIX retains system discovery', async () => {
   await withTempDir('shells-default-confined', dir => {
     // Both spellings exist, so the case asserts the same facts on either host.
     const system = makeExecutable(path.join(dir, 'bin', 'bash'))
@@ -70,19 +70,18 @@ await test('system discovery is opt-in on Windows and is the rung on a POSIX hos
     for (const raw of [resolveConfig({}), {}, undefined]) {
       const result = resolveShells(raw, { ...base, platform: 'win32', arch: 'x64' }).bash
       assert.equal(result.available, false, JSON.stringify(result))
-      assert.equal(result.source, 'disabled')
+      assert.equal(result.source, 'missing')
       assert.equal(result.file, undefined)
     }
-    // Windows with the flag ON: PATH answers first, and the well-known install answers when PATH
-    // does not — the same two rungs the POSIX host uses, reached through the gate instead.
+    // The historical flag cannot opt into an implicit Windows engine switch.
     const winFallback = resolveShells(config({ allowSystemShellFallback: true }), { ...base, platform: 'win32', arch: 'x64' }).bash
-    assert.equal(winFallback.source, 'path')
-    assert.equal(winFallback.file, systemExe)
+    assert.equal(winFallback.source, 'missing')
+    assert.equal(winFallback.file, undefined)
     const winWellKnown = resolveShells(config({ allowSystemShellFallback: true }), {
       ...base, platform: 'win32', arch: 'x64', env: { ...base.env, PATH: '/nonexistent-bin' },
     }).bash
-    assert.equal(winWellKnown.source, 'well-known', JSON.stringify(winWellKnown))
-    assert.equal(winWellKnown.file, wellKnown)
+    assert.equal(winWellKnown.source, 'missing', JSON.stringify(winWellKnown))
+    assert.equal(winWellKnown.file, undefined)
     // POSIX: the machine's own bash IS the rung, so the same config resolves it with no flag — and
     // `config.bashPath` still outranks discovery.
     const linux = resolveShells(config({}), { ...base, platform: 'linux', arch: 'x64' }).bash

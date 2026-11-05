@@ -141,6 +141,19 @@ interface Entry {
 // Track only this module's exact registrations, never foreign Bash providers.
 const bashOwners = new WeakMap<Agent, { entry: Entry; allowed(): boolean; clear(): void }>()
 
+/**
+ * The tool-registry surface a restriction decision reads.
+ *
+ * `restrict()` masks inherited global names only, and `restrictableNames` is the exact
+ * set of names it accepts for a scope: a name registered in the scope's own layer is
+ * absent from it and can never be masked. Reading the view keeps that permanent
+ * boundary from being attempted, and then reported, on every pass (#652).
+ */
+type RestrictableTools = {
+  view?(scope?: object): { restrictableNames?: Set<string> } | undefined
+  get?(name: string, scope?: object): unknown
+}
+
 /** A row's per-Agent permission to publish its bash layer. */
 export interface BashGate {
   /** Whether the row owns this Agent's mode. */
@@ -236,7 +249,13 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
     }
     for (const [agent, entry] of entries) {
       if (!entry.ctx || permitted.get(agent) || stopped || entry.dispose) continue
-      if (ctx.get('tools')?.get(BASH_TOOL, agent)) {
+      const tools = ctx.get('tools') as RestrictableTools | undefined
+      // `ops_bash` lands in the Agent's own layer, and `restrict()` masks inherited global
+      // names only, so masking it can never succeed: the attempt was retried and reported
+      // on every pass instead of being left as the boundary it is (#652). An inherited
+      // Bash a host does expose in `restrictableNames` keeps the mask below.
+      if (!tools?.view?.(agent)?.restrictableNames?.has?.(BASH_TOOL)) continue
+      if (tools.get?.(BASH_TOOL, agent)) {
         try { entry.dispose = withToolChange([agent], () => entry.ctx!.tools.restrict({ deny: [BASH_TOOL] })); entry.published = false }
         catch (error) { ctx.logger?.warn?.(`dsh-ops: inherited bash restriction failed: ${errorMessage(error)}`) }
       }

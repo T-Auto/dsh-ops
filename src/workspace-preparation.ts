@@ -47,8 +47,11 @@ export const PREPARATION_TIMEOUT_MS = 120_000
 const FAILED = 'DSH workspace preparation failed'
 // Locale-independent markers PowerShell prints when execution policy refuses a script file.
 const EXECUTION_POLICY = /about_Execution_Policies|UnauthorizedAccess|PSSecurityException/i
-// bin/prepare-workspace.ps1's own refusals, plus a denied DACL write: the folder lacks the prerequisite.
-const PREREQUISITE = /not owned by the current user|reparse point|Explicit effective denial of WRITE_OWNER|is not a directory|WRITE_OWNER verification failed|Access is denied|0x80070005/i
+// A folder owned by another account is usable when it already grants WRITE_OWNER; preparation
+// refuses only when the ACE still has to be added, and that reason is reported separately (#651).
+const OWNER_MISMATCH = /Workspace is not owned by the current user/i
+// bin/prepare-workspace.ps1's other refusals, plus a denied DACL write: the folder lacks the prerequisite.
+const PREREQUISITE = /reparse point|Explicit effective denial of WRITE_OWNER|is not a directory|WRITE_OWNER verification failed|Access is denied|0x80070005/i
 /** Name the cause of a failed preparation run, so a policy, a folder and an executor problem read differently (#66). */
 export function classifyPreparationFailure(output: string, { root, script: file = script }: { root?: string; script?: string } = {}) {
   const tail = output.trim() || '(no output)'
@@ -57,6 +60,10 @@ export function classifyPreparationFailure(output: string, { root, script: file 
   }
   if (EXECUTION_POLICY.test(output)) {
     return `PowerShell execution policy blocked dsh-ops's own preparation script ${file} even with -ExecutionPolicy Bypass, so the policy comes from Group Policy (MachinePolicy/UserPolicy). Ask an administrator, check \`powershell.exe -NoProfile -Command Get-ExecutionPolicy -List\`, or use danger-full-access for this session (it skips preparation). Output: ${tail}`
+  }
+  if (OWNER_MISMATCH.test(output)) {
+    const reason = output.split(/\r?\n/).map(line => line.trim()).find(line => OWNER_MISMATCH.test(line)) ?? tail
+    return `the workspace root ${root} is not owned by the current user and does not already grant the host's WRITE_OWNER prerequisite, so automatic ACL preparation left it unchanged: ${reason.replace(/\.?$/, '.')} This is a folder permission problem, not a DSH authorization denial.`
   }
   if (PREREQUISITE.test(output)) {
     const reason = output.split(/\r?\n/).map(line => line.trim()).find(line => PREREQUISITE.test(line)) ?? tail

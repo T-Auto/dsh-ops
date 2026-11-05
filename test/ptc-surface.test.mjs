@@ -12,7 +12,7 @@
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { assert, test, report } from './lib/harness.mjs'
-import { surfaceOf, surfaceNames } from '../lib/surface.js'
+import { surfaceOf, surfaceNames, visibleNames } from '../lib/surface.js'
 
 /** A registered tool whose schema is big enough that a deep copy is measurable. */
 const tool = name => ({
@@ -75,6 +75,20 @@ await test('a surface read does not re-read the view once per name', () => withS
   assert.equal(surfaceNames(surface).length, 2, 'the surface still describes every visible tool')
 }))
 
+await test('reading many scopes costs one view each, not one per name', () => withScope(async ({ ctx, tools, key, views }) => {
+  // The hidden-surface snapshot reads every tracked scope once per dispatch, so the per-scope
+  // cost is what decides whether dispatch stays cheap as agents accumulate. One view per scope
+  // keeps the cost linear in scopes; a per-name read would make it scopes times names, which is
+  // the O(scopes × tools) shape this test refuses to let back in.
+  // `scope.ctx` is not a key: passing it silently reads the global layer, so every entry in this
+  // list has to be the opaque key itself or the test only proves three global reads.
+  const keys = [key, { id: 'scope-b' }, { id: 'scope-c' }]
+  for (const extra of keys.slice(1)) createScope(ctx, extra)
+  views.count = 0
+  for (const scopedKey of keys) surfaceOf(tools, scopedKey)
+  assert.equal(views.count, keys.length, 'one view read per scope key, independent of how many tools it names')
+}))
+
 await test('a surface read agrees with schemas() for the same scope', () => withScope(async ({ tools, key }) => {
   const projected = tools.schemas(key).map(schema => schema.name)
   assert.deepEqual(surfaceNames(surfaceOf(tools, key)), projected, 'the memo key must name exactly what schemas() projects, in the same order')
@@ -111,6 +125,12 @@ await test('a host without a reachable view still names the surface', () => with
   const projected = tools.schemas(key).map(schema => schema.name)
   const noView = { schemas: scope => tools.schemas(scope) }
   assert.deepEqual(surfaceNames(surfaceOf(noView, key)), projected, 'the fallback names exactly what schemas() projects')
+  // The projection has already detached every parameter schema, so the fallback pairs each
+  // name with the description it already holds: a concat, not a copy. That is enough to see a
+  // same-named swap that ships a new description, without a second pass over the tree.
+  const swapped = { schemas: scope => tools.schemas(scope).map(schema => ({ ...schema, description: `swapped ${schema.name}` })) }
+  assert.notEqual(surfaceOf(swapped, key), surfaceOf(noView, key), 'a same-named swap with a new description moves the fallback key')
+  assert.deepEqual(surfaceNames(surfaceOf(noView, key)), projected, 'the description suffix never leaks into a name')
 }))
 
 /**
@@ -145,5 +165,59 @@ async function withScope (body) {
     await body({ ctx, tools, key, agent: scope.ctx, calls: countSchemas(tools), views: countViews(tools) })
   } finally { await shutdown(ctx) }
 }
-
+await test('a surface read without a scope describes the global layer', () => withScope(async ({ tools, calls }) => {
+  // The memo key is also read for the global layer (official-tool-hiding does that before
+  // any agent exists), so the optional scope must reach the same cheap view path instead of
+  // falling back to a projection for the largest surface of all.
+  calls.count = 0
+  const surface = surfaceOf(tools)
+  assert.equal(calls.count, 0, 'the global layer must be read through the view as well')
+  assert.deepEqual(surfaceNames(surface).sort(), ['alpha', 'beta'], 'a scope-less read names the global registrations')
+}))
+await test('a registry with no projection answers without throwing', () => withScope(async ({ tools }) => {
+  // Both readers fall back to `schemas` when the view publishes no keys, so a registry that
+  // offers neither can still be read: naming nothing is the honest answer, throwing on a
+  // dispatch path is not.
+  assert.deepEqual(visibleNames({}), [], 'no reader names nothing')
+  assert.equal(surfaceOf({}), '', 'and describes an empty surface')
+  const empty = { view: () => ({ visible: { entries: () => [] } }) }
+  assert.deepEqual(visibleNames(empty), [], 'a view that publishes neither reader names nothing')
+  // `entries()` carries the names. Answering from `keys()` alone reported an empty surface for
+  // such a host while `surfaceOf` built its key from those same entries — two readers describing
+  // two different surfaces.
+  const entriesOnly = { view: () => ({ visible: { entries: () => [['alpha', {}], ['beta', {}]] } }) }
+  assert.deepEqual(visibleNames(entriesOnly), ['alpha', 'beta'], 'names come from entries when the view publishes them')
+  assert.deepEqual(surfaceNames(surfaceOf(entriesOnly)), ['alpha', 'beta'], 'and both readers describe the same surface')
+}))
+await test('a description carrying a separator cannot forge an entry', () => withScope(async ({ tools, key }) => {
+  // Entries are NUL-joined and a name is split from its payload with SOH. Off the view path the
+  // description is the only payload `schemas()` hands over, so it is the only place one of those
+  // characters could smuggle in and make two registrations read back as three names.
+  for (const description of ['before\u0000after', 'x\u0000y\u0001z', 'plain', '\\u0000 literal']) {
+    const stand = { schemas: () => tools.schemas(key).map(schema => ({ ...schema, description })) }
+    assert.deepEqual(surfaceNames(surfaceOf(stand, key)).sort(), ['alpha', 'beta'],
+      'a separator in the description stays inside its own entry: ' + JSON.stringify(description))
+  }
+  // `tools.register()` validates the output schema and the timeout, not the type of
+  // `description`, and `schemaOf` forwards it unchanged: this key is read on the dispatch path,
+  // so a host that hands over a number must not turn it into a throw.
+  for (const description of [42, null, { toString: () => 'object description' }]) {
+    const stand = { schemas: () => tools.schemas(key).map(schema => ({ ...schema, description })) }
+    assert.doesNotThrow(() => surfaceOf(stand, key), 'a non-string description must not throw: ' + String(description))
+    assert.deepEqual(surfaceNames(surfaceOf(stand, key)).sort(), ['alpha', 'beta'], 'and the names survive')
+  }
+}))
+await test('a name carrying a separator cannot forge an entry either', () => withScope(async ({ tools, key }) => {
+  // `tools.register()` validates the output schema and the timeout, not the name, so a host can
+  // hand over a name carrying NUL or SOH. Names are escaped on the way into the key and unescaped
+  // on the way out, otherwise `surfaceNames` reads one registration back as two.
+  for (const name of ['forge\u0000two', 'split\u0001payload', 'plain', 'back\\slash']) {
+    const entries = { view: () => ({ visible: { entries: () => [[name, {}]] } }) }
+    assert.deepEqual(surfaceNames(surfaceOf(entries)), [name], 'entries path: ' + JSON.stringify(name))
+    const only = { view: () => ({ visible: { keys: () => [name] } }) }
+    assert.deepEqual(surfaceNames(surfaceOf(only)), [name], 'keys path: ' + JSON.stringify(name))
+    const projected = { schemas: () => [{ name, description: 'ignored' }] }
+    assert.deepEqual(surfaceNames(surfaceOf(projected)), [name], 'projection path: ' + JSON.stringify(name))
+  }
+}))
 report('ptc-surface')

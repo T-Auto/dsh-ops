@@ -14,21 +14,12 @@ while ($null -ne $cursor) {
     $cursor = $cursor.Parent
 }
 $acl = Get-Acl -LiteralPath $item.FullName
-if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $identity.User.Value) {
-    throw 'Workspace is not owned by the current user; refusing automatic ACL preparation'
-}
+. (Join-Path $PSScriptRoot 'workspace-acl.ps1')
+$decision = Get-DshOpsWorkspaceDecision -Acl $acl -Identity $identity -Principal $principal
+if ($decision.State -eq 'denied') { throw $decision.Reason }
+if ($decision.State -eq 'ready') { Write-Output 'ready'; exit 0 }
+if ($decision.State -eq 'foreign-owner') { throw $decision.Reason }
 $needed = [Security.AccessControl.FileSystemRights]::TakeOwnership # WRITE_OWNER, needed to set the sandbox integrity label
-$allow = 0L
-$deny = 0L
-foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
-    if ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) { continue }
-    $active = $rule.IdentityReference.Value -eq $identity.User.Value -or $principal.IsInRole($rule.IdentityReference)
-    if (!$active) { continue }
-    if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Deny) { $deny = $deny -bor [long]$rule.FileSystemRights }
-    else { $allow = $allow -bor [long]$rule.FileSystemRights }
-}
-if ($deny -band [long]$needed) { throw 'Explicit effective denial of WRITE_OWNER; refusing to override user policy' }
-if ($allow -band [long]$needed) { Write-Output 'ready'; exit 0 }
 # Write only the root's own DACL through its handle. The added ACE is directory-only and the
 # inheritable ACEs are unchanged, so no descendant needs a new ACL; path-based SetAccessControl
 # (SetNamedSecurityInfo) would still walk and re-propagate the whole subtree, which scales with

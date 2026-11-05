@@ -9,6 +9,7 @@
  * @module dsh-ops/cli/provision-shells
  */
 
+import { NIUBASH_PIN, NIUBASH_HOME_PATH, stageNiubashArchive, verifyNiubashTree } from './niubash-payload.js'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
@@ -345,7 +346,7 @@ export function validatePin(value: unknown, index: number): ShellPin {
  * @throws {Error} when the file is unreadable or a pin is malformed.
  */
 export function pinTable(file: string | undefined): ShellPin[] {
-  if (file === undefined) return SHELL_UPSTREAM_PINS.map((pin, index) => validatePin(pin, index))
+  if (file === undefined) return SHELL_UPSTREAM_PINS.filter(pin => pin.name !== 'bash').map((pin, index) => validatePin(pin, index))
   const resolved = path.resolve(file)
   let text
   try {
@@ -503,6 +504,43 @@ export function provisionShell(pin: ShellPin, { force, dryRun }: { force: boolea
   return true
 }
 
+/** Default Windows Bash provisioner; a custom --pin remains an explicit legacy operation. */
+export function provisionNiubash({ force, dryRun }: { force: boolean; dryRun: boolean }) {
+  const target = path.join(dshHome(), NIUBASH_HOME_PATH)
+  if (dryRun) {
+    console.log(`bash: would provision complete Niubash ${NIUBASH_PIN.upstreamVersion} at ${target}`)
+    console.log(`  sha256: ${NIUBASH_PIN.archiveSha256}`)
+    return true
+  }
+  if (!force && fs.existsSync(target)) {
+    try {
+      console.log(`bash: already provisioned — ${verifyNiubashTree(target)}`)
+      return true
+    } catch (error) {
+      console.error(`bash: invalid Niubash payload: ${errorMessage(error)}; use --force to replace it`)
+      return false
+    }
+  }
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-ops-niubash-'))
+  try {
+    let archive = process.env.DSH_OPS_NIUBASH_ARCHIVE
+    if (!archive) {
+      if (process.env.DSH_OPS_OFFLINE === '1') throw Error('Niubash archive missing in offline mode; no Git Bash fallback')
+      const result = curlAsset({ pin: { url: NIUBASH_PIN.url, assetFile: NIUBASH_PIN.archive }, into: scratch, env: process.env })
+      if (!('file' in result)) throw Error(`${result.error}: ${result.detail}`)
+      archive = result.file
+    }
+    const executable = stageNiubashArchive(archive, target)
+    console.log(`bash: provisioned complete Niubash ${NIUBASH_PIN.upstreamVersion} — ${executable}`)
+    return true
+  } catch (error) {
+    console.error(`bash: Niubash provisioning failed: ${errorMessage(error)}; no Git Bash fallback`)
+    return false
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true })
+  }
+}
+
 /**
  * `provision-shells`: turn the pinned upstream releases into the local copies
  * the shell rungs prefer.
@@ -538,6 +576,11 @@ export function commandProvisionShells({ kinds, force, dryRun, pinFile }: { kind
     return 1
   }
 
+  let failed = 0
+  if (pinFile === undefined && kinds.includes('bash')) {
+    if (!provisionNiubash({ force, dryRun })) failed += 1
+    kinds = kinds.filter(kind => kind !== 'bash')
+  }
   const selected = []
   for (const kind of kinds) {
     const pin = pins.find((candidate) => (
@@ -557,7 +600,6 @@ export function commandProvisionShells({ kinds, force, dryRun, pinFile }: { kind
     selected.push(pin)
   }
 
-  let failed = 0
   for (const pin of selected) {
     if (!provisionShell(pin, { force, dryRun })) failed += 1
   }

@@ -67,8 +67,10 @@ fs-sandbox, with no-follow paths, revision checks and host subprocess governance
 Arbitrary Bash/PTC code still uses the original DSH OS confinement; Windows
 partial enforcement is reported unchanged.
 
-Windows owned workspace roots get backed-up directory-only WRITE_OWNER before
-outer run_code/pwsh launch, with no recursive grants/owner changes/denial removal.
+Windows workspace roots whose DACL already grants WRITE_OWNER are used as-is
+whatever their owner; otherwise an owned root gets a backed-up directory-only
+WRITE_OWNER before outer run_code/pwsh launch, with no recursive grants/owner
+changes/denial removal (#651).
 Restricted Bash uses an installation-relative private MSYS copy: only import DLL
 names are redirected to original MIT IPC proxies, preserving the token and disk
 API paths. Original payload/proxy/source hashes are recorded and checked.

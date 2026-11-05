@@ -78,7 +78,7 @@ npm run build:ptc
 npm pack
 ```
 
-On Windows the pinned Bash payload is installed by `npm ci`; if it is missing (for example a checkout installed with `--omit=optional`), run `node bin/dsh-ops.mjs bash-runtime install`, then `npm run build:bash-ipc` before packing. For an offline build, set `DSH_OPS_TEST_BASH` to the absolute pinned `bin/bash.exe`; the build/test helper verifies its digest. The gate acquires its own temporary fixture unless this variable is provided. Install the resulting
+Before packing on **any host**, run `npm run stage:niubash -- --archive <absolute-frozen-v1.5.0.tar.gz> --offline` (or omit `--archive`/`--offline` to acquire the fixed official archive through the configured proxy). `prepack` verifies this complete tree and fails closed if missing. The release gate stages it before tests and pack; set `DSH_OPS_NIUBASH_ARCHIVE` and `DSH_OPS_OFFLINE=1` for offline gate runs. On Windows, the gate sets `DSH_OPS_TEST_NIUBASH` to the verified staged executable and separately acquires the committed legacy MSYS pin for compatibility tests and `build:bash-ipc`. `DSH_OPS_TEST_BASH` is only an explicit verified legacy fixture override, not the default backend. Install the resulting
 `dsh-ops-<version>.tgz` with the DSH CLI for your target profile (see the README). `npm pack` runs
 the build through `prepack`, unless lifecycle scripts are disabled. An unbuilt Git checkout has
 no `lib/` and is not ready to load; there is no install-time lifecycle hook. Keep development
