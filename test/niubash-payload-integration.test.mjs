@@ -36,9 +36,14 @@ await test('verified archive stages atomically; receipt cannot authorize tamperi
   assert.equal(verifyNiubashTree(target), exe)
 }))
 await test('default provision uses fixed Niubash home, verifies reuse, rejects corruption without Git fallback', () => {
+  // macOS aliases /var to /private/var. Use the physical test home rather than
+  // weakening the Windows payload's no-link ancestor validation for a POSIX fixture.
+  const savedHome = process.env.DSH_HOME
+  process.env.DSH_HOME = fs.realpathSync(TEST_HOME)
+  try {
   assert.equal(provisionNiubash({ force: false, dryRun: true }), true)
   assert.equal(provisionNiubash({ force: true, dryRun: false }), true)
-  const target = path.join(TEST_HOME, NIUBASH_HOME_PATH)
+  const target = path.join(process.env.DSH_HOME, NIUBASH_HOME_PATH)
   assert.equal(provisionNiubash({ force: false, dryRun: false }), true)
   fs.appendFileSync(path.join(target, 'niu.exe'), 'bad')
   assert.equal(provisionNiubash({ force: false, dryRun: false }), false)
@@ -52,6 +57,10 @@ await test('default provision uses fixed Niubash home, verifies reuse, rejects c
   removeManagedBash({ yes: true })
   assert.equal(fs.existsSync(target), false); assert.deepEqual(managedBashInventory(), [])
   assert.throws(() => selectBashRuntime('managed', { platform: 'win32', arch: 'x64' }), /install/)
+  } finally {
+    if (savedHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = savedHome
+  }
 })
 await test('npm pack carries every frozen file; consumer verifies and runs Niubash and bundled tools', async () => withTempDir('niu-pack', async root => {
   const source = path.join(root, 'source'), runtime = path.join(source, NIUBASH_PACKAGE_PATH)
