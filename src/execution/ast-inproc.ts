@@ -9,6 +9,7 @@
  * @module dsh-ops/execution/ast-inproc
  */
 import fs from 'node:fs'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 import type { Context, SandboxExecutionPolicy, SandboxMode, SandboxPolicyService, ToolRunContext } from '../adapter/dsh/types.js'
 import { credentialPath, credentialRefusal, credentialRoots } from '../credential-policy.js'
@@ -33,6 +34,71 @@ const writes = (mutates: boolean, args: Record<string, unknown>): boolean => mut
 /** Caller-named paths. `beforeFile` is read by `audit`, so it has to meet the same fences. */
 const named = (args: Record<string, unknown>): string[] =>
   [args.file, args.beforeFile, ...(Array.isArray(args.roots) ? args.roots : [])].filter((v): v is string => typeof v === 'string' && v !== '')
+
+
+const BOM = '\ufeff'
+const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex')
+
+/**
+ * Publish one planned file through its own descriptor.
+ *
+ * The descriptor is opened once, without following a link, and every byte after that goes through
+ * it — so replacing the parent directory with a junction between the plan and the write redirects
+ * nothing. That is stronger than comparing paths twice, which only narrows the window.
+ *
+ * The price is atomicity: a rename would make the file all-old or all-new at every instant, while an
+ * in-place write can be interrupted halfway. The original text is kept here and restored if the
+ * write fails, and the result is read back and compared before the call reports success.
+ *
+ * @param target - absolute path the plan was built for
+ * @param revision - SHA-256 of the text the plan was built against
+ * @param after - the complete replacement text
+ * @returns undefined on success, or the code and message of the refusal
+ */
+function publish(target: string, revision: string, after: string): { code: string; message: string } | undefined {
+  let fd: number
+  try { fd = fs.openSync(target, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW) } catch {
+    return { code: 'E_NOT_REGULAR', message: `${target} is not a regular file` }
+  }
+  try {
+    const before = fs.fstatSync(fd)
+    const original = Buffer.alloc(before.size)
+    let read = 0
+    while (read < before.size) {
+      const n = fs.readSync(fd, original, read, before.size - read, read)
+      if (n <= 0) break
+      read += n
+    }
+    const bytes = original.subarray(0, read)
+    let text: string
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes) } catch { return { code: 'E_ENCODING', message: `${target} is not UTF-8` } }
+    if (sha256(text) !== revision) return { code: 'E_STALE', message: 'changed while the rewrite was planned; nothing was overwritten' }
+    const bom = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf
+    const next = (bom ? BOM : '') + after
+    try {
+      const payload = Buffer.from(next, 'utf8')
+      let written = 0
+      while (written < payload.length) {
+        written += fs.writeSync(fd, payload, written, payload.length - written, written)
+      }
+      fs.ftruncateSync(fd, payload.length)
+      fs.fsyncSync(fd)
+    } catch (error) {
+      // The original bytes are still here: put them back rather than leave a half-written file.
+      try {
+        const restore = Buffer.from((bom ? BOM : '') + text, 'utf8')
+        fs.writeSync(fd, restore, 0, restore.length, 0)
+        fs.ftruncateSync(fd, restore.length)
+        fs.fsyncSync(fd)
+      } catch { /* the restore is best effort; the failure below still reports the truth */ }
+      return { code: 'E_WRITE', message: `writing ${target} failed: ${errorText(error).slice(0, 200)}` }
+    }
+    const check = Buffer.alloc(Buffer.byteLength(next, 'utf8'))
+    fs.readSync(fd, check, 0, check.length, 0)
+    if (sha256(check.toString('utf8')) !== sha256(next)) return { code: 'E_WRITE', message: `${target} did not read back as written` }
+    return undefined
+  } finally { try { fs.closeSync(fd) } catch { /* already closed */ } }
+}
 
 const ADVICE = 'Correct the request or restore host authority.'
 const UNSETTLED = 'Inspect the result; do not blindly retry after an unknown effect.'
@@ -133,6 +199,24 @@ export async function invokeAst(tool: string, ctx: Context, args: unknown, exec:
     // Scope is the bridge's call: full access lifts the bound, enumeration always skips credentials.
     const bounds = policy.mode === 'danger-full-access' ? undefined : [policy.workspaceRoot, cwd]
     const value = await handler(input, cwd, { bounds, deny: credentialRoots(), cache: policy.mode !== 'read-only', signal, writeRoots })
+    if (record(value) && value.status === 'ok' && tool === 'ast_refactor' && input.mode === 'apply' && Array.isArray(value.files)) {
+      const applied: string[] = []
+      for (const item of value.files) {
+        if (!record(item) || typeof item.file !== 'string' || typeof item.after !== 'string' || typeof item.revision !== 'string') continue
+        if (signal?.aborted) return { ...value, status: 'error', applied: applied.length > 0, effectState: applied.length > 0 ? 'partial' : 'none', filesApplied: applied,
+          error: { code: 'ABORTED', phase: 'execute', effectState: applied.length > 0 ? 'partial' : 'none', retryable: false,
+            message: 'cancelled before every planned file was published', nextAction: 'Inspect filesApplied before retrying.' } }
+        const refused = publish(path.resolve(cwd, item.file), item.revision, item.after)
+        if (refused) return { ...value, status: 'error', applied: applied.length > 0, effectState: applied.length > 0 ? 'partial' : 'none', filesApplied: applied,
+          error: { code: refused.code, phase: 'execute', effectState: applied.length > 0 ? 'partial' : 'none', retryable: false, message: refused.message,
+            nextAction: applied.length > 0 ? 'Inspect filesApplied before retrying.' : ADVICE } }
+        applied.push(item.file)
+      }
+      value.applied = true
+      value.effectState = 'applied'
+      value.filesApplied = applied
+      value.pending = 0
+    }
     if (!record(value)) return failure('RESULT_UNKNOWN', 'AST engine returned no structured receipt.', mayWrite ? 'unknown' : 'none')
     // Authority can be narrowed while the rewrite runs: never report an applied write as settled.
     const confirmed = policyService.resolve({ session })

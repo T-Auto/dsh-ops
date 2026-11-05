@@ -88,9 +88,7 @@ export async function invoke(ctx: Context, file: string, tool: string, args: unk
       withCallBudget(ctx.root ?? ctx, String(session.id), currentSignal,
         async () => {
           const basis = await resolveSessionDirectory(ctx, exec.agent, currentSignal)
-          const value = record(args) && tool === 'ast_refactor' && args.mode === 'apply'
-            ? await commitAstPlan(ctx, file, args, exec, currentSignal, basis.cwd, config)
-            : await invokeTrusted(ctx, file, tool, args, exec, currentSignal, basis.cwd, config)
+          const value = await invokeTrusted(ctx, file, tool, args, exec, currentSignal, basis.cwd, config)
           // Credential refusals deliberately disclose no absolute path, including ancestors.
           if (record(value) && record(value.error) && value.error.code === 'CREDENTIAL_DENIED') return value
           return { ...value as Record<string, unknown>, resolvedFrom: basis.cwd, cwdSource: basis.source }
@@ -105,31 +103,6 @@ export async function invoke(ctx: Context, file: string, tool: string, args: unk
     return failure('EXECUTOR_UNAVAILABLE', 'DSH file authority or preparation is unavailable; no unrestricted fallback was attempted.')
   }
 }
-/**
- * `ast_refactor` plans in process and publishes through the native worker. The worker already owns
- * the one publication kernel this repository trusts — no-follow open, fsync, atomic rename, revision
- * CAS — and a second copy here would be a second chance to get it wrong.
- */
-async function commitAstPlan(ctx: Context, file: string, args: Record<string, unknown>, exec: ToolRunContext, signal: AbortSignal, cwd: string, config?: WorkerInvokeConfig): Promise<unknown> {
-  const plan = await invokeAst('ast_refactor', ctx, { ...args, mode: 'apply' }, exec, signal)
-  if (!record(plan) || plan.status !== 'completed' || !Array.isArray(plan.files)) return plan
-  const applied: string[] = []
-  for (const item of plan.files) {
-    if (!record(item) || typeof item.file !== 'string' || typeof item.after !== 'string' || typeof item.revision !== 'string') continue
-    const written = await invokeTrusted(ctx, file, 'write_file', { path: item.file, content: item.after, expectedRevision: item.revision }, exec, signal, cwd, config)
-    if (!record(written) || written.status !== 'completed') {
-      const code = record(written) && record(written.error) && typeof written.error.code === 'string' ? written.error.code : 'E_WRITE'
-      const effectState = applied.length > 0 ? 'partial' as const : 'none' as const
-      return { ...plan, status: 'error', applied: applied.length > 0, effectState, filesApplied: applied,
-        error: { code, phase: 'execute', effectState, retryable: false,
-          message: `publishing ${item.file} failed after ${applied.length} file(s) were written`,
-          nextAction: applied.length > 0 ? 'Inspect filesApplied before retrying; the rewrite is not fully applied.' : 'Correct the request or restore host authority.' } }
-    }
-    applied.push(item.file)
-  }
-  return { ...plan, applied: true, effectState: 'applied', filesApplied: applied, pending: 0 }
-}
-
 async function invokeTrusted(ctx: Context, file: string, tool: string, args: unknown, exec: ToolRunContext, signal: AbortSignal, cwd: string, config?: WorkerInvokeConfig): Promise<unknown> {
   const session = exec?.agent?.session
   if (!session?.id || typeof cwd !== 'string' || !path.isAbsolute(cwd)) return failure('EXECUTOR_UNAVAILABLE', 'An authoritative session identity and cwd are required.')

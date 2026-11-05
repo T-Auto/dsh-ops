@@ -59,11 +59,14 @@ English: [ast-engine.md](ast-engine.md)
 回执带 `matched`、`planned`、`remaining`，被 `limit` 截断的运行会说明自己留下了多少工作，而不是看上去做完了。
 `apply` 用 `O_NOFOLLOW` 打开每个目标一次，通过该描述符读取字节，并在 rename 前拒绝 inode 已变化的目标
 （`E_STALE`，不覆盖任何内容）；目标变成链接时拒绝而不是跟随。
-引擎只出计划，不负责发布。`apply` 返回与 `preview` 相同的回执，另外每个文件附带替换后的 `after`
-文本和计划所基于的 `revision`；宿主再把它们逐个交给 native worker 的 `write_file`——**一个原子 CAS
-发布内核服务所有工具**，而不是在这里再写一份。那个内核会重读文件、拒绝过期 revision、写同目录临时
-文件、fsync、再 rename；BOM、行尾与权限位在提交时取自真实文件。**属主、ACL、xattr 与硬链接不保留**：
-rename 发布的是新 inode。第一次写入成功后
+引擎出计划，桥接负责发布。`apply` 返回与 `preview` 相同的回执，另外每个文件附带替换后的 `after`
+文本和计划所基于的 `revision`；随后每个文件都**通过它自己的描述符**写入：以 `O_NOFOLLOW` 打开一次，
+在同一描述符上做 revision 校验、写入、截断与 fsync。
+
+通过描述符写，是"路径被恶意替换"失去意义的原因——在计划与写入之间把父目录换成 junction 也改不
+了落点，因为描述符绑定的是 inode，不是路径。代价是原子性：rename 让文件在任意时刻要么全旧要么
+全新，而原地写可能被中途打断。原文留在内存里，写失败时回写，并在返回成功之前读回比对。
+**属主、ACL、xattr 与硬链接因此保留**，因为用的还是文件原本那个 inode；BOM 与行尾也从它读取并写回。第一次写入成功后
 再失败，会返回 `effectState: "partial"`，并在 `filesApplied` 里列出已经提交的文件，因此重试不会悄悄产生重复编辑。
 
 ## `ops_ast_audit`

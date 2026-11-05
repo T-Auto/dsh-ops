@@ -66,13 +66,18 @@ Rewrite source structurally with an ast-grep pattern and a rewrite template.
 A receipt carries `matched`, `planned` and `remaining`, so a `limit`-stopped run says how much work
 it left behind instead of looking complete. `apply` opens each target once with `O_NOFOLLOW`, reads the bytes through that descriptor, and
 refuses a target whose inode changed before the rename (`E_STALE`, nothing overwritten). A target
-that became a link is refused rather than followed. The engine plans and does not publish. `apply` returns the same receipt as `preview` plus, per file,
-the replacement `after` text and the `revision` the plan was built against; the host then hands each
-one to the native worker's `write_file`, so **one atomic-CAS publication kernel serves every tool**
-instead of a second copy here. That kernel re-reads the file, refuses a stale revision, writes a
-sibling temp file, fsyncs, and renames; the BOM, line endings and permission bits come from the real
-file at commit time. **Ownership, ACLs, xattrs and hard links are not preserved**: the rename
-publishes a new inode. A
+that became a link is refused rather than followed. The engine plans; the bridge publishes. `apply` returns the same receipt as `preview` plus, per file,
+the replacement `after` text and the `revision` the plan was built against, and each one is then
+written **through its own descriptor**: opened once with `O_NOFOLLOW`, read for the revision check,
+written and truncated and fsynced on that same descriptor.
+
+Writing through the descriptor is what makes a hostile path change meaningless — replacing the
+parent directory with a junction between the plan and the write redirects nothing, because the
+descriptor already names an inode, not a path. The trade is atomicity: a rename leaves a file
+all-old or all-new at every instant, while an in-place write can be interrupted halfway. The original
+text is kept in memory, restored if the write fails, and the result is read back and compared before
+the call reports success. **Ownership, ACLs, xattrs and hard links are preserved**, because the inode
+is the same one the file always had; the BOM and line endings are read from it and written back. A
 failure after the first write reports `effectState: "partial"` together with the files it already
 committed in `filesApplied`, so a retry cannot silently duplicate an edit.
 

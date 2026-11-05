@@ -94,4 +94,23 @@ await test('the receipt says how much work a limit left behind', async () => {
   } finally { fs.rmSync(ws, { recursive: true, force: true }) }
 })
 
+await test('an apply publishes through the descriptor and keeps the BOM and CRLF', async () => {
+  const ws = root()
+  try {
+    const file = path.join(ws, 'a.ts')
+    fs.writeFileSync(file, Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from("console.log('x')\r\n", 'utf8'),
+    ]))
+    const value = await call('ast_refactor', { pattern: 'console.log($A)', rewrite: 'logger.log($A)', mode: 'apply' }, ws, ws)
+    assert.equal(value.status, 'completed', JSON.stringify(value.error))
+    assert.equal(value.effectState, 'applied')
+    assert.deepEqual(value.filesApplied, ['a.ts'])
+    const raw = fs.readFileSync(file)
+    assert.deepEqual([...raw.subarray(0, 3)], [0xef, 0xbb, 0xbf], 'the BOM survives an in-place publish')
+    assert.match(raw.toString('utf8'), /logger\.log/)
+    assert.match(raw.toString('utf8'), /\r\n/, 'CRLF survives an in-place publish')
+  } finally { fs.rmSync(ws, { recursive: true, force: true }) }
+})
+
 report('ast-security')
