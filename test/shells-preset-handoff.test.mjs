@@ -91,6 +91,19 @@ await test('returning to the original preset does not revive its retained Bash c
   } finally { await shutdown(ctx) }
 }))
 
+await test('a preset that does not own Bash never attempts a restriction it cannot apply', () => withTempDir('bash-preset-boundary', async cwd => {
+  const { ctx, tools, mint, select, warnings } = await setup(cwd)
+  try {
+    const owner = await mint('boundary', 'ptc')
+    assert.ok(tools.get('ops_bash', owner))
+    warnings.length = 0
+    await select(owner, 'standard')
+    assert.ok(tools.get('ops_bash', owner), 'the eligible preset still publishes Bash')
+    const boundary = warnings.filter(line => line.includes('inherited bash restriction failed'))
+    assert.deepEqual(boundary, [], 'a scope-local Bash is not a global tool to mask')
+  } finally { await shutdown(ctx) }
+}))
+
 await test('handoff never withdraws an unrelated same-name provider', () => withTempDir('bash-preset-foreign', async cwd => {
   const { ctx, tools, mint, select } = await setup(cwd)
   try {
