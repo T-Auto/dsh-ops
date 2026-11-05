@@ -225,7 +225,8 @@ await test('the launcher receives an install spec verbatim, and the cmd line ref
   // characters (`^ ~ # +` and a space) must survive unchanged.
   await profileFixture(({ root, entry, receipt }) => {
     const file = launcher(path.join(root, 'CLI with spaces', launcherName), entry)
-    for (const spec of ['dsh-ops@^1.0.0', 'dsh-ops@~1.2', 'git+https://example.com/x#semver:^1.0.0', 'pkg name@1.0']) {
+    const localPaths = ['C:\\local', 'C:\\local path'].flatMap(root => [root + '\\', root + '\\\\\\'])
+    for (const spec of ['dsh-ops@^1.0.0', 'dsh-ops@~1.2', 'git+https://example.com/x#semver:^1.0.0', 'pkg name@1.0', ...localPaths]) {
       process.env.DSH_OPS_INSTALL_SPEC = spec
       fs.rmSync(receipt, { force: true })
       assert.equal(capture(() => profileCommand('install', { profile: 'tui', dshCli: file })).status, 0)

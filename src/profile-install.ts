@@ -99,7 +99,9 @@ function preflightCli(command: string, entry?: string): string {
  */
 function quoteCliArg(value: string): string {
   if (/["\r\n&|<>%!]/.test(value)) throw new Error(`The official CLI cannot receive an argument containing a quote, a newline, % or a cmd metacharacter: ${JSON.stringify(value)}`)
-  return `"${value}"`
+  // cmd preserves these slashes; the Node CLI's Windows argv parser pairs them before the
+  // closing quote. Double only the trailing run so the launcher delivers the original bytes.
+  return `"${value.replace(/\\+$/, slashes => slashes + slashes)}"`
 }
 
 export function profileCommand(operation: ProfileOperation, { profile, dshCli, dryRun = false }: ProfileCommandOptions): number {
