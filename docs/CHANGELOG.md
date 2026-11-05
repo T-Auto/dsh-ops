@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Give the discovery routing sentence an evaluable document condition — a `.pdf`, `.docx`, `.csv` or `.tsv` file whose reader is absent from the tool table — and state that creating, editing, rendering or exporting Office documents belongs to the host office skill, with a failed document read falling back to that skill instead of retrying the reader. Formats are named, never unpublished tool names; adds 279 characters (64 cl100k_base tokens) to the discovery-enabled prompt and changes no tool schema, so the pinned schema budgets stay valid.
+- 发现路由句改为可判定的文档条件：读取器不在工具表中的 `.pdf`、`.docx`、`.csv` 或 `.tsv` 文件；并写明创建、编辑、渲染或导出 Office 文档归宿主 office 技能，读取失败时回退到该技能而不是重试读取器。只写格式、不写未发布的工具名；发现开启时提示词增加 279 字符（64 个 cl100k_base token），工具 schema 未变，已固定的 schema 预算仍然有效。
 - Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
 - 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。
 - Report PowerShell ConstrainedLanguage before workspace ACL preparation and preserve a named diagnostic without changing security policy (#458). / 工作区 ACL 准备前明确报告 PowerShell ConstrainedLanguage，并保留具名诊断，不改变安全策略（#458）。
