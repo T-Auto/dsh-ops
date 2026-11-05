@@ -2,8 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { assert, test, report, skipSuite, withTempDir, TEST_HOME, canonical } from './lib/harness.mjs'
-import { preparationEnvironment } from '../lib/workspace-preparation.js'
+import { assert, test, report, withTempDir, TEST_HOME, canonical } from './lib/harness.mjs'
+import { preparationEnvironment, prepareWorkspace, classifyPreparationFailure } from '../lib/workspace-preparation.js'
 
 /**
  * The Windows workspace prerequisite is decided before any ACL is written, and
@@ -12,7 +12,24 @@ import { preparationEnvironment } from '../lib/workspace-preparation.js'
  * caller already held WRITE_OWNER. These checks pin the decision order and the
  * real script's dispatch without needing an elevated shell.
  */
-if (process.platform !== 'win32') skipSuite('workspace-acl', 'Windows workspace ACL preparation is Windows-only')
+await test('foreign-owner diagnostics distinguish a missing prerequisite from authorization denial', () => {
+  const message = classifyPreparationFailure('Workspace is not owned by the current user and does not already grant WRITE_OWNER.', { root: '/workspace' })
+  assert.match(message, /does not already grant.*WRITE_OWNER/)
+  assert.match(message, /automatic ACL preparation left it unchanged/)
+  assert.match(message, /not a DSH authorization denial/)
+})
+
+await test('POSIX workspace preparation never invokes the Windows ACL executor', async () => {
+  for (const platform of ['linux', 'darwin']) {
+    await prepareWorkspace({ mode: 'workspace-write', workspaceRoot: '/not/a/Windows/workspace' },
+      { platform, run() { assert.fail('POSIX must not invoke ACL preparation') } })
+  }
+})
+
+if (process.platform === 'win32') await windowsAclChecks()
+else console.log('  Windows ACL fixture unavailable: real DACL and PowerShell checks require Windows')
+
+async function windowsAclChecks() {
 
 const helper = fileURLToPath(new URL('../bin/workspace-acl.ps1', import.meta.url))
 const preparation = fileURLToPath(new URL('../bin/prepare-workspace.ps1', import.meta.url))
@@ -125,5 +142,7 @@ Set-Acl -LiteralPath $p -AclObject $acl`)
     assert.equal(psValue(`(Get-Acl -LiteralPath ${quote(root)}).GetSecurityDescriptorSddlForm('Access')`), before)
   })
 })
+
+}
 
 report('workspace-acl')
