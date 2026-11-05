@@ -2,7 +2,7 @@
 import type { Agent, Context, ToolDefinition, ToolRunContext, ToolActivationContext } from '../adapter/dsh/types.js'
 import type { Outcome } from '../kernel/outcome.js'
 import { loadScopes } from '../adapter/dsh/host.js'
-import { publicationRegistration } from './reentry.js'
+import { publicationReady, publicationRegistration } from './reentry.js'
 
 export interface PublicationGrant {
   readonly consumer: object
@@ -17,6 +17,7 @@ export interface PublicationGrant {
 }
 export interface PublicationLease {
   grant(grant: PublicationGrant): () => void
+  ready(): Promise<void>
   dispose(): void
 }
 const denied = (): Outcome<never> => ({ status: 'rejected', error: { code: 'PUBLICATION_DENIED',
@@ -205,6 +206,18 @@ export async function acquire(ctx: Context, scope: object | undefined, name: str
         }
         local.add(revoke)
         return revoke
+      },
+      async ready() {
+        for (;;) {
+          if (disposed || closed) throw new Error('Publication lease is disposed')
+          const pending = unregister
+          if (!pending) return
+          try { await publicationReady(pending) }
+          catch (error) { if (pending === unregister) throw error }
+          // Another consumer can rotate this shared source while it is queued.
+          // Its replacement, rather than the cancelled generation, owns readiness.
+          if (pending === unregister) return
+        }
       },
       dispose() {
         if (disposed) return

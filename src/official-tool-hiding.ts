@@ -40,7 +40,7 @@ export function apply(root: Context, raw?: unknown): void {
     let stopped = false, mutating = false
     let lastSurface: string | undefined
     const tools = ctx.get('tools')!
-    const apiError = (['schemas', 'get', 'restrict', 'guard'] as const).filter(api => typeof tools[api] !== 'function')
+    const apiError = (['schemas', 'get', 'restrict', 'guard', 'executable'] as const).filter(api => typeof tools[api] !== 'function')
     const fail = (message: string): void => ctx.logger?.error?.(message)
     const clear = (entry: Entry): boolean => {
       const pending = entry.lifts.splice(0)
@@ -58,12 +58,13 @@ export function apply(root: Context, raw?: unknown): void {
       const owned = new Set(typeof tools.get === 'function' ? nativeProviders(ctx, agent).map(provider => provider.definition) : [])
       return replaceTools.map(tool => {
         const counterpart = OFFICIAL_REPLACEMENTS[tool]
-        const visible = toolSet ? tools.executable(counterpart, agent, toolSet)
+        const visible = toolSet ? (typeof tools.executable === 'function' ? tools.executable(counterpart, agent, toolSet) : undefined)
           : typeof tools.get === 'function' ? tools.get(counterpart, agent) : undefined
         return visible !== undefined && (owned.has(visible) || ownsPublication(ctx, visible))
       })
     }
     const maskable = (agent: object): Set<string> => {
+      if (typeof tools.executable !== 'function') return new Set()
       const owned = new Set(nativeProviders(ctx, agent).map(provider => provider.definition))
       return new Set(replaceTools.filter(tool => {
         const counterpart = tools.executable(OFFICIAL_REPLACEMENTS[tool], agent)

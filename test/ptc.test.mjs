@@ -457,7 +457,13 @@ try {
       assert.equal(completion.value.sandbox.mode, agent.session.mode, JSON.stringify(completion))
       return completion.value.result
     }
+    const legacy = request('result', { action: 'put', items: [{ legacy: true }] }, agent.session.id)
+    const foreignLegacy = request('result', { action: 'put', items: [{ foreign: true }] }, 'foreign-sdk-owner')
+    assert.match(legacy.id, /^r-/)
     const sdkResult = await sdk(`
+      const legacyPage = await tools.ops_result({action:'page',id:${JSON.stringify(legacy.id)}});
+      const foreignLegacy = await tools.ops_result({action:'page',id:${JSON.stringify(foreignLegacy.id)}});
+      const legacyRelease = await tools.ops_result({action:'release',id:${JSON.stringify(legacy.id)}});
       const storedOutcome = await tools.ops_result({action:'put',items:Array.from({length:120},(_,n)=>({n,kind:n%2?'odd':'even',payload:'x'.repeat(80)}))});
       if (storedOutcome.status !== 'completed') return storedOutcome; const stored = storedOutcome.data;
       const selected = []; let offset = 0; let stable = true; let bounded = true; let contentHash;
@@ -477,13 +483,19 @@ try {
       const planOutcome = await tools.ops_batch({action:'plan',operations:[{op:'copy',path:'real-source',to:'sdk-copy'}]});
       if (planOutcome.status !== 'completed') return planOutcome; const plan = planOutcome.data;
       const audit = await tools.ops_result({action:'page',id:plan.detailsRef,fields:['state','revision','entries']});
+      if (!Array.isArray(audit.data?.items)) throw new Error('Audit paging failed: ' + JSON.stringify(audit));
+      const auditRelease = await tools.ops_result({action:'release',id:plan.detailsRef});
       const resumed = await tools.ops_batch({action:'resume',id:plan.id});
       const replay = await tools.ops_batch({action:'resume',id:plan.id});
       await tools.ops_result({action:'release',id:stored.id});
-      return {stable,bounded,count:selected.length,last:selected[selected.length-1],invalid:invalid.error.code,denied:denied.data.error,
+      return {legacyPage,foreignLegacy,legacyRelease,auditRelease,stable,bounded,count:selected.length,last:selected[selected.length-1],invalid:invalid.error.code,denied:denied.data.error,
         audit:audit.data.items[0],resumed:resumed.status,replay:replay.data.done,detailsRef:plan.detailsRef};
     `)
     assert.equal(sdkResult.stable, true, JSON.stringify(sdkResult)); assert.equal(sdkResult.bounded, true)
+    assert.deepEqual(sdkResult.legacyPage.data.items, [{ legacy: true }])
+    assert.equal(sdkResult.legacyRelease.data.status, 'released')
+    assert.equal(sdkResult.foreignLegacy.error.code, 'POLICY_DENIED')
+    assert.equal(sdkResult.auditRelease.error.code, 'INVALID_ARGUMENT', 'audit records cannot be released through the shared SDK')
     assert.equal(sdkResult.count, 60); assert.equal(sdkResult.last, 118)
     assert.equal(sdkResult.invalid, 'INVALID_ARGUMENT'); assert.equal(sdkResult.audit.state, 'pending')
     assert.equal(sdkResult.denied.code, 'POLICY_DENIED'); assert.equal(sdkResult.denied.permission.current, 'workspace-write')

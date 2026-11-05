@@ -11,6 +11,7 @@ import { createJsonDigestProjection, jsonDigest } from '../lib/shells/json-diges
 import { hostForeground, renderHostBash } from '../lib/shells/host-contract.js'
 import { hostBashDefinition } from '../lib/shells/host-tool.js'
 import { bashToolDefinition } from '../lib/shells.js'
+import { publicToolName } from '../lib/policy.js'
 import { assert, report, test, withTempDir } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
 
@@ -105,7 +106,7 @@ await test('real host registry applies Native projection and preserves nested SD
   await withTempDir('json-digest-registry', async dir => {
     const file = path.join(dir, 'stdout.log'); await fs.writeFile(file, raw)
     let nested
-    const { ctx, tools } = await bootHost(), agent = { id: 'digest-registry', session: { id: 'digest-registry', header: { cwd: dir }, read() { return [] }, append(type, data) { if (type === 'tool/ptc-dispatch' && data.name === 'ops_bash') nested = data } } }
+    const { ctx, tools } = await bootHost(), agent = { id: 'digest-registry', session: { id: 'digest-registry', header: { cwd: dir }, read() { return [] }, append(type, data) { if (type === 'tool/ptc-dispatch' && data.name === publicToolName('bash')) nested = data } } }
     agent.ctx = createScope(ctx, agent).ctx
     try {
       const original = value(file), base = bashToolDefinition({ file: process.execPath, source: 'config' })
@@ -124,7 +125,7 @@ await test('real host registry applies Native projection and preserves nested SD
       await new Promise(resolve => setImmediate(resolve))
       let lift, executorContext
       await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { executorContext = inner; lift = selectExecutor(inner, 'ptc') } })
-      const transport = await call({ agent, name: 'run_code', callId: 'outer-digest', arguments: { description: 'Read a nested Bash JSON result', code: `return await tools.ops_bash({ command: 'produce-json', description: 'Produce a large JSON result' });` }, signal: new AbortController().signal })
+      const transport = await call({ agent, name: 'run_code', callId: 'outer-digest', arguments: { description: 'Read a nested Bash JSON result', code: `return await tools.${publicToolName('bash')}({ command: 'produce-json', description: 'Produce a large JSON result' });` }, signal: new AbortController().signal })
       assert.equal(transport.isError, false, JSON.stringify(transport)); assert.equal(nested.isError, false)
       assert.deepEqual(transport.value.result, original)
       assert.equal(nested.content[0].text, renderHostBash(original))

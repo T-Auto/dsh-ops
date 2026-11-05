@@ -2,6 +2,7 @@ import { createScope } from '@deepseek-ai/dsh-scope'
 import SessionStore, { appendPluginRecord } from '@deepseek-ai/dsh-session'
 import { publicationRegistration, publicationReady, publicationPending, appendReentry } from '../lib/publication/reentry.js'
 import { acquire } from '../lib/publication/registrar.js'
+import { publicToolName } from '../lib/policy.js'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { prepareStep } from './lib/executor.mjs'
 import { assert, test, report } from './lib/harness.mjs'
@@ -129,6 +130,29 @@ await test('a permanent error after cooldown rejects readiness once and never re
     assert.equal(failures, 1)
     assert.equal(messages.filter(message => message.includes('permanent configuration error')).length, 1)
   } finally { await shutdown(ctx) }
+})
+
+await test('shared lease readiness follows a queued grant generation replaced by another consumer', async () => {
+  const { ctx, tools } = await bootHost()
+  const agent = { id: 'shared-ready-generation' }, scope = createScope(ctx, agent)
+  const name = publicToolName('stat'), { name: _name, execute: _execute, ...canonical } = definition(name)
+  let locked = true, first, second
+  try {
+    const blocker = publicationRegistration(ctx, () => { if (locked) throw refusal(); return () => {} })
+    first = await acquire(scope.ctx, agent, name, canonical)
+    second = await acquire(scope.ctx, agent, name, canonical)
+    const dispatch = async () => ({})
+    first.grant({ consumer: {}, agent, token: {}, entitled: true, dispatch })
+    const readiness = first.ready()
+    void readiness.catch(() => {})
+    second.grant({ consumer: {}, agent, token: {}, entitled: true, dispatch })
+    locked = false
+    await ready(blocker)
+    await readiness
+    await second.ready()
+    assert.ok(tools.get(name, agent), 'both consumer leases await the current shared registration')
+    assert.equal(tools.definitions(agent).filter(tool => tool.name === name).length, 1)
+  } finally { locked = false; first?.dispose(); second?.dispose(); await shutdown(ctx) }
 })
 
 await test('synchronous cancellation during queued registration retains a refused undo before replacement', async () => {

@@ -60,7 +60,7 @@ await test('the resident file row publishes one bounded reader even with the dis
   try {
     const agent = await mintDiscoveryAgent(ctx, 'resident-disabled', dir)
     assert.deepEqual(await admitted(ctx, agent), [READ])
-    assert.deepEqual((await admitted(ctx, agent)), [READ])
+    assert.deepEqual(ctx.get('tools').definitions().map(tool => tool.name), [READ], 'the legacy file row keeps only its one global resident definition')
     fs.writeFileSync(path.join(dir, 'read.txt'), 'bounded reader')
     fs.writeFileSync(path.join(dir, 'second.txt'), 'second file')
     const read = await callTool(ctx, READ, { files: [{ path: 'read.txt' }, { path: 'second.txt' }] }, undefined, agent)

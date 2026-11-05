@@ -21,6 +21,8 @@ The host can refuse a registry write while publishing a session append. OPS shar
 
 The retained explicit `hide-official` row remains strict: each selected counterpart must be an exact live OPS definition admitted by that step. A same-name foreign definition cannot satisfy readiness. Deferred permanent initialization errors reject awaited readiness and trigger attachment rollback; they do not become retry loops.
 
+The shared result adapter preserves PTC's existing `j-` batch audit and legacy `r-` snapshot routes only under a verified live `run_code` parent. Worker checks still bind session, root and root identity; audit records cannot be released. Native permits only `ref://` page/release. A failed or changed presentation inspection rejects PTC storage before cache IO with no effects.
+
 PTC guidance is filled only after the public text waterfall confirms the executor's `tools:ptc-only` section. Shared callable file names do not establish presentation. Enabling the PTC row must leave the complete Native prompt and wire tool list unchanged, while the PTC assembly keeps its admitted SDK.
 
 ## Source ownership

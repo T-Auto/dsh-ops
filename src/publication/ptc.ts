@@ -166,7 +166,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         if (!owns(agent) || entries.get(agent) !== entry) return
         rotateFiles(entry)
         if (gate.dynamic !== false) publish('load_sdk', sdkDefinition(loadable, execute(entry, 'load_sdk')))
-        await Promise.all(entry.disposers.map(publicationReady))
+        await Promise.all([...entry.disposers.map(publicationReady), ...[...entry.files.values()].map(file => file.lease.ready())])
       }).catch(async error => {
         // Do not await ready here: this is its own rejection path. Preserve the
         // original failure for agent/created while observing teardown failures.
@@ -211,9 +211,14 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         }
       }
       const name = ownership!.sectionName(PTC_SECTION)
-      return { ...result, sections: ptc
-        ? result.sections.map(section => section.name === name ? { ...section, text: renderGuidance(context.scope as Agent, context.toolSet) } : section)
-        : result.sections.filter(section => section.name !== name) }
+      if (!result.sections.some(section => section.name === name)) return result
+      if (!ptc) return { ...result, sections: result.sections.filter(section => section.name !== name) }
+      // A text-only inspection cannot reconstruct a provider's captured SDK.
+      // Preserve its presentation and identity until an admitted step supplies the set.
+      if (!context.toolSet) return result
+      const text = renderGuidance(context.scope as Agent, context.toolSet)
+      if (result.sections.every(section => section.name !== name || section.text === text)) return result
+      return { ...result, sections: result.sections.map(section => section.name === name ? { ...section, text } : section) }
     })
     ctx.on('session/event', (session, event) => {
       if ((event as { type: string }).type === 'agent-preset/selected') { refresh(); return }

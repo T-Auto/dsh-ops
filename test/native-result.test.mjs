@@ -41,6 +41,8 @@ import { resultStorage } from '../lib/kernel/result-storage.js'
 import { resultDefinition } from '../lib/file/result.js'
 import { CAPABILITIES, NATIVE_FILE_TOOLS } from '../lib/capabilities/registry.js'
 import { NATIVE_RESULT_PARAMETERS, STORAGE_REFERENCE } from '../lib/capabilities/result.js'
+import { isPresentationProbe } from '../lib/publication/presentation.js'
+import { publicToolName } from '../lib/policy.js'
 requireWorker('native-result')
 let serial = 0
 async function setup(root) {
@@ -175,7 +177,9 @@ await test('Native pager denies hidden producers, other sessions, narrower autho
       assert.equal((await page(ctx, owner, { action: 'page', id: stored.id })).value.error.code, 'POLICY_DENIED')
       assert.equal((await page(ctx, owner, { action: 'release', id: stored.id })).value.error.code, 'POLICY_DENIED')
       owner.session.mode = 'workspace-write'
-      for (const args of [{ action: 'put', items: [] }, { action: 'purge' }, { action: 'page', id: 'j-audit' }, { action: 'page', id: stored.id, authority: 'fake' }]) {
+      for (const args of [{ action: 'put', items: [] }, { action: 'purge' }, { action: 'page', id: 'j-audit' },
+        { action: 'page', id: 'j-00000000-0000-4000-8000-000000000001' }, { action: 'release', id: 'r-00000000-0000-4000-8000-000000000002' },
+        { action: 'page', id: stored.id, authority: 'fake' }]) {
         const rejected = await page(ctx, owner, args); assert.equal(rejected.value.error.code, args.action === 'put' ? 'PUBLICATION_DENIED' : 'INVALID_ARGUMENT', JSON.stringify(rejected))
       }
       const policy = ctx.get('sandboxPolicy').resolve({ session: owner.session })
@@ -303,6 +307,55 @@ await test('put rejects Native nested calls, forged parent and stale admission b
     } finally { steps.forEach(step => step.dispose()); await shutdown(ctx) }
   })
 })
+
+for (const mode of ['changed', 'failed']) await test(`PTC put refuses ${mode} presentation inspection before cache IO`, () => withTempDir('ptc-put-presentation', async root => {
+  let workerCalls = 0
+  class CountingSubprocess extends Subprocess {
+    spawn(spec) {
+      if (path.resolve(spec.argv[0]) === path.resolve(WORKER)) ++workerCalls
+      return super.spawn(spec)
+    }
+  }
+  const { ctx } = await bootHost()
+  let step, release = () => {}, remove = () => {}
+  try {
+    for (const plugin of [CountingSubprocess, Sandbox, FileSystem, NodePtc]) await ctx.plugin(plugin)
+    ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'workspace-write', workspaceRoot: root }) })
+    inventory(ctx)
+    await mountNativeCatalogue(ctx, { binaryPath: WORKER, required: true })
+    await ctx.plugin(ptc, { binaryPath: WORKER, required: true })
+    await new Promise(resolve => setImmediate(resolve))
+    const owner = await agent(ctx, root, 'ptc')
+    step = await prepareStep(ctx, owner)
+    let enter, armed = true
+    const entered = new Promise(resolve => { enter = resolve })
+    const gate = new Promise(resolve => { release = resolve })
+    remove = ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
+      const result = await next()
+      if (armed && context.scope === owner && isPresentationProbe(context)) {
+        armed = false; enter(); await gate
+        if (mode === 'failed') throw new Error('presentation fixture unavailable')
+      }
+      return result
+    })
+    const work = executeCall(ctx, { name: 'run_code', callId: 'put-presentation', agent: owner, toolSet: step.toolSet,
+      arguments: { description: 'Attempt storage across a presentation change', code: `return await tools.${publicToolName('result')}({action:'put',items:[{unsafe:true}]});` } })
+    let timer
+    try { await Promise.race([entered, new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error('result admission inspection was not reached')), 5000) })]) }
+    finally { clearTimeout(timer) }
+    if (mode === 'changed') {
+      owner.liftPresentation()
+      await owner.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { owner.liftPresentation = selectExecutor(inner, 'native') } })
+    }
+    release()
+    const result = await work
+    assert.equal(result.isError, false, JSON.stringify(result))
+    assert.equal(result.value.result.error.code, 'PUBLICATION_DENIED', JSON.stringify(result))
+    assert.equal(result.value.result.error.effectState, 'none')
+    assert.equal(workerCalls, 0, 'rejected admission must not start result cache IO')
+    assert.equal(fs.existsSync(path.join(root, '.dsh-ops')), false)
+  } finally { release(); remove(); step?.dispose(); await shutdown(ctx) }
+}))
 
 await test('Native page rendering preserves source/capture facts, complete chunks and bounded recoverability', () => {
   const render = resultDefinition(async () => null).output.render

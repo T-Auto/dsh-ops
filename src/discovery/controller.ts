@@ -192,7 +192,10 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
         if (!owns(agent) || entries.get(agent) !== entry) return
         rotateFiles(agent, entry)
         syncExternal(agent, entry)
-        await Promise.all([...entry.registrations.values()].map(registration => publicationReady(registration.dispose)))
+        await Promise.all([
+          ...[...entry.registrations.values()].map(registration => publicationReady(registration.dispose)),
+          ...[...entry.files.values()].map(file => file.lease.ready()),
+        ])
       }).catch(async error => {
         // This is ready's own rejection path: cleanup must never await ready,
         // replace the original error, or remove a newer attachment.
