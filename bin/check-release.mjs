@@ -20,15 +20,10 @@ if (!sameSet(declared, PLATFORMS)) throw Error(`Declared scope ${JSON.stringify(
 // and runtime resolver are authoritative; Windows/Linux arm64 stay rejected.
 if (!sameSet(pkg.os ?? [], PLATFORMS.map(target => target.split('-')[0]).filter((value, index, all) => all.indexOf(value) === index)) ||
     !sameSet(pkg.cpu ?? [], [...new Set(PLATFORMS.map(target => target.split('-')[1]))])) throw Error('Package os/cpu and exact target declarations disagree')
-// Restored to the 0.3.2 contract: the Windows bash payload is a declared optional
-// dependency at a committed pin, while PowerShell stays with the host.
-const BASH_PAYLOAD = '@dsh-ops/bash-win32-x64'
-const PWSH_PAYLOAD = '@dsh-ops/pwsh-win32-x64'
-if (pkg.optionalDependencies?.[BASH_PAYLOAD] !== '0.2.1') throw Error(`${BASH_PAYLOAD} must remain the pinned Windows-only optional payload`)
-if (pkg.dependencies?.[BASH_PAYLOAD]) throw Error(`${BASH_PAYLOAD} must be optional, never a hard dependency`)
-const shellPins = Object.keys(pkg.optionalDependencies ?? {}).filter((name) => name.startsWith('@dsh-ops/'))
-if (shellPins.length !== 1 || shellPins[0] !== BASH_PAYLOAD) throw Error(`the only @dsh-ops optional payload may be ${BASH_PAYLOAD}`)
-if (pkg.optionalDependencies?.[PWSH_PAYLOAD] || pkg.dependencies?.[PWSH_PAYLOAD]) throw Error(`${PWSH_PAYLOAD} must not be a package dependency; PowerShell is host-managed`)
+// Shell payloads are carried in the main runtime tree; never fetch legacy Git Bash implicitly.
+for (const name of ['@dsh-ops/bash-win32-x64', '@dsh-ops/pwsh-win32-x64']) {
+  if (pkg.optionalDependencies?.[name] || pkg.dependencies?.[name]) throw Error(`${name} must not be a package dependency`)
+}
 if (pkg.scripts?.postinstall) throw Error('Release must not download shell payloads from postinstall')
 const runtimeDir = path.join(root, 'runtime')
 const staged = fs.existsSync(runtimeDir) ? fs.readdirSync(runtimeDir, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort() : []
@@ -47,4 +42,6 @@ if (receipt.version !== 1 || receipt.platform !== 'win32-x64') throw Error('Inva
 for (const name of ['opsipc.dll', 'opsnt.dll']) if (hash(path.join(ipc, name)) !== receipt.files[name]) throw Error(`IPC hash mismatch ${name}`)
 for (const name of ['security.h', 'opsipc.cpp', 'opsnt.cpp']) if (hash(path.join(root, 'native/bash-ipc', name)) !== receipt.sources[name]) throw Error(`IPC source mismatch ${name}; rebuild proxies`)
 if (!sameSet(fs.readdirSync(ipc), ['opsipc.dll', 'opsnt.dll', 'provenance.json'])) throw Error('Unexpected Bash IPC output files')
-console.log(`Release closure OK: dsh-ops@${pkg.version}, ${declared.join(' + ')} + Bash IPC proxies and matching source.`)
+const { verifyNiubashTree } = await import('../lib/cli/niubash-payload.js')
+verifyNiubashTree(path.join(runtimeDir, 'win32-x64/niubash'))
+console.log(`Release closure OK: dsh-ops@${pkg.version}, ${declared.join(' + ')} + complete Niubash v1.5.0, Bash IPC proxies and matching source.`)

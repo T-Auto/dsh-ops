@@ -13,6 +13,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { assembleNiubash } from './lib/build/niubash.mjs'
 import { describePackages, stepAssemble } from './lib/build/assemble.js'
 import { stepCheck } from './lib/build/check.js'
 import { downloadPins, resolveProxy } from './lib/build/download.js'
@@ -60,6 +61,9 @@ function parseArgs(argv) {
     proxy: undefined,
     noProxy: false,
     force: false,
+    backend: 'niubash',
+    offline: false,
+    niubashArchive: undefined,
   }
   const flags = new Set()
   for (let index = 0; index < argv.length; index += 1) {
@@ -83,6 +87,9 @@ function parseArgs(argv) {
       return argv[index]
     }
     switch (name) {
+      case '--backend': options.backend = value(); break
+      case '--niubash-archive': options.niubashArchive = path.resolve(value()); break
+      case '--offline': options.offline = true; break
       case '--platform': options.platform = value(); break
       case '--arch': options.arch = value(); break
       case '--dist': options.dist = path.resolve(value()); break
@@ -120,7 +127,7 @@ async function main() {
   const context = {
     ...options,
     proxy,
-    packages: describePackages(options.platform, options.arch, options.dist),
+    packages: describePackages(options.platform, options.arch, options.dist, options.backend),
   }
   console.log(`dsh-ops platform packages: ${options.command} -> ${options.dist}`)
   console.log(`target ${options.platform}-${options.arch}`
@@ -137,6 +144,10 @@ async function main() {
     printArtifactTable(options.dist)
     process.exitCode = problems === 0 ? 0 : 1
     return
+  }
+  if (options.backend === 'niubash') {
+    await assembleNiubash(context)
+    if (['fetch', 'verify-upstream', 'assemble'].includes(options.command)) return
   }
   if (options.command === 'verify-upstream') {
     await runStep('verify-upstream', () => stepVerifyUpstream(context))
