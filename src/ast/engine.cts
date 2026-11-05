@@ -74,8 +74,8 @@ export interface RefactorReceipt {
   /** Files whose content matched, before `limit` was applied. */
   matched?: number
   planned?: number
-  /** Matched but not planned because `limit` stopped the walk: work still outstanding. */
-  remaining?: number
+  /** Matched but not planned because `limit` stopped the walk; `null` when the walk stopped early. */
+  remaining?: number | null
   applied?: boolean
   effectState?: 'none' | 'applied' | 'partial'
   audit?: AuditFacts
@@ -663,6 +663,7 @@ export async function refactor(req: RefactorRequest, cwd: string = process.cwd()
     let firstMiss: string | null = null
 
     let matched = 0
+    let stopped = false
     for (const cand of await prefilterAsync(files, req.symbol ?? literalOf(req.pattern), opts.signal)) {
       const file = cand.file
       const lang = langFor(file)
@@ -687,9 +688,10 @@ export async function refactor(req: RefactorRequest, cwd: string = process.cwd()
       }
       const nodes = [...found.values()].sort((a, b) => a.range().start.index - b.range().start.index)
       if (nodes.length === 0) { firstMiss ??= `pattern matched nothing: ${req.pattern}`; continue }
-      // Count every match before honouring the limit, so the receipt can say what was left out.
+      // Counting every match before honouring the limit meant walking the whole tree for a one-file
+      // rewrite. Stop at the limit and say the rest is unknown rather than measuring it.
       matched++
-      if (plans.length >= limit) { firstMiss ??= `${matched} files match; only the first ${limit} were ${mode === 'apply' ? 'planned' : 'shown'}`; continue }
+      if (plans.length >= limit) { stopped = true; break }
 
       const after = withEol(root.commitEdits(nodes.map((n) => n.replace(expand(n, req.rewrite as string, src.text as string)))), eolOf(src.text))
       const delta = lineDelta(src.text, after)
@@ -727,7 +729,9 @@ export async function refactor(req: RefactorRequest, cwd: string = process.cwd()
 
     const base: RefactorReceipt = {
       ...out, edits: totalEdits, files: fileSummary, filesTotal: plans.length,
-      matched, planned: plans.length, remaining: Math.max(matched - plans.length, 0),
+      matched, planned: plans.length,
+      // A stopped walk did not count the rest: `null` is the honest answer, not a measured number.
+      remaining: stopped ? null : Math.max(matched - plans.length, 0),
       ...(d.continuation ? { continuation: d.continuation } : {}),
       ...(plans.length === 1 ? { audit: plans[0].audit } : {}),
     }
