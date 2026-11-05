@@ -25,6 +25,7 @@ import { parseRequest } from './search.js'
 import { InvocationLifetime, InvocationNotStarted } from '../lifecycle/invocations.js'
 import { observeSelection } from './observations.js'
 import { scopedReconciliation, scopeFamilies } from '../publication/reconciliation.js'
+import { visibleNames } from '../publication/surface.js'
 
 export interface DiscoveryGate {
   allows(agent: Agent): boolean; watch?(notify: () => void): () => void; guidance?: boolean; extraGuidance?: string
@@ -503,7 +504,7 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
         if (gate.guidance === false || context.signal?.aborted || !entry || !ownership?.owns(agent) || !gate.allows(agent)) return ''
         // Read only: no registrations, prompt assembly, worker probes or authorization
         // from a text provider. The assembly hook below withdraws Native text in PTC-only mode.
-        const callable = new Set(tools.schemas(agent).map(tool => tool.name))
+        const callable = new Set(visibleNames(tools, agent))
         const directory = config.enabled && entry.owned.has(DISCOVER) && callable.has(DISCOVER)
           ? renderNativeDirectory(catalog(agent, callable)) : ''
         const policy = renderToolingPolicy({ published: [...entry.owned].filter(name => callable.has(name)), shellComponent: false,
