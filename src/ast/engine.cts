@@ -707,7 +707,9 @@ export async function refactor(req: RefactorRequest, cwd: string = process.cwd()
       const target = resolvedInside(file, roots)
       if (!target) { conflicts.push({ file: relative(cwd, file), code: 'E_ROOT_OUTSIDE', message: `${relative(cwd, file)} resolves outside the root` }); continue }
       if (mode === 'apply') {
-        try { if (lstatSync(target).isSymbolicLink()) { conflicts.push({ file: relative(cwd, file), code: 'E_NOT_REGULAR', message: `${relative(cwd, file)} is a link, not the file the plan was built against` }); continue } } catch { /* absent: the worker reports it */ }
+        // `target` is already resolved, so asking whether it is a link always answers no. The name
+        // the caller reached the file through is the one that can be a link.
+        try { if (lstatSync(file).isSymbolicLink()) { conflicts.push({ file: relative(cwd, file), code: 'E_NOT_REGULAR', message: `${relative(cwd, file)} is a link, not the file the plan was built against` }); continue } } catch { /* absent: the publisher reports it */ }
       }
       // A write plan is refused at planning time when the target is not writable by this caller.
       if (mode === 'apply' && opts.writeRoots && opts.writeRoots.length > 0 && resolvedInside(target, opts.writeRoots) === null) {

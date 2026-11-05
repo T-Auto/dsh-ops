@@ -56,6 +56,9 @@ const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8
  * @returns undefined on success, or the code and message of the refusal
  */
 function publish(target: string, revision: string, after: string): { code: string; message: string } | undefined {
+  // O_NOFOLLOW is a POSIX flag: on Windows it is accepted and ignored, so a link would be followed
+  // and its target rewritten. Ask the question the descriptor cannot.
+  try { if (fs.lstatSync(target).isSymbolicLink()) return { code: 'E_NOT_REGULAR', message: `${target} is a link; refusing to write through it` } } catch { /* absent: open reports it */ }
   let fd: number
   try { fd = fs.openSync(target, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW) } catch {
     return { code: 'E_NOT_REGULAR', message: `${target} is not a regular file` }
