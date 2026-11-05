@@ -156,8 +156,10 @@ await test('preparation failures name their cause: execution policy vs folder pr
     assert.doesNotMatch(message,/not a user permission denial/)
   }
   const owner=await failure(failing('C:\\x\\prepare-workspace.ps1 : Workspace is not owned by the current user; refusing automatic ACL preparation\r\n    + CategoryInfo          : OperationStopped\r\n'))
-  assert.match(owner,/^DSH workspace preparation failed: the workspace root C:\\ws does not meet the sandbox prerequisite \(the host needs WRITE_OWNER on it\): .*not owned by the current user; refusing automatic ACL preparation\. Fix the folder's owner or permissions/)
+  assert.match(owner,/^DSH workspace preparation failed: the workspace root C:\\ws is not owned by the current user and does not already grant the host's WRITE_OWNER prerequisite/)
+  assert.match(owner,/automatic ACL preparation left it unchanged: .*not owned by the current user; refusing automatic ACL preparation\./)
   assert.match(owner,/not a DSH authorization denial/)
+  assert.doesNotMatch(owner,/does not meet the sandbox prerequisite/)
   assert.doesNotMatch(owner,/execution policy/)
   assert.match(await failure(failing('Explicit effective denial of WRITE_OWNER; refusing to override user policy')),/does not meet the sandbox prerequisite.*Explicit effective denial of WRITE_OWNER/)
   // Unknown output keeps the plain exit-code text rather than guessing a cause.
