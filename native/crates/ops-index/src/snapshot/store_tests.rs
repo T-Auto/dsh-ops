@@ -177,9 +177,8 @@ fn a_failed_save_removes_its_temporary_file() {
 fn a_write_failure_leaves_no_temporary_file() {
     let directory = TestDir::new("write-failure");
     let store = SnapshotStore::new(directory.path());
-    super::FAIL_AFTER_CREATE.store(true, Ordering::Relaxed);
+    super::inject_write_failure();
     let error = store.save(&snapshot(1)).unwrap_err();
-    super::FAIL_AFTER_CREATE.store(false, Ordering::Relaxed);
     assert_eq!(error.code(), "INDEX_SNAPSHOT_IO");
     assert_eq!(
         listing(directory.path()),
@@ -290,4 +289,25 @@ fn store_error_codes_and_sources_are_stable() {
     assert_eq!(too_large.code(), "INDEX_SNAPSHOT_TOO_LARGE");
     assert!(too_large.corrupt().is_none());
     assert!(std::error::Error::source(&too_large).is_none());
+}
+
+#[test]
+fn write_failure_injection_cannot_be_consumed_by_another_thread() {
+    let directory = TestDir::new("thread-local-failure");
+    let store = SnapshotStore::new(directory.path());
+    super::inject_write_failure();
+    // Force an unrelated save between arming and consuming the injection.
+    let unrelated = std::thread::spawn(|| {
+        let directory = TestDir::new("unrelated-save");
+        SnapshotStore::new(directory.path()).save(&snapshot(1))
+    })
+    .join()
+    .unwrap();
+    let injected = store.save(&snapshot(1));
+    assert!(
+        unrelated.is_ok(),
+        "another thread must not consume the injection"
+    );
+    assert!(matches!(injected, Err(StoreError::Io(_))));
+    assert!(listing(directory.path()).is_empty());
 }
