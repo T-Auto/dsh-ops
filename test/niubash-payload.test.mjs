@@ -20,8 +20,8 @@ await test('clean installs and default release select full Niubash, never a Git 
   assert.equal(NIUBASH_HOME_PATH, 'dsh-ops/shells/niubash')
   assert.equal(Object.keys(NIUBASH_PIN.files).length, 158)
   assert.equal(NIUBASH_PIN.directories.length, 35)
-  assert.equal(NIUBASH_PIN.archiveSha256, 'f1e429b32987052ffeda18872b52f1e4fd399c06d15e14a8d067ee74e5db5b06')
-  assert.equal(NIUBASH_PIN.files['niu.exe'], '8d37b48e6f5694ee2c9f4af53cad2d0921ac5132d3196d86fdd91c7f017c05c4')
+  assert.equal(NIUBASH_PIN.archiveSha256, 'da28cdc4e2e87f777ee0eae71386276f9c6a0ed135c1e2baad943acd8d349b87')
+  assert.equal(NIUBASH_PIN.files['niu.exe'], '7ec3ec04ce91bae64c23d7150e6b16574e9d91df8fcf0df997006e2b37bf2f1e')
 })
 await test('archive traversal, Windows aliases and unsupported links fail before extraction', () => {
   for (const name of ['../x', '/tmp/x', 'C:/x', 'x\\y', 'x/../y', 'x:ads', 'x./y', 'x /y', 'AUX.txt', 'x//y']) {
