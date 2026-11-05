@@ -129,4 +129,20 @@ await test('a rewrite reaches every file unless a limit says otherwise', async (
   } finally { fs.rmSync(ws, { recursive: true, force: true }) }
 })
 
+await test('a session whose cwd is a link still reaches its own files', async () => {
+  const base = root()
+  try {
+    const real = path.join(base, 'real'), link = path.join(base, 'link')
+    fs.mkdirSync(real)
+    write(real, 'a.ts', "console.log('a')\n")
+    write(real, 'b.ts', "console.log('b')\n")
+    try { fs.symlinkSync(real, link, 'junction') } catch { return }
+    // The lexical fence compared a realpathed root against an unresolved target, so a cwd reached
+    // through a junction matched nothing and every call was POLICY_DENIED.
+    const value = await call('ast_refactor', { roots: ['.', './'], pattern: 'console.log($A)', rewrite: 'logger.log($A)', limit: 5 }, link, real)
+    assert.equal(value.status, 'completed', JSON.stringify(value.error))
+    assert.equal(value.planned, 2)
+  } finally { fs.rmSync(base, { recursive: true, force: true }) }
+})
+
 report('ast-security')

@@ -173,6 +173,10 @@ export async function invokeAst(tool: string, ctx: Context, args: unknown, exec:
 
     // Credential fence first: it must see the name the caller asked for, not the anchor result.
     const roots = [canonicalAnchor(policy.workspaceRoot), canonicalAnchor(cwd)]
+    // The first pass compares the names before anything resolves, so it has to compare against the
+    // same kind of name. Comparing a realpathed root with a lexical target rejected a session whose
+    // cwd is a link — the target's spelling never matched the resolved root's.
+    const lexicalRoots = [path.resolve(policy.workspaceRoot), path.resolve(cwd)]
     // A read scope is not a write grant: a cwd outside the workspace must not authorise a commit.
     const writeRoots = [canonicalAnchor(policy.workspaceRoot)]
     const confined = policy.mode !== 'danger-full-access'
@@ -180,7 +184,7 @@ export async function invokeAst(tool: string, ctx: Context, args: unknown, exec:
       const resolved = path.isAbsolute(target) ? path.normalize(target) : path.resolve(cwd, target)
       const lexical = credentialPath(resolved)
       if (lexical.denied) return credentialDenied(credentialRefusal(target, lexical.matched).message)
-      if (confined && !roots.some((entry) => inside(entry, resolved))) {
+      if (confined && !lexicalRoots.some((entry) => inside(entry, resolved))) {
         return failure('POLICY_DENIED', 'Named files and roots must stay inside the workspace or session cwd.', 'none', policy.mode)
       }
       // A junction inside the workspace can point outside and only the real path shows it — the
