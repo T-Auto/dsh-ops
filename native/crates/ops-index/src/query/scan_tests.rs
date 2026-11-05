@@ -380,3 +380,107 @@ fn substring_patterns_keep_their_mode() {
     let pattern = Pattern::from_bytes(b"abc", MatchMode::Substring).expect("valid");
     assert_eq!(pattern.mode(), MatchMode::Substring);
 }
+
+#[test]
+fn expired_deadline_rejects_empty_and_no_match_queries() {
+    for count in [0, 1] {
+        let source = many_names(count);
+        for patterns in [vec![], vec![Pattern::substring("absent").unwrap()]] {
+            let mut query = Query {
+                patterns,
+                ..Query::default()
+            };
+            query.budget.deadline = Some(Instant::now() - Duration::from_secs(1));
+            assert_eq!(
+                run_query(&source, &query),
+                Err(QueryError::DeadlineExceeded)
+            );
+        }
+    }
+}
+
+// Hold the arena accessor until the budget expires, without depending on scan
+// speed or a race between the test and the scanner.
+struct ExpiringArena {
+    source: TestSource,
+    deadline: Instant,
+}
+
+impl super::NameSource for ExpiringArena {
+    fn folded_arena(&self) -> &[u8] {
+        while Instant::now() < self.deadline {
+            std::thread::sleep(self.deadline.saturating_duration_since(Instant::now()));
+        }
+        self.source.folded_arena()
+    }
+    fn name_count(&self) -> u32 {
+        self.source.name_count()
+    }
+    fn name_at(&self, ordinal: u32) -> crate::ids::NameId {
+        self.source.name_at(ordinal)
+    }
+    fn name_raw(&self, name: crate::ids::NameId) -> &[u8] {
+        self.source.name_raw(name)
+    }
+    fn name_folded(&self, name: crate::ids::NameId) -> &[u8] {
+        self.source.name_folded(name)
+    }
+    fn folded_name_at(&self, _: usize) -> Option<crate::ids::NameId> {
+        panic!("expired prefilter must stop before resolving a hit")
+    }
+    fn for_each_name_entry(
+        &self,
+        name: crate::ids::NameId,
+        visit: &mut dyn FnMut(super::EntryView),
+    ) {
+        self.source.for_each_name_entry(name, visit);
+    }
+    fn entry(&self, entry: EntryId) -> Option<super::EntryView> {
+        self.source.entry(entry)
+    }
+}
+
+#[test]
+fn deadline_expiring_in_prefilter_is_not_a_complete_empty_result() {
+    let source = ExpiringArena {
+        source: many_names(1),
+        deadline: Instant::now() + Duration::from_millis(20),
+    };
+    let mut query = query_with(Pattern::substring("absent").unwrap(), false);
+    query.budget.deadline = Some(source.deadline);
+    assert_eq!(
+        run_query(&source, &query),
+        Err(QueryError::DeadlineExceeded)
+    );
+}
+
+#[test]
+fn deadline_expiring_in_prefilter_stops_before_resolving_matches() {
+    let source = ExpiringArena {
+        source: many_names(1),
+        deadline: Instant::now() + Duration::from_millis(20),
+    };
+    let mut query = query_with(Pattern::substring("entry").unwrap(), false);
+    query.budget.deadline = Some(source.deadline);
+    assert_eq!(
+        run_query(&source, &query),
+        Err(QueryError::DeadlineExceeded)
+    );
+}
+
+#[test]
+fn prefilter_preserves_needles_spanning_byte_chunks() {
+    let mut source = TestSource::new();
+    // The separator puts the next name two bytes before a chunk boundary.
+    source.add(&vec![b'x'; super::PREFILTER_BYTES - 3]);
+    source.add(b"abcdef");
+    let query = query_with(Pattern::substring("abcdef").unwrap(), false);
+    assert_eq!(run_query(&source, &query).unwrap().total, 1);
+    let long = vec![b'y'; 1024];
+    source.add(&long);
+    let query = query_with(
+        Pattern::from_bytes(&long, MatchMode::Substring).unwrap(),
+        false,
+    );
+    assert_eq!(run_query(&source, &query).unwrap().total, 1);
+}

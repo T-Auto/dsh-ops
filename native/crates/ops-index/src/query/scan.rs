@@ -18,7 +18,8 @@
 //! eight. The index root is stored under the empty name and is skipped before
 //! matching: it is structural, never a row.
 //!
-//! Budget checks happen at chunk boundaries. A deadline or a match cap aborts
+//! Budget checks happen before work, at prefilter and scan chunk boundaries,
+//! and before publishing the scan. A deadline or a match cap aborts
 //! the scan and surfaces an error; a truncated scan is never returned as if it
 //! were complete.
 
@@ -123,9 +124,13 @@ pub(crate) fn run<S: NameSource + Sync + ?Sized>(
     plan: &Plan,
     query: &Query,
 ) -> Result<ScanOutcome, QueryError> {
-    let work = build_work(source, plan);
-    let threads = effective_threads(query.threads, work.len());
     let tracker = Tracker::new(&query.budget);
+    tracker.check_deadline();
+    if tracker.stopped() {
+        return Err(QueryError::DeadlineExceeded);
+    }
+    let work = build_work(source, plan, &tracker);
+    let threads = effective_threads(query.threads, work.len());
     let tracker = &tracker;
     let work = &work;
 
@@ -156,6 +161,7 @@ pub(crate) fn run<S: NameSource + Sync + ?Sized>(
         parts.into_iter().flatten().collect()
     };
 
+    tracker.check_deadline();
     let aborted = tracker.aborted.load(Ordering::Relaxed);
     if aborted != 0 {
         return Err(if aborted & ABORT_DEADLINE != 0 {
@@ -175,6 +181,10 @@ pub(crate) fn run<S: NameSource + Sync + ?Sized>(
     for chunk in chunks {
         candidates.extend(chunk.candidates);
         skipped = skipped.saturating_add(chunk.skipped);
+    }
+    tracker.check_deadline();
+    if tracker.stopped() {
+        return Err(QueryError::DeadlineExceeded);
     }
     Ok(ScanOutcome {
         candidates,
@@ -254,23 +264,48 @@ impl Tracker {
     }
 }
 
-fn build_work<S: NameSource + ?Sized>(source: &S, plan: &Plan) -> Work {
+fn build_work<S: NameSource + ?Sized>(source: &S, plan: &Plan, tracker: &Tracker) -> Work {
     match plan.prefilter() {
-        Some(needle) => Work::Names(prefilter_names(source, needle)),
+        Some(needle) => Work::Names(prefilter_names(source, needle, tracker)),
         None => Work::All {
             count: source.name_count(),
         },
     }
 }
 
-fn prefilter_names<S: NameSource + ?Sized>(source: &S, needle: &[u8]) -> Vec<NameId> {
+// Bound no-match searches too: checking only finder hits misses an entire arena
+// with no occurrences. The overlap preserves needles spanning two byte chunks.
+const PREFILTER_BYTES: usize = 64 * 1024;
+
+fn prefilter_names<S: NameSource + ?Sized>(
+    source: &S,
+    needle: &[u8],
+    tracker: &Tracker,
+) -> Vec<NameId> {
     let arena = source.folded_arena();
+    let finder = memchr::memmem::Finder::new(needle);
     let mut names = Vec::new();
-    for offset in memchr::memmem::find_iter(arena, needle) {
-        if let Some(name) = source.folded_name_at(offset)
-            && names.last().copied() != Some(name)
-        {
-            names.push(name);
+    for start in (0..arena.len()).step_by(PREFILTER_BYTES) {
+        tracker.check_deadline();
+        if tracker.stopped() {
+            break;
+        }
+        let end = start.saturating_add(PREFILTER_BYTES).min(arena.len());
+        let search_end = end.saturating_add(needle.len() - 1).min(arena.len());
+        for relative in finder.find_iter(&arena[start..search_end]) {
+            let offset = start + relative;
+            if offset >= end {
+                break;
+            }
+            tracker.check_deadline();
+            if tracker.stopped() {
+                return names;
+            }
+            if let Some(name) = source.folded_name_at(offset)
+                && names.last().copied() != Some(name)
+            {
+                names.push(name);
+            }
         }
     }
     names
