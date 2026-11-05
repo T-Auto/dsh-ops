@@ -97,7 +97,18 @@ await test('actual assembly advertises eligible unloaded tools and real dispatch
     await step(ctx, owner)
     assert.equal((await call(ctx, owner, 'acme_lookup')).value.answer, 42)
     assert.equal(authorized, 1); assert.equal(executed, 1)
-    assert.ok(!(await assemble(owner)).text.includes('- acme_lookup:'), 'loaded tool no longer needs loading')
+    // The guidance section reads the scope view, not a schema projection. An assembly that
+    // called `schemas()` would deep-copy every visible definition once per prompt — the cost
+    // this change exists to remove — so pin the absence instead of a wall-clock number. This
+    // covers the whole assembly chain on purpose: a new section that projects schemas owes the
+    // same argument, and the fix then is to narrow it to the discovery section, not to drop it.
+    let projected = 0
+    const schemasOf = tools.schemas
+    tools.schemas = function (...args) { ++projected; return schemasOf.apply(this, args) }
+    try {
+      assert.ok(!(await assemble(owner)).text.includes('- acme_lookup:'), 'loaded tool no longer needs loading')
+    } finally { tools.schemas = schemasOf }
+    assert.equal(projected, 0, 'assembling the discovery guidance must not project schemas')
     assert.ok((await assemble(other)).text.includes('- acme_lookup:'), 'other agent retains its own unselected directory')
     assert.ok(!tools.get('acme_lookup', other))
     assert.equal((await assemble(owner)).assembly.sections.find(section => section.name === 'acme:own-guidance').text, 'Provider-owned usage {{literal}}')
