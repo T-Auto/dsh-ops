@@ -8,7 +8,7 @@
  * @module dsh-ops/ast/engine
  */
 
-import { chmodSync, closeSync, existsSync, fstatSync, fsyncSync, mkdirSync, openSync, promises as fsp, readFileSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, promises as fsp, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { createHash, randomBytes } from 'node:crypto'
 import { constants as fsConstants } from 'node:fs'
 import { dirname, extname, join, relative, resolve, sep } from 'node:path'
@@ -667,6 +667,9 @@ export async function refactor(req: RefactorRequest, cwd: string = process.cwd()
       }
       const target = resolvedInside(file, roots)
       if (!target) { conflicts.push({ file: relative(cwd, file), code: 'E_ROOT_OUTSIDE', message: `${relative(cwd, file)} resolves outside the root` }); continue }
+      if (mode === 'apply') {
+        try { if (lstatSync(target).isSymbolicLink()) { conflicts.push({ file: relative(cwd, file), code: 'E_NOT_REGULAR', message: `${relative(cwd, file)} is a link, not the file the plan was built against` }); continue } } catch { /* absent: the worker reports it */ }
+      }
       // A write plan is refused at planning time when the target is not writable by this caller.
       if (mode === 'apply' && opts.writeRoots && opts.writeRoots.length > 0 && resolvedInside(target, opts.writeRoots) === null) {
         conflicts.push({ file: relative(cwd, file), code: 'PATH_RESTRICTED', message: `${relative(cwd, file)} is outside the write roots` }); continue
