@@ -21,9 +21,17 @@ await test('clean full-plugin pack consumer uses production prepare for repeated
     const consumer = path.join(root, 'consumer')
     fs.mkdirSync(consumer)
     fs.writeFileSync(path.join(consumer, 'package.json'), JSON.stringify({ name: 'ops-clean-consumer', private: true, version: '1.0.0' }))
-    const install = npm(['install', '--ignore-scripts', '--offline', '--no-audit', '--no-fund', '--package-lock=false', artifact], { cwd: consumer })
-    assert.equal(install.status, 0, install.stderr)
-    const installed = path.join(consumer, 'node_modules/dsh-ops')
+    const pnpm = process.env.DSH_OPS_TEST_PNPM_CLI
+    const install = pnpm ? spawnSync(process.execPath, [pnpm, 'add', '--offline', '--ignore-scripts',
+      '--store-dir', path.join(root, 'store'), '--package-import-method=hardlink', artifact], {
+      cwd: consumer, env: process.env, encoding: 'utf8', windowsHide: true, timeout: 120000,
+    }) : npm(['install', '--ignore-scripts', '--offline', '--no-audit', '--no-fund', '--package-lock=false', artifact], { cwd: consumer })
+    assert.equal(install.status, 0, `${install.error ?? ''}\n${install.stderr}`)
+    // pnpm's public package entry is a link into its physical virtual store. The
+    // verifier receives the real package root, never a relaxed no-link policy.
+    const installed = fs.realpathSync.native(path.join(consumer, 'node_modules/dsh-ops'))
+    if (pnpm) assert.ok(fs.statSync(path.join(installed, 'runtime/win32-x64/niubash/niu.exe')).nlink > 1,
+      'exercise actual pnpm store hardlink imports, not copy/reflink fallback')
     assert.equal(fs.lstatSync(installed).isSymbolicLink(), false, 'consumer is a real installed artifact, not a workspace link')
     assert.equal(fs.existsSync(path.join(installed, 'src')), false, 'consumer cannot import source')
     const home = path.join(root, 'host-home'); fs.mkdirSync(home)

@@ -29,11 +29,23 @@ cp.spawn = (command, args, options) => {
 };
 require('node:module').syncBuiltinESMExports();
 `)
+    const loader = path.join(root, 'pinned-fixture.mjs')
+    const pinnedUrl = pathToFileURL(path.join(PACKAGE_ROOT, 'lib/shells/pinned.js')).href
+    // This is an orchestration test, not a payload verifier. Isolate the in-process
+    // fixture-acquisition seam as well as subprocess steps; never borrow a host Bash.
+    fs.writeFileSync(loader, `
+export async function load(url, context, next) {
+  if (url === ${JSON.stringify(pinnedUrl)}) return { format: 'module', shortCircuit: true,
+    source: 'export function pinnedBashExecutable(options = {}) { return options.file ?? "fixture-bash.exe" }' };
+  return next(url, context);
+}
+`)
     for (const failure of ['none', 'unpack', 'closure']) {
-      const child = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href,
+      const child = spawnSync(process.execPath, ['--experimental-loader', pathToFileURL(loader).href,
+        '--import', pathToFileURL(preload).href,
         path.join(PACKAGE_ROOT, 'scripts/verify-gate.mjs'), '--skip-install', '--keep-going', '--json'], {
         cwd: PACKAGE_ROOT, encoding: 'utf8', timeout: 30000,
-        env: { ...process.env, GATE_ARTIFACT_FAILURE: failure },
+        env: { ...process.env, DSH_OPS_TEST_BASH: '', GATE_ARTIFACT_FAILURE: failure },
       })
       assert.equal(child.error, undefined, String(child.error))
       assert.equal(child.status, failure === 'none' ? 0 : 1, child.stdout + child.stderr)

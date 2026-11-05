@@ -110,6 +110,10 @@ if (process.platform === 'win32') {
       await fs.promises.writeFile(extra, 'extra')
       await assert.rejects(runtime.verify(), /checksum/)
       await fs.promises.unlink(extra)
+      const alias = path.join(path.dirname(runtime.file), 'outside-hardlink')
+      await fs.promises.link(face, alias)
+      await assert.rejects(runtime.verify(), /Unsafe/)
+      await fs.promises.unlink(alias)
       await runtime.verify()
     } finally { await runtime.dispose() }
   })

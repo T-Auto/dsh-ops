@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Accept package-manager hardlinks only in rehashed Niubash source payloads while requiring exclusive execution copies; cover a real offline pnpm hardlink consumer and keep gate orchestration fixtures independent of a host Git Bash installation.
+- Niubash 源载荷逐字节校验后兼容包管理器硬链接，执行副本仍要求独占文件；增加真实离线 pnpm 硬链接消费者验证，并让门禁编排测试不依赖宿主 Git Bash 安装。
+
 - Repin the rebuilt official Niubash 1.5.0 Windows x64 archive after checking its GitHub asset digest, published SHA256SUMS and complete member inventory; keep strict archive and per-file validation.
 - 核对 GitHub 资产摘要、官方 SHA256SUMS 与完整成员清单后，重新固定官方重建的 Niubash 1.5.0 Windows x64 归档；保留严格归档与逐文件校验。
 

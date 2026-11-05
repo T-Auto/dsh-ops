@@ -124,7 +124,9 @@ function verifyTree(directory: string, allowExecutionState: boolean) {
         }
         walk(name)
       }
-      else if (!entry.isFile() || (fs.lstatSync(file).isSymbolicLink() || fs.lstatSync(file).nlink !== 1)) throw Error(`Unsafe Niubash tree member: ${name}`)
+      // pnpm may hardlink immutable package members into its store. Rehash every
+      // source byte; only disposable execution trees must have exclusive file links.
+      else if (!entry.isFile() || fs.lstatSync(file).isSymbolicLink() || (allowExecutionState && fs.lstatSync(file).nlink !== 1)) throw Error(`Unsafe Niubash tree member: ${name}`)
       else if (name === NIUBASH_RECEIPT || (allowExecutionState && name === 'execution-provenance.json')) continue
       else {
         if (!Object.hasOwn(expected, name) || fs.statSync(file).size !== (sizes[name] ?? sizes['winuxcmd/usr/bin/winuxcmd.exe']) || niubashFileHash(file) !== expected[name]) throw Error(`Niubash tree checksum mismatch: ${name}`)
@@ -170,7 +172,7 @@ export async function verifyNiubashTreeAsync(directory: string, allowExecutionSt
         }
         await walk(name)
       }
-      else if (!entry.isFile() || (fs.lstatSync(file).isSymbolicLink() || fs.lstatSync(file).nlink !== 1)) throw Error(`Unsafe Niubash tree member: ${name}`)
+      else if (!entry.isFile() || fs.lstatSync(file).isSymbolicLink() || (allowExecutionState && fs.lstatSync(file).nlink !== 1)) throw Error(`Unsafe Niubash tree member: ${name}`)
       else if (name === NIUBASH_RECEIPT || (allowExecutionState && name === 'execution-provenance.json')) continue
       else {
         if (!Object.hasOwn(expected, name) || fs.statSync(file).size !== (sizes[name] ?? sizes['winuxcmd/usr/bin/winuxcmd.exe']) || digest(await fs.promises.readFile(file, { signal })) !== expected[name]) throw Error(`Niubash tree checksum mismatch: ${name}`)
