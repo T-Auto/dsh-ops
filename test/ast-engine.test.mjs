@@ -35,7 +35,7 @@ await test('a prefilter that leaves more than 48 candidates is reported as prune
   try {
     for (let i = 0; i < 49; i++) write(root, `f${i}.ts`, `// greet appears only in this comment ${i}\nexport const v${i} = ${i}\n`)
     const value = await locate({ symbol: 'greet' }, root)
-    assert.equal(value.status, 'error')
+    assert.equal(value.status, 'ok', 'no hit answers the question; it is not a failure')
     assert.equal(value.code, 'E_NO_MATCH')
     assert.equal(value.pruned, true, 'a short list must say it was pruned, not look complete')
   } finally { cleanup(root) }

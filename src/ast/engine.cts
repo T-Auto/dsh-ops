@@ -523,7 +523,7 @@ export async function locate(req: LocateRequest, cwd: string = process.cwd(), op
       const next = d.continuation
         ? `; ${files.length}/${d.total} files in this page carry no literal hit, pass continuation=${d.continuation} for the next page`
         : `; none of the ${d.total} files carries a literal hit`
-      return { ...out, status: 'error', code: 'E_NO_MATCH', message: `symbol ${req.symbol} not found${next}`, ...(d.continuation ? { continuation: d.continuation } : {}) }
+      return { ...out, hits: [], code: 'E_NO_MATCH', message: `no definition of ${req.symbol}${next}`, ...(d.continuation ? { continuation: d.continuation } : {}) }
     }
 
     // A signature answers "where is it defined"; the whole node is opt-in, because it rides in
@@ -552,7 +552,7 @@ export async function locate(req: LocateRequest, cwd: string = process.cwd(), op
     if (stopped && out.truncated === undefined) out.truncated = true
     if (out.hits.length === 0) {
       const pruned = capped ? `; ${pool.length} candidates and only the first ${LOCATE_PARSE_MAX} were parsed (pruned), narrow roots or use a fuller name` : ''
-      return { ...out, status: 'error', code: 'E_NO_MATCH', message: `symbol ${req.symbol} not found (${pool.length} candidates after prefilter${pruned})`, ...(capped ? { pruned: true } : {}), ...(d.continuation ? { continuation: d.continuation } : {}) }
+      return { ...out, hits: [], code: 'E_NO_MATCH', message: `no definition of ${req.symbol} (${pool.length} candidates after prefilter${pruned})`, ...(capped ? { pruned: true } : {}), ...(d.continuation ? { continuation: d.continuation } : {}) }
     }
     return { ...out, ...(d.continuation ? { continuation: d.continuation } : {}) }
   } catch (e) {
