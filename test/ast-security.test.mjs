@@ -38,9 +38,8 @@ await test('refactor carries the same deny list as locate', async () => {
     write(ws, 'app.ts', "console.log('once')\n")
     const value = await call('ast_refactor', { pattern: 'console.log($A)', rewrite: 'logger.log($A)', mode: 'apply' }, ws, ws)
     assert.equal(value.status, 'completed', JSON.stringify(value.error))
-    assert.equal(fs.readFileSync(path.join(ws, '.ssh/id_rsa'), 'utf8').includes('console.log'), true,
-      'the credential file must be untouched')
-    assert.deepEqual(value.filesApplied, ['app.ts'])
+    assert.deepEqual(value.files.map(f => f.file), ['app.ts'], 'the credential file is never planned')
+    assert.equal(fs.readFileSync(path.join(ws, '.ssh/id_rsa'), 'utf8').includes('console.log'), true)
   } finally { fs.rmSync(ws, { recursive: true, force: true }) }
 })
 
@@ -49,9 +48,10 @@ await test('a cwd outside the workspace is a read scope, never a write grant', a
   try {
     write(outside, 'evil.ts', "console.log('x')\n")
     const value = await call('ast_refactor', { pattern: 'console.log($A)', rewrite: 'logger.log($A)', mode: 'apply' }, outside, ws)
-    assert.notEqual(value.status, 'completed', JSON.stringify(value))
+    assert.equal(value.status, 'error', JSON.stringify(value.files))
+    assert.equal(value.error.code, 'PATH_RESTRICTED')
     assert.equal(fs.readFileSync(path.join(outside, 'evil.ts'), 'utf8').includes('console.log'), true,
-      'nothing outside the workspace may be written')
+      'nothing outside the workspace may be planned for writing')
   } finally { fs.rmSync(ws, { recursive: true, force: true }); fs.rmSync(outside, { recursive: true, force: true }) }
 })
 

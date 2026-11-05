@@ -55,7 +55,7 @@ await test('stopping at limit reports truncated instead of a complete-looking li
   } finally { cleanup(root) }
 })
 
-await test('apply preserves a BOM and CRLF line endings', async () => {
+await test('an apply plan carries the text to publish, BOM and CRLF included', async () => {
   const root = dir()
   try {
     const file = path.join(root, 'b.ts')
@@ -65,15 +65,18 @@ await test('apply preserves a BOM and CRLF line endings', async () => {
     ]))
     const value = await refactor({ pattern: 'console.log($A)', rewrite: 'logger.log($A)', mode: 'apply' }, root)
     assert.equal(value.status, 'ok', JSON.stringify(value))
-    assert.equal(value.effectState, 'applied')
-    const raw = fs.readFileSync(file)
-    assert.deepEqual([...raw.subarray(0, 3)], [0xef, 0xbb, 0xbf], 'the BOM must survive the rewrite')
-    assert.match(raw.toString('utf8'), /\r\n/, 'CRLF must survive the rewrite')
-    assert.match(raw.toString('utf8'), /logger\.log/, 'the rewrite must land')
+    // The engine plans; publishing belongs to the worker. The plan must still carry the exact bytes.
+    assert.equal(value.applied, false)
+    assert.equal(value.pending, 1)
+    const planned = value.files[0]
+    assert.match(planned.after, /logger\.log/, 'the plan carries the rewritten text')
+    assert.match(planned.after, /\r\n/, 'CRLF survives in the plan')
+    assert.match(planned.revision, /^[0-9a-f]{64}$/, 'the plan carries the revision it was built against')
+    assert.equal(fs.readFileSync(file).includes(Buffer.from('console.log')), true, 'nothing is written by the engine')
   } finally { cleanup(root) }
 })
 
-await test('two roots naming one directory still write the file once', async () => {
+await test('two roots naming one directory plan the file once', async () => {
   const root = dir()
   try {
     write(root, 'sub/s.ts', "console.log('once')\n")
@@ -81,8 +84,7 @@ await test('two roots naming one directory still write the file once', async () 
     assert.equal(value.status, 'ok', JSON.stringify(value))
     assert.equal(value.filesTotal, 1, 'one path reached twice is still one target')
     assert.equal(value.edits, 1)
-    const text = fs.readFileSync(path.join(root, 'sub/s.ts'), 'utf8')
-    assert.equal((text.match(/logger\.log/g) ?? []).length, 1, 'the file is written once')
+    assert.equal((value.files[0].after.match(/logger\.log/g) ?? []).length, 1)
   } finally { cleanup(root) }
 })
 

@@ -66,10 +66,13 @@ Rewrite source structurally with an ast-grep pattern and a rewrite template.
 A receipt carries `matched`, `planned` and `remaining`, so a `limit`-stopped run says how much work
 it left behind instead of looking complete. `apply` opens each target once with `O_NOFOLLOW`, reads the bytes through that descriptor, and
 refuses a target whose inode changed before the rename (`E_STALE`, nothing overwritten). A target
-that became a link is refused rather than followed. One atomic replacement per file, written to a sibling temp file, fsynced, then renamed. The BOM,
-line endings and permission bits are read from the real file at commit time, never taken from the
-caller. **Ownership, ACLs, xattrs and hard links are not preserved**: the rename publishes a new
-inode, and this engine deliberately does not carry the native worker's metadata machinery. A
+that became a link is refused rather than followed. The engine plans and does not publish. `apply` returns the same receipt as `preview` plus, per file,
+the replacement `after` text and the `revision` the plan was built against; the host then hands each
+one to the native worker's `write_file`, so **one atomic-CAS publication kernel serves every tool**
+instead of a second copy here. That kernel re-reads the file, refuses a stale revision, writes a
+sibling temp file, fsyncs, and renames; the BOM, line endings and permission bits come from the real
+file at commit time. **Ownership, ACLs, xattrs and hard links are not preserved**: the rename
+publishes a new inode. A
 failure after the first write reports `effectState: "partial"` together with the files it already
 committed in `filesApplied`, so a retry cannot silently duplicate an edit.
 

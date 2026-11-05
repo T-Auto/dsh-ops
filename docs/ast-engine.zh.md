@@ -59,9 +59,11 @@ English: [ast-engine.md](ast-engine.md)
 回执带 `matched`、`planned`、`remaining`，被 `limit` 截断的运行会说明自己留下了多少工作，而不是看上去做完了。
 `apply` 用 `O_NOFOLLOW` 打开每个目标一次，通过该描述符读取字节，并在 rename 前拒绝 inode 已变化的目标
 （`E_STALE`，不覆盖任何内容）；目标变成链接时拒绝而不是跟随。
-每个文件一次原子替换：写入同目录临时文件、fsync、再 rename。BOM、行尾与权限位在提交时从真实文件
-读取，绝不取自调用方。**属主、ACL、xattr 与硬链接不保留**：rename 发布的是新 inode，本引擎刻意
-不搬 native worker 那套元数据处理。第一次写入成功后
+引擎只出计划，不负责发布。`apply` 返回与 `preview` 相同的回执，另外每个文件附带替换后的 `after`
+文本和计划所基于的 `revision`；宿主再把它们逐个交给 native worker 的 `write_file`——**一个原子 CAS
+发布内核服务所有工具**，而不是在这里再写一份。那个内核会重读文件、拒绝过期 revision、写同目录临时
+文件、fsync、再 rename；BOM、行尾与权限位在提交时取自真实文件。**属主、ACL、xattr 与硬链接不保留**：
+rename 发布的是新 inode。第一次写入成功后
 再失败，会返回 `effectState: "partial"`，并在 `filesApplied` 里列出已经提交的文件，因此重试不会悄悄产生重复编辑。
 
 ## `ops_ast_audit`

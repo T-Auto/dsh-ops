@@ -65,6 +65,12 @@ export interface RefactorReceipt {
   files?: FileDelta[]
   filesTotal?: number
   filesApplied?: string[]
+  /** Present on `apply`: the full replacement text, so a caller can commit it elsewhere. */
+  after?: string
+  /** Present on `apply`: the SHA-256 of the bytes the plan was built against. */
+  revision?: string
+  /** Files the caller still has to publish. */
+  pending?: number
   /** Files whose content matched, before `limit` was applied. */
   matched?: number
   planned?: number
@@ -541,6 +547,7 @@ function expand(node: NapiNode, template: string, src: string): string {
   })
 }
 
+const digest = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex')
 const eolOf = (text: string): string => (text.includes('\r\n') ? '\r\n' : '\n')
 /** Fast path: an LF file whose result has no CR skips the regex entirely. */
 const withEol = (text: string, eol: string): string => {
@@ -603,59 +610,6 @@ function auditOf(lang: string, before: string, after: string, beforeRoot?: NapiR
   return out
 }
 
-/** Single-file commit: re-read and compare, random tmp with O_EXCL, chmod, same-directory rename. */
-function commitSource(target: string, expectedText: string, nextText: string): void {
-  // Open the target once, without following a link, and judge the bytes through that descriptor.
-  // Anything swapped in afterwards changes the inode, which the compare-and-swap below refuses.
-  let fd: number
-  try { fd = openSync(target, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW) } catch (e) {
-    throw Object.assign(new Error('the target is no longer a readable regular file; nothing was overwritten'), { code: 'E_STALE', cause: e })
-  }
-  let freshBuf: Buffer, before: ReturnType<typeof fstatSync>
-  try {
-    before = fstatSync(fd)
-    freshBuf = Buffer.alloc(before.size)
-    let read = 0
-    while (read < before.size) {
-      const n = readSync(fd, freshBuf, read, before.size - read, read)
-      if (n <= 0) break
-      read += n
-    }
-    freshBuf = freshBuf.subarray(0, read)
-  } finally { closeSync(fd) }
-  let fresh: string | null = null
-  try { fresh = new TextDecoder('utf-8', { fatal: true }).decode(freshBuf) } catch { fresh = null }
-  if (fresh === null || fresh !== expectedText) throw Object.assign(new Error('changed while the rewrite was planned; nothing was overwritten'), { code: 'E_STALE' })
-  const bom = freshBuf.length >= 3 && freshBuf[0] === 0xef && freshBuf[1] === 0xbb && freshBuf[2] === 0xbf
-  const perm = (before.mode & 0o0777) || 0o644
-  const dir = dirname(target)
-  const tmp = join(dir, `.ast-${randomBytes(8).toString('hex')}.tmp`)
-  try {
-    // Write, flush, then rename: a rename alone can publish an empty file after a power loss.
-    const out = openSync(tmp, 'wx', perm)
-    try {
-      writeSync(out, (bom ? '\ufeff' : '') + nextText, null, 'utf8')
-      fsyncSync(out)
-    } finally { closeSync(out) }
-    try { chmodSync(tmp, perm) } catch { /* unsupported on this platform */ }
-    // Last look before publishing: same file, same location, or nothing is published.
-    const now = statSync(target)
-    if (now.ino !== before.ino || now.dev !== before.dev) {
-      throw Object.assign(new Error('the target was replaced while the rewrite was staged; nothing was overwritten'), { code: 'E_STALE' })
-    }
-    renameSync(tmp, target)
-    if (process.platform !== 'win32') {
-      // The directory entry is the durability boundary on POSIX; open() on a directory is valid there.
-      try { const handle = openSync(dir, 'r'); try { fsyncSync(handle) } finally { closeSync(handle) } } catch { /* best effort */ }
-    }
-    contentCache.delete(target) // the read path has no re-check, so the cache entry must go now
-  } catch (e) {
-    try { unlinkSync(tmp) } catch { /* already gone */ }
-    if ((e as { code?: string })?.code === 'E_STALE') throw e
-    throw Object.assign(e as Error, { code: 'E_WRITE' })
-  }
-}
-
 export async function refactor(req: RefactorRequest, cwd: string = process.cwd(), opts: EngineOptions = {}): Promise<RefactorReceipt> {
   // Default is preview: one missing field must not rewrite a repository. `apply` stays explicit.
   const mode = req.mode === 'apply' ? 'apply' : 'preview'
@@ -713,11 +667,18 @@ export async function refactor(req: RefactorRequest, cwd: string = process.cwd()
       }
       const target = resolvedInside(file, roots)
       if (!target) { conflicts.push({ file: relative(cwd, file), code: 'E_ROOT_OUTSIDE', message: `${relative(cwd, file)} resolves outside the root` }); continue }
+      // A write plan is refused at planning time when the target is not writable by this caller.
+      if (mode === 'apply' && opts.writeRoots && opts.writeRoots.length > 0 && resolvedInside(target, opts.writeRoots) === null) {
+        conflicts.push({ file: relative(cwd, file), code: 'PATH_RESTRICTED', message: `${relative(cwd, file)} is outside the write roots` }); continue
+      }
       plans.push({ rel: relative(cwd, file), target, text: src.text, after, delta, audit, edits: nodes.length })
     }
 
     const totalEdits = plans.reduce((n, p) => n + p.edits, 0)
-    const fileSummary: FileDelta[] = plans.slice(0, 20).map((p) => ({ file: p.rel, edits: p.edits, addedLines: p.delta.addedLines, removedLines: p.delta.removedLines }))
+    const fileSummary: FileDelta[] = plans.slice(0, mode === 'apply' ? 500 : 20).map((p) => ({
+      file: p.rel, edits: p.edits, addedLines: p.delta.addedLines, removedLines: p.delta.removedLines,
+      ...(mode === 'apply' ? { after: p.after, revision: digest(p.text) } : {}),
+    }))
 
     if (conflicts.length > 0) {
       const first = conflicts[0]
@@ -734,25 +695,11 @@ export async function refactor(req: RefactorRequest, cwd: string = process.cwd()
       ...(d.continuation ? { continuation: d.continuation } : {}),
       ...(plans.length === 1 ? { audit: plans[0].audit } : {}),
     }
-    if (mode === 'preview') return { ...base, applied: false, effectState: 'none' }
+    // Both modes return a plan. `apply` additionally carries the text to publish, and the caller
+    // publishes it: one publication kernel for every tool, not a second one here.
+    if (mode !== 'apply') return { ...base, applied: false, effectState: 'none' }
+    return { ...base, applied: false, effectState: 'none', pending: plans.length }
 
-    /* Phase 2 commits file by file; any failure is reported as partial. */
-    const writeRoots = opts.writeRoots ?? opts.bounds ?? [cwd]
-    const appliedFiles: string[] = []
-    for (const plan of plans) {
-      try {
-        if (opts.signal?.aborted) throw Object.assign(new Error('cancelled before commit'), { code: 'E_ABORTED' })
-        if (writeRoots && writeRoots.length > 0 && resolvedInside(plan.target, writeRoots) === null) {
-          throw Object.assign(new Error(`${plan.rel} is outside the write roots`), { code: 'PATH_RESTRICTED' })
-        }
-        commitSource(plan.target, plan.text, plan.after)
-        appliedFiles.push(plan.rel)
-      } catch (e) {
-        const partial = appliedFiles.length > 0
-        return { ...base, status: 'error', code: (e as { code?: string })?.code ?? 'E_WRITE', message: `commit failed for ${plan.rel}: ${String((e as Error)?.message ?? e)}`, applied: partial, effectState: partial ? 'partial' : 'none', filesApplied: appliedFiles }
-      }
-    }
-    return { ...base, applied: true, effectState: 'applied', filesApplied: appliedFiles }
   } catch (e) {
     return { ...out, status: 'error', code: (e as { code?: string })?.code ?? 'E_INTERNAL', message: String((e as Error)?.message ?? e), applied: false, effectState: 'none' }
   }
