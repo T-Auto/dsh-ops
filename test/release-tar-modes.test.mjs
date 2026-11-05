@@ -6,6 +6,9 @@ import { tar, UNIX_WORKERS, fixUnixWorkerModes, checkUnixWorkerModes } from '../
 import { packDirectory, writeReleaseRecords } from '../scripts/lib/build/pack.js'
 import { sha256File } from '../scripts/lib/build/util.js'
 import { stepCheck } from '../scripts/lib/build/check.js'
+import { copyFixtureModules, stageFixtureNiubash } from './lib/niubash-distribution-fixture.mjs'
+import { NIUBASH_PACKAGE_PATH } from '../lib/cli/niubash-payload.js'
+import { pathToFileURL } from 'node:url'
 
 const names = [...UNIX_WORKERS, 'package/runtime/win32-x64/dsh-ops-worker.exe', 'package/docs/中文.txt']
 function archive(file, entries = names.map(name => ({ path: name }))) {
@@ -67,7 +70,9 @@ await test('actual npm pack hashes, provenance and SHA256SUMS describe repaired 
     const dist = path.join(root, 'dist')
     fs.mkdirSync(stage)
     fs.mkdirSync(dist)
-    fs.writeFileSync(path.join(stage, 'package.json'), JSON.stringify({name:'dsh-ops',version:'0.0.0',files:['runtime']}))
+    fs.writeFileSync(path.join(stage, 'package.json'), JSON.stringify({name:'dsh-ops',version:'0.0.0',type:'module',files:['runtime','lib']}))
+    stageFixtureNiubash(path.join(stage, NIUBASH_PACKAGE_PATH))
+    copyFixtureModules(stage)
     for (const name of names.slice(0, 4)) {
       const file = path.join(stage, name.slice('package/'.length))
       fs.mkdirSync(path.dirname(file), { recursive: true })
@@ -75,6 +80,14 @@ await test('actual npm pack hashes, provenance and SHA256SUMS describe repaired 
     }
     const packed = await packDirectory(stage, dist)
     await checkUnixWorkerModes(packed.path)
+    const extracted = path.join(root, 'unpacked')
+    fs.mkdirSync(extracted)
+    await tar.x({ file: packed.path, cwd: extracted, strict: true })
+    const consumer = path.join(extracted, 'package')
+    const { verifyNiubashTree } = await import(pathToFileURL(path.join(consumer, 'lib/cli/niubash-payload.js')).href)
+    const { verifiedNiubash } = await import(pathToFileURL(path.join(consumer, 'lib/niubash/runtime.js')).href)
+    const executable = verifyNiubashTree(path.join(consumer, NIUBASH_PACKAGE_PATH))
+    assert.equal(verifiedNiubash(executable).file, executable)
     assert.equal(packed.sha256, await sha256File(packed.path))
     assert.equal(packed.bytes, fs.statSync(packed.path).size)
     await writeReleaseRecords({dist, packages:[], plan:{mainTarball:packed.path,

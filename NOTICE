@@ -25,29 +25,28 @@ history and in the published tarballs of earlier versions.
 THIRD-PARTY COMPONENTS
 ================================================================
 
-The published package declares this distribution's own Windows Bash
-platform package as an OPTIONAL dependency, and the same package — this
-distribution's own tarball, carrying the pinned upstream runtime
-unchanged — is attached to the GitHub Release for a tag. It is optional
-in the dependency sense: npm fetches it automatically on Windows x64 and
-skips it on platforms it does not cover.
+The Windows x64 default backend is the complete official Niubash v1.5.0
+portable distribution, embedded unchanged under runtime/win32-x64/niubash.
+Source: https://github.com/unixwin/niubash/releases/tag/v1.5.0
+The archive and complete file inventory are SHA-256 pinned and verified
+before staging or execution. bash-runtime install acquires this same
+archive into an operator-managed DSH_HOME copy, not PortableGit.
 
-  * `@dsh-ops/bash-win32-x64` — a declared optional dependency.
-    This distribution carries the pinned upstream release unchanged: Git
-    for Windows' `PortableGit-2.56.0.2-64-bit.7z.exe` (Git for Windows
-    `v2.56.0.windows.2`, GNU bash 5.3.15). The pin records that upstream
-    release, the official URL that publishes it, and its SHA-256; the
-    assembly verifies the archive and the executable against the pin
-    before publishing it. When the optional install is absent or
-    incomplete, `dsh-ops bash-runtime install` reads the same pin,
-    downloads that asset on the user's own machine, verifies the digest
-    there, and unpacks it there. Git for Windows is distributed under the
-    GNU General Public License version 2, so its bytes are GPL-2.0 and
-    are used under that licence; its terms, its copyright, and the
-    corresponding source belong to the Git for Windows project
-    (https://github.com/git-for-windows/git) and to the Git project
-    (https://github.com/git/git). Its original licences and notices are
-    kept with the payload.
+Niubash and its rubash library and WinuxCmd are MIT-licensed. The complete
+upstream package also carries gawk (GPL-3.0-or-later), niugit (GPL-2.0-only),
+ripgrep (MIT OR Unlicense), fd (MIT OR Apache-2.0), and the DLL closure
+listed in licenses/dll-closure. Their license texts, provenance and
+corresponding-source pointers are retained in the payload's licenses/
+directory. Upstream provenance is retained verbatim, including its version
+labels; the frozen archive inventory is the authority for shipped bytes.
+Per-call command faces are derived only from the verified WinuxCmd binary;
+the immutable source distribution is not modified by shell execution.
+
+PortableGit is no longer a default optional dependency. The explicit legacy
+Git Bash build/provision path retains the pinned Git for Windows
+v2.56.0.windows.2 (GPL-2.0) for compatibility. Upstream source and terms:
+https://github.com/git-for-windows/git and https://github.com/git/git.
+Existing operator-selected Git Bash installations are not removed.
 
   * PowerShell remains managed by the host. `dsh-ops upgrade-host-pwsh`
     previews a standard Windows installation and `--yes` executes WinGet.
