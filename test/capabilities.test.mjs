@@ -1,3 +1,4 @@
+import { Context } from '@deepseek-ai/cordis'
 /** Registry migration preserves the complete previously published host definitions. */
 import { createHash } from 'node:crypto'
 import { CAPABILITIES, NATIVE_FILE_TOOLS, NATIVE_RESIDENT_FILE_TOOLS, FILE_CAPABILITIES, PTC_CAPABILITIES, SHELL_CAPABILITIES, capability, capabilitiesFor } from '../lib/capabilities/registry.js'
@@ -83,9 +84,9 @@ await test('create-only help names the required literal instead of suggesting an
 
 await test('native registration consumes the catalogue while execute values stay unchanged', async () => {
   const registered = [], disposed = []
-  const runtime = new NativeFileTools({ ctx: { tools: { register(definition) {
+  const runtime = new NativeFileTools({ ctx: Object.assign(new Context(), { tools: { register(definition) {
     registered.push(definition); return () => disposed.push(definition.name)
-  } } }, config: { workerPath: 'fixture-worker' } })
+  } } }), config: { workerPath: 'fixture-worker' } })
   assert.deepEqual(await runtime.start(), NATIVE_FILE_TOOLS.map(publicToolName))
   assert.deepEqual(registered.map(item => item.name), NATIVE_FILE_TOOLS.map(publicToolName))
   const canonical = { status: 'completed', items: [{ path: '/file', line: 1, text: 'text' }], complete: false }
@@ -104,7 +105,7 @@ await test('native registration consumes the catalogue while execute values stay
   assert.deepEqual(disposed.sort(), registered.map(item => item.name).sort())
 })
 await test('unstarted Native runtimes return an unavailable value before creating call state', async () => {
-  const runtime = new NativeFileTools({ ctx: {}, config: { workerPath: 'fixture-worker' } })
+  const runtime = new NativeFileTools({ ctx: new Context(), config: { workerPath: 'fixture-worker' } })
   const value = await runtime.call('stat', { path: '.' }, {})
   assert.equal(value.error.code, 'EXECUTOR_UNAVAILABLE')
   assert.match(value.error.message, /worker path is unavailable/)

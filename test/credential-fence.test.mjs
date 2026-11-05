@@ -145,6 +145,7 @@ await test('the file bridge refuses a credential path before the worker is spawn
     fs.writeFileSync(key, 'PRIVATE')
     let spawned = false
     const ctx = { get: name => ({
+      workingDirectory: { ensure: async agent => agent.session.header.cwd },
       sandboxPolicy: { resolve: () => ({ mode: 'read-only', workspaceRoot: workspace }) },
       subprocess: { spawn: () => { spawned = true; throw new Error('the fence must refuse before spawning') } },
     })[name] }
@@ -239,6 +240,7 @@ await test('the fence refuses writes and copy destinations, and the wording name
     fs.writeFileSync(path.join(workspace, 'plain.txt'), 'PLAIN\n')
     let spawned = false
     const ctx = { get: name => ({
+      workingDirectory: { ensure: async agent => agent.session.header.cwd },
       sandboxPolicy: { resolve: () => ({ mode: 'workspace-write', workspaceRoot: workspace }) },
       subprocess: { spawn: () => { spawned = true; throw new Error('the fence must refuse before spawning') } },
     })[name] }
@@ -284,6 +286,7 @@ await test('the fence refuses every direction on a credential path, including wr
     // danger-full-access is the decisive case: the DSH permission mode allows the write, so a
     // refusal here can only come from this fence.
     const ctx = { get: name => ({
+      workingDirectory: { ensure: async agent => agent.session.header.cwd },
       sandboxPolicy: { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: workspace }) },
       subprocess: { spawn: () => { spawned += 1; throw new Error('the fence must refuse before spawning') } },
     })[name] }

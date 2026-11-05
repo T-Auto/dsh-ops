@@ -7,7 +7,7 @@ import { outcomeSchema } from './schema.js'
 import type { ApiName } from '../../ptc/config.js'
 export function sdkDefinition(allowed: readonly ApiName[], execute: ToolDefinition['execute']): ToolDefinition {
   const entry = SDK_CAPABILITIES[0]
-  return { name: publicToolName(entry.rawName), description: entry.description + ' Allowed raw names: ' + (allowed.join(', ') || '(none)') + '.',
+  return { name: publicToolName(entry.rawName), description: entry.description + ' Configured raw names (current authority may narrow this pool; consult the per-step directory): ' + (allowed.join(', ') || '(none)') + '.',
     parameters: entry.parameters, output: { schema: outcomeSchema(entry.output), render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
     execute: async (args, exec) => {
       let value: unknown

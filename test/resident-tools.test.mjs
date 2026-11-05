@@ -1,3 +1,4 @@
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 /** The actual assembled file/discovery lane, with the full catalogue measured separately. */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -62,7 +63,7 @@ await test('the resident file row publishes one bounded reader even with the dis
     const read = await callTool(ctx, READ, { files: [{ path: 'read.txt' }, { path: 'second.txt' }] }, undefined, agent)
     assert.equal(read.value.status, 'completed')
     assert.match(read.text, /1\|bounded reader/); assert.match(read.text, /1\|second file/)
-    const absent = await ctx.get('tools').execute({ agent, name: publicToolName('stat'), arguments: { path: 'read.txt' }, callId: 'absent', signal: new AbortController().signal })
+    const absent = await executeCall(ctx, { agent, name: publicToolName('stat'), arguments: { path: 'read.txt' }, callId: 'absent', signal: new AbortController().signal })
     assert.equal(absent.isError, true)
   } finally { await shutdown(ctx) }
 }))

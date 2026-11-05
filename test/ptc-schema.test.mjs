@@ -1,5 +1,6 @@
 /** PTC schemas must remain discoverable in the actual pinned host SDK. */
-import { assertSupportedJsonSchema, jsonSchemaToTs } from '@deepseek-ai/dsh-tools'
+import { assertSupportedJsonSchema } from '@deepseek-ai/dsh-tools'
+import { jsonSchemaToTs } from '@deepseek-ai/dsh-tool-executor-ptc'
 import { assert, test, report } from './lib/harness.mjs'
 import { PTC_TOOLS, PARAMETERS, OUTPUT } from '../lib/ptc/contract.js'
 

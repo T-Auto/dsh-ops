@@ -12,12 +12,12 @@ export type { FileSystem, FsTarget, FsInfo, FsObservation } from '@deepseek-ai/d
 export type { GenerateOptions, StreamChunk, UserMessage } from '@deepseek-ai/dsh-llm'
 export type { Session } from '@deepseek-ai/dsh-session'
 export type { SettingsPathOpView } from '@deepseek-ai/dsh-settings/types'
-export type { AssembleContext, PromptAssembly, SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
+export type { AssembleContext, PromptAssembly, PromptPresentation, SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 export type { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
 export type { SubprocessHandle, SubprocessOutputRead, SubprocessOutputReader, SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 export type { InvocationDescriptor, RemoteResult, TypertCodec, TypertGatewayBinding } from '@deepseek-ai/dsh-typert-protocol'
-export type { JsonSchemaNode, JsonSchemaType, ObjectJsonSchema, ToolDefinition, ToolExecution,
-  ToolExecutionResult, ToolExecutionToken, ToolGuard, ToolPresentationMode, ToolRunContext } from '@deepseek-ai/dsh-tools'
+export type { JsonSchemaNode, JsonSchemaType, ObjectJsonSchema, ToolActivationContext, ToolDefinition, ToolExecution,
+  ToolExecutionResult, ToolExecutionToken, ToolGuard, ToolRunContext, ResolvedToolSet } from '@deepseek-ai/dsh-tools'
 export type { default as ToolRuntime } from '@deepseek-ai/dsh-tools'
 export type { ConfinedArgv, RunnerFailureRule, SandboxExecutionPolicy, SandboxMode, SandboxProvider } from '@deepseek-ai/dsh-sandbox'
 // Compile-time types come from the pinned devDependency; the running Host stopped

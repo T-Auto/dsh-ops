@@ -1,3 +1,4 @@
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 /**
  * The session bash layer on a real host, with the machine's own bash: what #235
  * and #237 look like at the boundary the caller sees.
@@ -78,7 +79,7 @@ async function publishOpsBash(ctx, id, workspace) {
   agent.ctx = scope.ctx
   await ctx.plugin(Subprocess)
   await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: workspace }) }))
-  await ctx.plugin({ inject: ['tools'], apply(inner) { mountSessionBash(inner, { publishBashTool: true }, { bash }) } })
+  await ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { mountSessionBash(inner, { publishBashTool: true }, { bash }) } })
   await ctx.serial('agent/created', { agent, source: 'startup' })
   await waitFor(() => ctx.get('tools').get('ops_bash', agent) !== undefined, { what: 'ops_bash publication to the session' })
   const tool = ctx.get('tools').get('ops_bash', agent)
@@ -158,7 +159,7 @@ await test('a wrong argument reaches the caller as itself, not as invalid output
           assert.match(value.error, pattern); assert.ok(value.error.includes(argument))
           // Through the real registry the caller reads the refusal itself; the pre-fix path ended
           // in "returned invalid output" and the argument was never named.
-          const result = await ctx.get('tools').execute({
+          const result = await executeCall(ctx, {
             name: 'ops_bash', callId: 'shells-session-args-' + call++, agent, signal: signal(), arguments: input,
           })
           assert.equal(result.isError, false, JSON.stringify(result))
@@ -185,7 +186,7 @@ await test('a vanished session workspace is named as the missing directory (#180
         assert.match(value.error, /invalid workdir: must be an existing directory/)
         assert.ok(value.error.includes(workspace), value.error)
         assert.doesNotMatch(value.error, /bash executable|provision-shells/)
-        const result = await ctx.get('tools').execute({
+        const result = await executeCall(ctx, {
           name: 'ops_bash', callId: 'shells-session-gone', agent, signal: signal(), arguments: input,
         })
         assert.equal(result.isError, false, JSON.stringify(result))
@@ -280,7 +281,7 @@ await test('real background and promoted jobs expose their description in the ho
           { what: 'real host jobs publication' })
         for (const background of [true, false]) {
           const description = background ? '后台 "测试" task' : 'Wait for a promoted test task'
-          const result = await ctx.get('tools').execute({
+          const result = await executeCall(ctx, {
             name: 'ops_bash', callId: `shells-session-label-${background}`, agent, signal: signal(),
             arguments: { command: 'printf LABEL_READY; sleep 30', description,
               ...(background ? { run_in_background: true } : { timeoutMs: 500 }) },

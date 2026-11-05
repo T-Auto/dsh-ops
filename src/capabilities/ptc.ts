@@ -1,6 +1,6 @@
 /** Batch and PTC result schemas; the same result capability also owns a Native projection. */
 import type { JsonSchemaNode } from '../adapter/dsh/types.js'
-import { STORAGE_REFERENCE, RESULT_PAGE_PARAMETERS } from './result.js'
+import { STORAGE_REFERENCE, NATIVE_RESULT_PARAMETERS } from './result.js'
 import type { ParameterSchema } from './types.js'
 
 const string: JsonSchemaNode = { type: 'string' }
@@ -15,11 +15,7 @@ export const PARAMETERS = {
     protect: { type: 'array', description: 'At most 128 protected relative paths.', items: string },
     id: string,
   }, ['action']),
-  result: object({
-    action: { type: 'string', enum: ['put', 'page', 'release'] }, ...RESULT_PAGE_PARAMETERS,
-    items: { type: 'array', description: 'At most 10000 object rows; 2 MiB whole request, 10 MiB physical reference cap.', items: { type: 'object' } },
-    ttlMs: { ...integer, description: 'put only: 0 (default, session lifetime), or 1-604800000 milliseconds.' },
-  }, ['action']),
+  result: NATIVE_RESULT_PARAMETERS,
 }
 // Open JSON values exist only in the data plane (caller-owned rows), not in operation inputs.
 export const OUTPUT: JsonSchemaNode = {

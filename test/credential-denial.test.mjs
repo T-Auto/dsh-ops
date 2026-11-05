@@ -35,7 +35,7 @@ for (const ptcMode of [false, true]) await test(`real ${ptcMode ? 'PTC' : 'Nativ
     host = await bootLoop(root, { ptcMode, discoveryConfig: { alwaysLoaded: ['write_file'] } })
     const forbidden = [temporary, path.dirname(temporary), outside, target, 'PRIVATE_FIXTURE_SECRET']
     const scripts = ptcMode ? [[{ name: 'run_code', args: { description: 'Verify private credential denials', code:
-      `return { read: await tools.${publicToolName('inspect_local_file')}({path:${JSON.stringify(target)}}), store: await tools.${publicToolName('result')}({action:'put',root:${JSON.stringify(outside)},data:'MUST_NOT_WRITE'}) };` } }], []]
+      `return { read: await tools.${publicToolName('inspect_local_file')}({path:${JSON.stringify(target)}}), store: await tools.${publicToolName('result')}({action:'put',root:${JSON.stringify(outside)},items:[{text:'MUST_NOT_WRITE'}]}) };` } }], []]
       : [[{ name: publicToolName('read_files'), args: { files: [{ path: target }] } },
         { name: publicToolName('write_file'), args: { path: target, content: 'MUST_NOT_WRITE', expectedRevision: 'absent' } }], []]
     const run = await host.run(await host.agent(), scripts)

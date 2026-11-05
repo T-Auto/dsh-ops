@@ -1,3 +1,4 @@
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
@@ -5,7 +6,8 @@ import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import FileSystem from '@deepseek-ai/dsh-fs-local'
 import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
 import { createScope } from '@deepseek-ai/dsh-scope'
-import { assertSupportedJsonSchema, jsonSchemaToTs } from '@deepseek-ai/dsh-tools'
+import { assertSupportedJsonSchema } from '@deepseek-ai/dsh-tools'
+import { jsonSchemaToTs } from '@deepseek-ai/dsh-tool-executor-ptc'
 import { assert, test, report, withTempDir, wait, waitFor } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
@@ -37,17 +39,17 @@ async function setup(root, { native = false, config = {}, real = false } = {}) {
     const id = 'sdk-' + ++serial
     const value = { id, session: { id, mode: 'workspace-write', header: { cwd: root }, append() {}, read() { return [] } } }
     value.ctx = createScope(parent?.ctx ?? ctx, value, parent ? { parent } : undefined).ctx
-    await value.ctx.plugin({ inject: ['tools'], apply(inner) { value.lift = inner.tools.presentAs(mode) } })
+    await value.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { value.lift = selectExecutor(inner, mode) } })
     agents.push(value)
     await ctx.serial('agent/created', { agent: value })
     return value
   }
   return { ctx, component, agent, mountFile }
 }
-const step = (ctx, agent, signal = new AbortController().signal) => ctx.waterfall('agent/pre-step', { agent, messages: [], turn: 1, step: ++serial, signal }, () => Promise.resolve({ kind: 'continue' }))
+const step = (ctx, agent) => ctx.serial('session/event', agent.session, { type: 'step/end' })
 const direct = (ctx, agent, name, args) => ctx.get('tools').get(name, agent).execute(args, { agent, signal: new AbortController().signal })
 async function code(ctx, agent, body) {
-  const value = await ctx.get('tools').execute({ name: 'run_code', callId: 'sdk-call-' + ++serial, agent,
+  const value = await executeCall(ctx, { name: 'run_code', callId: 'sdk-call-' + ++serial, agent,
     signal: new AbortController().signal, arguments: { description: 'Exercise the progressive OPS SDK', code: body } })
   assert.equal(value.isError, false, JSON.stringify(value)); return value.value.result
 }
@@ -114,7 +116,7 @@ await test('Native/PTC child scopes preserve projections and same-layer file row
       assert.equal(visible(ctx, independent).includes('ops_grep'), false)
       assert.equal(visible(ctx, child).includes('ops_load_sdk'), false)
       const retained = ctx.get('tools').get('ops_grep', parent)
-      parent.lift(); await parent.ctx.plugin({ inject: ['tools'], apply(inner) { parent.lift = inner.tools.presentAs('native') } })
+      parent.lift(); await parent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { parent.lift = selectExecutor(inner, 'native') } })
       const assembled = await ctx.get('systemPrompt').assemble({ scope: parent })
       assert.equal(assembled.tools.some(tool => tool.name === 'ops_load_sdk'), false)
       assert.equal((await retained.execute({ path: root, pattern: 'x' }, { agent: parent, signal: new AbortController().signal })).error.code, 'POLICY_DENIED')
@@ -157,7 +159,7 @@ await test('Native child restoration honors external ancestor masks and late par
       await waitFor(() => visible(ctx, child).length === 0, { timeoutMs: 5000, what: 'late provider disposal' })
       await mountFile(ctx)
       await waitFor(() => visible(ctx, child).includes('ops_grep'), { timeoutMs: 5000, what: 'global Native provider' })
-      const mask = await parent.ctx.plugin({ inject: ['tools'], apply(scoped) { scoped.tools.restrict({ deny: ['ops_read_files'] }) } })
+      const mask = await parent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(scoped) { scoped.tools.restrict({ deny: ['ops_read_files'] }) } })
       await waitFor(() => !visible(ctx, child).includes('ops_read_files'), { timeoutMs: 5000, what: 'external ancestor restriction' })
       assert.ok(visible(ctx, child).includes('ops_stat'))
       await mask.dispose()
@@ -194,7 +196,7 @@ await test('same-surface both to ptc and unsignalled prompt flips publish the re
       const owner=await agent('both')
       assert.equal(visible(ctx,owner).includes('ops_load_sdk'),false)
       owner.lift()
-      await owner.ctx.plugin({inject:['tools'],apply(inner){owner.lift=inner.tools.presentAs('ptc')}})
+      await owner.ctx.plugin({inject:['tools','systemPrompt'],apply(inner){owner.lift=selectExecutor(inner, 'ptc')}})
       await step(ctx,owner)
       assert.ok(visible(ctx,owner).includes('ops_load_sdk'))
       let collapse=false
@@ -219,8 +221,8 @@ await test('nested foreign ancestor masks cannot borrow an unrelated OPS attribu
       await waitFor(()=>ctx.get('tools').get('ops_read_files',child)!==undefined)
       const retained=ctx.get('tools').get('ops_read_files',child)
       let parentTools, unrelatedTools
-      await parent.ctx.plugin({inject:['tools'],apply(inner){parentTools=inner.tools}})
-      await unrelated.ctx.plugin({inject:['tools'],apply(inner){unrelatedTools=inner.tools}})
+      await parent.ctx.plugin({inject:['tools','systemPrompt'],apply(inner){parentTools=inner.tools}})
+      await unrelated.ctx.plugin({inject:['tools','systemPrompt'],apply(inner){unrelatedTools=inner.tools}})
       let mask,armed=true
       ctx.on('tools/change',()=>{
         if(!armed)return
@@ -270,7 +272,7 @@ await test('a prompt change re-derives the verdict of an unattributed registry c
       const value = await agent('native')
       assert.equal(visible(ctx, value).includes('ops_load_sdk'), false, 'a Native row starts Native')
       value.lift()
-      await value.ctx.plugin({ inject: ['tools'], apply(inner) { value.lift = inner.tools.presentAs('ptc') } })
+      await value.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { value.lift = selectExecutor(inner, 'ptc') } })
       await ctx.serial('tools/change', {})
       await waitFor(() => visible(ctx, value).includes('ops_load_sdk'), { timeoutMs: 5000, what: 'the flipped session publishes the PTC row' })
     } finally { await shutdown(ctx) }
@@ -298,7 +300,7 @@ await test('an unattributed registry change defers the verdict instead of spendi
       // — the new name is visible in it — but cannot move the presentation mode, which
       // only `presentAs` moves. The republish must still happen; the verdict must not cost
       // an assembly to confirm what no registry event can have changed.
-      await ctx.plugin({ inject: ['tools'], apply(inner) {
+      await ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) {
         inner.tools.register({ name: 'verdict_extra', description: '', parameters: { type: 'object' },
           output: { schema: {}, render: () => [] }, execute: () => ({}) })
       } })
@@ -309,7 +311,7 @@ await test('an unattributed registry change defers the verdict instead of spendi
       // A prompt change is the evidence that a mode may have flipped, so the registry
       // change that follows it must spend the probe the deferred path would have skipped.
       await ctx.serial('system-prompt/change')
-      await ctx.plugin({ inject: ['tools'], apply(inner) {
+      await ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) {
         inner.tools.register({ name: 'verdict_later', description: '', parameters: { type: 'object' },
           output: { schema: {}, render: () => [] }, execute: () => ({}) })
       } })

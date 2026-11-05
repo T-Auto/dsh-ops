@@ -1,3 +1,4 @@
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 /** Real run_code calls reuse read facts; fixtures never reconstruct file bytes from numbered text. */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -7,7 +8,7 @@ import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import FileSystem from '@deepseek-ai/dsh-fs-local'
 import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
 import { createScope } from '@deepseek-ai/dsh-scope'
-import { assert, test, report, withTempDir } from './lib/harness.mjs'
+import { assert, test, report, waitFor, withTempDir } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
 import { legacyComponent } from './lib/legacy-component.mjs'
@@ -23,7 +24,7 @@ async function fixture(root, run) {
     await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem)
     await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: ({ session } = {}) => ({ mode: 'workspace-write', workspaceRoot: root, sessionId: session?.id }) }))
     // A separate writer is invoked at an exact point between the read and CAS, without sleeps.
-    await ctx.plugin({ inject: ['tools'], apply(inner) {
+    await ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) {
       inner.tools.register({ name: 'fixture_external_write', description: 'Replace the test fixture from outside OPS.',
         parameters: { type: 'object', properties: {}, additionalProperties: false },
         output: { schema: { type: 'object', properties: { written: { type: 'boolean' } }, required: ['written'] }, render: () => [] },
@@ -35,17 +36,19 @@ async function fixture(root, run) {
     const id = `compose-${++serial}`
     const agent = { id, session: { id, header: { cwd: root }, append() {}, read() { return [] } } }
     agent.ctx = createScope(ctx, agent).ctx
-    await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.presentAs('ptc') } })
+    await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, 'ptc') } })
     agents.push(agent); await ctx.serial('agent/created', { agent })
-    // Exercise the real provider-call boundary: publication and SDK materialization settle here.
-    // Direct execute immediately after agent creation can race Node 22's initial reconciliation.
-    await ctx.waterfall('agent/pre-step', { agent, messages: [], turn: 1, step: 1,
-      signal: new AbortController().signal }, () => Promise.resolve({ kind: 'continue' }))
-    const prompt = await ctx.get('systemPrompt').assemble({ scope: agent })
-    const sdk = prompt.sections.find(section => section.name === 'tools:sdk')?.text ?? ''
-    for (const name of ['ops_inspect_local_file','ops_read_files','ops_edit_file','ops_replace']) assert.ok(sdk.includes(name), name)
+    await waitFor(async () => { const step = await prepareStep(ctx, agent); try { return Boolean(ctx.get('tools').executable('ops_load_sdk', agent, step.toolSet)) } finally { step.dispose() } })
+    const step = await prepareStep(ctx, agent)
+    try {
+      const sdk = step.assembly.sections.find(section => section.name === 'tools:sdk')?.text ?? ''
+      for (const name of ['ops_inspect_local_file','ops_read_files','ops_edit_file','ops_replace']) {
+        assert.ok(ctx.get('tools').executable(name, agent, step.toolSet), name + ' must be admitted')
+        assert.ok(sdk.includes(name), name)
+      }
+    } finally { step.dispose() }
     const call = async code => {
-      const result = await ctx.get('tools').execute({ name: 'run_code', callId: `composition-${++serial}`,
+      const result = await executeCall(ctx, { name: 'run_code', callId: `composition-${++serial}`,
         agent, signal: new AbortController().signal, arguments: { description: 'Verify read-to-edit composition', code } })
       assert.equal(result.isError, false, JSON.stringify(result)); return result.value.result
     }

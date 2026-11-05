@@ -46,7 +46,7 @@ conventions a pull request is reviewed against. 中文版：[贡献指南.md](�
 | --- | --- |
 | Node.js | `^22.19` or `>=24` (`package.json#engines`; CI uses 24) |
 | Rust | `1.97.1` (the toolchain CI pins); needed to build the native worker |
-| Target host | DSH `0.2.0-rc.2` |
+| Target host | DSH `0.2.2-rc.1` (0.5 series; older hosts are unsupported) |
 | Linux only | the `acl` package for the POSIX ACL checks |
 
 ```console
@@ -251,19 +251,19 @@ The credential fence, trusted path anchors and permission helpers are strict Typ
 `src/index.ts` types the component entry against the public Cordis `Context` and `Agent` contracts. Raw configuration remains `unknown` until validation; callbacks and tool-denial decisions retain their public host signatures. Runtime imports remain `.js`, and host dependencies remain type-only at module load. `node test/run.mjs kernel-types mount bundle-startup progressive-loop` checks the type boundary, scoped startup/disposal and next-step publication.
 
 The settings integration tests use exact development-only host settings, profile boot and config
-editor packages at `0.2.0-rc.2`, with matching Cordis loader/group/include, CosmoKit and Schemastery
+editor packages at `0.2.2-rc.1`, with matching Cordis loader/group/include, CosmoKit and Schemastery
 patch versions. They exercise the real profile writer and component reload instead of substituting
 an in-memory save. These packages are not production dependencies or host runtime imports.
 
 Browser settings are strict TSX. The build uses the existing TypeScript compiler to produce the
 host's lazy `./client` factory, with React supplied by the host. Exact development-only React 18.3.1,
-React type packages, jsdom 26.1.0 and the pinned `0.2.0-rc.2` client contracts support compilation,
+React type packages, jsdom 26.1.0 and the pinned `0.2.2-rc.1` client contracts support compilation,
 DOM interactions and the real host slot lifecycle tests. No browser bundler or production dependency
 is added. `settings-ui`, `settings-client`, `settings-host` and `settings-runtime` suites cover the
 form-to-profile and reviewed-action boundaries.
 
 The browser-page regression also uses development-only `@deepseek-ai/dsh-client-modules`
-`0.2.0-rc.2` (published 2026-09-29) to assert actual client registry activation, teardown and
+`0.2.2-rc.1` to assert actual client registry activation, teardown and
 restart against temporary installed profiles. `settings-client` covers exact composition,
 backups and atomic rollback; it never migrates a developer profile.
 

@@ -1,3 +1,4 @@
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 /** Shipped eight-row bundle + representative standard-preset fs/search plugins, real DSH registry/prompt/services. */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -45,7 +46,7 @@ async function mintAgent(ctx, presets, { id, mode, root, preset, presentation })
   // Create the agent scope from a tools-injected context: the scoped context
   // inherits that dependency API, so per-agent restrictions are callable.
   await presetScope.plugin({ inject: ['tools'], apply(inner) { agent.ctx = createScope(inner, agent, { parent: scopeOf(presetScope) }).ctx } })
-  await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.presentAs(presentation) } })
+  await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, presentation) } })
   await ctx.serial('agent/created', { agent, source: 'startup' })
   return agent
 }
@@ -66,6 +67,7 @@ for (const mode of ['read-only', 'workspace-write', 'danger-full-access']) {
         ctx.provide('agentPresets', { composedPreset: scoped => presets.get(scopeParentOf(scopeOf(scoped))) })
         await mountBundle(ctx)
         const names = agent => ctx.get('tools').schemas(agent).map(tool => tool.name)
+        const admitted = async agent => { const step = await prepareStep(ctx, agent); try { return step.assembly.tools.map(tool => tool.name) } finally { step.dispose() } }
         // `scope` drives the tool projection; route-section text additionally
         // reads the live `agent`.
         const assembled = agent => ctx.get('systemPrompt').assemble({ scope: agent, agent, signal: new AbortController().signal })
@@ -75,19 +77,22 @@ for (const mode of ['read-only', 'workspace-write', 'danger-full-access']) {
         const standard = await mintAgent(ctx, presets, { id: `${mode}-standard`, mode, root, preset: 'standard', presentation: 'native' })
         await waitFor(() => names(standard).includes('ops_read_files') && names(standard).includes('ops_discover_tools'), { what: `${mode} standard publication` })
         for (const resident of ['ops_inspect_local_file', 'ops_glob', 'ops_grep', 'ops_read_files', 'ops_result']) assert.ok(names(standard).includes(resident), `${resident}: ${names(standard).join(', ')}`)
-        await waitFor(() => ['read', 'glob', 'grep'].every(name => !names(standard).includes(name)), { what: `${mode}: standard replacement hides official file tools` })
+        const standardNames = await admitted(standard)
+        assert.ok(['read', 'glob', 'grep'].every(name => standardNames.includes(name)), 'conditional replacements retain official schemas')
+        const denied = await executeCall(ctx, { agent: standard, name: 'read', arguments: { path: path.join(root, 'absent') } })
+        assert.equal(denied.isError, true); assert.match(JSON.stringify(denied), /MODE_REPLACEMENT|replaced the official/)
         assert.ok(names(standard).includes('write'), 'defaults must not mask standard-preset mutation tools')
         assert.equal(names(standard).includes('ops_bash'), process.platform === 'win32', 'POSIX keeps the host bash; Windows replaces pwsh')
         const standardPrompt = await assembled(standard)
         assert.ok(standardPrompt.sections.some(section => section.name === modeSectionName('mode-standard') && String(section.text).includes('ops_read_files')), 'standard routing section names the resident surface')
-        const result = await ctx.get('tools').get('ops_read_files', standard).execute({ files: [{ path: path.join(root, 'absent') }] }, { agent: standard, signal: new AbortController().signal })
-        assert.equal(result.items[0].error.code, 'NOT_FOUND', JSON.stringify(result))
+        const result = await executeCall(ctx, { name: 'ops_read_files', arguments: { files: [{ path: path.join(root, 'absent') }] }, agent: standard })
+        assert.equal(result.value.data.items[0].error.code, 'NOT_FOUND', JSON.stringify(result))
         console.log(`    startup ${mode}/standard: ${standardPrompt.tools.length} wire tools; resident OPS replaces read/glob/grep`)
 
         // A Cordis-preset agent is served by its own row, with its own section.
         const cordis = await mintAgent(ctx, presets, { id: `${mode}-cordis`, mode, root, preset: 'cordis', presentation: 'native' })
         await waitFor(() => names(cordis).includes('ops_read_files'), { what: `${mode} cordis publication` })
-        await waitFor(() => !names(cordis).includes('read'), { what: `${mode}: cordis replaces read` })
+        assert.equal((await admitted(cordis)).includes('read'), true)
         const cordisPrompt = await assembled(cordis)
         assert.ok(cordisPrompt.sections.some(section => section.name === modeSectionName('mode-cordis') && String(section.text).length > 0), 'cordis routing section')
 
@@ -95,7 +100,7 @@ for (const mode of ['read-only', 'workspace-write', 'danger-full-access']) {
         // discovery entry. It publishes no routing section.
         const minimal = await mintAgent(ctx, presets, { id: `${mode}-minimal`, mode, root, preset: 'minimal', presentation: 'native' })
         await waitFor(() => names(minimal).includes('ops_discover_tools'), { what: `${mode} minimal discovery entry` })
-        for (const resident of ['ops_inspect_local_file', 'ops_read_files', 'ops_glob', 'ops_grep']) assert.equal(names(minimal).includes(resident), false, `${mode}: minimal publishes no ${resident}`)
+        for (const resident of ['ops_inspect_local_file', 'ops_read_files', 'ops_glob', 'ops_grep']) assert.equal((await admitted(minimal)).includes(resident), false, `${mode}: minimal publishes no ${resident}`)
         for (const official of ['read', 'glob', 'grep']) assert.ok(names(minimal).includes(official), `${mode}: minimal keeps ${official}`)
         const minimalPrompt = await assembled(minimal)
         assert.equal(minimalPrompt.sections.some(section => section.name.startsWith('dsh-ops:repository-tooling:mode-') && String(section.text).trim() !== ''), false, 'minimal publishes no routing text')
@@ -108,7 +113,7 @@ for (const mode of ['read-only', 'workspace-write', 'danger-full-access']) {
         const ptcPrompt = await assembled(ptc)
         assert.deepEqual(ptcPrompt.tools.map(tool => tool.name), ['run_code'])
         assert.ok(ptcPrompt.sections.some(section => section.name === modeSectionName('mode-ptc') && String(section.text).length > 0), 'PTC routing section')
-        await waitFor(() => !names(ptc).includes('ops_discover_tools'), { what: `${mode} discovery withdrawal in PTC presentation` })
+        assert.equal((await admitted(ptc)).includes('ops_discover_tools'), false)
       } finally { await shutdown(ctx) }
     })
   })
@@ -135,9 +140,9 @@ await test('a missing optional Bash leaves the native file surface available', a
       const names = () => ctx.get('tools').schemas(agent).map(tool => tool.name)
       await waitFor(() => names().includes('ops_read_files'), { what: 'native file publication without optional Bash' })
       assert.equal(names().includes('ops_bash'), false)
-      const result = await ctx.get('tools').get('ops_read_files', agent).execute({ files: [{ path: path.join(root, 'absent') }] }, { agent, signal: new AbortController().signal })
-      assert.equal(result.items[0].status, 'error', JSON.stringify(result))
-      assert.equal(result.items[0].error.code, 'NOT_FOUND')
+      const result = await executeCall(ctx, { name: 'ops_read_files', arguments: { files: [{ path: path.join(root, 'absent') }] }, agent })
+      assert.equal(result.value.data.items[0].status, 'error', JSON.stringify(result))
+      assert.equal(result.value.data.items[0].error.code, 'NOT_FOUND')
     } finally { await shutdown(ctx) }
   })
 })

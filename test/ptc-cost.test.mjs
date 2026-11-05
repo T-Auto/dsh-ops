@@ -1,3 +1,4 @@
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 /** Real pinned-host declaration accounting, not a tokenizer or an LLM benchmark. */
 import fs from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -25,15 +26,17 @@ await test('measure PTC enhancement separately from the existing file/shell decl
       inner.provide('subprocess', { spawn() { throw new Error('cost probe must never spawn') } })
     })
     const agents = []
-    for (const mode of ['native', 'ptc', 'both']) {
+    for (const mode of ['native', 'ptc']) {
       const agent = { id: `cost-${mode}`, session: { id: `cost-${mode}`, header: { cwd: process.cwd() } } }
       const scope = createScope(ctx, agent); scopes.push(scope); agent.ctx = scope.ctx
-      await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.presentAs(mode) } })
+      await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, mode) } })
       agents.push([mode, agent])
     }
     const capture = async stage => {
       for (const [mode, agent] of agents) {
-        const assembly = await ctx.get('systemPrompt').assemble({ scope: agent })
+        const prepared = await prepareStep(ctx, agent)
+        const assembly = prepared.assembly
+        prepared.dispose()
         const sections = assembly.sections.map(({ name, text }) => ({ name, chars: text.length, bytes: Buffer.byteLength(text) }))
         const text = assembly.sections.filter(section => section.text.length > 0 && (section.name === 'tools:sdk' || section.name === 'tools:ptc-only' || section.name.startsWith('dsh-ops:repository-tooling'))).map(section => section.text).join('\n\n')
         const wire = JSON.stringify(assembly.tools)
@@ -49,10 +52,11 @@ await test('measure PTC enhancement separately from the existing file/shell decl
     await new Promise(resolve => setTimeout(resolve, 100))
     await capture('file-and-shell')
     const component = await ctx.plugin(ptc, { binaryPath: worker.file, required: true })
+    await new Promise(resolve => setImmediate(resolve))
     for (const [, agent] of agents) await ctx.serial('agent/created', { agent })
     const pure = agents.find(([mode]) => mode === 'ptc')[1]
     const deadline = Date.now() + 5000
-    while (!ctx.get('tools').get('ops_load_sdk', pure) || !ctx.get('tools').get('ops_result', pure)?.parameters.properties.action.enum.includes('put')) {
+    while (!ctx.get('tools').get('ops_load_sdk', pure)) {
       if (Date.now() > deadline) throw new Error('PTC declarations did not become available')
       await new Promise(resolve => setTimeout(resolve, 10))
     }
@@ -73,7 +77,7 @@ await test('measure PTC enhancement separately from the existing file/shell decl
     const evidence = { platform: process.platform, node: process.version, samples, deltas,
       limitations: ['No model requests, tokenizer, cache accounting or actual task usage measured.',
         'File/shell are held constant to isolate PTC enhancement; #148 enabled snapshots also added file/shell and cannot establish a PTC-only delta.',
-        'Native/both zero delta concerns this enhancement only, not the file/shell plugin cost.',
+        'Native zero delta concerns this enhancement only, not the file/shell plugin cost.',
         'No net token saving or reproduction of the historical +9462-character snapshot is claimed.'] }
     console.log(JSON.stringify({ declarationCost: deltas }))
     if (process.env.DSH_OPS_PTC_COST_REPORT) fs.writeFileSync(process.env.DSH_OPS_PTC_COST_REPORT, JSON.stringify(evidence, null, 2) + '\n')

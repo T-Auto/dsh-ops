@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { ToolDefinition } from '../../adapter/dsh/types.js'
 import { capability } from '../../capabilities/registry.js'
 import { publicToolName } from '../../policy.js'
-import { OUTPUT } from '../../capabilities/ptc.js'
+import { PARAMETERS, OUTPUT } from '../../capabilities/ptc.js'
 import { invoke, failure } from '../../execution/jobs.js'
 import { renderNative } from './render.js'
 import { presentationMeta } from '../../kernel/presentation-outcome.js'
@@ -12,23 +12,25 @@ export function resultDefinition(execute: ToolDefinition['execute']): ToolDefini
   const entry = capability('result')
   if (!entry || !('nativeProjection' in entry) || !entry.nativeProjection) throw new Error('Native result projection is missing')
   return { name: publicToolName(entry.rawName), description: entry.nativeProjection.description,
-    parameters: entry.nativeProjection.parameters, execute,
+    parameters: PARAMETERS.result, execute,
     output: { schema: OUTPUT, render: (args, value) => [{ type: 'text', text: renderNative('result', args, value) }], presentationMeta } }
 }
 type Execution = Parameters<ToolDefinition['execute']>[1]
 export async function invokeResult(ctx: Parameters<typeof invoke>[0], file: string, args: unknown,
-  exec: Execution, signal: AbortSignal, config: Parameters<typeof invoke>[6]): Promise<unknown> {
+  exec: Execution, signal: AbortSignal, config: Parameters<typeof invoke>[6], allowPut: () => Promise<boolean> = async () => false): Promise<unknown> {
   if (!args || typeof args !== 'object' || Array.isArray(args)) return failure('INVALID_ARGUMENT', 'Expected page/release arguments.')
   const input: Record<string, unknown> = { ...args }
   for (const [key, value] of Object.entries(input)) {
-    if (key !== 'id' && key !== 'action' && (value === null || value === undefined
+    if (input.action !== 'put' && key !== 'id' && key !== 'action' && (value === null || value === undefined
       || (typeof value === 'string' && value.trim() === '') || (Array.isArray(value) && value.length === 0))) delete input[key]
   }
-  const allowed = new Set(['action', 'root', 'id', 'offset', 'limit', 'maxBytes', 'fields', 'equals'])
+  const putting = input.action === 'put'
+  if (putting && !await allowPut()) return failure('PUBLICATION_DENIED', 'Result put requires a live run_code parent and current PTC admission; no cache was written.')
+  const allowed = new Set(['action', 'root', 'id', 'offset', 'limit', 'maxBytes', 'fields', 'equals', ...(putting ? ['items', 'ttlMs'] : [])])
   const unknown = Object.keys(input).find(key => !allowed.has(key))
-  if (unknown) return failure('INVALID_ARGUMENT', 'Unknown Native result argument: ' + unknown)
-  if (!['page', 'release'].includes(String(input.action)) || typeof input.id !== 'string' || !input.id.startsWith('ref://')) {
-    return failure('INVALID_ARGUMENT', 'Native result accepts page/release with an owned ref:// ID only.')
+  if (unknown) return failure('INVALID_ARGUMENT', 'Unknown result argument: ' + unknown)
+  if (!putting && (!['page', 'release'].includes(String(input.action)) || typeof input.id !== 'string' || !input.id.startsWith('ref://'))) {
+    return failure('INVALID_ARGUMENT', 'Result accepts owned ref:// page/release, or PTC put only.')
   }
   let root = input.root
   if (root === undefined) {

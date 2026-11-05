@@ -1,4 +1,5 @@
-import { assertSupportedJsonSchema, jsonSchemaToTs, validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
+import { assertSupportedJsonSchema, validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
+import { jsonSchemaToTs } from '@deepseek-ai/dsh-tool-executor-ptc'
 import { toOutcome } from '../lib/ptc/projection/outcome.js'
 import { continuationFor, decodeContinuation } from '../lib/ptc/projection/continuation.js'
 import { outcomeSchema } from '../lib/ptc/projection/schema.js'

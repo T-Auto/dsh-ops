@@ -1,3 +1,4 @@
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 /** Independently named preset consumes the public package export, not OPS internals. */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -22,15 +23,15 @@ async function boot(subprocess) {
   const live = []; ctx.provide('agents', { list: () => [...live] })
   const mint = async (id, cwd, parent) => {
     const base = createScope(parent?.ctx ?? ctx, { preset: id }, parent ? { parent } : undefined).ctx
-    await base.plugin({ inject: ['tools'], apply(inner) { for (const name of ['read', 'glob', 'grep']) inner.tools.register(tool(name)) } })
+    await base.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { for (const name of ['read', 'glob', 'grep']) inner.tools.register(tool(name)) } })
     const agent = { id, session: { id, mode: 'danger-full-access', header: { cwd, agentPreset: id } } }
-    await base.plugin({ inject: ['tools'], apply(inner) { agent.ctx = createScope(inner, agent, { parent: scopeOf(base) }).ctx } })
+    await base.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { agent.ctx = createScope(inner, agent, { parent: scopeOf(base) }).ctx } })
     live.push(agent); await ctx.serial('agent/created', { agent })
     return agent
   }
   return { ctx, mint, names: agent => scopedToolNames(ctx, agent) }
 }
-const execute = (ctx, agent, raw, args) => ctx.get('tools').execute({ agent, name: `ops_${raw}`, arguments: args, callId: 'third-party', signal: new AbortController().signal })
+const execute = (ctx, agent, raw, args) => executeCall(ctx, { agent, name: `ops_${raw}`, arguments: args, callId: 'third-party', signal: new AbortController().signal })
 const next = (ctx, agent) => ctx.serial('session/event', agent.session, { type: 'step/end' })
 await test('simple and detailed configuration are explicit and reject inert or invalid options', () => {
   const simple = resolveIntegrationConfig({ preset: 'acme-native' })
@@ -94,7 +95,7 @@ await test('a missing worker never hides the official alternatives (#436)', () =
     const assembly = await ctx.get('systemPrompt').assemble({ scope: own, agent: own })
     for (const name of ['read', 'glob', 'grep']) {
       assert.ok(names(own).includes(name))
-      assert.equal((await ctx.get('tools').execute({ agent: own, name, arguments: {}, callId: name, signal: new AbortController().signal })).isError, false)
+      assert.equal((await executeCall(ctx, { agent: own, name, arguments: {}, callId: name, signal: new AbortController().signal })).isError, false)
     }
     assert.equal(assembly.sections.some(section => section.name.startsWith('dsh-ops:') && section.text.trim()), false)
   } finally { await shutdown(ctx) }
@@ -109,7 +110,7 @@ await test('PTC uses actual host presentation, keeps another native preset intac
     const first = await ctx.get('systemPrompt').assemble({ scope: labeled, agent: labeled })
     assert.equal(names(labeled).some(name => name.startsWith('ops_') && name !== 'ops_status'), false, 'a preset id is not PTC-only presentation')
     assert.ok(first.tools.some(tool => tool.name === 'read'))
-    const lift = labeled.ctx.tools.presentAs('ptc')
+    const lift = selectExecutor(labeled.ctx, 'ptc')
     await ctx.get('systemPrompt').assemble({ scope: labeled, agent: labeled })
     await waitFor(() => names(labeled).includes('ops_inspect_local_file'))
     assert.equal(names(labeled).includes('ops_load_sdk'), false)
@@ -141,7 +142,7 @@ await test('PTC preset withdrawal aborts an in-flight worker call', () => withTe
     ctx.provide('ptcRuntime', { language: 'typescript' })
     await ctx.plugin(integration({ preset: 'abort-ptc', profile: 'ptc', discovery: false }))
     const agent = await mint('abort-ptc', cwd)
-    agent.ctx.tools.presentAs('ptc')
+    selectExecutor(agent.ctx, 'ptc')
     await ctx.get('systemPrompt').assemble({ scope: agent, agent })
     await waitFor(() => names(agent).includes('ops_inspect_local_file'))
     const running = ctx.get('tools').get('ops_inspect_local_file', agent).execute({ path: 'example.txt' }, { agent, signal: new AbortController().signal })
@@ -160,19 +161,19 @@ await test('host ancestor masks intersect; own child tools bypass masks but inhe
     const parent = await mint('selected-parent', cwd)
     await waitFor(() => names(parent).includes('ops_read_files') && !names(parent).includes('read'))
     const inherited = { id: 'inherited-child', session: { id: 'inherited-child', mode: 'read-only', header: { cwd, agentPreset: 'other' } } }
-    await parent.ctx.plugin({ inject: ['tools'], apply(inner) { inherited.ctx = createScope(inner, inherited, { parent }).ctx } })
+    await parent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { inherited.ctx = createScope(inner, inherited, { parent }).ctx } })
     await ctx.serial('agent/created', { agent: inherited })
     assert.ok(names(inherited).includes('ops_read_files'), 'host inherits resident registrations despite internal inheritable:false')
     assert.equal(names(inherited).includes('read'), false, 'host also inherits ancestor official masks')
     assert.equal((await execute(ctx, inherited, 'read_files', { files: [] })).value.status, 'rejected', 'inherited OPS callback cannot execute for another preset')
-    assert.equal((await ctx.get('tools').execute({ agent: inherited, name: 'read', arguments: {}, callId: 'inherited', signal: new AbortController().signal })).isError, true)
+    assert.equal((await executeCall(ctx, { agent: inherited, name: 'read', arguments: {}, callId: 'inherited', signal: new AbortController().signal })).isError, true)
     const allow = inherited.ctx.tools.restrict({ allow: ['read', 'ops_read_files'] })
     assert.equal(names(inherited).includes('read'), false, 'child allow cannot lift ancestor deny')
     allow()
     const own = await mint('own-child', cwd, parent)
-    await own.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.register(tool('read')) } })
+    await own.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { inner.tools.register(tool('read')) } })
     assert.ok(names(own).includes('read'), 'child-own registration bypasses ancestor mask')
-    assert.equal((await ctx.get('tools').execute({ agent: own, name: 'read', arguments: {}, callId: 'own', signal: new AbortController().signal })).isError, false)
+    assert.equal((await executeCall(ctx, { agent: own, name: 'read', arguments: {}, callId: 'own', signal: new AbortController().signal })).isError, false)
   } finally { await shutdown(ctx) }
 }))
 report('preset-integration')

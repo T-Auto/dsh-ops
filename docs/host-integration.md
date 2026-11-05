@@ -6,6 +6,17 @@ These checks separate plugin configuration from host presentation and provider
 transport failures. They do not establish that an unobserved Desktop freeze or
 an old conversation has been repaired.
 
+## DSH 0.2.2 publication migration
+
+All file reads/mutations and result share one scope-owned canonical source, not separate Native/PTC shadow definitions. Native retains its renderer and context-read evidence; values are Outcome.data. File operations retain the existing authoritative cwd, credential, CAS and sandbox bridge. PTC-only jobs and load_sdk remain separate.
+
+Conditions and prompt assembly never change registration. Pending selection commits at step/end. Unchanged entitlement preserves definition identity. A real grant/source change conservatively replaces the shared registration: **other agents sharing that source also lose their previously captured toolSet**. The host reports UNKNOWN_TOOL before dispatch; fresh resolve restores eligible agents. Distinct sources remain independent. This is an availability limit, not per-agent snapshot isolation. An old step never acquires a new grant. Never replay automatically.
+
+Late foreign ancestor sources retain their exact definitions, conditions and restrictions; fallback retires without copying into a child-owned layer. Cancellation vetoes any captured grant revoked during work. If a provider ignores abort, the bounded return is RESULT_UNKNOWN with unknown effects; inspect effects, never replay automatically. See [result budgets](result-budgets.md) for the shared result schema and PTC-only put fence.
+
+
+In 0.5, enabling official-tool replacement does not guarantee that a conditional official tool disappears from the model's tool table. When the OPS counterpart has conditional admission, OPS keeps the official registration visible and guards its dispatch only when the same captured step toolSet admits the counterpart and the consumer still has current authority. An absent, revoked or not-yet-ready counterpart cannot disable the official tool as well. Safe unconditional resident replacements may still use host restrictions. OPS never wraps official definitions or hides tools from inside admission conditions or prompt assembly.
+
 ## Source ownership
 
 `src/presets/` owns built-in preset defaults. `src/consumer/` assembles built-in and external
@@ -92,7 +103,7 @@ use the PTC SDK loader under the host's `run_code` presentation. Check the scope
 assembled tools and presentation, not just a global registry or a prompt section
 name. An empty discovery section alone does not identify the cause.
 
-Host support declarations and component resource exports are covered by the current adapter boundary. The package declares and tests the bounded range `>=0.2.0-rc.2 <0.2.2-0`, including rc2, rc3, rc4, rc5 and the 0.2.1 stable line. Compatibility is validated by running the whole suite twice over the same source: once on `0.2.0-rc.2` and once on `0.2.1-rc.5`. The version range itself is re-checked on every run by `test/host-metadata.test.mjs`. Where rc.5 removed a host feature, the source reads the surviving one — `presentations` names only `native` and `ptc`, a Client form is editable when it is ready and writable, and `run_code` finds its directory through the adapter's working-directory fallback. The text-only PTC hook adaptation is not used as the sole compatibility proof.
+The 0.5 adapter targets DSH `>=0.2.2-rc.1 <0.2.3-0`; earlier hosts are not supported. Host imports remain centralized in `src/adapter/dsh`, with type-only declarations and lazy runtime loading. The 0.2.2 host owns executor selection and captures a `ResolvedToolSet` before prompt assembly and pre-step. Stable conditional registrations expose committed discovery/PTC selection on the next step; prompt callbacks never publish tools. Request guidance and replacement guards read the captured set, while registry diagnostics use public `definitions()` without schema cloning. A missing live working-directory service is an infrastructure error, not permission to use the original session header as an execution directory. Runtime evidence must name the tested dependency graph and actual checks; version strings alone do not establish compatibility.
 
 The original #346 report also describes an enabled row and a stalled publication
 chain. The profile checks above do not prove that failure fixed. If the row is

@@ -18,7 +18,7 @@ import fs from 'node:fs'
 import { credentialPath, credentialRefusal, credentialRoots } from '../credential-policy.js'
 import { sessionTempDir } from '../session-temp.js'
 import { denied, authorityChanged, executionRestriction, normalizeNativeDenial, credentialDenied } from '../permissions.js'
-import { inside, canonicalAnchor } from '../authority-paths.js'
+import { inside, canonicalAnchor, sameAuthority } from '../authority-paths.js'
 import { prepareWorkspace } from '../workspace-preparation.js'
 export { resolveWorker } from './runtime.js'
 export function failure(code: string, message: string, effectState: EffectState = 'none') {
@@ -84,7 +84,7 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
       if (verdict.denied) return credentialDenied(credentialRefusal(operationRoot, verdict.matched).message)
     }
     // Comparison only: never rewrite the selected root passed to the native worker.
-    const requiredMode = (current: SandboxExecutionPolicy): 'workspace-write' | 'danger-full-access' => [current.workspaceRoot, sessionTempDir(session.id)]
+    const requiredMode = (current: SandboxExecutionPolicy): 'workspace-write' | 'danger-full-access' => [current.workspaceRoot, ...(current.additionalWritableRoots ?? []), sessionTempDir(session.id)]
       .some(root => inside(canonicalAnchor(root), fs.realpathSync.native(operationRoot))) ? 'workspace-write' : 'danger-full-access'
     if (policy.mode === 'workspace-write' && requiredMode(policy) === 'danger-full-access') {
       return denied(policy, `${tool} outside the workspace and session temporary directory`, 'danger-full-access', 'The selected root is outside the user-authorized workspace.')
@@ -114,7 +114,7 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
     signal?.throwIfAborted?.()
     // Authority may change during asynchronous sandbox preparation.
     const current = policyService.resolve({ session })
-    if (current.mode !== policy.mode || current.workspaceRoot !== policy.workspaceRoot) {
+    if (!sameAuthority(current, policy)) {
       if (!['read-only', 'workspace-write', 'danger-full-access'].includes(current?.mode) || !path.isAbsolute(current?.workspaceRoot ?? '')) return failure('EXECUTOR_UNAVAILABLE', 'Invalid authoritative DSH policy after preparation.')
       const operation = `${tool} ${args?.action ?? ''}`.trim()
       const required = requiredMode(current)

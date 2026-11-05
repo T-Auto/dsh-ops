@@ -7,7 +7,6 @@ import { resolveShells } from '../shells.js'
 import { pendingSelection } from '../discovery/observations.js'
 import { providers } from '../discovery/providers.js'
 import { integrationFor } from '../consumer/registry.js'
-import { nativeProviders } from '../publication/providers.js'
 import { publicToolName } from '../policy.js'
 import { ownScopes } from '../publication/ownership.js'
 import type { PublicationGate } from '../publication/types.js'
@@ -27,8 +26,18 @@ export async function diagnose(ctx: Context, agent: Agent): Promise<Diagnostic> 
   const selected = Boolean(config || mode && enabledModes(ctx).has(mode))
   const issues: Diagnostic['issues'] = []
   let names: string[] = []
-  try { names = visibleNames(ctx.get('tools')!, agent) } catch { /* reported below */ }
+  let admitted = new Map<string, import('../adapter/dsh/types.js').ToolDefinition>()
   const issue = (code: string, message: string) => { if (!issues.some(row => row.code === code)) issues.push({ code, message }) }
+  try {
+    const tools = ctx.get('tools')!
+    const signal = new AbortController().signal
+    const modelSelection = agent.model?.current() ?? { provider: 'diagnostic', model: 'diagnostic' }
+    const toolSet = await tools.resolve({ agent, modelSelection, signal })
+    try {
+      admitted = new Map(tools.definitions(agent, toolSet).map(definition => [definition.name, definition]))
+      names = [...admitted.keys()]
+    } finally { toolSet.dispose() }
+  } catch (error) { issue('ADMISSION_UNAVAILABLE', `Tool admission failed: ${String(error)}`) }
   if (selected && config?.enabled !== false) {
     for (const service of ['tools', 'systemPrompt']) if (!ctx.get(service as 'tools')) issue('HOST_SERVICE_UNAVAILABLE', `Required host service ${service} is unavailable; enable it and reload the component.`)
     const builtins = Boolean(config ? config.files || config.presentation === 'native' && (config.native.allowedTools.length || config.native.alwaysLoaded.length)
@@ -64,13 +73,12 @@ export async function diagnose(ctx: Context, agent: Agent): Promise<Diagnostic> 
   // Readiness is evaluated from the current visible surface, never binary presence alone.
   const pending = pendingSelection(ctx, agent)
   const pool = providers(ctx, agent)
-  const published = nativeProviders(ctx, agent)
   const external: Diagnostic['external'] = (config?.externalTools ?? []).map(name => {
     const provider = pool.find(row => row.capability.definition.name === name)
     let available = false
     try { available = Boolean(provider?.active && provider.capability.available?.(agent) !== false) } catch { /* unavailable */ }
     return { name, state: config!.externalDisabled.includes(name) ? 'disabled' : !provider || !available ? 'unavailable'
-      : published.some(source => source.scope === agent && source.definition.name === name && source.definition.output === provider.capability.definition.output) ? 'active' : pending?.has(provider.token) ? 'pending' : 'available' }
+      : admitted.get(name)?.output === provider.capability.definition.output ? 'active' : pending?.has(provider.token) ? 'pending' : 'available' }
   })
   return { preset: presetOf(ctx, agent), state: !selected ? 'not-selected' : config?.enabled === false ? 'disabled' : issues.length ? 'degraded' : 'ready',
     tools: [...names].sort(), issues, external }

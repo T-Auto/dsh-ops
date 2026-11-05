@@ -1,3 +1,4 @@
+import { Context } from '@deepseek-ai/cordis'
 import { getEncoding } from 'js-tiktoken'
 import { resolveDiscoveryConfig } from '../lib/config.js'
 import { DISCOVERABLE_TOOLS } from '../lib/discovery/config.js'
@@ -37,13 +38,14 @@ await test('discovery-entry schema has a reproducible pinned token measurement, 
 await test('scoped file cancellation aborts active workers and disposal waits for their completion', () => withTempDir('discovery-cancel', async dir => {
   let spawned, complete
   const done = new Promise(resolve => { complete = resolve })
-  const ctx = { get(name) {
+  const ctx = Object.assign(new Context(), { get(name) {
+    if (name === 'workingDirectory') return { get: () => dir, ensure: async () => dir }
     if (name === 'sandboxPolicy') return { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: dir }) }
     if (name === 'subprocess') return { spawn(options) {
       spawned = options
       return { done, collected: { stdout: { readFrom: () => ({ text: '{}', lossy: false }) }, stderr: { readFrom: () => ({ text: '', lossy: false }) } } }
     } }
-  } }
+  } })
   const runtime = new NativeFileTools({ ctx, config: { workerPath: 'fixture', denyCredentialReads: false } })
   await runtime.start([])
   const call = runtime.call('stat', { path: '.' }, { agent: { session: { id: 'cancel-test', header: { cwd: dir } } } })

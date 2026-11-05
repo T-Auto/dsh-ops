@@ -1,3 +1,4 @@
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
@@ -29,7 +30,7 @@ agent.ctx = createScope(ctx, agent).ctx
 await ctx.plugin(Subprocess)
 await ctx.plugin(Sandbox, {})
 await ctx.plugin(inner => inner.provide('sandboxPolicy', { defaultMode: 'workspace-write', resolve: (input) => ({ mode: input?.session?.mode ?? agent.session.mode, workspaceRoot: root, sessionId: input?.session?.id ?? agent.session.id }) }))
-await ctx.plugin({ inject: ['tools'], apply(inner) { mountSessionBash(inner, { publishBashTool: true }, { bash }) } })
+await ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { mountSessionBash(inner, { publishBashTool: true }, { bash }) } })
 await ctx.serial('agent/created', { agent })
 await waitFor(() => ctx.get('tools').get('ops_bash', agent), { what: 'Niubash tool publication' })
 const tool = ctx.get('tools').get('ops_bash', agent)
@@ -152,9 +153,9 @@ try {
   await test('Native and PTC projections use the same live session policy', async () => {
     await ctx.plugin(FileSystem, {})
     await ctx.plugin(NodePtc, {})
-    await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.presentAs('ptc') } })
+    await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, 'ptc') } })
     const ptc = async (command, workdir = root) => {
-      const result = await ctx.get('tools').execute({ name: 'run_code', callId: 'niu-ptc', agent, signal: new AbortController().signal,
+      const result = await executeCall(ctx, { name: 'run_code', callId: 'niu-ptc', agent, signal: new AbortController().signal,
         arguments: { description: 'Verify Niubash PTC authority', code: `return await tools.ops_bash(${JSON.stringify({ description: 'Verify PTC confinement', command, workdir, timeoutMs: 15000 })});` } })
       assert.notEqual(result.isError, true, JSON.stringify(result)); return result.value.result
     }

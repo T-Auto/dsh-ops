@@ -1,5 +1,5 @@
 /** Scoped replacement controller. Missing counterparts always leave official tools available. */
-import type { Agent, AssembleContext, Context, ToolGuard } from '../adapter/dsh/types.js'
+import type { Agent, Context, ToolGuard } from '../adapter/dsh/types.js'
 import type {} from '../adapter/dsh/types.js'
 import { onToolChange, withToolChange } from './changes.js'
 import { isPresentationProbe } from './presentation.js'
@@ -10,8 +10,6 @@ import type { PublicationGate } from './types.js'
 interface Entry {
   lifts: (() => void)[]
   deny: string[]
-  /** Names the last assembled request carried, when one has been seen. */
-  admitted?: Set<string>
 }
 
 /** Product-independent mapping; publication and replacement remain separate choices. */
@@ -84,11 +82,14 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
     // counterpart is visible and it is either still visible or already denied by
     // this row. Reading only current visibility would lift and re-apply the mask
     // on every registry change and oscillate forever.
+    // Conditional counterparts cannot drive an unconditional registry restriction.
+    // They are guarded only when the actual step admits the replacement.
     const plan = (agent: Agent, entry: Entry): string[] => {
       if (keepOfficial()) return []
       const visible = new Set(visibleNames(tools, agent))
       return [...targets]
-        .filter(([official, counterpart]) => visible.has(counterpart) && (visible.has(official) || entry.deny.includes(official)))
+        .filter(([official, counterpart]) => visible.has(counterpart) && tools.executable(counterpart, agent) !== undefined
+          && (visible.has(official) || entry.deny.includes(official)))
         .map(([official]) => official)
     }
     /** Bring one entry's mask in line with the surface it currently resolves. */
@@ -185,31 +186,9 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
     // live Agent's tool view. Coalescing them into one pass per burst keeps a
     // session's own creation from costing O(live sessions) scans per host event.
     onToolChange(ctx, scopes => { if (scopes === undefined || scopes.length === 0) defer(); else reconcileScopes(scopes) })
-    // Reconcile on the way into an assembly so a Compatibility change is visible
-    // for the request being assembled, not one request later — but only when a
-    // full pass is actually owed. The pass scans every live Agent's tool view, so
-    // an unconditional call makes every assembly (and therefore every new
-    // session's first request) cost O(live sessions), which is exactly the cost
-    // this controller must not add.
-    //
-    // The same pass remembers the surface this request actually carries. The mask is
-    // registry state and the request is a snapshot taken before it, so across the change
-    // the two can name different halves of one swap; the guard answers for the snapshot
-    // (#578). A presentation probe publishes nothing and is not the model's surface.
-    ctx.on('system-prompt/assemble', async (assembly, context, next) => {
-      flush()
-      if (!isPresentationProbe(context as AssembleContext)) {
-        const agent = (context as { scope?: Agent } | undefined)?.scope
-        const carried = (assembly as { tools?: unknown } | undefined)?.tools
-        if (agent !== undefined && Array.isArray(carried)) {
-          const entry = entries.get(agent)
-          if (entry && matches(agent) && !stopped) {
-            const admitted = new Set<string>()
-            for (const tool of carried as { name?: unknown }[]) if (typeof tool?.name === 'string') admitted.add(tool.name)
-            entry.admitted = admitted
-          }
-        }
-      }
+    // Restrictions are live; dispatch authority comes from the captured step toolSet.
+    ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
+      if (!isPresentationProbe(context)) flush()
       return next()
     })
     const refusal: ToolGuard = exec => {
@@ -221,19 +200,14 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
       // Same authority as the mask: the refusal answers for the surface the request was assembled
       // with, so a call the model could only make with the official tool is not refused on behalf
       // of a replacement that request never carried (#578).
-      if (entries.get(agent)?.admitted?.has(counterpart) === false) return undefined
-      if (!visibleNames(tools, agent).includes(counterpart)) return undefined
+      if (tools.executable(counterpart, agent, exec.toolSet) === undefined) return undefined
       return `dsh-ops ${mode} mode replaced the official tool ${String(exec.name)} with ${counterpart}; call ${counterpart}, or turn off that replacement in the dsh-ops row settings.`
     }
     ctx.on('tools/pre-execute', async (exec, next) => {
       const reason = refusal(exec)
       return reason ? { kind: 'deny', reason, info: { name: 'ReplacementError', code: 'MODE_REPLACEMENT' } } : next()
     })
-    const guard = (tools as unknown as { guard?: (listener: ToolGuard) => (() => void) | void }).guard
-    if (typeof guard === 'function') ctx.effect(() => {
-      const dispose = guard.call(tools, refusal)
-      return typeof dispose === 'function' ? dispose : () => {}
-    }, `dsh-ops: ${mode} replacement guard`)
+    ctx.effect(() => tools.guard(refusal), `dsh-ops: ${mode} replacement guard`)
     ctx.effect(() => () => {
       stopped = true
       if (scheduled !== undefined) clearImmediate(scheduled)

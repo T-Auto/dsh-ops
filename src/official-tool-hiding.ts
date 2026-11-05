@@ -169,40 +169,16 @@ export function apply(root: Context, raw?: unknown): void {
       try { result = await next() }
       catch (error) { throw block(context.scope, `agent prompt assembly could not be verified: ${message(error)}`) }
       reconcile()
-      const wire = Array.isArray(result?.tools) ? result.tools.map(schema => schema.name) : []
-      // A collapsed scope receives one program entry and nothing else: its selected
-      // official tools are not native duplicates there, and their OPS counterparts can
-      // only ever be SDK functions, so readiness is unprovable by construction. Fail
-      // closed on the assembled surface instead: a scope that really kept a selected
-      // official tool still throws, while a run_code scope owns no mask and no error.
-      // A host that transforms the presentation here attaches the tool array only after
-      // this waterfall, so the wire proves nothing then. The host also publishes the
-      // `tools:ptc-only` section for a real program presentation and renders it empty
-      // otherwise, and the section survives the deferred array — judge the scope by it
-      // rather than by the configuration view, which answers for the declaration alone.
-      const ptcOnly = Array.isArray(result?.sections)
-        && result.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
-      const collapsed = Array.isArray(result?.tools)
-        ? wire.length > 0 && wire.every(name => name === RUN_CODE)
-        : ptcOnly
+      // DSH 0.2.2 keeps tools provider-owned; this waterfall contains text only.
+      const collapsed = result.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
       const entry = entries.get(context.scope)
       if (entry) entry.collapsed = collapsed
       if (entry?.error) {
         if (!collapsed) throw new Error(entry.error)
         clear(entry); entry.error = undefined
       }
-      // DSH 0.2.1 transforms a presentation here and attaches the tool array only
-      // after the waterfall, so the payload proves nothing about the assembled
-      // surface. Ask the scope view instead: an official tool this component
-      // selected is either still resolvable there or genuinely hidden. A host
-      // that still supplies schemas keeps the stricter assembled-surface check.
-      // A collapsed scope keeps the selected official names resolvable on purpose (the
-      // program calls their OPS counterparts) and owns no mask, so there is no assembled
-      // surface to leak there; the guard still refuses to dispatch them.
-      const leaked = collapsed ? []
-        : Array.isArray(result?.tools)
-          ? wire.filter(hideable)
-          : replaceTools.filter(tool => typeof tools.get === 'function' && tools.get(tool, context.scope) !== undefined)
+      // Restrictions affect future admission; inspect this step's captured set.
+      const leaked = collapsed ? [] : tools.definitions(context.scope, context.toolSet).map(tool => tool.name).filter(hideable)
       if (leaked.length) throw block(context.scope, `assembled surface still contains hidden official tools: ${leaked.join(', ')}`)
       return result
     })

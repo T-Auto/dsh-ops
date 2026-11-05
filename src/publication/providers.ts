@@ -3,7 +3,7 @@ import type { ToolDefinition } from '../adapter/dsh/types.js'
 import type { Context } from '../adapter/dsh/types.js'
 import { withToolChange } from './changes.js'
 import { loadScopes } from '../adapter/dsh/host.js'
-interface Host { root?: object; emit?(name: 'tools/change'): unknown; get(name: 'tools'): { get(name: string, scope?: unknown): ToolDefinition | undefined } | undefined }
+interface Host { root?: object; emit?(name: 'tools/change'): unknown; get(name: 'tools'): { definitions(scope?: object): readonly ToolDefinition[] } | undefined }
 export interface NativeProvider { definition: ToolDefinition; scope: unknown; active: boolean; inheritable: boolean; priority: number }
 interface Provider extends NativeProvider { publish(visible: boolean): void }
 interface State { providers: Set<Provider>; shadows: Set<NativeProvider>; ptc: Set<unknown>; revisions: WeakMap<object, number>; globalRevision: number; selections: Set<{ scope: unknown; names: ReadonlySet<string> }> }
@@ -92,31 +92,10 @@ export function trackNativeShadow(ctx: Host, scope: unknown, definition: ToolDef
   owner.shadows.add(shadow)
   return () => { owner.shadows.delete(shadow) }
 }
-/**
- * A name lookup over one scope's visible definitions, read from a single view.
- *
- * `tools.get(name, scope)` IS `this.view(scope).visible.get(name)`, so asking it
- * per provider rebuilds the whole scope view per provider and makes a scan of P
- * candidates cost P view copies. A PTC publish scans every provider of every live
- * scope, which made one unattributed change rebuild the view 82,365 times over
- * 198 sessions. The view already holds every answer this scan needs, so read it
- * once and look the names up in the map it returned. A host that serves no view
- * still resolves through `get()`, as `surfaceOf` already does.
- * @param tools - the tool registry, or undefined before it is provided.
- * @param scope - the scope to read, or undefined for the global layer.
- * @returns a lookup returning the definition that scope resolves, if any.
- */
+/** Read the public definition list once, rather than rebuilding a view per provider. */
 function visibleOf(tools: ReturnType<Host['get']>, scope: unknown): (name: string) => ToolDefinition | undefined {
-  if (tools === undefined) return () => undefined
-  // Duck-typed rather than `instanceof Map`, for the reason `surfaceOf` records: a host may
-  // serve the view through a subclass or a proxy, and a failed instanceof would silently
-  // take the per-provider `get()` path forever — the exact cost this function removes.
-  const visible = (tools as unknown as { view?(scope?: object): { visible?: { get?(name: string): unknown } } | undefined }).view?.(scope as object)?.visible
-  if (visible !== undefined && typeof visible.get === 'function') {
-    const get = visible.get.bind(visible)
-    return name => get(name) as ToolDefinition | undefined
-  }
-  return name => tools.get(name, scope)
+  const visible = new Map(tools?.definitions(scope as object).map(definition => [definition.name, definition]))
+  return name => visible.get(name)
 }
 
 /** Capture before publishing PTC: external restrictions and sibling scopes remain authoritative. */

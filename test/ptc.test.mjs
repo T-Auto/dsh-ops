@@ -1,3 +1,4 @@
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 /** Three end-to-end scenarios: real Rust worker + real Cordis/tools/prompt;
  * simulated workspace and confinement provider, no business code in tests.
  */
@@ -182,6 +183,7 @@ try {
   // refused. It has to go through the host bridge: at the worker level the alias
   // reaches the no-follow walk and is refused either way.
   const bridge = new Context(); bridge.logger.level = 0
+  bridge.provide('workingDirectory', workingDirectoryOver(dir))
   await bridge.plugin(Subprocess)
   await bridge.plugin(inner => { inner.provide('sandboxPolicy', { resolve: () => ({ mode: 'read-only', workspaceRoot: dir, sessionId: 'alias' }) }) })
   try {
@@ -217,7 +219,8 @@ try {
       }) }) }
   } }
   try {
-    await ctx.plugin(SystemPrompt, {}); await ctx.plugin(ToolRuntime, { mode: 'native' })
+    await ctx.plugin(SystemPrompt, {}); await ctx.plugin(ToolRuntime, {})
+  await ctx.plugin(await import('@deepseek-ai/dsh-tool-executor-native'), {})
     let sandboxAvailable = true
     await ctx.plugin(inner => {
       inner.provide('ptcRuntime', { language: 'typescript' })
@@ -233,7 +236,7 @@ try {
     const makeAgent = async (id, presentation, parent) => {
       const agent = { id, session: { id, mode: 'workspace-write', header: { cwd: dir } } }
       const scope = createScope(parent?.ctx ?? ctx, agent); agent.ctx = scope.ctx
-      if (presentation) await agent.ctx.plugin({ inject: ['tools','systemPrompt'], apply(inner) { agent.liftPresentation = inner.tools.presentAs(presentation) } })
+      if (presentation) await agent.ctx.plugin({ inject: ['tools','systemPrompt'], apply(inner) { agent.liftPresentation = selectExecutor(inner, presentation) } })
       await ctx.serial('agent/created', {agent}); return agent
     }
     const pure = await makeAgent('pure','ptc'), native = await makeAgent('native','native',pure), both = await makeAgent('both','both')
@@ -419,13 +422,13 @@ try {
     await real.plugin(inner => { inner.provide('sandboxPolicy',{resolve:({session} = {})=>({mode:session?.mode ?? agent.session.mode,workspaceRoot:dir,sessionId:session?.id ?? agent.session.id})}) })
     write('real-source','native')
     await real.plugin(NodePtc, {})
-    await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.presentAs('ptc') } })
+    await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, 'ptc') } })
     const sdkComponent = await real.plugin(ptc, { binaryPath: file, required: true, alwaysLoaded: ['batch'] })
     await real.serial('agent/created', { agent })
     for (let n = 0; n < 100 && !real.get('tools').get('ops_result', agent); n++) await new Promise(resolve => setTimeout(resolve, 10))
     assert.ok(real.get('tools').get('ops_result', agent), JSON.stringify(await real.get('systemPrompt').assemble({ scope: agent })))
     const sdk = async code => {
-      const completion = await real.get('tools').execute({ name: 'run_code', callId: 'ptc-result-sdk', agent,
+      const completion = await executeCall(real, { name: 'run_code', callId: 'ptc-result-sdk', agent,
         signal: new AbortController().signal, arguments: { description: 'Verify bounded PTC-native dataflow', code } })
       assert.notEqual(completion.isError, true, JSON.stringify(completion))
       assert.equal(completion.value.sandbox.mode, agent.session.mode, JSON.stringify(completion))

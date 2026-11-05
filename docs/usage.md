@@ -8,14 +8,14 @@ for stopping the host, registry-policy failures and the 0.4.x-to-0.5.x migration
 ## 0.5.0 candidate and component defaults
 
 Native file paths (including copy/move destinations), omitted search paths and Bash's default or
-relative `workdir` follow the live `working_directory` service. Each call resolves its base once;
+relative `workdir` follow the live `workingDirectory` service. Each call resolves its base once;
 `resolvedFrom` and `cwdSource` identify that base in structured and rendered file/Bash results
 (credential refusals remain path-free).
-Hosts without this service fall back to `session.header.cwd` and label that source. Service errors
+The DSH 0.2.2 `workingDirectory` service is required. Missing services, service errors
 or cancellation stop the call rather than silently using an old directory. Changing cwd never
 widens `sandboxPolicy.workspaceRoot` write authority. Native `ops_result` defaults to the live cwd;
 after changing directories, pass the original returned `referenceRoot` as `root` to page or release
-an older reference. PTC's explicit/default workspace-root contract is unchanged.
+an older reference. The shared PTC result capability also defaults to the live cwd; use an explicit root for workspace-bound batch audits.
 
 This checkout is an unreleased candidate. The bundle declares one enabled `dsh-ops` row. Its
 built-in preset consumers, explicit `presets` map, Native discovery, panel, TUI and companion link
@@ -30,6 +30,8 @@ intent. Explicit consumers use the same assembler; unlisted presets remain uncha
 see the [upgrade notes](upgrading.md#moving-from-04x-to-05x) for migration.
 
 
+In 0.5, enabling official-tool replacement does not guarantee that a conditional official tool disappears from the model's tool table. When the OPS counterpart has conditional admission, OPS keeps the official registration visible and guards its dispatch only when the same captured step toolSet admits the counterpart and the consumer still has current authority. An absent, revoked or not-yet-ready counterpart cannot disable the official tool as well. Safe unconditional resident replacements may still use host restrictions. OPS never wraps official definitions or hides tools from inside admission conditions or prompt assembly.
+
 ---
 
 ## Prerequisites
@@ -41,7 +43,7 @@ aggregates bounded PR, claim, CI and base-head facts without adding resident too
 | --- | --- |
 | OS | Windows x64, Linux x64 or macOS 13+ (arm64 or Intel x64); OPS Bash is on by default on all of them (pinned payload on Windows, distribution Bash on POSIX) |
 | Node.js | `^22.19 \|\| >=24` (the `engines` field in `package.json`) |
-| Host | DSH `0.2.0-rc.2` |
+| Host | DSH `0.2.2-rc.1` or later in the 0.2.2 series |
 | Target application | Initialized |
 
 ### macOS (arm64 and Intel)
@@ -137,7 +139,7 @@ refused — and the manifest gate fails if one appears. See
 
 ### Host compatibility and display metadata
 
-The package declares the bounded DSH compatibility range `>=0.2.0-rc.2 <0.2.2-0` in both `engines.dsh` and the legacy DSH peer dependency. This includes `0.2.0-rc.2`, `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` and the `0.2.1` stable line, while rejecting `0.2.0-rc.1`, `0.2.2` prereleases and `0.3.0`. The range is checked against the Host's own evaluator on every run, and the whole suite is validated twice over the same source — on `0.2.0-rc.2` and on `0.2.1-rc.5` — so one shipped build serves both the older and the newest supported Host; the plugin's native adapter preserves the existing Cordis tool, prompt, policy, subprocess, PTC and UI behavior.
+The 0.5 series declares `>=0.2.2-rc.1 <0.2.3-0` in `engines.dsh` and the DSH peer dependency. DSH 0.2.0/0.2.1 and earlier 0.2.2 previews are unsupported; use an older OPS release with those hosts. The adapter architecture remains, but its host APIs and development dependencies target 0.2.2-rc.1 natively. Version-range tests check metadata, not runtime coverage of future releases. Discovery and PTC definitions remain stable while the host captures each step's admitted tool set; selections commit at step end and cannot expand the current request. The live working-directory service is required, with no session-header execution fallback.
 
 The bundle icon comes from the root manifest. Each component exports its own
 `dsh-ops/<component>/icon` and `locale/*.json`; DSH 0.2.1 does not use a component's
@@ -299,8 +301,7 @@ This version starts no long-lived server process: the native file worker is owne
 
 Native file tools present readable text: `=== FILE: path (Lines a-b of n) ===`
 followed by `N | text`; fully returned multi-file ranges use compact `N|text` and may share one JSON-quoted parent path. Paths, observed revisions and paging notices remain visible. See [compact ranges](native-ranges.md).
-PTC execution values remain structured objects; inspect `status` and completeness
-before using them. Grep context labels use the physical source line, while glob
+Native execution values and PTC SDK values share the typed `Outcome` contract: inspect `status`, then `data` for canonical facts, and preserve coverage/continuation on partial results. Native text stays independently rendered and compact. Grep context labels use the physical source line, while glob
 path mode lists one path per line. Stat retains size, revision and metadata facts;
 diff shows removed/added lines. Mutation tools return short receipts without
 repeating file contents.

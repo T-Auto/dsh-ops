@@ -1,3 +1,4 @@
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 /** A real host hook that never answers must not serialize unrelated roots. */
 import { createScope, scopeChainOf } from '@deepseek-ai/dsh-scope'
 import * as ptcModule from '../lib/ptc/index.js'
@@ -90,7 +91,7 @@ for (const [mode, plugin, ownName] of [['native', discovery, 'ops_discover_tools
     agent = mint(ctx, 'changed-during-probe')
     creation = ctx.serial('agent/created', { agent })
     await bounded(entered.promise, 'the old probe did not capture its presentation')
-    await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.presentAs(mode === 'ptc' ? 'native' : 'ptc') } })
+    await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, mode === 'ptc' ? 'native' : 'ptc') } })
     // A real configuration notification cancels the old generation. The new
     // generation must complete without releasing the obsolete host response.
     ctx.emit('tools/change')
@@ -125,7 +126,7 @@ for (const [mode, plugin, ownName] of [['native', discovery, 'ops_discover_tools
       }
       return result
     })
-    const switched = await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.presentAs(mode === 'ptc' ? 'native' : 'ptc') } })
+    const switched = await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, mode === 'ptc' ? 'native' : 'ptc') } })
     await bounded(entered.promise, 'the old withdrawal was not reached')
     await switched.dispose()
     ctx.emit('tools/change')

@@ -3,6 +3,12 @@ import path from 'node:path'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { bootHost, shutdown, scopedToolNames } from './lib/host.mjs'
 import { assert, test, report, waitFor, withTempDir } from './lib/harness.mjs'
+import { executeCall, prepareStep } from './lib/executor.mjs'
+const dispatch = async (ctx, request) => {
+  const step = await prepareStep(ctx, request.agent)
+  try { return await executeCall(ctx, { ...request, toolSet: step.toolSet }) }
+  finally { step.dispose() }
+}
 await test('diagnostics distinguishes unselected, unavailable and ready publication states', () => withTempDir('diagnostics', async cwd => {
   const { ctx } = await bootHost()
   try {
@@ -19,7 +25,7 @@ await test('diagnostics distinguishes unselected, unavailable and ready publicat
     } })
     await ctx.serial('agent/created', { agent })
     await waitFor(() => scopedToolNames(ctx, agent).includes('diag_lookup'))
-    const result = await ctx.get('tools').execute({ agent, name: 'ops_status', arguments: {}, callId: 'diag', signal: new AbortController().signal })
+    const result = await dispatch(ctx, { agent, name: 'ops_status', arguments: {}, callId: 'diag', signal: new AbortController().signal })
     assert.equal(result.isError, false); assert.equal(result.value.external[0].state, 'active')
     const ready = await diagnose(ctx, agent)
     assert.equal(ready.state, 'ready'); assert.equal(ready.external[0].state, 'active')
@@ -72,7 +78,7 @@ await test('external-only diagnostics need no worker and distinguish pending fro
     await ctx.plugin({ inject: ['tools'], apply(inner) { agent.ctx = createScope(inner, agent).ctx } })
     await ctx.serial('agent/created', { agent })
     assert.equal((await diagnose(ctx, agent)).external[0].state, 'available')
-    await ctx.get('tools').execute({ agent, name: 'ops_discover_tools', arguments: { query: 'select:pending_lookup' }, callId: 'select', signal: new AbortController().signal })
+    await dispatch(ctx, { agent, name: 'ops_discover_tools', arguments: { query: 'select:pending_lookup' }, callId: 'select', signal: new AbortController().signal })
     const pending = await diagnose(ctx, agent)
     assert.equal(pending.state, 'ready'); assert.equal(pending.external[0].state, 'pending')
     await ctx.serial('session/event', agent.session, { type: 'step/end' })

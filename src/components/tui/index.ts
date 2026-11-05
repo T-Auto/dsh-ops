@@ -39,7 +39,7 @@ export function apply(ctx: Context, rawConfig?: unknown): void {
     catch { /* A presentation failure cannot escape into the committed event observer. */ }
   })
   ctx.on('session/event', (session, event) => {
-    if (store.observe(session.id, event) && (event.type === 'tool/result' || event.type === 'tool/ptc-dispatch')) {
+    if (store.observe(session.id, event) && event.type === 'tool/result') {
       attention.observe(store.snapshot(session.id).recent[0])
     }
   })

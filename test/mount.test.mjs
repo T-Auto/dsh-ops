@@ -1,3 +1,4 @@
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 import { discoveryMountChecks } from './lib/discovery.mjs'
 /** Real Cordis/tool/prompt composition with the released independent components. */
 import fs from 'node:fs'
@@ -21,6 +22,11 @@ import { officialToolHidingMountChecks } from './lib/official-tool-hiding.mjs'
 // Component 4 has no native runtime dependency; always exercise its real mounts.
 await officialToolHidingMountChecks()
 const EXPECTED = NATIVE_RESIDENT_FILE_TOOLS.map(publicToolName).sort()
+async function admittedCall(ctx, name, args, signal, agent) {
+  const result = await executeCall(ctx, { name, arguments: args, signal, agent })
+  return { ...result, value: result.value?.data ?? result.value, text: result.content?.filter(b => b.type === 'text').map(b => b.text).join('
+') ?? '' }
+}
 const FILE_SECTION = `${TOOLING_SECTION}:file`
 const SHELL_SECTION = `${TOOLING_SECTION}:shell`
 const BG_SECTION = `${TOOLING_SECTION}:background`
@@ -58,7 +64,9 @@ async function agentForCall(ctx, cwd, mode = 'danger-full-access') {
   return result
 }
 async function advancedMount(ctx, names) {
-  return ctx.plugin(legacyComponent(discovery), { required: true, enabled: false, allowedTools: names, alwaysLoaded: names })
+  const fiber = await ctx.plugin(legacyComponent(discovery), { required: true, enabled: false, allowedTools: names, alwaysLoaded: names })
+  await new Promise(resolve => setImmediate(resolve))
+  return fiber
 }
 async function component(ctx, name, config = {}) {
   return ctx.plugin({ name: `fixture-${name}`, apply(inner) { return applyComponent(inner, { ...config }, name) } })
@@ -129,16 +137,17 @@ await test('PTC batch/result mount only in pure PTC scopes and withdraw on prese
     const native = await agent(ctx, 'ptc-native')
     const pure = await agent(ctx, 'ptc-only')
     let lift
-    await pure.ctx.plugin({ inject: ['tools'], apply(inner) { lift = inner.tools.presentAs('ptc') } })
+    await pure.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { lift = selectExecutor(inner, 'ptc') } })
     await visible(ctx, pure, ['ops_batch', 'ops_result'])
     for (const name of ['ops_batch', 'ops_result']) {
       assert.equal(registryNames(ctx).includes(name), false)
-      assert.equal(scopedToolNames(ctx, native).includes(name), false)
+      const step = await prepareStep(ctx, native)
+      try { assert.equal(Boolean(ctx.tools.executable(name, native, step.toolSet)), false) } finally { step.dispose() }
     }
     const stale = ctx.get('tools').get('ops_result', pure)
-    lift()
-    await ctx.get('systemPrompt').assemble({ scope: pure })
-    assert.equal(scopedToolNames(ctx, pure).includes('ops_result'), false)
+    lift(); selectExecutor(pure.ctx, 'native')
+    const restored = await prepareStep(ctx, pure)
+    try { assert.equal(Boolean(ctx.tools.executable('ops_result', pure, restored.toolSet)), false) } finally { restored.dispose() }
     assert.equal((await stale.execute({ action: 'page', id: 'unused' }, { agent: pure, signal: new AbortController().signal })).error.code, 'POLICY_DENIED')
     await component.dispose()
     assert.equal((await sections(ctx, pure)).has('tools:ptc-only'), false)
@@ -153,14 +162,14 @@ await test('real native file calls return data and propagate errors promptly', a
     await withTempDir('glob', async dir => {
       fs.writeFileSync(path.join(dir, 'alpha.txt'), 'alpha\n')
       const agent = await agentForCall(ctx, dir)
-      const created = await callTool(ctx, publicToolName('write_file'), { path: 'created.txt', expectedRevision: 'absent', content: 'created' }, undefined, agent)
+      const created = await admittedCall(ctx, publicToolName('write_file'), { path: 'created.txt', expectedRevision: 'absent', content: 'created' }, undefined, agent)
       assert.equal(created.value.status, 'completed', JSON.stringify(created.value))
-      const stat = await callTool(ctx, publicToolName('stat'), { path: 'created.txt' }, undefined, agent)
+      const stat = await admittedCall(ctx, publicToolName('stat'), { path: 'created.txt' }, undefined, agent)
       assert.equal(stat.value.revision, created.value.revision)
-      const result = await callTool(ctx, publicToolName('glob'), { pattern: ['*.txt'], path: dir }, undefined, agent)
+      const result = await admittedCall(ctx, publicToolName('glob'), { pattern: ['*.txt'], path: dir }, undefined, agent)
       assert.match(result.text, /alpha\.txt/)
       assert.equal(fs.realpathSync.native(result.value.items[0]), fs.realpathSync.native(path.join(dir, 'alpha.txt')))
-      const missing = await callTool(ctx, publicToolName('inspect_local_file'), { path: path.join(dir, 'missing.txt') }, undefined, agent)
+      const missing = await admittedCall(ctx, publicToolName('inspect_local_file'), { path: path.join(dir, 'missing.txt') }, undefined, agent)
       assert.equal(missing.value.error.code, 'NOT_FOUND')
     })
   } finally { await shutdown(ctx) }
@@ -173,17 +182,17 @@ await test('native file paths resolve from session cwd and enforce workspace-wri
     await withTempDir('native-paths', async dir => {
       fs.writeFileSync(path.join(dir, 'cwd.txt'), 'cwd\n')
       const workspace = await agentForCall(ctx, dir, 'workspace-write')
-      const relative = await callTool(ctx, publicToolName('glob'), { pattern: ['cwd.txt'], path: '.' }, undefined, workspace)
+      const relative = await admittedCall(ctx, publicToolName('glob'), { pattern: ['cwd.txt'], path: '.' }, undefined, workspace)
       assert.equal(relative.value.status, 'completed')
       assert.deepEqual(relative.value.items.map(item => fs.realpathSync.native(item)), [fs.realpathSync.native(path.join(dir, 'cwd.txt'))])
       const outside = path.join(path.dirname(dir), 'outside-native.txt')
       fs.writeFileSync(outside, 'outside\n')
       try {
-        const read = await callTool(ctx, publicToolName('inspect_local_file'), { path: outside }, undefined, workspace)
+        const read = await admittedCall(ctx, publicToolName('inspect_local_file'), { path: outside }, undefined, workspace)
         assert.equal(read.value.status, 'completed')
         workspace.session.mode = 'read-only'
         const readonly = workspace
-        const denied = await callTool(ctx, publicToolName('replace'), { path: outside, pattern: 'outside', replacement: 'changed' }, undefined, readonly)
+        const denied = await admittedCall(ctx, publicToolName('replace'), { path: outside, pattern: 'outside', replacement: 'changed' }, undefined, readonly)
         assert.equal(denied.value.error.code, 'POLICY_DENIED')
         assert.match(denied.value.error.message, /User authorization/)
         assert.match(denied.value.error.nextAction, /Ask the user/)

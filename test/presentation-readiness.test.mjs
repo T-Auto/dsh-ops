@@ -1,3 +1,4 @@
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createScope } from '@deepseek-ai/dsh-scope'
@@ -21,8 +22,8 @@ let sequence = 0
 async function agentFor(ctx, cwd, parent, mode) {
   const id = 'readiness-' + ++sequence
   const agent = { id, session: { id, mode: 'danger-full-access', header: { cwd } } }
-  await (parent?.ctx ?? ctx).plugin({ inject: ['tools'], apply(inner) { agent.ctx = createScope(inner, agent, parent ? { parent } : undefined).ctx } })
-  if (mode) await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.presentAs(mode) } })
+  await (parent?.ctx ?? ctx).plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { agent.ctx = createScope(inner, agent, parent ? { parent } : undefined).ctx } })
+  if (mode) await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, mode) } })
   await ctx.serial('agent/created', { agent })
   return agent
 }
@@ -44,12 +45,12 @@ for (const official of ['read', 'glob']) for (const hidingFirst of [true, false]
     assert.deepEqual((await assemble()).tools.map(tool => tool.name).sort(), [publicToolName(raw), retained].sort())
     assert.equal(registryHasOwnRegister(ctx), false)
     fs.writeFileSync(path.join(cwd, 'ready.txt'), 'ready')
-    const request = name => ctx.tools.execute({ name, arguments: raw === 'glob' ? { pattern: ['*.txt'] } : { path: 'ready.txt' }, agent, callId: 'readiness', signal: new AbortController().signal })
+    const request = name => executeCall(ctx, { name, arguments: raw === 'glob' ? { pattern: ['*.txt'] } : { path: 'ready.txt' }, agent, callId: 'readiness', signal: new AbortController().signal })
     const executed = await request(publicToolName(raw))
     assert.equal(executed.isError, false); assert.equal(executed.value.status, 'completed', JSON.stringify(executed))
     assert.equal((await request(official)).isError, true, 'selected official dispatch remains blocked')
     ctx.provide('ptcRuntime', { language: 'typescript' })
-    const lift = agent.ctx.tools.presentAs('ptc')
+    const lift = selectExecutor(agent.ctx, 'ptc')
     // A run_code scope cannot own a native counterpart, so it is never masked and
     // never gated: the model receives the program entry and nothing else.
     assert.deepEqual((await assemble()).tools.map(tool => tool.name), ['run_code'])
@@ -82,7 +83,7 @@ await test('an internal presentation probe never exempts a concurrent provider a
     const probing = isNativePresentation(ctx.systemPrompt, agent)
     await entered.promise
     await assert.rejects(ctx.systemPrompt.assemble({ scope: agent }), /READINESS_BLOCKED/)
-    const refused = await ctx.tools.execute({ name: 'glob', arguments: {}, agent, callId: 'ordinary', signal: new AbortController().signal })
+    const refused = await executeCall(ctx, { name: 'glob', arguments: {}, agent, callId: 'ordinary', signal: new AbortController().signal })
     assert.equal(refused.isError, true)
     release.resolve()
     assert.equal(await probing, true)
@@ -110,7 +111,7 @@ await test('real PTC Native shadows retain exact OPS ownership while PTC definit
     await ctx.plugin(Hiding, { replaceTools: ['read'] })
     const assembled = await ctx.systemPrompt.assemble({ scope: child })
     assert.equal(assembled.tools.some(tool => tool.name === 'read'), false)
-    const value = await ctx.tools.execute({ name: original.name, arguments: {}, agent: child, callId: 'owned-shadow', signal: new AbortController().signal })
+    const value = await executeCall(ctx, { name: original.name, arguments: {}, agent: child, callId: 'owned-shadow', signal: new AbortController().signal })
     assert.equal(value.isError, false, JSON.stringify(value))
     assert.deepEqual((await ctx.systemPrompt.assemble({ scope: parent })).tools.map(tool => tool.name), ['run_code'],
       'a collapsed scope is not gated')

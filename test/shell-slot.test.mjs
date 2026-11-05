@@ -1,3 +1,4 @@
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 /** Real registries, prompt assembly and Bash execution; only the preset roster is a fixture. */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -53,7 +54,7 @@ async function boot(cwd) {
     return agent
   }
   return { ctx, mint, names: agent => scopedToolNames(ctx, agent),
-    assemble: agent => ctx.get('systemPrompt').assemble({ scope: agent, agent, signal: new AbortController().signal }) }
+    assemble: async agent => { const step = await prepareStep(ctx, agent); try { return step.assembly } finally { step.dispose() } } }
 }
 const bashSections = assembly => assembly.sections.filter(section => section.name.startsWith(BASH_PROMPT_SECTION + ':') && section.text.trim())
 
@@ -86,7 +87,7 @@ for (const bash of [false, true]) for (const pwsh of [false, true]) {
       }
       if (pwsh) assert.equal(assembly.tools.find(tool => tool.name === 'pwsh').description, pwshDescription)
       assert.equal(Object.hasOwn(ctx.get('tools'), 'register'), false)
-      await row.dispose()
+      await row.dispose(); await new Promise(resolve => setImmediate(resolve))
       assert.equal(names(agent).includes(BASH_TOOL), false)
       assert.equal(bashSections(await assemble(agent)).length, 0)
       assert.equal((await assemble(agent)).sections.some(section => section.name.startsWith(BASH_PROMPT_SECTION + ':')), false, 'disposal removes the registered section, not only its text')
@@ -121,17 +122,18 @@ for (const preset of ['standard', 'cordis']) {
       assert.equal((textOf(assembly).match(/^# .*Bash command execution/gm) ?? []).length, process.platform === 'win32' ? 1 : 0)
       assert.equal(assembly.tools.some(tool => tool.name === 'pwsh'), false)
       agent.session.mode = 'unavailable'
-      await ctx.serial('session/event', agent.session, { type: 'sandbox/mode' })
+      await ctx.serial('session/event', agent.session, { type: 'sandbox/mode' }); await new Promise(resolve => setImmediate(resolve))
       const withdrawn = await assemble(agent)
       assert.equal(bashSections(withdrawn).length, 0)
       assert.equal(count(withdrawn, guidance), 1, 'live Native section retains guidance after Bash withdrawal')
       assert.equal(count(await assemble(peer), guidance), 1, 'peer retains independent guidance')
       agent.session.mode = 'danger-full-access'
-      await ctx.serial('session/event', agent.session, { type: 'sandbox/mode' })
+      await ctx.serial('session/event', agent.session, { type: 'sandbox/mode' }); await new Promise(resolve => setImmediate(resolve))
       for (const [bash, residentTools, owner] of [[false, true, 'Native'], [true, false, 'Bash']]) {
-        await row.dispose()
+        await row.dispose(); await new Promise(resolve => setImmediate(resolve))
         assert.equal(count(await assemble(agent), guidance), 0, 'disposal removes the old owner')
         row = await ctx.plugin(Bundle, { ...config, [preset]: { ...config[preset], bash, residentTools } })
+        await new Promise(resolve => setImmediate(resolve))
         const current = await assemble(agent)
         const shellOwnsGuidance = bash && process.platform === 'win32'
         // Native suppresses its extra guidance when the Windows Bash section is live.
@@ -148,7 +150,7 @@ for (const preset of ['standard', 'cordis']) {
           assert.equal(nativeSection?.text.trim() ?? '', '', `${process.platform} has no Native guidance owner`)
         }
       }
-      await row.dispose()
+      await row.dispose(); await new Promise(resolve => setImmediate(resolve))
       const otherGuidance = 'Keep the discovery-only consumer independent.'
       const otherRow = await ctx.plugin(integration({ preset: 'directory-only', profile: 'discovery', extraGuidance: otherGuidance }))
       const other = await mint('directory-only', { preset: 'directory-only', pwsh: false })
@@ -212,20 +214,20 @@ await test('two agents, permission withdrawal, reload and dispose preserve the h
     assert.equal(bashSections(await assemble(sibling)).length, 0)
     assert.equal(names(sibling).includes(BASH_TOOL), false)
     own.session.mode = 'unavailable'
-    await ctx.serial('session/event', own.session, { type: 'sandbox/mode' })
+    await ctx.serial('session/event', own.session, { type: 'sandbox/mode' }); await new Promise(resolve => setImmediate(resolve))
     assert.equal(bashSections(await assemble(own)).length, 0)
     assert.equal(names(own).includes('pwsh'), true)
     assert.equal(bashSections(await assemble(peer)).length, 1, 'another session keeps its own authority and guidance')
     own.session.mode = 'danger-full-access'
-    await ctx.serial('session/event', own.session, { type: 'sandbox/mode' })
+    await ctx.serial('session/event', own.session, { type: 'sandbox/mode' }); await new Promise(resolve => setImmediate(resolve))
     assert.equal(bashSections(await assemble(own)).length, 1)
-    await row.dispose()
+    await row.dispose(); await new Promise(resolve => setImmediate(resolve))
     assert.equal(bashSections(await assemble(own)).length, 0)
     row = await ctx.plugin(integration({ preset: 'bash-only', profile: 'shell' }))
     assert.equal(bashSections(await assemble(own)).length, 1)
     assert.equal(bashSections(await assemble(sibling)).length, 0)
     assert.equal((await assemble(own)).sections.find(section => section.name === 'tool:pwsh').text, pwshText)
-    await row.dispose()
+    await row.dispose(); await new Promise(resolve => setImmediate(resolve))
     assert.equal(names(own).includes(BASH_TOOL), false)
     assert.equal(names(own).includes('pwsh'), true)
   } finally { await shutdown(ctx) }
@@ -237,7 +239,7 @@ await test('real Bash uses Bash syntax and honest result fields through the real
     await ctx.plugin(integration({ preset: 'calls', profile: 'shell' }))
     const agent = await mint('calls', { preset: 'calls' })
     await assemble(agent)
-    const call = (id, args) => ctx.get('tools').execute({ name: BASH_TOOL, callId: id, agent, signal: new AbortController().signal, arguments: args })
+    const call = (id, args) => executeCall(ctx, { name: BASH_TOOL, callId: id, agent, signal: new AbortController().signal, arguments: args })
     const success = await call('bash-syntax', { command: 'v=slot; printf "%s" "$(printf %s "$v")" | cat', description: 'Check Bash variables substitution and pipeline' })
     assert.equal(success.isError, false, JSON.stringify(success))
     assert.equal(success.value.status, 'completed', JSON.stringify(success))
@@ -262,10 +264,11 @@ await test('job schema and guidance change together on mount and disposal', () =
     const agent = await mint('jobs', { preset: 'jobs' })
     assert.match(bashSections(await assemble(agent))[0].text, /Host jobs are unavailable/)
     const jobs = await ctx.plugin(LocalJobs, {})
+    await new Promise(resolve => setImmediate(resolve))
     const assembly = await assemble(agent)
     assert.equal(assembly.tools.find(tool => tool.name === BASH_TOOL).parameters.properties.run_in_background.type, 'boolean')
     assert.match(bashSections(assembly)[0].text, /kind promoted with jobId/)
-    await jobs.dispose()
+    await jobs.dispose(); await new Promise(resolve => setImmediate(resolve))
     const after = await assemble(agent)
     assert.equal(after.tools.find(tool => tool.name === BASH_TOOL).parameters.properties.run_in_background, undefined)
     assert.match(bashSections(after)[0].text, /Host jobs are unavailable/)
@@ -281,7 +284,7 @@ await test('pinned third-party bridge compat on/off/reload/dispose leaves native
     const agent = await mint('linked', { preset: 'linked' })
     await assemble(agent)
     let enabled = true
-    const bridge = () => ctx.plugin({ name: 'pinned-pwsh7-bridge', inject: ['tools'], apply(inner) {
+    const bridge = () => ctx.plugin({ name: 'pinned-pwsh7-bridge', inject: ['tools', 'systemPrompt'], apply(inner) {
       inner.effect(() => mountDshOpsBridge(inner, () => ({ dshOpsCompat: enabled })))
     } })
     let row = await bridge()
@@ -296,16 +299,16 @@ await test('pinned third-party bridge compat on/off/reload/dispose leaves native
     ctx.emit('app-boot/config-reload')
     await assemble(agent)
     assert.equal(names(agent).includes('pwsh_persistent'), false)
-    await row.dispose()
+    await row.dispose(); await new Promise(resolve => setImmediate(resolve))
     assert.equal(names(agent).includes('pwsh_persistent'), true)
     row = await bridge()
     const assembled = await assemble(agent)
     assert.equal(names(agent).includes('pwsh'), true)
     assert.equal(bashSections(assembled).length, 1)
     assert.equal(assembled.sections.find(section => section.name === 'tool:pwsh').text, pwshText)
-    const result = await ctx.get('tools').execute({ name: 'pwsh', callId: 'native-pwsh', agent, signal: new AbortController().signal, arguments: { command: 'Get-Date' } })
+    const result = await executeCall(ctx, { name: 'pwsh', callId: 'native-pwsh', agent, signal: new AbortController().signal, arguments: { command: 'Get-Date' } })
     assert.equal(result.isError, false)
-    await row.dispose()
+    await row.dispose(); await new Promise(resolve => setImmediate(resolve))
   } finally { await shutdown(ctx) }
 }))
 
@@ -317,7 +320,7 @@ await test('a hidden PowerShell fallback returns when Bash authority is withdraw
     await assemble(agent)
     assert.equal(names(agent).includes('pwsh'), process.platform !== 'win32')
     agent.session.mode = 'unavailable'
-    await ctx.serial('session/event', agent.session, { type: 'sandbox/mode' })
+    await ctx.serial('session/event', agent.session, { type: 'sandbox/mode' }); await new Promise(resolve => setImmediate(resolve))
     await assemble(agent)
     assert.equal(names(agent).includes(BASH_TOOL), false)
     assert.equal(names(agent).includes('pwsh'), true)
