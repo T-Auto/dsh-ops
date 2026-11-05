@@ -113,4 +113,20 @@ await test('an apply publishes through the descriptor and keeps the BOM and CRLF
   } finally { fs.rmSync(ws, { recursive: true, force: true }) }
 })
 
+await test('a rewrite reaches every file unless a limit says otherwise', async () => {
+  const ws = root()
+  try {
+    for (const n of ['f0', 'f1', 'f2']) write(ws, `${n}.ts`, 'export function a() { return 1 }\n')
+    // The old default planned exactly one file and said nothing, so a caller expecting a full
+    // rename silently got the first file only.
+    const all = await call('ast_refactor', { pattern: 'return 1', rewrite: 'return 2', mode: 'apply' }, ws, ws)
+    assert.equal(all.status, 'completed', JSON.stringify(all.error))
+    assert.deepEqual([...all.filesApplied].sort(), ['f0.ts', 'f1.ts', 'f2.ts'])
+    for (const n of ['f0', 'f1', 'f2']) assert.match(fs.readFileSync(path.join(ws, `${n}.ts`), 'utf8'), /return 2/)
+    const one = await call('ast_refactor', { pattern: 'return 2', rewrite: 'return 3', mode: 'preview', limit: 1 }, ws, ws)
+    assert.equal(one.remaining, null)
+    assert.match(String(one.message), /only the first 1/, 'a stopped walk has to say so')
+  } finally { fs.rmSync(ws, { recursive: true, force: true }) }
+})
+
 report('ast-security')

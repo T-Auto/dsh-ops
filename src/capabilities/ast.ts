@@ -23,7 +23,7 @@ export const PARAMETERS = Object.freeze({
   ast_locate: bounded(locateArgs, ['symbol']),
   ast_refactor: bounded({
     ...locateArgs,
-    limit: count(1),
+    limit: count(50),
     pattern: { ...string, description: 'ast-grep pattern with $VAR metavariables, e.g. "console.log($A)".' },
     rewrite: { ...string, description: 'Replacement text; $VAR expands to the matched metavariable.' },
     mode: { type: 'string', enum: ['preview', 'apply'], description: 'Preview (default) reports the plan; apply writes it.' },

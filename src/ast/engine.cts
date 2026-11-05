@@ -648,7 +648,9 @@ export async function refactor(req: RefactorRequest, cwd: string = process.cwd()
   try {
     if (typeof req.pattern !== 'string' || typeof req.rewrite !== 'string') return { ...out, status: 'error', code: 'E_BAD_ARGS', message: 'pattern and rewrite are required' }
     if (req.pattern.length > 4096 || req.rewrite.length > 4096 || (req.symbol ?? '').length > 512) return { ...out, status: 'error', code: 'E_BAD_ARGS', message: 'pattern / rewrite / symbol too long', applied: false }
-    const limit = Math.min(Math.max(Math.trunc(req.limit ?? 1) || 1, 1), 500)
+    // A rewrite means "all of them": the old default of 1 planned a single file and said nothing,
+    // so a caller that expected a full rename silently got the first file only.
+    const limit = Math.min(Math.max(Math.trunc(req.limit ?? 50) || 1, 1), 500)
     const c = await openCandidates(req, cwd, opts)
     if ('error' in c) return { ...out, status: 'error', code: c.code, message: c.error, applied: false, ...(c.continuation ? { continuation: c.continuation } : {}) }
     const { files, roots, discover: d } = c
@@ -729,6 +731,7 @@ export async function refactor(req: RefactorRequest, cwd: string = process.cwd()
 
     const base: RefactorReceipt = {
       ...out, edits: totalEdits, files: fileSummary, filesTotal: plans.length,
+      ...(stopped ? { message: `${matched} file(s) match; only the first ${limit} were ${mode === 'apply' ? 'planned' : 'shown'} — pass a larger limit to include the rest` } : {}),
       matched, planned: plans.length,
       // A stopped walk did not count the rest: `null` is the honest answer, not a measured number.
       remaining: stopped ? null : Math.max(matched - plans.length, 0),
