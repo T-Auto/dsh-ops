@@ -197,19 +197,31 @@ impl VolumeIo for VolumeHandle {
                 ptr::null_mut(),
             )
         };
-        if ok != 0 {
-            return written_page(returned, output.len());
-        }
-        let error = last_error();
-        match error {
+        let error = if ok != 0 { None } else { Some(last_error()) };
+        completed_page(error, returned, output.len())
+    }
+}
+
+/// Decodes the actual kernel completion, including partial zero-byte pages.
+fn completed_page(
+    error: Option<u32>,
+    returned: u32,
+    capacity: usize,
+) -> Result<PageOutcome, WinfsError> {
+    match error {
+        None => written_page(returned, capacity),
+        Some(error) => match error {
             // The page filled up: success with data, per the FSCTL protocol. A
             // zero-byte return is kept as `Wrote(0)` so page functions can
             // reject it instead of calling it a clean end.
-            ERROR_MORE_DATA => written_page(returned, output.len()),
+            ERROR_MORE_DATA => {
+                written_page(returned, capacity)?;
+                Ok(PageOutcome::Wrote(returned as usize))
+            }
             // The enumeration or journal read is complete.
             ERROR_HANDLE_EOF => Ok(PageOutcome::EndOfData),
             other => Err(map_win32(other)),
-        }
+        },
     }
 }
 
