@@ -2,7 +2,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { locate, refactor, audit } from '../lib/ast/engine.cjs'
+import { locate, refactor, audit, resolvedInside, rootRealCacheSize } from '../lib/ast/engine.cjs'
 import { assert, test, report } from './lib/harness.mjs'
 
 // The engine touches no host state, so a plain temp directory is enough and keeps this suite
@@ -139,6 +139,20 @@ await test('denied trees are pruned during enumeration, not just at named paths'
     const still = await locate({ symbol: 'publicValue' }, root, { deny: [path.join(root, '.ssh')] })
     assert.equal(still.hits.length, 1, 'denying one tree must not disable the rest')
   } finally { cleanup(root) }
+})
+
+await test('the resolved-root cache stops growing and keeps answering correctly', async () => {
+  const root = dir(), outside = dir()
+  try {
+    write(root, 'a.ts', 'export function keep() { return 1 }\n')
+    const file = path.join(root, 'a.ts')
+    // Every distinct root is a cache entry; before the ceiling this grew for the life of the process.
+    for (let i = 0; i < 900; i++) resolvedInside(file, [path.join(outside, `nope${i}`)])
+    assert.equal(rootRealCacheSize() <= 512, true, `cache grew to ${rootRealCacheSize()}`)
+    // Dropping entries is only safe if the answer is the same afterwards.
+    assert.notEqual(resolvedInside(file, [root]), null, 'a bounded cache still resolves')
+    assert.equal(resolvedInside(path.join(outside, 'x.ts'), [root]), null, 'and still refuses an outsider')
+  } finally { cleanup(root); cleanup(outside) }
 })
 
 report('ast-engine')

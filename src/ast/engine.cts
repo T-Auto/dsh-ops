@@ -274,7 +274,13 @@ async function discover(roots: string[], exts: ReadonlySet<string>, opts: { offs
 /* ── Fences and reads ── */
 
 const rootRealCache = new Map<string, string | null>()
+/** Every other cache here is bounded; this one is keyed by path strings, so it needs a ceiling. */
+const ROOT_REAL_LIMIT = 512
+/** Exposed so the bound itself can be asserted: a cache that only grows is a leak, not a cache. */
+export const rootRealCacheSize = (): number => rootRealCache.size
+
 function realRoots(roots: readonly string[]): Array<string | null> {
+  if (rootRealCache.size > ROOT_REAL_LIMIT) rootRealCache.clear()
   return roots.map((root) => {
     if (rootRealCache.has(root)) return rootRealCache.get(root) ?? null
     let real: string | null = null
