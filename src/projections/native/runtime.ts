@@ -1,10 +1,10 @@
 import type { Context } from '../../adapter/dsh/types.js'
 import type { ToolDefinition } from '../../adapter/dsh/types.js'
-import type { FileToolName } from '../../capabilities/registry.js'
+import type { AstToolName, FileToolName } from '../../capabilities/registry.js'
 import { WORKER_TIMEOUT_MS } from '../../execution/protocol.js'
 import { publicToolName } from '../../policy.js'
 import { definition } from './contract.js'
-import { NATIVE_FILE_TOOLS } from '../../capabilities/registry.js'
+import { NATIVE_TOOLS } from '../../capabilities/registry.js'
 import { resultDefinition, invokeResult } from './result.js'
 import { registerNativeProvider } from '../../publication/providers.js'
 import { safeDisposeAll } from '../../teardown.js'
@@ -13,7 +13,7 @@ import { InvocationLifetime, InvocationNotStarted } from '../../lifecycle/invoca
 import { createNativeReadDedup } from './read-dedup.js'
 
 type Execution = Parameters<ToolDefinition['execute']>[1]
-type NativeToolName = FileToolName | 'result'
+type NativeToolName = FileToolName | 'result' | AstToolName
 export interface NativeRuntimeConfig { workerPath?: string; required?: boolean; denyCredentialReads?: boolean; toolCallTimeoutMs?: number }
 type Reporter = (message: string, level?: string) => void
 export class NativeFileTools {
@@ -37,7 +37,7 @@ export class NativeFileTools {
     this.readDedup = createNativeReadDedup(ctx)
   }
 
-  async start(names: readonly NativeToolName[] = NATIVE_FILE_TOOLS as readonly NativeToolName[]): Promise<string[]> {
+  async start(names: readonly NativeToolName[] = NATIVE_TOOLS as readonly NativeToolName[]): Promise<string[]> {
     this.file = this.config.workerPath
     if (!this.file) {
       if (this.config.required) throw new Error('Native file worker path is unavailable.')

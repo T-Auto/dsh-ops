@@ -69,7 +69,7 @@
       {
         "serverName": "dsh-ops",
         "transport": "in-process",
-        "source": "native Rust file worker",
+        "source": "native Rust file worker; in-process Tree-sitter engine for the ast_* tools",
         "publicPrefix": "ops_",
         "tools": [
           "inspect_local_file",
@@ -87,9 +87,12 @@
           "read_table",
           "read_docx",
           "read_pdf",
-          "result"
+          "result",
+          "ast_locate",
+          "ast_refactor",
+          "ast_audit"
         ],
-        "shellPermission": "Per-call DSH sandbox policy and native subprocess"
+        "shellPermission": "Per-call DSH sandbox policy and native subprocess; the ast_* tools are Tree-sitter work answered in-process under the same policy"
       },
       {
         "serverName": "dsh-ops",
@@ -158,6 +161,9 @@
           "ops_read_table",
           "ops_read_docx",
           "ops_read_pdf",
+          "ops_ast_locate",
+          "ops_ast_refactor",
+          "ops_ast_audit",
           "ops_batch",
           "ops_load_sdk",
           "ops_discover_tools"

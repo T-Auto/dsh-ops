@@ -2,7 +2,7 @@
 import { ConfigError, resolveConfig, type ResolvedConfig } from '../config.js'
 import { resolveDiscoveryConfig, type DiscoveryConfig } from '../discovery/config.js'
 import { NATIVE_RESIDENT_RAW } from '../capabilities/profiles.js'
-import { NATIVE_FILE_TOOLS, type FileToolName } from '../capabilities/registry.js'
+import { NATIVE_TOOLS, type FileToolName } from '../capabilities/registry.js'
 import { migrateRawNames } from '../compat/alias.js'
 import { parsePtcConfig, type PtcConfig } from '../ptc/config.js'
 
@@ -77,7 +77,7 @@ export function resolveIntegrationConfig(raw: unknown): IntegrationConfig {
   const residentInput = input.residentNames ?? NATIVE_RESIDENT_RAW
   if (!Array.isArray(residentInput) || residentInput.some(name => typeof name !== 'string')) throw new ConfigError('residentNames must be an array of Native capability names')
   const residentNames = [...new Set(migrateRawNames(residentInput as string[]))]
-  if (residentNames.some(name => !(NATIVE_FILE_TOOLS as readonly string[]).includes(name))) throw new ConfigError('residentNames contains an unavailable Native capability')
+  if (residentNames.some(name => !(NATIVE_TOOLS as readonly string[]).includes(name))) throw new ConfigError('residentNames contains an unavailable Native capability')
   const presentation = input.presentation ?? defaults.presentation
   if (presentation !== 'native' && presentation !== 'ptc') throw new ConfigError('presentation must be native or ptc')
   const enabled = boolean('discovery', defaults.discovery)

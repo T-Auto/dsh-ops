@@ -17,12 +17,14 @@ import { inside, canonicalAnchor, anchoredPath, sessionAnchors } from '../author
 import { exchange } from './transport.js'
 import { resolveWorker } from './runtime.js'
 import { FILE_MUTATIONS } from '../policy.js'
+import { inProcAst } from '../capabilities/registry.js'
 import { normalizeArguments } from '../capabilities/arguments.js'
 import { resolveReadFiles } from './read-files.js'
 import { withCallBudget, CallBudgetError } from '../kernel/call-budget.js'
 import { withResultSession } from '../kernel/result-lifecycle.js'
 import { resultStorage } from '../kernel/result-storage.js'
 import { resolveSessionDirectory } from '../adapter/dsh/working-directory.js'
+import { invokeAst } from './ast-inproc.js'
 import { tryWslRead } from './wsl-worker.js'
 
 export { resolveWorker }
@@ -104,6 +106,8 @@ export async function invoke(ctx: Context, file: string, tool: string, args: unk
 async function invokeTrusted(ctx: Context, file: string, tool: string, args: unknown, exec: ToolRunContext, signal: AbortSignal, cwd: string, config?: WorkerInvokeConfig): Promise<unknown> {
   const session = exec?.agent?.session
   if (!session?.id || typeof cwd !== 'string' || !path.isAbsolute(cwd)) return failure('EXECUTOR_UNAVAILABLE', 'An authoritative session identity and cwd are required.')
+  // A tool that declares its own executor is answered here, before the worker is ever considered.
+  if (inProcAst(tool)) return invokeAst(tool, ctx, args, exec, signal)
   const policyService: SandboxPolicyService | undefined = ctx.get('sandboxPolicy')
   const subprocess: SubprocessRuntime | undefined = ctx.get('subprocess')
   if (!policyService?.resolve || !subprocess?.spawn) return failure('EXECUTOR_UNAVAILABLE', 'DSH policy and subprocess services are required.')
