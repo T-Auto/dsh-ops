@@ -342,10 +342,18 @@ impl EventStream {
             }
         }
         let inner = ffi::Stream::create(roots, since, latency)?;
+        // A live stream must not hand out the SINCE_NOW sentinel as its cursor:
+        // persisting that value would make the next process replay from "now"
+        // forever. Capture the real journal id once, at open time.
+        let base = if since.is_since_now() {
+            ffi::current_event_id()
+        } else {
+            since
+        };
         Ok(Self {
             inner,
             since,
-            latest: since,
+            latest: base,
         })
     }
 

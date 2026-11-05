@@ -388,7 +388,27 @@ fn an_idle_live_stream_reports_no_events() {
     assert!(!batch.dropped);
     assert!(!batch.event_ids_wrapped);
     assert!(!batch.history_done);
-    assert_eq!(batch.latest, EventId::SINCE_NOW);
+    // A live stream seeds its cursor with a real journal id at open time (see
+    // the live-cursor test); it must never hand out the SINCE_NOW sentinel.
+    assert!(batch.latest > EventId::from_raw(0));
+    assert!(!batch.latest.is_since_now());
+    assert!(batch.latest <= EventStream::current_event_id());
+}
+
+#[test]
+fn a_live_batch_never_reports_the_since_now_sentinel() {
+    let tree = TempTree::new("live-cursor");
+    let root = tree.to_path_buf();
+    // Opened live: there is no replay, so the batch is empty — but its cursor
+    // must still be a real journal id, because persisting SINCE_NOW would make
+    // the next process replay nothing forever.
+    let mut stream = open_stream(std::slice::from_ref(&root), EventId::SINCE_NOW);
+    assert_eq!(stream.since(), EventId::SINCE_NOW);
+    let batch = stream.drain(Duration::from_millis(150));
+    assert!(batch.is_empty(), "{:?}", batch.events);
+    assert!(!batch.latest.is_since_now());
+    assert!(batch.latest > EventId::from_raw(0));
+    assert!(batch.latest <= EventStream::current_event_id());
 }
 
 #[test]
