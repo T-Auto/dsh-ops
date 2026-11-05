@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Give the discovery routing sentence an evaluable document condition — a `.pdf`, `.docx`, `.csv` or `.tsv` file whose reader is absent from the tool table — and state that creating, editing, rendering or exporting Office documents belongs to the host office skill, with a failed document read falling back to that skill instead of retrying the reader. Formats are named, never unpublished tool names; adds 279 characters (64 cl100k_base tokens) to the discovery-enabled prompt and changes no tool schema, so the pinned schema budgets stay valid.
+- 发现路由句改为可判定的文档条件：读取器不在工具表中的 `.pdf`、`.docx`、`.csv` 或 `.tsv` 文件；并写明创建、编辑、渲染或导出 Office 文档归宿主 office 技能，读取失败时回退到该技能而不是重试读取器。只写格式、不写未发布的工具名；发现开启时提示词增加 279 字符（64 个 cl100k_base token），工具 schema 未变，已固定的 schema 预算仍然有效。
 - Add `ops_ast_locate`, `ops_ast_refactor` and `ops_ast_audit`: in-process Tree-sitter symbol lookup, structural rewrite and format-only audit. They answer without spawning the native worker, run the same session-policy, credential and anchor fences as the worker path, default to preview, and publish on the Native presentation only (#666).
 - 新增 `ops_ast_locate`、`ops_ast_refactor`、`ops_ast_audit`：进程内的 Tree-sitter 符号定位、结构化重写与格式化审计。不启动 native worker，与 worker 路径共用会话策略、凭证与路径锚定围栏，重写默认预览，仅发布在 Native 呈现面上（#666）。
 

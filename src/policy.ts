@@ -81,7 +81,10 @@ export function renderToolingPolicy({ published, mounted, levels, shellComponent
   if (names.has('pwsh')) lines.push(`| Windows-native cmdlets / registry / services only | pwsh (host PowerShell) |`)
   lines.push('', '- ops_* arguments are strict: pass only declared fields.')
   if (hasFiles) lines.push('- Use published file tools for file operations.')
-  if (hasDiscovery) lines.push('- Discover a capability when needed; selection makes it available on the next model step and performs no file action.')
+  if (hasDiscovery) lines.push(
+    '- Discover a capability when a task needs a reader for a `.pdf`, `.docx`, `.csv` or `.tsv` file whose reader is absent from the tool table; selection makes it available on the next model step and performs no file action.',
+    '- Creating, editing, rendering or exporting Office documents belongs to the host office skill, and a document read that fails falls back to it rather than retrying the reader.',
+  )
   if (names.has(publicToolName('grep'))) lines.push('- ops_grep: summary for aggregate file/match totals; count for per-file counts; content for matching text. Follow nextOffset for remaining pages, but do not loop blindly on truncated/failed scans: they are not exhaustive.')
   if (hasFiles) lines.push(
     '- Single-file tools use `path`, resolved relative to the current DSH session cwd. Use `/` separators; do not pass workspace, cwd, or file_path aliases.',
