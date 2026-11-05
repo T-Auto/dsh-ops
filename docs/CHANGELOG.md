@@ -31,6 +31,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Retain the old-name removal when a paired rename target is replaced later in the batch.
+- 配对重命名的目标在同批次被替换时，保留旧路径的删除操作。
 - Seed live FSEvents cursors with the current journal id instead of persisting the SINCE_NOW sentinel.
 - 实时 FSEvents 游标以当前日志 ID 初始化，不再持久化 SINCE_NOW 哨兵。
 - Preserve PTC paging of session-owned legacy snapshots and batch audits through the shared result adapter, while Native still accepts only ref:// references. Refuse result storage when the active PTC parent's presentation changes or its inspection fails before cache IO. Await shared publication readiness and roll back permanent delayed initialization failures.
@@ -92,8 +94,7 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Read a scope's visible names from the entries its view publishes, not only from `keys()`: a view that offers entries without keys now reports its names, so the replacement planner stops treating every selected counterpart as absent there.
 - 作用域的可见名字改从视图条目读取，不再只认 `keys()`：只发布条目、不发布键的视图现在也能报出名字，替换计划不再把每个已选对应项当成缺失。
 - Refuse an install spec the Windows launcher line cannot carry: the profile installer quotes every argument it hands to `cmd.exe /s /c` and rejects the cmd metacharacters a `.cmd` expands again, so an `&` or `|` in `DSH_OPS_INSTALL_SPEC` can no longer become a second command. A `--dry-run` preview refuses the same input as the real run instead of reporting success.
-- 拒绝 Windows 启动器行承载不了的 install spec：配置档安装器给交给 `cmd.exe /s /c` 的每个参数加引号，并拒绝会被 `.cmd` 再次展开的 cmd 元字符，`DSH_OPS_INSTALL_SPEC` 里的 `&` 或 `|` 不再能变成第二条命令。`--dry-run` 预览与真跑拒绝同一批输入，不再报告成功。
-- Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
+- 拒绝 Windows 启动器行承载不了的 install spec：配置档安装器给交给 `cmd.exe /s /c` 的每个参数加引号，并拒绝会被 `.cmd` 再次展开的 cmd 元字符，`DSH_OPS_INSTALL_SPEC` 里的 `&` 或 `|` 不再能变成第二条命令。`--dry-run` 预览与真跑拒绝同一批输入，不再报告成功。- Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
 - 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。
 - Report PowerShell ConstrainedLanguage before workspace ACL preparation and preserve a named diagnostic without changing security policy (#458). / 工作区 ACL 准备前明确报告 PowerShell ConstrainedLanguage，并保留具名诊断，不改变安全策略（#458）。
 

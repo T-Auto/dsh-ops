@@ -319,3 +319,90 @@ fn an_unpaired_rename_of_a_vanished_name_is_a_removal() {
     assert_eq!(batch.changes.len(), 1);
     assert_eq!(batch.changes[0].action, ChangeAction::Removed);
 }
+
+#[test]
+fn a_replaced_rename_target_keeps_the_old_name_removal() {
+    let events = [
+        identified(event(5, EventFlags::ITEM_RENAMED, "/root/old"), 11),
+        identified(event(5, EventFlags::ITEM_RENAMED, "/root/new"), 11),
+        identified(event(6, EventFlags::ITEM_REMOVED, "/root/new"), 11),
+        identified(event(7, EventFlags::ITEM_CREATED, "/root/new"), 22),
+    ];
+    let batch = coalesce_with(&events, &roots(), probe(&["/root/new"]));
+    assert_eq!(batch.changes.len(), 2);
+    let old = batch
+        .changes
+        .iter()
+        .find(|change| change.rel == Path::new("old"))
+        .expect("old snapshot name must be removed");
+    assert_eq!(old.action, ChangeAction::Removed);
+    let new = batch
+        .changes
+        .iter()
+        .find(|change| change.rel == Path::new("new"))
+        .expect("replacement must be upserted");
+    assert_eq!(new.action, ChangeAction::Modified);
+    assert_eq!(new.file_id, Some(22));
+}
+
+#[test]
+fn rename_chains_do_not_leave_the_original_name() {
+    let events = [
+        identified(event(5, EventFlags::ITEM_RENAMED, "/root/old"), 11),
+        identified(event(5, EventFlags::ITEM_RENAMED, "/root/middle"), 11),
+        identified(event(6, EventFlags::ITEM_RENAMED, "/root/middle"), 11),
+        identified(event(6, EventFlags::ITEM_RENAMED, "/root/new"), 11),
+    ];
+    let batch = coalesce_with(&events, &roots(), probe(&["/root/new"]));
+    let old = batch
+        .changes
+        .iter()
+        .find(|change| change.rel == Path::new("old"))
+        .expect("original snapshot name must be removed");
+    assert_eq!(old.action, ChangeAction::Removed);
+    assert!(
+        batch
+            .changes
+            .iter()
+            .any(|change| change.rel == Path::new("new") && change.file_id == Some(11))
+    );
+}
+
+#[test]
+fn a_removed_rename_target_removes_both_snapshot_names() {
+    let events = [
+        identified(event(5, EventFlags::ITEM_RENAMED, "/root/old"), 11),
+        identified(event(5, EventFlags::ITEM_RENAMED, "/root/new"), 11),
+        identified(event(6, EventFlags::ITEM_REMOVED, "/root/new"), 11),
+    ];
+    let batch = coalesce_with(&events, &roots(), probe(&[]));
+    assert_eq!(batch.changes.len(), 2);
+    assert!(
+        batch
+            .changes
+            .iter()
+            .all(|change| change.action == ChangeAction::Removed)
+    );
+}
+
+#[test]
+fn replacing_a_rename_target_does_not_erase_a_recreated_source() {
+    let events = [
+        identified(event(5, EventFlags::ITEM_RENAMED, "/root/old"), 11),
+        identified(event(5, EventFlags::ITEM_RENAMED, "/root/new"), 11),
+        identified(event(6, EventFlags::ITEM_CREATED, "/root/old"), 33),
+        identified(event(7, EventFlags::ITEM_REMOVED, "/root/new"), 11),
+        identified(event(8, EventFlags::ITEM_CREATED, "/root/new"), 22),
+    ];
+    // The same injected end-state probe used by the existing recreated-source
+    // test resolves the move; the later source event must override suppression.
+    let batch = coalesce_with(&events, &roots(), probe(&["/root/new"]));
+    assert_eq!(batch.changes.len(), 2);
+    let source = batch
+        .changes
+        .iter()
+        .find(|change| change.rel == Path::new("old"))
+        .expect("recreated source");
+    assert_eq!(source.action, ChangeAction::Added);
+    assert_eq!(source.file_id, Some(33));
+}

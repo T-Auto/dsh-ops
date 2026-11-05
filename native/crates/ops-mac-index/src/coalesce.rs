@@ -150,7 +150,10 @@ where
                 // The old name: the paired `Renamed` change on the new name
                 // already describes this move. Any later event for this path
                 // overrides the suppression.
-                pending.entry(rel).or_default().suppressed = true;
+                let source = pending.entry(rel).or_default();
+                source.file_id = event.file_id;
+                source.last_id = event.id;
+                source.suppressed = true;
                 continue;
             }
             if event.path == direction.new {
@@ -178,6 +181,30 @@ where
                     pending.entry(rel).or_default().remove(event);
                 }
             }
+        }
+    }
+
+    // Suppressing a source is only safe while the destination still carries
+    // that same identity-preserving move. A later replacement or another move
+    // may erase it; retain the source removal in that case.
+    for direction in directions.values() {
+        let Some(old) = relative_path(roots, &direction.old) else {
+            continue;
+        };
+        let Some(new) = relative_path(roots, &direction.new) else {
+            continue;
+        };
+        let move_survives = pending.get(&new).is_some_and(|state| {
+            state.action() == Some(ChangeAction::Renamed)
+                && state.file_id == Some(direction.file_id)
+        });
+        if !move_survives
+            && let Some(source) = pending.get_mut(&old)
+            && source.suppressed
+        {
+            source.state = State::Absent;
+            source.renamed = false;
+            source.suppressed = false;
         }
     }
 
