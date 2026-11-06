@@ -86,11 +86,15 @@ impl WinFsSource {
     }
 
     fn probe_state(&self, root: &Path) -> Result<SourceState, SourceError> {
-        let opened = open_for_root(root)?;
-        let live = info(&opened.volume)?;
+        // Without a store there is no snapshot to validate and no cursor to
+        // replay. Check that before opening the volume or issuing a journal
+        // FSCTL: a configured indexCache with no store must not pay the
+        // volume/journal probe (the startup path keeps Unavailable).
         let Some(store) = self.store.as_ref() else {
             return Ok(SourceState::Unavailable);
         };
+        let opened = open_for_root(root)?;
+        let live = info(&opened.volume)?;
         let Some((snapshot, stored)) = store.load_for_root(root) else {
             return Ok(SourceState::Unavailable);
         };
