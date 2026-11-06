@@ -24,6 +24,14 @@
 //! events; expanding the subtree ourselves would race the same window. L2
 //! therefore invalidates instead of guessing, and a later slice may replace
 //! that with an explicit expansion once it can prove the watch is live.
+//!
+//! Symlink policy matches the cold walk: the root the caller explicitly names
+//! is followed once (it is canonicalized before the watcher is opened, so a
+//! symlinked root keeps working), and no directory symlink *inside* the tree is
+//! followed. Both backends are therefore built with
+//! `follow_symlinks = false`; otherwise notify's recursive traversal would
+//! enter a linked directory, report events under a path the cold walk never
+//! indexed, and read metadata outside the root.
 
 use crate::limits::{DegradeReason, WatchLimits};
 use crate::state::{InvalidationReason, SessionCore, WatchEvent, WatchMode, WatchUpdate};
@@ -65,19 +73,23 @@ impl WatchSession {
         limits: &WatchLimits,
         poll_interval: Duration,
     ) -> Result<Self, DegradeReason> {
+        // Follow the caller's explicit root exactly once: a symlinked root keeps
+        // working while every symlink *below* it stays unentered.
+        let watch_root =
+            std::fs::canonicalize(root).map_err(|error| DegradeReason::Io(error.kind()))?;
         if limits.can_watch()
-            && let Ok((backend, receiver)) = open_native(root)
+            && let Ok((backend, receiver)) = open_native(&watch_root)
         {
             return Ok(Self {
                 backend,
                 receiver,
-                core: SessionCore::new(root.to_path_buf()),
+                core: SessionCore::new(watch_root),
                 poll_interval,
             });
         }
         log::warn!("no native inotify session; starting the watcher in polling mode");
-        let (backend, receiver) = open_polling(root, poll_interval)?;
-        let mut core = SessionCore::new(root.to_path_buf());
+        let (backend, receiver) = open_polling(&watch_root, poll_interval)?;
+        let mut core = SessionCore::new(watch_root);
         core.set_mode(WatchMode::Polling);
         Ok(Self {
             backend,
@@ -168,7 +180,7 @@ fn open_native(root: &Path) -> Result<(Backend, Receiver<notify::Result<Event>>)
         move |result| {
             let _ = sender.send(result);
         },
-        Config::default(),
+        Config::default().with_follow_symlinks(false),
     )?;
     watcher.watch(root, RecursiveMode::Recursive)?;
     Ok((Backend::Native(watcher), receiver))
@@ -183,7 +195,9 @@ fn open_polling(
         move |result| {
             let _ = sender.send(result);
         },
-        Config::default().with_poll_interval(poll_interval),
+        Config::default()
+            .with_poll_interval(poll_interval)
+            .with_follow_symlinks(false),
     )
     .map_err(classify_notify_error)?;
     watcher

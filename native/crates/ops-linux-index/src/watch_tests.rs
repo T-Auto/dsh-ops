@@ -351,6 +351,95 @@ fn creating_a_directory_during_a_live_session_requires_a_rescan() {
     );
 }
 
+/// Removes a directory created outside the watched root.
+struct Cleanup(PathBuf);
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn outside_dir(tree: &TempTree, label: &str) -> Cleanup {
+    let outside = tree.root.with_file_name(format!(
+        "{}-{label}",
+        tree.root.file_name().unwrap().to_string_lossy()
+    ));
+    std::fs::create_dir_all(&outside).unwrap();
+    Cleanup(outside)
+}
+
+/// Both backend configurations: the normal limit set (native where available)
+/// and a zero watch budget (forced PollWatcher).
+fn session_budgets() -> [WatchLimits; 2] {
+    [limits(), no_budget()]
+}
+
+#[test]
+fn directory_symlinks_inside_the_root_are_never_watched() {
+    for budget in session_budgets() {
+        let tree = TempTree::new("external-link");
+        let outside = outside_dir(&tree, "target");
+        std::fs::write(outside.0.join("before.txt"), b"x").unwrap();
+        std::os::unix::fs::symlink(&outside.0, tree.root.join("link")).unwrap();
+
+        let mut session =
+            WatchSession::start(&tree.root, &budget, Duration::from_millis(20)).unwrap();
+        session.adopt_directories(Vec::new());
+
+        // Prove the session really watches the root...
+        tree.file("probe.txt");
+        let update = wait_for(&mut session, |update| {
+            update
+                .events
+                .iter()
+                .any(|event| event.rel == Path::new("probe.txt"))
+        })
+        .expect("the in-root probe must be reported");
+
+        // ...and that a change behind the linked directory is not.
+        std::fs::write(outside.0.join("external.txt"), b"y").unwrap();
+        let deadline = Instant::now() + Duration::from_millis(600);
+        while Instant::now() < deadline {
+            let external = session.poll();
+            for event in external.events {
+                assert!(
+                    !event.rel.starts_with("link"),
+                    "a directory symlink must not widen the watched tree: {event:?}"
+                );
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(update.invalidated, None);
+    }
+}
+
+#[test]
+fn an_explicitly_named_symlinked_root_is_followed_once() {
+    for budget in session_budgets() {
+        let tree = TempTree::new("symlinked-root");
+        let alias = tree.root.with_file_name(format!(
+            "{}-alias",
+            tree.root.file_name().unwrap().to_string_lossy()
+        ));
+        std::os::unix::fs::symlink(&tree.root, &alias).unwrap();
+        let _cleanup = Cleanup(alias.clone());
+
+        let mut session = WatchSession::start(&alias, &budget, Duration::from_millis(20)).unwrap();
+        session.adopt_directories(Vec::new());
+        std::fs::write(tree.root.join("inside.txt"), b"z").unwrap();
+
+        let update = wait_for(&mut session, |update| {
+            update
+                .events
+                .iter()
+                .any(|event| event.rel == Path::new("inside.txt"))
+        })
+        .expect("the explicitly named symlinked root must still be followed once");
+        assert_eq!(update.invalidated, None);
+    }
+}
+
 #[test]
 fn resyncing_after_a_rescan_clears_the_live_session_invalidation() {
     let tree = TempTree::new("resync");
