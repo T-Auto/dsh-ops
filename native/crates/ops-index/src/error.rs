@@ -53,6 +53,33 @@ pub enum Error {
         /// The odd byte length.
         len: u32,
     },
+    /// One page asked for more decoded structures than its own size allows.
+    ///
+    /// Every file, name, stream and info entry costs one step, and the page
+    /// grants at most one step per byte. A well-formed page never comes close:
+    /// each structure occupies at least 24 bytes of the page. The budget only
+    /// trips when several files share satellite chains, which multiplies the
+    /// work a page can request without growing the page; the whole page is
+    /// rejected rather than decoded, so such amplification cannot occupy a
+    /// worker.
+    PageBudgetExceeded {
+        /// Name of the structure whose step ran out of budget.
+        what: &'static str,
+        /// Steps the page granted (its byte length).
+        limit: usize,
+    },
+    /// One page asked for more payload bytes than its own size allows.
+    ///
+    /// Name payloads and stream identifiers are charged against a budget equal
+    /// to the page length. A well-formed page stores every payload byte exactly
+    /// once, so the budget is exact for real pages; sharing a chain between
+    /// several files would decode the same bytes repeatedly and is rejected.
+    PayloadBudgetExceeded {
+        /// Name of the payload field that ran out of budget.
+        what: &'static str,
+        /// Payload bytes the page granted (its byte length).
+        limit: usize,
+    },
     /// A name length exceeded the contract maximum.
     NameTooLong {
         /// Name of the field that carried the length.
@@ -75,6 +102,8 @@ impl Error {
             Self::OffsetCycle { .. } => "INDEX_OFFSET_CYCLE",
             Self::OddUtf16Length { .. } => "INDEX_ODD_UTF16_LENGTH",
             Self::NameTooLong { .. } => "INDEX_NAME_TOO_LONG",
+            Self::PageBudgetExceeded { .. } => "INDEX_LAYOUT_PAGE_BUDGET",
+            Self::PayloadBudgetExceeded { .. } => "INDEX_LAYOUT_PAYLOAD_BUDGET",
         }
     }
 }
@@ -118,6 +147,14 @@ impl fmt::Display for Error {
             } => write!(
                 f,
                 "{what} at offset {offset} has byte length {len}, above the maximum of {max}"
+            ),
+            Self::PageBudgetExceeded { what, limit } => write!(
+                f,
+                "{what} exceeded the page-wide structure budget of {limit} steps"
+            ),
+            Self::PayloadBudgetExceeded { what, limit } => write!(
+                f,
+                "{what} exceeded the page-wide payload budget of {limit} bytes"
             ),
         }
     }

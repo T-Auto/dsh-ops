@@ -106,3 +106,25 @@ fn error_is_cloneable_comparable_and_a_std_error() {
     let as_dyn: &dyn std::error::Error = &error;
     assert!(as_dyn.source().is_none());
 }
+
+#[test]
+fn budget_errors_have_stable_codes_and_explain_the_allowance() {
+    let step = Error::PageBudgetExceeded {
+        what: "FILE_LAYOUT_NAME_ENTRY",
+        limit: 8464,
+    };
+    assert_eq!(step.code(), "INDEX_LAYOUT_PAGE_BUDGET");
+    assert_eq!(
+        step.to_string(),
+        "FILE_LAYOUT_NAME_ENTRY exceeded the page-wide structure budget of 8464 steps"
+    );
+    let payload = Error::PayloadBudgetExceeded {
+        what: "FILE_LAYOUT_NAME_ENTRY.FileName",
+        limit: 44896,
+    };
+    assert_eq!(payload.code(), "INDEX_LAYOUT_PAYLOAD_BUDGET");
+    assert_eq!(
+        payload.to_string(),
+        "FILE_LAYOUT_NAME_ENTRY.FileName exceeded the page-wide payload budget of 44896 bytes"
+    );
+}
