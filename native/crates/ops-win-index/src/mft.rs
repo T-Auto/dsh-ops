@@ -145,38 +145,52 @@ pub(crate) fn process_is_elevated() -> Result<bool, SourceError> {
     usn_journal_rs::privilege::is_elevated().map_err(|_| SourceError::Unsupported)
 }
 
-/// Enforces the whole-volume node cap before the next push.
-pub(crate) fn check_node_budget(nodes: usize) -> Result<(), SourceError> {
-    if nodes >= MAX_MFT_NODES {
-        return Err(SourceError::Budget);
-    }
-    Ok(())
-}
-
 /// Collects every MFT record, refusing 128-bit ids and capping the map.
 pub(crate) fn collect_nodes(
     volume: &Volume,
     budget: &EnumBudget,
 ) -> Result<Vec<MftNode>, SourceError> {
-    let mut nodes = Vec::new();
-    let mut seen = 0usize;
-    for item in volume.mft().iter() {
-        seen += 1;
-        if seen.is_multiple_of(DEADLINE_CHECK_EVERY) && budget.expired() {
-            return Err(SourceError::Budget);
-        }
+    let entries = volume.mft().iter().map(|item| {
         let entry = item.map_err(map_usn_error)?;
         if entry.fid.is_extended() || entry.parent_fid.is_extended() {
             // ReFS: FileKey only has 64 bits for the file half.
             return Err(SourceError::Unsupported);
         }
-        check_node_budget(nodes.len())?;
-        nodes.push(MftNode {
+        Ok(MftNode {
             fid: entry.fid,
             parent: entry.parent_fid,
             name: entry.file_name,
             attributes: entry.file_attributes,
-        });
+        })
+    });
+    collect_nodes_from(entries, budget, MAX_MFT_NODES)
+}
+
+/// Pure collection over an injectable record stream with an explicit node cap.
+///
+/// max_nodes exists so tests can exercise the cap without a million real
+/// records; production passes MAX_MFT_NODES. The cap is checked before each
+/// push, and the first over-cap record aborts with SourceError::Budget instead
+/// of continuing to allocate. An empty volume is Unsupported, not an empty set.
+pub(crate) fn collect_nodes_from<I>(
+    items: I,
+    budget: &EnumBudget,
+    max_nodes: usize,
+) -> Result<Vec<MftNode>, SourceError>
+where
+    I: IntoIterator<Item = Result<MftNode, SourceError>>,
+{
+    let mut nodes = Vec::new();
+    let mut seen = 0usize;
+    for item in items {
+        seen += 1;
+        if seen.is_multiple_of(DEADLINE_CHECK_EVERY) && budget.expired() {
+            return Err(SourceError::Budget);
+        }
+        if nodes.len() >= max_nodes {
+            return Err(SourceError::Budget);
+        }
+        nodes.push(item?);
     }
     if nodes.is_empty() {
         return Err(SourceError::Unsupported);
@@ -223,16 +237,23 @@ fn plain_mount(mount: &Path) -> PathBuf {
 /// The map includes the requested root itself with an empty path, so a journal
 /// event can resolve its parent directory without a special case. The node cap
 /// and the cycle guard keep this bounded even for a damaged parent graph.
-pub(crate) struct SubtreePaths {
+pub(crate) struct SubtreePaths<'a> {
     pub(crate) paths: HashMap<u64, PathBuf>,
     /// Every file id in the whole-volume MFT map. Lets a journal record with an
     /// unknown parent be classified as outside the requested root (the parent
     /// exists, just elsewhere) instead of as a dangling reference.
     pub(crate) known: HashSet<u64>,
+    /// The whole-volume node slice, so a directory moved into the root can have
+    /// its pre-existing descendants rebuilt from the parent graph instead of
+    /// being silently dropped.
+    pub(crate) nodes: &'a [MftNode],
 }
 
 /// Rebuilds the requested subtree's relative paths. Pure: no IO, no clock.
-pub(crate) fn subtree_paths(nodes: &[MftNode], root_fid: u64) -> Result<SubtreePaths, SourceError> {
+pub(crate) fn subtree_paths<'a>(
+    nodes: &'a [MftNode],
+    root_fid: u64,
+) -> Result<SubtreePaths<'a>, SourceError> {
     let mut children: HashMap<u64, Vec<usize>> = HashMap::new();
     let mut known: HashSet<u64> = HashSet::with_capacity(nodes.len());
     for (index, node) in nodes.iter().enumerate() {
@@ -263,7 +284,11 @@ pub(crate) fn subtree_paths(nodes: &[MftNode], root_fid: u64) -> Result<SubtreeP
             queue.push(child);
         }
     }
-    Ok(SubtreePaths { paths, known })
+    Ok(SubtreePaths {
+        paths,
+        known,
+        nodes,
+    })
 }
 
 /// Rebuilds candidates from MFT records. Pure: no IO, no clock, no handles.
