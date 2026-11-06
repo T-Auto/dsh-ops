@@ -538,6 +538,118 @@ fn leaf_exclusions_and_credentials_match_the_walk_counters() {
 }
 
 #[test]
+fn a_vanished_hidden_entry_creates_no_skip_like_the_walk() {
+    let fixture = Fixture::new("vanished-hidden");
+    let hidden = fixture.file(".hidden", b"h");
+    let candidate = candidate(&fixture.root, ".hidden");
+    std::fs::remove_file(&hidden).unwrap();
+    let source = MemorySource::ready(SnapshotId::new(3), vec![candidate]);
+    let request = request(&fixture.root);
+    let batch = ready(collect(&fixture.root, &request, &source, budget()));
+
+    assert!(batch.fresh.is_empty());
+    assert!(
+        batch.skipped.is_empty(),
+        "the walk never lists a vanished path, so neither does the index"
+    );
+    assert_eq!(batch.gaps(), 0);
+    assert_eq!(batch.skipped_files(), 0);
+
+    let mut scan = Scan::new();
+    let mut walked = Vec::new();
+    scan.walk(&fixture.root, &[], &request, |path, _, _| {
+        walked.push(path.to_path_buf());
+        Ok(())
+    })
+    .unwrap();
+    assert!(walked.is_empty());
+    assert_eq!(scan.reasons, batch.reasons());
+    assert_eq!(scan.skipped, batch.skipped_files());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_hidden_link_is_a_symlink_skip_like_the_walk() {
+    let fixture = Fixture::new("hidden-link");
+    fixture.file("target-file", b"t");
+    std::os::unix::fs::symlink(
+        fixture.root.join("target-file"),
+        fixture.root.join(".hidden-link"),
+    )
+    .unwrap();
+    // The snapshot saw a regular file; the live entry is a link.
+    let mut link = candidate(&fixture.root, ".hidden-link");
+    link.kind = EntryKind::File;
+    let source = MemorySource::ready(
+        SnapshotId::new(4),
+        vec![candidate(&fixture.root, "target-file"), link],
+    );
+    let request = request(&fixture.root);
+    let batch = ready(collect(&fixture.root, &request, &source, budget()));
+
+    assert_eq!(sorted_rels(&batch), vec![PathBuf::from("target-file")]);
+    assert_eq!(
+        batch
+            .skipped
+            .iter()
+            .map(|skip| (skip.rel.clone(), skip.reason, skip.file))
+            .collect::<Vec<_>>(),
+        vec![(PathBuf::from(".hidden-link"), SkipReason::Symlink, false)],
+        "the walk classifies a hidden link before the hidden-name exclusion"
+    );
+    assert_eq!(batch.gaps(), 0);
+    assert_eq!(batch.skipped_files(), 0);
+
+    let mut scan = Scan::new();
+    let mut walked = Vec::new();
+    scan.walk(&fixture.root, &[], &request, |path, _, _| {
+        walked.push(path.to_path_buf());
+        Ok(())
+    })
+    .unwrap();
+    let indexed: Vec<_> = batch.fresh.iter().map(|fresh| fresh.path.clone()).collect();
+    assert_eq!(walked, indexed);
+    assert_eq!(scan.reasons, batch.reasons());
+    assert_eq!(scan.skipped, batch.skipped_files());
+}
+
+#[test]
+fn an_excluded_name_that_became_a_file_counts_the_live_type() {
+    let fixture = Fixture::new("excluded-type");
+    fixture.file("target", b"now a file");
+    // The snapshot recorded a directory; the live entry is an excluded file.
+    let mut snapshot = candidate(&fixture.root, "target");
+    snapshot.kind = EntryKind::Dir;
+    let source = MemorySource::ready(SnapshotId::new(5), vec![snapshot]);
+    let request = request(&fixture.root);
+    let batch = ready(collect(&fixture.root, &request, &source, budget()));
+
+    assert!(batch.fresh.is_empty());
+    assert_eq!(
+        batch
+            .skipped
+            .iter()
+            .map(|skip| (skip.rel.clone(), skip.reason, skip.file))
+            .collect::<Vec<_>>(),
+        vec![(PathBuf::from("target"), SkipReason::Excluded, true)],
+        "the excluded count uses the live type, not the snapshot's directory kind"
+    );
+    assert_eq!(batch.gaps(), 0);
+    assert_eq!(batch.skipped_files(), 1);
+
+    let mut scan = Scan::new();
+    let mut walked = Vec::new();
+    scan.walk(&fixture.root, &[], &request, |path, _, _| {
+        walked.push(path.to_path_buf());
+        Ok(())
+    })
+    .unwrap();
+    assert!(walked.is_empty());
+    assert_eq!(scan.reasons, batch.reasons());
+    assert_eq!(scan.skipped, batch.skipped_files());
+}
+
+#[test]
 fn a_candidate_below_a_pruned_directory_falls_back_instead_of_guessing() {
     let fixture = Fixture::new("pruned");
     fixture.file(".git/config", b"c");

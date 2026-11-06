@@ -26,7 +26,11 @@
 //! The module also restores the walk's lexical rules (invalid components,
 //! hidden names, credential roots, reserved names) and the component-order sort
 //! the walk produces naturally, so an indexed answer and a walked answer cannot
-//! disagree about item order. It does not wire itself into the scan: [`collect`]
+//! disagree about item order. Name exclusions and credentials are classified
+//! from the live leaf, after link classification, in the same order as the
+//! walk: a vanished hidden entry is silent instead of an `excluded` skip, a
+//! hidden link is `symlink` instead of `excluded`, and `skippedFiles` uses the
+//! live type rather than the snapshot's. It does not wire itself into the scan: [`collect`]
 //! returns a [`Batch`] whose counters the caller applies to the existing
 //! `Scan` fields, keeping `scanComplete`/`continuation` semantics in one place.
 
@@ -305,10 +309,10 @@ fn collect_with(
                     metadata,
                 });
             }
-            Verdict::Skip(reason) => batch.skipped.push(Skip {
+            Verdict::Skip(reason, file) => batch.skipped.push(Skip {
                 rel: candidate.rel.clone(),
                 reason,
-                file: reason.counts_file() && candidate.is_file(),
+                file: reason.counts_file() && file,
             }),
             Verdict::Stale => batch.stale += 1,
             Verdict::Directory => {}
@@ -325,7 +329,9 @@ fn collect_with(
 
 enum Verdict {
     Fresh(Metadata),
-    Skip(SkipReason),
+    /// A dropped candidate; the bool is whether the *live* entry is a regular
+    /// file, which is what the walk's `skippedFiles` counter uses.
+    Skip(SkipReason, bool),
     Stale,
     /// A directory is traversal state, not an item; it is neither accepted nor
     /// counted as a skip.
@@ -346,15 +352,21 @@ fn revalidate(
     // that case falls back instead.
     let names = match names(&candidate.rel) {
         Ok(names) => names,
-        Err((reason, true)) => return Verdict::Skip(reason),
+        Err((reason, true)) => return Verdict::Skip(reason, false),
         Err((_reason, false)) => return Verdict::Fallback(FallbackKind::Unverified),
     };
     let (leaf, ancestors) = names.split_last().expect("names is never empty");
+    let display = root.join(&candidate.rel);
+    let parent = display.parent().unwrap_or(root);
     // The walk treats the audit store as an intentional exclusion before any
     // other rule, and `file_path::checked` would otherwise reject it as
-    // PATH_RESTRICTED (which is an ancestor-fallback signal here).
+    // PATH_RESTRICTED (which is an ancestor-fallback signal here). Its file
+    // flag comes from the live relative entry, exactly like the walk's.
     if leaf.eq_ignore_ascii_case(ops_files::paths::STORE) {
-        return Verdict::Skip(SkipReason::Excluded);
+        let file = inspect
+            .leaf(parent, leaf)
+            .is_ok_and(|metadata| metadata.is_file());
+        return Verdict::Skip(SkipReason::Excluded, file);
     }
     if ancestors
         .iter()
@@ -364,53 +376,84 @@ fn revalidate(
     }
     if let Some(index) = names.iter().position(|name| invalid_name(name, request)) {
         return if index + 1 == names.len() {
-            Verdict::Skip(SkipReason::InvalidPath)
+            Verdict::Skip(SkipReason::InvalidPath, false)
         } else {
             Verdict::Fallback(FallbackKind::Unverified)
         };
     }
-    let display = root.join(&candidate.rel);
-    let parent = display.parent().unwrap_or(root);
-    if request.denies_path(&display) {
-        return if request.denies_path(parent) {
-            Verdict::Fallback(FallbackKind::Unverified)
-        } else {
-            Verdict::Skip(SkipReason::Credential)
-        };
-    }
-    if excluded_name(leaf) {
-        return Verdict::Skip(SkipReason::Excluded);
-    }
+    // A hidden ancestor is pruned by the walk before it reaches any leaf, so a
+    // source that enumerated below one cannot be proven equivalent.
     if ancestors.iter().any(|name| excluded_name(name)) {
         return Verdict::Fallback(FallbackKind::Unverified);
     }
-    if candidate.kind == EntryKind::Dir {
-        // Directories are how the walk reaches items, not items themselves,
-        // but they are still checked live: the walk's gap/count semantics
-        // depend on what happened to them.
-        return classify_directory(candidate, inspect.leaf(parent, leaf), inspect, parent, leaf);
+    // The walk reads live metadata first and only then applies the credential,
+    // link and hidden-name rules. Applying the name rules from the snapshot
+    // would report `excluded` for a vanished hidden entry (the walk reports
+    // nothing), report `excluded` for a hidden link (the walk reports
+    // `symlink`), and count a type change with the stale snapshot type.
+    let metadata = match inspect.leaf(parent, leaf) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            return if candidate.kind == EntryKind::Dir {
+                directory_error(error)
+            } else {
+                leaf_error(error, candidate)
+            };
+        }
+    };
+    if request.denies_path(&display) {
+        // A denied *ancestor* pruned the whole subtree in the walk; a denied
+        // leaf is its own `credential` skip.
+        return if request.denies_path(parent) {
+            Verdict::Fallback(FallbackKind::Unverified)
+        } else {
+            Verdict::Skip(SkipReason::Credential, metadata.is_file())
+        };
     }
-    match inspect.leaf(parent, leaf) {
-        Ok(metadata) => classify(candidate, metadata),
-        Err(InspectError::Stale) => Verdict::Stale,
-        Err(InspectError::Invalid) => Verdict::Skip(SkipReason::InvalidPath),
+    if file_path::link(&metadata) {
+        return if candidate.kind == EntryKind::Dir {
+            // The snapshot listed children below this path; the walk does not
+            // descend through a link, so the batch is no longer complete.
+            Verdict::Fallback(FallbackKind::AncestorLink)
+        } else {
+            Verdict::Skip(SkipReason::Symlink, false)
+        };
+    }
+    if excluded_name(leaf) {
+        return Verdict::Skip(SkipReason::Excluded, metadata.is_file());
+    }
+    if candidate.kind == EntryKind::Dir {
+        return classify_directory(candidate, metadata, inspect, parent, leaf);
+    }
+    classify(candidate, metadata)
+}
+
+/// Maps a failed leaf stat for a non-directory candidate to the walk's answer.
+fn leaf_error(error: InspectError, candidate: &Candidate) -> Verdict {
+    match error {
+        InspectError::Stale => Verdict::Stale,
+        InspectError::Invalid => Verdict::Skip(SkipReason::InvalidPath, false),
         // A leaf that cannot be stat'ed is the walk's `unreadable-entry` gap.
         // An *ancestor* that cannot be opened is the walk's
-        // `unreadable-directory` gap, which only a walk can account for: it
-        // records one gap for the directory, not one per child, so a
+        // `unreadable-directory` gap, which only a walk can account for, so a
         // per-candidate skip would over-count.
-        Err(InspectError::Unreadable) => Verdict::Skip(SkipReason::Unreadable),
-        Err(InspectError::ParentUnreadable) => Verdict::Fallback(FallbackKind::DirectoryUnreadable),
-        Err(InspectError::AncestorLink) => Verdict::Fallback(FallbackKind::AncestorLink),
-        Err(InspectError::Unverified) => Verdict::Fallback(FallbackKind::Unverified),
+        InspectError::Unreadable => {
+            Verdict::Skip(SkipReason::Unreadable, candidate.kind == EntryKind::File)
+        }
+        InspectError::ParentUnreadable => Verdict::Fallback(FallbackKind::DirectoryUnreadable),
+        InspectError::AncestorLink => Verdict::Fallback(FallbackKind::AncestorLink),
+        InspectError::Unverified => Verdict::Fallback(FallbackKind::Unverified),
     }
 }
 
+/// Classifies a fresh leaf against the snapshot's type and identity.
 fn classify(candidate: &Candidate, metadata: Metadata) -> Verdict {
-    if file_path::link(&metadata) {
-        return Verdict::Skip(SkipReason::Symlink);
-    }
     if metadata.is_file() {
+        if candidate.kind != EntryKind::File {
+            // The snapshot described a directory whose children no longer
+            // describe the tree.
+            return Verdict::Fallback(FallbackKind::KindChanged);
+        }
         let actual = FileKey::new(metadata.dev(), metadata.ino());
         if actual != candidate.key {
             // A single silent drop would hide files the walk would report.
@@ -423,10 +466,11 @@ fn classify(candidate: &Candidate, metadata: Metadata) -> Verdict {
         // snapshot never listed; only a walk can prove what is there now.
         return Verdict::Fallback(FallbackKind::KindChanged);
     }
-    Verdict::Skip(SkipReason::Unsupported)
+    Verdict::Skip(SkipReason::Unsupported, false)
 }
 
-/// Classifies a directory candidate against the live file system.
+/// Classifies a directory candidate that already passed the walk-ordered
+/// credential, link and hidden-name rules.
 ///
 /// A directory that is still the same directory produces nothing: it is
 /// traversal state, not an item. Everything else must fall back or be silent,
@@ -443,18 +487,11 @@ fn classify(candidate: &Candidate, metadata: Metadata) -> Verdict {
 ///   never saw.
 fn classify_directory(
     candidate: &Candidate,
-    inspected: Result<Metadata, InspectError>,
+    metadata: Metadata,
     inspect: &dyn Inspect,
     parent: &Path,
     leaf: &str,
 ) -> Verdict {
-    let metadata = match inspected {
-        Ok(metadata) => metadata,
-        Err(error) => return directory_error(error),
-    };
-    if file_path::link(&metadata) {
-        return Verdict::Fallback(FallbackKind::AncestorLink);
-    }
     if !metadata.is_dir() {
         return if metadata.is_file() {
             Verdict::Fallback(FallbackKind::KindChanged)
