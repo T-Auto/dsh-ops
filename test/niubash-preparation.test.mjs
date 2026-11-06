@@ -94,7 +94,7 @@ if (process.platform === 'win32') {
         const execution = startSessionBash({ ctx, bash: { file: process.env.DSH_OPS_TEST_NIUBASH, source: 'bundled' }, active: () => true },
           { command: 'printf preserved', workdir: root }, { agent: { session: { id: 'cleanup' } } }, policy, policy, {}, {})
         const value = await execution.result()
-        assert.equal(value.exitCode, 0); assert.equal(value.stdout.text, 'preserved')
+        assert.equal(value.exitCode, 0, JSON.stringify(value)); assert.equal(value.stdout.text, 'preserved')
         await execution.done; await delay(10)
         assert.equal(warnings.length, 1); assert.match(warnings[0], /locked execution tree/)
         assert.deepEqual(unhandled, [])
@@ -119,6 +119,9 @@ if (process.platform === 'win32') {
       // The unseal covers the whole shared tree, so the stat check may notice the
       // missing seal before the tampered size; either rejection is the same fail-closed result.
       await assert.rejects(runtime.verify(), /not sealed|size mismatch/)
+      // verify() re-applies the seal before its stat check, so clear it again
+      // before restoring the tampered bytes.
+      await runtime.unseal()
       await fs.promises.writeFile(face, saved)
       await runtime.seal()
       await runtime.verify()
