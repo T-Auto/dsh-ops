@@ -1,12 +1,13 @@
 //! Model-based convergence properties for the volume policy layer.
 //!
-//! The tape assumes a consistent journal order: a DELETE record names one
-//! record only, and in a journal that was applied in order every descendant's
-//! own DELETE arrived before its parent's. The model therefore removes the
-//! whole subtree on a delete. The index itself cannot assume that (it must
-//! survive a missed child delete), so it severs live children instead and
-//! refuses their paths; that behaviour has its own unit test in
-//! `volume_tests`.
+//! The tape replays a USN journal in order: a DELETE record names exactly one
+//! record. In a consistent journal every descendant's own DELETE arrived before
+//! its parent's, but the generator can also emit a later action for a record
+//! whose parent was deleted first. The model therefore removes only the named
+//! record and chain-detaches that record's direct children, mirroring the
+//! index's survivor semantics: a detached entry contributes no path, and only a
+//! later action naming the record itself revives it (that bookkeeping has its
+//! own unit test in `volume_tests`).
 
 use super::*;
 use crate::ids::RecordId;
@@ -20,7 +21,7 @@ use crate::usn::{
     ParsedUsnRecord, USN_REASON_FILE_CREATE, USN_REASON_FILE_DELETE, USN_REASON_RENAME_NEW_NAME,
 };
 use proptest::prelude::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const ROOT: u64 = 5;
 const FIRST_RECORD: u64 = 100;
@@ -85,14 +86,14 @@ fn action_strategy() -> impl Strategy<Value = Action> {
     ]
 }
 
-/// Model state: record -> (parent record, name, is_dir).
-///
-/// A delete removes the whole subtree, matching a journal applied in consistent
-/// order (the index cannot assume that and instead severs live children; that
-/// behaviour is pinned by an explicit unit test).
+/// Model state: record -> (parent record, name, is_dir), plus the records a
+/// delete chain-detached (see `Model::detached`).
 #[derive(Default)]
 struct Model {
     entries: BTreeMap<u64, (u64, Vec<u8>, bool)>,
+    /// Records the index has chain-detached: they still have slots but no path
+    /// until a later create/rename clears the flag on the record itself.
+    detached: BTreeSet<u64>,
 }
 
 impl Action {
@@ -159,6 +160,7 @@ impl Action {
                 is_dir,
             } => {
                 let record = record_id(*record);
+                model.detached.remove(&record);
                 model
                     .entries
                     .insert(record, (parent_id(*parent), name_of(*name), *is_dir));
@@ -174,22 +176,26 @@ impl Action {
                     .get(&record)
                     .map(|entry| entry.2)
                     .unwrap_or(false);
+                model.detached.remove(&record);
                 model
                     .entries
                     .insert(record, (parent_id(*parent), name_of(*name), is_dir));
             }
             Self::Delete { record } => {
-                let mut stack = vec![record_id(*record)];
-                while let Some(record) = stack.pop() {
-                    model.entries.remove(&record);
-                    let children: Vec<u64> = model
-                        .entries
-                        .iter()
-                        .filter(|(_, (parent, _, _))| *parent == record)
-                        .map(|(&child, _)| child)
-                        .collect();
-                    stack.extend(children);
-                }
+                let record = record_id(*record);
+                model.entries.remove(&record);
+                // A DELETE names one record; every descendant is removed by its
+                // own DELETE record. The index cannot assume those arrived, so
+                // it severs the deleted directory's direct children (they keep
+                // slots but no path) and revives one only when a later action
+                // names it explicitly. Mirror that in the model.
+                let detached: Vec<u64> = model
+                    .entries
+                    .iter()
+                    .filter(|(_, (parent, _, _))| *parent == record)
+                    .map(|(&child, _)| child)
+                    .collect();
+                model.detached.extend(detached);
             }
         }
     }
@@ -199,6 +205,9 @@ fn resolve_path(model: &Model, record: u64) -> Option<String> {
     let mut parts = Vec::new();
     let mut current = record;
     while current != ROOT {
+        if model.detached.contains(&current) {
+            return None;
+        }
         let (parent, name, _) = model.entries.get(&current)?;
         parts.push(name.clone());
         current = *parent;
