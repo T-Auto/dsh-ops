@@ -469,8 +469,10 @@ impl NameStore {
     ///
     /// # Panics
     ///
-    /// Panics when releasing a name that is not live (a bug in the caller),
-    /// and in debug builds when the same-name chain is not empty.
+    /// Panics when releasing a name that is not live, or while the same-name
+    /// chain is not empty. Both are caller bugs and the contract holds in every
+    /// profile (a release that dropped a linked name would leave a dangling
+    /// name id in a release build too).
     pub fn release(&mut self, id: NameId) -> bool {
         let refcount = &mut self.refcount[id.index()];
         assert!(*refcount > 0, "release of a name that is not live");
@@ -478,7 +480,7 @@ impl NameStore {
         if *refcount != 0 {
             return false;
         }
-        debug_assert!(
+        assert!(
             self.head[id.index()].is_nil(),
             "same-name chain must be unlinked before its name is released"
         );
