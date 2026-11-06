@@ -53,9 +53,11 @@ try {
     process.env.DSH_OPS_EXEC_ROOT = configured
     try {
       const value = ok(await call(node('process.stdout.write(process.env.NIU_ROOT)')))
-      const base = path.dirname(path.dirname(value.stdout.text))
-      assert.equal(fs.realpathSync.native(base), fs.realpathSync.native(configured))
-      assert.equal(fs.existsSync(base), false, 'the configured execution root is disposed')
+      // NIU_ROOT is the clone's winuxcmd directory; its parent is the per-call tree.
+      const instance = path.dirname(value.stdout.text)
+      assert.match(path.basename(instance), /^dsh-ops-niu-exec-/u)
+      assert.equal(fs.realpathSync.native(path.dirname(instance)), fs.realpathSync.native(configured))
+      assert.equal(fs.existsSync(instance), false, 'the execution tree is disposed')
     } finally {
       if (previous === undefined) delete process.env.DSH_OPS_EXEC_ROOT
       else process.env.DSH_OPS_EXEC_ROOT = previous
