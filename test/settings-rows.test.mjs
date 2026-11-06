@@ -83,8 +83,9 @@ await test('the status card reports the resolved executor and its candidates', (
   const view = statusView({ ...base, bash, modes: [bundled], git: ['C:/Git/bin/bash.exe'] }, t)
   // A payload shipped in the package is a working executor even without an install.
   assert.equal(view.summary, en.summaryNiubashBundled)
+  // The optional `<DSH_HOME>` copy is not a fact of the running executor.
   assert.deepEqual(view.facts.map(fact => fact.value), ['win32', `${en.engineNiubash}（${en.sourceBundled}）`,
-    bundled.file, en.statusNone, 'C:/Git/bin/bash.exe', en.statusPwshReady])
+    bundled.file, 'C:/Git/bin/bash.exe', en.statusPwshReady])
   // An explicit path is reported as such, with its engine.
   const git = { ...bundled, source: 'config', engine: 'msys', file: 'C:/Git/bin/bash.exe' }
   const configured = statusView({ ...base, modes: [git], bash: { available: true, source: 'config', engine: 'msys', file: git.file, detail: 'configured bash executable' } }, t)

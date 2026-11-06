@@ -79,7 +79,6 @@ function summaryFor(engine: string, source: string, t: Translator): string {
 export function statusView(snapshot: RuntimeSnapshot | undefined, t: Translator): StatusView {
   const note = t('runtimeHelp')
   if (snapshot === undefined) return { summary: t('summaryNone'), facts: [], note }
-  const managed = [...new Set(snapshot.managed.map(entry => entry.version))].join(', ')
   const running = snapshot.modes.filter(mode => mode.enabled && mode.publishesBash)
   const uniform = snapshot.bash
   const summary = snapshot.modes.length > 0 && running.length === 0 ? t('summaryNoShell')
@@ -94,7 +93,6 @@ export function statusView(snapshot: RuntimeSnapshot | undefined, t: Translator)
     { label: t('statusPlatform'), value: snapshot.platform },
     { label: t('statusExecutor'), value: executor },
     { label: t('statusBashPath'), value: uniform?.file ?? none(t) },
-    { label: t('statusManaged'), value: managed === '' ? none(t) : managed },
     { label: t('statusGit'), value: snapshot.git.length === 0 ? none(t) : snapshot.git.join(', ') },
     { label: t('statusPwsh'), value: snapshot.powerShell.supported
       ? `${t('statusPwshReady')}${snapshot.powerShell.version === undefined ? '' : `（${snapshot.powerShell.version}）`}`
@@ -206,6 +204,10 @@ function RuntimeStatus({ api, t, plugins }: { api: RuntimeRemote; t: Translator;
   }
   const owned = runtime.snapshot?.managed.some(entry => entry.owned) === true
   const win32 = runtime.snapshot?.platform === 'win32'
+  // The packaged payload is the executor; a `<DSH_HOME>` copy is an optional extra
+  // and only deserves a row when one exists, or when installing is the recovery.
+  const managed = runtime.snapshot?.managed ?? []
+  const managedRow = managed.length > 0 || runtime.snapshot?.bash?.available !== true
   return <section className="ops-detail" aria-label={t('runtime')}>
     <div className="ops-status-card">
       <div className="ops-detail-head">
@@ -220,15 +222,15 @@ function RuntimeStatus({ api, t, plugins }: { api: RuntimeRemote; t: Translator;
           <div className="ops-status-body">
             <p className="ops-status-lead">{view.summary}</p>
             <dl className="ops-facts">
-              {view.facts.filter(fact => fact.label !== t('statusManaged')).map(fact => <div key={fact.label}>
+              {view.facts.map(fact => <div key={fact.label}>
                 <dt>{fact.label}</dt><dd>{fact.value}</dd>
               </div>)}
-              <div><dt>{t('statusManaged')}</dt><dd>{runtime.snapshot.managed.length === 0
+              {managedRow && <div><dt>{t('statusManaged')}</dt><dd>{managed.length === 0
                 ? <>{t('statusNone')}{win32 && <button type="button" className="ops-link ops-row-action" disabled={runtime.busy}
                   onClick={() => void runtime.preview('install-bash')}>{t('installAction')}</button>}</>
-                : <>{runtime.snapshot.managed.map(entry => entry.version).join(', ')}{owned && <button type="button"
+                : <>{managed.map(entry => entry.version).join(', ')}{owned && <button type="button"
                   className="ops-link ops-row-action" disabled={runtime.busy}
-                  onClick={() => void runtime.preview('remove-bash')}>{t('removeAction')}</button>}</>}</dd></div>
+                  onClick={() => void runtime.preview('remove-bash')}>{t('removeAction')}</button>}</>}</dd></div>}
               <div><dt>{t('pwsh7Plugin')}</dt><dd>{companion.state === 'present'
                 ? `${t('pwsh7Present')}${(companion.version ?? runtime.snapshot?.companion) === undefined ? '' : `（${companion.version ?? runtime.snapshot?.companion}）`}`
                 : <>{t('statusNone')}{plugins !== undefined && <button type="button" className="ops-link ops-row-action"

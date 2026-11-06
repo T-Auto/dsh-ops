@@ -74,11 +74,11 @@ export const en = {
   summaryNone: 'Waiting for the host runtime report.', pwsh7Plugin: 'dsh-win-pwsh7', pwsh7Present: 'Available', pwsh7Absent: 'Not installed', installPwsh7: 'Install dsh-win-pwsh7', pwsh7Installing: 'Installing… {seconds}s elapsed; the host runs the phases.',
   pwsh7Installed: 'Installed. Restart DSH and check again; reopening the configuration page turns the link on by detection.', pwsh7Failed: 'The installation did not complete:',
   pwsh7Hint: 'PowerShell 7 was not detected. dsh-win-pwsh7 is a separate plugin that points the pwsh tool at PowerShell 7; install it from the plugin market first.',
-  runtimeHelp: 'Installing never changes your saved executor. Choose the executor on the row page; stop Bash jobs before removing a managed installation.',
+  runtimeHelp: 'The packaged payload needs no installation. Choosing an executor happens on the row page; a managed copy under DSH_HOME is optional, and removing one requires stopping Bash jobs first.',
   preview: 'Review this action', execute: 'Run this action', cancel: 'Cancel running action', dismiss: 'Close preview', busy: 'Working…',
   unknownEffect: 'Changes may have occurred. Inspect the installation before trying again.', noRuntime: 'Runtime controls require the host runtime services.',
   exitCode: 'Exit code',
-  statusPlatform: 'Platform', statusExecutor: 'Executor', statusBashPath: 'Bash path', statusManaged: 'Managed Bash', statusGit: 'Git Bash candidates', statusPwsh: 'PowerShell 7', statusPwshReady: 'Available', statusNone: 'None detected',
+  statusPlatform: 'Platform', statusExecutor: 'Executor', statusBashPath: 'Bash path', statusManaged: 'Managed copy', statusGit: 'Git Bash candidates', statusPwsh: 'PowerShell 7', statusPwshReady: 'Available', statusNone: 'None detected',
   refreshedAt: 'Refreshed at', redetect: 'Check again', redetecting: 'Checking…',
 }
 export const zh: Record<keyof typeof en, string> = {
@@ -156,11 +156,11 @@ export const zh: Record<keyof typeof en, string> = {
   summaryNone: '正在等待宿主运行时报告。', pwsh7Plugin: 'dsh-win-pwsh7', pwsh7Present: '可用', pwsh7Absent: '未安装', installPwsh7: '安装 dsh-win-pwsh7', pwsh7Installing: '正在安装…已等待 {seconds} 秒；具体阶段由宿主执行。',
   pwsh7Installed: '已安装。重启 DSH 后重新检测；重新打开配置页后联动会按检测自动开启。', pwsh7Failed: '安装未完成：',
   pwsh7Hint: '未检测到 PowerShell 7。dsh-win-pwsh7 是一个独立插件，安装后会把 pwsh 工具指向 PowerShell 7，需要先在插件市场安装它。',
-  runtimeHelp: '安装不会改动已保存的执行器选择。请在配置页选择执行器；删除受管理的安装前，请先停止 Bash 作业。',
+  runtimeHelp: '随包载荷无需安装。执行器在配置页选择；DSH_HOME 下的托管副本是可选项，删除前请先停止 Bash 作业。',
   preview: '检查本次操作', execute: '执行此操作', cancel: '取消正在执行的操作', dismiss: '关闭预览', busy: '正在处理…',
   unknownEffect: '可能已经发生更改。再次尝试前，请检查安装状态。', noRuntime: '运行时控制需要宿主运行时服务。',
   exitCode: '退出码',
-  statusPlatform: '平台', statusExecutor: '执行器', statusBashPath: 'Bash 路径', statusManaged: '受管理的 Bash', statusGit: 'Git Bash 候选', statusPwsh: 'PowerShell 7', statusPwshReady: '可用', statusNone: '未检测到',
+  statusPlatform: '平台', statusExecutor: '执行器', statusBashPath: 'Bash 路径', statusManaged: '托管副本', statusGit: 'Git Bash 候选', statusPwsh: 'PowerShell 7', statusPwshReady: '可用', statusNone: '未检测到',
   refreshedAt: '刷新于', redetect: '重新检测', redetecting: '正在检测…',
 }
 declare module '@deepseek-ai/dsh-client-ui-slots' { interface LocaleNamespaceMap { dshOps: keyof typeof en } }

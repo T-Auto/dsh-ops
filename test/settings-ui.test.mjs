@@ -24,6 +24,9 @@ const niubashMode = { id: 'ptc', enabled: true, publishesBash: true, available: 
 const { id: _modeId, enabled: _modeEnabled, publishesBash: _modePublishes, ...niubashBash } = niubashMode
 const snapshot = { platform: 'win32', bash: niubashBash, modes: [niubashMode], managed: [],
   git: ['C:/Git/bin/bash.exe'], powerShell: { supported: true, guidance: 'Restart DSH.' } }
+/** The same deployment with no verified payload: the only state that offers installation. */
+const missingSnapshot = { ...snapshot, bash: { available: false, source: 'missing', engine: 'none', detail: 'no payload' },
+  modes: [{ ...niubashMode, available: false, source: 'missing', engine: 'none', file: undefined }] }
 const ok = value => ({ ok: true, value })
 const defaultApi = () => ({
   snapshot: async () => ok(snapshot),
@@ -303,6 +306,7 @@ await test('dirty drafts retain their revision and refused saves never claim suc
 
 await test('runtime actions require preview plus explicit execution and retain transport failures after refresh', async () => {
   const calls = [], api = defaultApi()
+  api.snapshot = async () => ok(missingSnapshot)
   api.plan = async action => { calls.push(['plan', action]); return ok({ id: 'reviewed-id', action, available: true, details: ['Standard host installation.'] }) }
   api.execute = async id => { calls.push(['execute', id]); return { ok: false, error: { message: 'Shell row became unavailable' } } }
   const view = await mount(DiagnosticsSection, { subject: bundleSubject, t, api })
@@ -320,6 +324,7 @@ await test('runtime actions require preview plus explicit execution and retain t
 
 await test('cancelled runtime execution preserves unknown effects and unavailable plans cannot execute', async () => {
   const api = defaultApi(); let signal, finish, executions = 0
+  api.snapshot = async () => ok(missingSnapshot)
   api.execute = async (_id, inputSignal) => { executions++; signal = inputSignal; return new Promise(resolve => { finish = () => resolve({ ok: false, error: { message: 'Remote call cancelled after launch.' } }); inputSignal.addEventListener('abort', finish, { once: true }) }) }
   const view = await mount(DiagnosticsSection, { subject: bundleSubject, t, api })
   try {
@@ -334,13 +339,35 @@ await test('cancelled runtime execution preserves unknown effects and unavailabl
   } finally { finish?.(); await view.close() }
 })
 
+await test('the managed-copy row stays hidden while the packaged payload runs', async () => {
+  const view = await mount(DiagnosticsSection, { subject: bundleSubject, t, api: defaultApi() })
+  try {
+    // Nothing is installed under DSH_HOME, and nothing needs to be: no missing row.
+    assert.equal(view.container.textContent.includes(en.statusManaged), false)
+    assert.equal(button(view.container, en.installAction), undefined)
+    assert.match(view.container.textContent, new RegExp(en.summaryNiubashBundled.slice(0, 24)))
+  } finally { await view.close() }
+})
+
+await test('an existing managed copy gets its own optional row and can be removed', async () => {
+  const api = defaultApi()
+  api.snapshot = async () => ok({ ...snapshot,
+    managed: [{ version: '1.5.0', directory: 'C:/home/dsh-ops/shells/niubash', owned: true, backend: 'niubash' }] })
+  const view = await mount(DiagnosticsSection, { subject: bundleSubject, t, api })
+  try {
+    assert.equal(view.container.textContent.includes(en.statusManaged), true)
+    assert.equal(button(view.container, en.removeAction).disabled, false)
+    assert.equal(button(view.container, en.installAction), undefined)
+  } finally { await view.close() }
+})
+
 await test('an older failed runtime refresh cannot replace a newer successful status', async () => {
   const pending = [], api = defaultApi()
   api.snapshot = () => new Promise((resolve, reject) => pending.push({ resolve, reject }))
   const view = await mount(DiagnosticsSection, { subject: bundleSubject, t, api })
   try {
     await click(button(view.container, en.redetect))
-    await act(async () => pending[1].resolve(ok(snapshot)))
+    await act(async () => pending[1].resolve(ok(missingSnapshot)))
     await act(async () => pending[0].reject(new Error('obsolete network failure')))
     assert.equal(view.container.textContent.includes('obsolete network failure'), false)
     assert.equal(button(view.container, en.installAction).disabled, false)
