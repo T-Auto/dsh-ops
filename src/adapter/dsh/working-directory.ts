@@ -1,4 +1,4 @@
-/** Compatibility seam for the live directory service introduced after DSH 0.2.0. */
+/** Resolve execution directories through the DSH 0.2.2 live directory service. */
 import path from 'node:path'
 import type { Agent } from './types.js'
 
@@ -7,11 +7,13 @@ interface WorkingDirectory {
   ensure(agent: Agent, signal?: AbortSignal): Promise<string>
   get(session: Agent['session']): string
 }
-export interface DirectoryBasis { cwd: string; source: 'workingDirectory' | 'session.header.cwd' }
+export interface DirectoryBasis { cwd: string; source: 'workingDirectory' }
 
-function service(ctx: Host): WorkingDirectory | undefined {
+function service(ctx: Host): WorkingDirectory {
   const value = ctx.get('workingDirectory' as never)
-  if (value === undefined || value === null) return undefined
+  if (value === undefined || value === null) {
+    throw new Error('EXECUTOR_UNAVAILABLE: the DSH workingDirectory service is required.')
+  }
   return value as WorkingDirectory
 }
 function absolute(cwd: unknown): string {
@@ -25,12 +27,12 @@ export async function resolveSessionDirectory(ctx: Host, agent: Agent | undefine
   signal?.throwIfAborted()
   if (!agent) throw new Error('EXECUTOR_UNAVAILABLE: an authoritative agent is required.')
   const live = service(ctx)
-  const cwd = absolute(live ? await live.ensure(agent, signal) : agent.session.header.cwd)
+  const cwd = absolute(await live.ensure(agent, signal))
   signal?.throwIfAborted()
-  return { cwd, source: live ? 'workingDirectory' : 'session.header.cwd' }
+  return { cwd, source: 'workingDirectory' }
 }
 /** Discovery cache identity is synchronous; execution still validates with ensure(). */
 export function currentSessionDirectory(ctx: Host, agent: Agent): string {
   const live = service(ctx)
-  return absolute(live ? live.get(agent.session) : agent.session.header.cwd)
+  return absolute(live.get(agent.session))
 }

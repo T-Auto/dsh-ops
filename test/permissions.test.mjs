@@ -1,3 +1,4 @@
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -364,7 +365,7 @@ await test('owned Modify-only workspace starts real DSH sandbox; three modes and
         assert.notEqual(path.resolve(prepared.file), path.resolve(shells.bash.file))
         console.log(`  legacy fixture pre-stage: ${Math.round(performance.now() - started)}ms (not a command result)`)
       }
-      await ctx.plugin({inject:['tools'],apply(inner){mountSessionBash(inner,{publishBashTool:true},shells)}})
+      await ctx.plugin({inject:['tools','systemPrompt'],apply(inner){mountSessionBash(inner,{publishBashTool:true},shells)}})
       await ctx.serial('agent/created',{agent})
       let bash
       for(let n=0;n<50;n++) { bash=ctx.get('tools').get('ops_bash',agent);if(bash)break;await new Promise(r=>setTimeout(r,10)) }
@@ -388,7 +389,7 @@ await test('owned Modify-only workspace starts real DSH sandbox; three modes and
         assert.equal(result.exitCode,0,JSON.stringify(result));assert.equal(fs.readFileSync(path.join(root,'allowed.txt'),'utf8'),'allowed')
       }
       await ctx.plugin(NodePtc,{})
-      await agent.ctx.plugin({inject:['tools'],apply(inner){inner.tools.presentAs('ptc')}})
+      await agent.ctx.plugin({inject:['tools','systemPrompt'],apply(inner){selectExecutor(inner, 'ptc')}})
       agent.session.mode='workspace-write'
       fs.writeFileSync(path.join(root,'probe.sh'),"printf 'SCRIPT_OK'\n")
       const request = {name:'run_code',callId:'ptc-bash-acceptance',agent,signal:exec.signal,arguments:{description:'Test confined Bash via pure PTC SDK',code:`
@@ -398,7 +399,7 @@ await test('owned Modify-only workspace starts real DSH sandbox; three modes and
         const denied = await tools.ops_bash({description:"Check programmatic Bash permissions",command:"printf blocked > ptc-outside.txt",workdir:${JSON.stringify(outside)},timeoutMs:10000});
         return {command,script,pipeline,denied};
       `}}
-      const ptc=await ctx.get('tools').execute(request)
+      const ptc=await executeCall(ctx, request)
       assert.notEqual(ptc.isError,true,JSON.stringify(ptc))
       const ptcText=ptc.content.filter(c=>c.type==='text').map(c=>c.text).join('\n')
       const completion=ptc.value.result
@@ -412,7 +413,7 @@ await test('owned Modify-only workspace starts real DSH sandbox; three modes and
       assert.ok(!fs.existsSync(path.join(outside,'ptc-outside.txt')))
       assert.doesNotMatch(ptcText,/3221225794|EXECUTOR_UNAVAILABLE|fatal error/)
       agent.session.mode='read-only'
-      const downgrade=await ctx.get('tools').execute({...request,callId:'ptc-bash-downgrade',arguments:{description:'Verify PTC permission downgrade',code:`return await tools.ops_bash({description:"Check programmatic Bash permissions",command:"printf blocked > ptc-readonly.txt",workdir:${JSON.stringify(root)},timeoutMs:10000});`}})
+      const downgrade=await executeCall(ctx, {...request,callId:'ptc-bash-downgrade',arguments:{description:'Verify PTC permission downgrade',code:`return await tools.ops_bash({description:"Check programmatic Bash permissions",command:"printf blocked > ptc-readonly.txt",workdir:${JSON.stringify(root)},timeoutMs:10000});`}})
       assert.notEqual(downgrade.isError,true,JSON.stringify(downgrade))
       assert.equal(downgrade.value.result.restriction.code,'EXECUTION_RESTRICTED')
       assert.ok(!fs.existsSync(path.join(root,'ptc-readonly.txt')))

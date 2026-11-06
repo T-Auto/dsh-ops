@@ -1,7 +1,8 @@
 /** Real Native/PTC PDF observations preserve restricted text scope and bounded page recovery. */
 import fs from 'node:fs'
 import path from 'node:path'
-import { assertSupportedJsonSchema, jsonSchemaToTs } from '@deepseek-ai/dsh-tools'
+import { assertSupportedJsonSchema } from '@deepseek-ai/dsh-tools'
+import { jsonSchemaToTs } from '@deepseek-ai/dsh-tool-executor-ptc'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { shutdown } from './lib/host.mjs'
 import { requireWorker } from './lib/boundary.mjs'
@@ -29,14 +30,14 @@ await test('real PDF discovery activates next step for its owner and PTC pages p
   const { ctx, agent } = await documentHost(root, ['read_pdf'], { real: true })
   try {
     const native = await agent('native', { cwd }), sibling = await agent(), child = await agent('native', { parent: native }), code = await agent('ptc', { cwd })
-    const initial = await ctx.get('systemPrompt').assemble({ scope: native })
+    const initial = await ctx.get('systemPrompt').assemble({ scope: native, toolSet: native.prepared.toolSet })
     assert.equal(initial.tools.some(tool => tool.name === TOOL), false)
     await activateDocument(ctx, native, 'read_pdf'); await activateDocument(ctx, code, 'read_pdf', 'ptc')
     for (const other of [sibling, child]) assert.equal(documentNames(ctx, other).includes(TOOL), false)
     const raw = await documentCall(ctx, native, 'read_pdf', { path: 'text.pdf', limit: 1 })
-    assert.equal(raw.scope, 'page-text-layer-content-order'); assert.equal(raw.total, 2); assert.equal(raw.scanComplete, true)
-    assert.deepEqual(raw.items, [{ page: 1, text: 'BM04 PDF text', runs: ['BM04 PDF text'] }])
-    const text = render(raw); assert.match(text, /Page 1/); assert.match(text, /BM04 PDF text/); assert.match(text, /images and OCR/)
+    assert.equal(raw.data.scope, 'page-text-layer-content-order'); assert.equal(raw.data.total, 2); assert.equal(raw.data.scanComplete, true)
+    assert.deepEqual(raw.data.items, [{ page: 1, text: 'BM04 PDF text', runs: ['BM04 PDF text'] }])
+    const text = render(raw.data); assert.match(text, /Page 1/); assert.match(text, /BM04 PDF text/); assert.match(text, /images and OCR/)
     assert.match(text, /Completeness applies only to this scope/)
     const result = await documentCode(ctx, code, `return await tools.${TOOL}({path:'text.pdf',limit:1});`)
     assert.equal(result.status, 'partial'); assert.equal(result.data.items[0].runs[0], 'BM04 PDF text')
@@ -53,9 +54,9 @@ await test('unsupported later PDF pages retain only preceding complete pages and
     const native = await agent(), code = await agent('ptc')
     await activateDocument(ctx, native, 'read_pdf'); await activateDocument(ctx, code, 'read_pdf', 'ptc')
     const raw = await documentCall(ctx, native, 'read_pdf', { path: 'text.pdf', limit: 1 })
-    assert.equal(raw.scanComplete, false); assert.equal(raw.pageComplete, true); assert.equal(raw.pagesObserved, 1)
-    assert.equal(raw.total, undefined); assert.match(render(raw), /UNSUPPORTED_DOCUMENT/); assert.match(render(raw), /Page 1.*safe prefix/)
-    assert.match(render(raw), /not exhaustive/); assert.doesNotMatch(render(raw), /not complete/)
+    assert.equal(raw.data.scanComplete, false); assert.equal(raw.data.pageComplete, true); assert.equal(raw.data.pagesObserved, 1)
+    assert.equal(raw.data.total, undefined); assert.match(render(raw.data), /UNSUPPORTED_DOCUMENT/); assert.match(render(raw.data), /Page 1.*safe prefix/)
+    assert.match(render(raw.data), /not exhaustive/); assert.doesNotMatch(render(raw.data), /not complete/)
     const result = await documentCall(ctx, code, 'read_pdf', { path: 'text.pdf', limit: 1 })
     assert.equal(result.status, 'error'); assert.equal(result.error.code, 'UNSUPPORTED_DOCUMENT'); assert.equal(result.error.retry, 'never')
     assert.equal(result.continuation, undefined); assert.equal(result.data.items[0].text, 'safe prefix'); assert.equal(result.data.revision, undefined)
@@ -84,12 +85,12 @@ await test('large PDF text and run data spill with original page scope and bound
   try {
     const owner = await agent(); await activateDocument(ctx, owner, 'read_pdf'); await activateDocument(ctx, owner, 'result')
     const raw = await documentCall(ctx, owner, 'read_pdf', { path: 'text.pdf' })
-    assert.equal(raw.reference.producerTool, 'read_pdf'); assert.equal(raw.scanComplete, true); assert.equal(raw.complete, false)
-    const content = render(raw); assert.ok(Buffer.byteLength(JSON.stringify([{ type: 'text', text: content }])) <= 65536); assert.match(content, /ref:\/\//)
-    const page = await documentCall(ctx, owner, 'result', { action: 'page', id: raw.reference.refId, root: raw.referenceRoot, limit: 1 })
-    assert.equal(page.source.scope, 'page-text-layer-content-order'); assert.equal(page.source.pagesObserved, 1)
-    assert.equal(page.source.captureComplete, true); assert.ok(page.source.decodedBytes > 80000); assert.ok(page.source.processedBytes > 80000)
-    assert.equal(page.items[0].kind, 'item-json-chunk'); assert.equal(page.items[0].byteOffset, 0)
+    assert.equal(raw.data.reference.producerTool, 'read_pdf'); assert.equal(raw.data.scanComplete, true); assert.equal(raw.data.complete, false)
+    const content = render(raw.data); assert.ok(Buffer.byteLength(JSON.stringify([{ type: 'text', text: content }])) <= 65536); assert.match(content, /ref:\/\//)
+    const page = await documentCall(ctx, owner, 'result', { action: 'page', id: raw.data.reference.refId, root: raw.data.referenceRoot, limit: 1 })
+    assert.equal(page.data.source.scope, 'page-text-layer-content-order'); assert.equal(page.data.source.pagesObserved, 1)
+    assert.equal(page.data.source.captureComplete, true); assert.ok(page.data.source.decodedBytes > 80000); assert.ok(page.data.source.processedBytes > 80000)
+    assert.equal(page.data.items[0].kind, 'item-json-chunk'); assert.equal(page.data.items[0].byteOffset, 0)
   } finally { await shutdown(ctx) }
 }))
 report('pdf-host')

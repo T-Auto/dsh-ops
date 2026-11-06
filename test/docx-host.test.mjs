@@ -1,7 +1,8 @@
 /** Scoped DOCX adapters retain main-body scope and safe prefix data. */
 import fs from 'node:fs'
 import path from 'node:path'
-import { assertSupportedJsonSchema, jsonSchemaToTs } from '@deepseek-ai/dsh-tools'
+import { assertSupportedJsonSchema } from '@deepseek-ai/dsh-tools'
+import { jsonSchemaToTs } from '@deepseek-ai/dsh-tool-executor-ptc'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { shutdown } from './lib/host.mjs'
 import { requireWorker } from './lib/boundary.mjs'
@@ -33,9 +34,9 @@ await test('real Native and PTC DOCX discovery remain scoped and typed pages ret
     await activateDocument(ctx, native, 'read_docx'); await activateDocument(ctx, code, 'read_docx', 'ptc')
     assert.equal(documentNames(ctx, sibling).includes(TOOL), false)
     const raw = await documentCall(ctx, native, 'read_docx', { path: 'body.docx', limit: 1 })
-    assert.equal(raw.format, 'docx'); assert.equal(raw.scope, 'main-body-paragraphs'); assert.equal(raw.scanComplete, true)
-    assert.equal(raw.complete, false); assert.equal(raw.total, 2); assert.equal(raw.items[0].text, '中😀')
-    const text = render(raw); assert.match(text, /Paragraph 1/); assert.match(text, /main-body-paragraphs/)
+    assert.equal(raw.data.format, 'docx'); assert.equal(raw.data.scope, 'main-body-paragraphs'); assert.equal(raw.data.scanComplete, true)
+    assert.equal(raw.data.complete, false); assert.equal(raw.data.total, 2); assert.equal(raw.data.items[0].text, '中😀')
+    const text = render(raw.data); assert.match(text, /Paragraph 1/); assert.match(text, /main-body-paragraphs/)
     assert.match(text, /headers and footers/); assert.match(text, /Completeness applies only to this scope/)
     const result = await documentCode(ctx, code, `return await tools.${TOOL}({path:'body.docx',limit:1});`)
     assert.equal(result.status, 'partial'); assert.equal(result.data.scope, 'main-body-paragraphs')
@@ -52,8 +53,8 @@ await test('unsupported late DOCX content preserves paragraphs and scope in both
     const native = await agent(), code = await agent('ptc')
     await activateDocument(ctx, native, 'read_docx'); await activateDocument(ctx, code, 'read_docx', 'ptc')
     const raw = await documentCall(ctx, native, 'read_docx', { path: 'body.docx', limit: 1 })
-    assert.equal(raw.scanComplete, false); assert.equal(raw.pageComplete, true); assert.equal(raw.total, undefined)
-    assert.match(render(raw), /UNSUPPORTED_DOCUMENT/); assert.match(render(raw), /Paragraph 1.*safe prefix/); assert.match(render(raw), /not exhaustive/)
+    assert.equal(raw.data.scanComplete, false); assert.equal(raw.data.pageComplete, true); assert.equal(raw.data.total, undefined)
+    assert.match(render(raw.data), /UNSUPPORTED_DOCUMENT/); assert.match(render(raw.data), /Paragraph 1.*safe prefix/); assert.match(render(raw.data), /not exhaustive/)
     const result = await documentCall(ctx, code, 'read_docx', { path: 'body.docx', limit: 1 })
     assert.equal(result.status, 'error'); assert.equal(result.error.code, 'UNSUPPORTED_DOCUMENT'); assert.equal(result.error.effectState, 'none')
     assert.equal(result.error.retry, 'never'); assert.equal(result.continuation, undefined); assert.equal(result.data.items[0].text, 'safe prefix')
@@ -81,13 +82,13 @@ await test('large DOCX paragraphs spill with exact paragraph chunks and independ
   try {
     const owner = await agent(); await activateDocument(ctx, owner, 'read_docx'); await activateDocument(ctx, owner, 'result')
     const raw = await documentCall(ctx, owner, 'read_docx', { path: 'body.docx' })
-    assert.equal(raw.reference.producerTool, 'read_docx'); assert.equal(raw.complete, false); assert.equal(raw.scanComplete, true)
-    const content = render(raw); assert.ok(Buffer.byteLength(JSON.stringify([{ type: 'text', text: content }])) <= 65536)
+    assert.equal(raw.data.reference.producerTool, 'read_docx'); assert.equal(raw.data.complete, false); assert.equal(raw.data.scanComplete, true)
+    const content = render(raw.data); assert.ok(Buffer.byteLength(JSON.stringify([{ type: 'text', text: content }])) <= 65536)
     assert.match(content, /ref:\/\//); assert.match(content, /main-body-paragraphs/)
-    const page = await documentCall(ctx, owner, 'result', { action: 'page', id: raw.reference.refId, root: raw.referenceRoot, limit: 1 })
-    assert.equal(page.source.scope, 'main-body-paragraphs'); assert.equal(page.source.blocksObserved, 1)
-    assert.equal(page.source.captureComplete, true); assert.ok(page.source.excludedContent.includes('headers and footers'))
-    assert.equal(page.items[0].kind, 'item-json-chunk'); assert.equal(page.items[0].byteOffset, 0)
+    const page = await documentCall(ctx, owner, 'result', { action: 'page', id: raw.data.reference.refId, root: raw.data.referenceRoot, limit: 1 })
+    assert.equal(page.data.source.scope, 'main-body-paragraphs'); assert.equal(page.data.source.blocksObserved, 1)
+    assert.equal(page.data.source.captureComplete, true); assert.ok(page.data.source.excludedContent.includes('headers and footers'))
+    assert.equal(page.data.items[0].kind, 'item-json-chunk'); assert.equal(page.data.items[0].byteOffset, 0)
   } finally { await shutdown(ctx) }
 }))
 report('docx-host')

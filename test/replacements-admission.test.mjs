@@ -1,97 +1,69 @@
-/**
- * #578: a replaced official tool stays callable while the assembled request
- * still carries it.
- *
- * The mask is registry state, the model's request is a snapshot taken before
- * it. When the replacement lands between the two, the model is still holding
- * `read` and has never seen the counterpart it is told to call; denying `read`
- * then leaves the session with neither half of the swap. The guard therefore
- * answers for the request that produced the call, not for the registry's
- * current opinion.
- */
-import { createScope, scopeOf, scopeParentOf } from '@deepseek-ai/dsh-scope'
-import { inspectPresentation } from '../lib/publication/presentation.js'
+/** Replacement guards use the exact DSH 0.2.2 step admission, not waterfall text. */
+import { createScope } from '@deepseek-ai/dsh-scope'
 import { mountReplacements } from '../lib/publication/replacements.js'
-import { bootHost, shutdown, scopedToolNames } from './lib/host.mjs'
-import { assert, test, report, wait, waitFor, withTempDir } from './lib/harness.mjs'
-
+import { bootHost, shutdown } from './lib/host.mjs'
+import { assert, test, report, wait } from './lib/harness.mjs'
+import { prepareStep, executeCall } from './lib/executor.mjs'
 const COUNTERPART = 'ops_inspect_local_file'
-const tool = name => ({ name, description: 'fixture ' + name, parameters: { type: 'object', properties: {} },
+const tool = name => ({ name, description: `fixture ${name}`, parameters: { type: 'object', properties: {} },
   output: { schema: { type: 'object' }, render: () => [] }, execute: async () => ({ ran: name }) })
-
-/** A scope that inherits the tools dependency API, so registrations and restrictions work. */
-async function scopedContext(parent, key, parentKey) {
-  let scoped
-  await parent.plugin({ inject: ['tools'], apply(inner) { scoped = createScope(inner, key, parentKey ? { parent: parentKey } : undefined).ctx } })
-  return scoped
+async function fixture(body) {
+  const { ctx, tools } = await bootHost()
+  let allowed = true
+  const agent = { id: 'replacement', session: { id: 'replacement' } }
+  agent.ctx = createScope(ctx, agent).ctx
+  ctx.provide('agents', { list: () => [agent] })
+  tools.register(tool('read'))
+  await ctx.plugin({ apply(inner) { mountReplacements(inner, { id: 'fixture', targets: new Map([['read', COUNTERPART]]),
+    gate: { allows: () => allowed }, keepOfficial: () => false }) } })
+  try { await ctx.serial('agent/created', { agent }); await body({ ctx, tools, agent, revokeAuthority: () => { allowed = false } }) }
+  finally { await shutdown(ctx) }
 }
+const dispatch = (ctx, agent, step, name) => executeCall(ctx, { agent, name, arguments: {}, callId: name,
+  signal: new AbortController().signal, toolSet: step.toolSet })
 
-/** The ordered pre-execute stage a model-direct dispatch reaches before the body. */
-const preExecute = (ctx, agent, name) => ctx.waterfall('tools/pre-execute',
-  { callId: 'test', name, arguments: {}, signal: new AbortController().signal, agent },
-  () => Promise.resolve({ kind: 'allow' }))
-
-/** The whole dispatch the host performs for a model-direct call, guard included. */
-const dispatch = (ctx, agent, name) => ctx.get('tools').execute(
-  { callId: 'test', name, arguments: {}, signal: new AbortController().signal, agent })
-
-await test('a replaced official tool stays callable for the request that still carries it (#578)', () => withTempDir('replacement-admission', async cwd => {
-  const { ctx } = await bootHost()
-  ctx.provide('sandboxPolicy', { resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: session.header.cwd, sessionId: session.id }) })
-  const live = []
-  ctx.provide('agents', { list: () => [...live] })
-  const presets = new Map()
-  ctx.provide('agentPresets', { composedPreset: scoped => presets.get(scopeParentOf(scopeOf(scoped))) })
-  const presetScope = await scopedContext(ctx, { preset: 'admission-preset' })
-  presets.set(scopeOf(presetScope), 'standard')
-  presetScope.tools.register(tool('read'))
-  const agent = { id: 'admission', session: { id: 'admission', mode: 'danger-full-access', header: { cwd } } }
-  agent.ctx = await scopedContext(presetScope, agent, scopeOf(presetScope))
-  live.push(agent)
-
-  const mounted = await ctx.plugin({ name: 'fixture-replacements', apply(inner) {
-    mountReplacements(inner, { id: 'standard', targets: new Map([['read', COUNTERPART]]), gate: { allows: () => true }, keepOfficial: () => false })
-  } })
+await test('a conditional replacement never denies the official-only held request', () => fixture(async ({ ctx, tools, agent }) => {
+  let enabled = false
+  await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.register(tool(COUNTERPART), { when: () => enabled }) } })
+  const held = await prepareStep(ctx, agent)
   try {
-    await ctx.serial('agent/created', { agent, source: 'startup' })
-    await wait(100)
-    // The request the model holds: the official tool, no replacement yet.
-    const held = await ctx.get('systemPrompt').assemble({ scope: agent, agent, signal: new AbortController().signal })
-    const heldNames = (held.tools ?? []).map(entry => entry.name)
-    assert.equal(heldNames.includes('read'), true)
-    assert.equal(heldNames.includes(COUNTERPART), false)
-
-    // The replacement lands after that request was captured. The call the model makes next
-    // names the tool that request carried, so the whole dispatch — not only the waterfall —
-    // has to reach the body; a refusal here is what left the reported session with neither
-    // half of the swap.
-    agent.ctx.tools.register(tool(COUNTERPART))
-    const carried = await dispatch(ctx, agent, 'read')
-    assert.equal(carried.isError, false, 'the call the model can actually make must not be refused')
-    assert.equal(carried.value?.ran, 'read', 'the official tool body must run for that call')
-
-    await waitFor(() => scopedToolNames(ctx, agent).includes('read') === false, { what: 'the mask applies' })
-
-    const decision = await preExecute(ctx, agent, 'read')
-    assert.equal(decision.kind, 'allow', 'the model must keep the half of the swap it was actually offered')
-
-    // A presentation probe publishes nothing, so it is not the surface the model holds and
-    // must not overwrite the snapshot the guard answers for.
-    await inspectPresentation(ctx.get('systemPrompt'), agent)
-    const afterProbe = await preExecute(ctx, agent, 'read')
-    assert.equal(afterProbe.kind, 'allow', 'a presentation probe must not become the model surface')
-
-    // The next request carries the replacement, so the denial is correct again.
-    const next = await ctx.get('systemPrompt').assemble({ scope: agent, agent, signal: new AbortController().signal })
-    const nextNames = (next.tools ?? []).map(entry => entry.name)
-    assert.equal(nextNames.includes(COUNTERPART), true)
-    assert.equal(nextNames.includes('read'), false)
-    const later = await preExecute(ctx, agent, 'read')
-    assert.equal(later.kind, 'deny')
-    assert.equal(String(later.reason ?? '').includes(COUNTERPART), true)
-  } finally {
-    await mounted?.dispose?.()
-    await shutdown(ctx)
-  }
+    assert.deepEqual(held.assembly.tools.map(t => t.name), ['read'])
+    enabled = true
+    await wait(30)
+    await ctx.get('systemPrompt').assemble({ scope: agent })
+    const result = await dispatch(ctx, agent, held, 'read')
+    assert.equal(result.isError, false); assert.equal(result.value.ran, 'read')
+    assert.equal(tools.executable(COUNTERPART, agent, held.toolSet), undefined)
+    const next = await prepareStep(ctx, agent)
+    try {
+      assert.ok(next.assembly.tools.some(t => t.name === COUNTERPART))
+      const refused = await dispatch(ctx, agent, next, 'read')
+      assert.equal(refused.isError, true)
+      assert.match(JSON.stringify(refused), /MODE_REPLACEMENT|replaced the official/)
+      assert.equal((await dispatch(ctx, agent, next, COUNTERPART)).isError, false)
+    } finally { next.dispose() }
+  } finally { held.dispose() }
+}))
+await test('an unloaded conditional counterpart cannot deny a still-live official tool', () => fixture(async ({ ctx, agent }) => {
+  const fiber = await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.register(tool(COUNTERPART), { when: () => true }) } })
+  const step = await prepareStep(ctx, agent)
+  try {
+    await fiber.dispose()
+    const result = await dispatch(ctx, agent, step, 'read')
+    assert.equal(result.isError, false)
+    assert.equal(result.value.ran, 'read')
+  } finally { step.dispose() }
+}))
+await test('revoked consumer authority cannot guard an official call on a held admitted step', () => fixture(async ({ ctx, tools, agent, revokeAuthority }) => {
+  await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.register(tool(COUNTERPART), { when: () => true }) } })
+  const step = await prepareStep(ctx, agent)
+  try {
+    assert.ok(tools.executable(COUNTERPART, agent, step.toolSet))
+    assert.equal((await dispatch(ctx, agent, step, 'read')).isError, true)
+    revokeAuthority()
+    const result = await dispatch(ctx, agent, step, 'read')
+    assert.equal(result.isError, false)
+    assert.equal(result.value.ran, 'read', 'a revoked consumer cannot keep both tools unavailable')
+  } finally { step.dispose() }
 }))
 report('replacements-admission')

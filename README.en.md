@@ -105,7 +105,7 @@ Direct `git+https` installation and unbuilt source checkouts lack the complete r
 
 #### Update
 
-Host compatibility is declared for DSH **0.2.0-rc.2 and 0.2.1-rc.2**. See
+The 0.5 series supports DSH **from 0.2.2-rc.1**, not 0.2.0/0.2.1 or earlier 0.2.2 previews. The DSH adapter remains; integration uses the native 0.2.2 tool-admission and executor APIs. See
 [host versions and display metadata](docs/usage.md#host-compatibility-and-display-metadata)
 for component icon exports, profile refresh and config/schema checks.
 

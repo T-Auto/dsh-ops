@@ -1,5 +1,6 @@
 /** Resolve and confine every invocation using the current session authority. */
 import path from 'node:path'
+import { sameAuthority } from '../authority-paths.js'
 import type { ConfinedArgv } from '../adapter/dsh/types.js'
 import type { ShellContext, ShellCall, ShellPolicy, ExecutionOptions, ShellExecution, ShellResult } from './types.js'
 import { bashToolDefinition, withBashStatus } from './tool.js'
@@ -15,7 +16,7 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
   const session = exec.agent.session
   const assertAuthority = () => {
     const current = ctx.get('sandboxPolicy')?.resolve({ session })
-    if (!active() || current?.mode !== standing.mode || current?.workspaceRoot !== standing.workspaceRoot) {
+    if (!active() || !current || !sameAuthority(current, standing)) {
       throw new Error('AUTHORITY_CHANGED: session authority changed before execution; no command executed. Read the current policy before another call.')
     }
   }
