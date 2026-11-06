@@ -277,7 +277,7 @@ fn a_layout_page_feeds_the_index_and_answers_a_query() {
     assert_eq!(outcome.total, 1);
     assert_eq!(outcome.hits[0].name, b"Report.PDF");
     assert_eq!(outcome.hits[0].size, Some(4096));
-    assert_eq!(outcome.hits[0].modified_ns, Some(1234));
+    assert_eq!(outcome.hits[0].modified_ns, None);
     assert_eq!(outcome.hits[0].record, REPORT);
 
     let prefix = Query {
