@@ -9,14 +9,19 @@
 crates.io API 核对），传递依赖由 lockfile 固定。完整许可证正文见
 [`licenses/windows-index/THIRD-PARTY-NOTICES.txt`](../licenses/windows-index/THIRD-PARTY-NOTICES.txt)。
 
-## 直接依赖（1 个）
+## 直接依赖（3 个）
 
 | crate | 精确版本 | 发布时间（UTC） | 许可证 | 用途 |
 | --- | --- | --- | --- | --- |
-| `usn-journal-rs` | `=0.5.0` | 2026-10-13 | MIT | 为 W1 的 MFT 冷枚举提供 `FSCTL_ENUM_USN_DATA` 安全封装，W2 起提供 USN 变更日志封装。本切片唯一的 Win32 代码都在它内部：本 crate 保持 `#![forbid(unsafe_code)]`，源码不出现任何裸 Windows 类型。运行期需要 Administrator 权限，未提权即按文档回退。MSRV 1.88，与本 crate 地板相同。 |
+| `usn-journal-rs` | `=0.5.0` | 2026-10-13 | MIT | 为 MFT 冷枚举提供 `FSCTL_ENUM_USN_DATA` 安全封装、为增量尾巴提供 USN 变更日志封装。本切片唯一的 Win32 代码都在它内部：本 crate 保持 `#![forbid(unsafe_code)]`，源码不出现任何裸 Windows 类型。运行期需要 Administrator 权限，未提权即按文档回退。MSRV 1.88，与本 crate 地板相同。 |
+| `cap-std` | `3.4.6` | 2026-08-20 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | 打开卷根并读取其目录元数据，使 `Candidate.key.volume` 就是 cap-fs-ext `dev()` 报告的卷序列号。集成侧的候选复验本就用同一 crate，因此两边不会漂移。ambient authority 只在卷根上、只用于元数据。 |
+| `cap-fs-ext` | `3.4.6` | 2026-08-20 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | `dev()`/`ino()` 背后的 `MetadataExt` 实现：`Candidate.key.file` 是 cap 报告为 `ino()` 的完整 64 位 nFileIndex。该 crate 已通过 workspace 根存在于 `native/Cargo.lock`；本切片只新增直接依赖边。 |
 
-该依赖必须 target-gate，因为 `usn-journal-rs` 自身包含
-`#[cfg(not(windows))] compile_error!`；它绝不能出现在 `ops-index` 或其它平台无关 crate。
+三者都必须 target-gate。`usn-journal-rs` 自身包含
+`#[cfg(not(windows))] compile_error!`，绝不能出现在 `ops-index` 或其它平台无关 crate。
+`cap-std`/`cap-fs-ext` 与集成侧使用同一套安全元数据层：通过它读出的卷序列号与 file index
+使 `Candidate.key` 与集成的 `(dev, ino)` 完全一致，而不是漂移成 Fallback。两者本来就是
+workspace 根的直接依赖并锁定在 3.4.6；本切片不新增包，只新增两条直接依赖边及其许可证正文。
 
 ## Windows 目标实际解析的传递依赖
 

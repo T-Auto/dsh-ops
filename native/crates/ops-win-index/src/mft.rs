@@ -3,11 +3,12 @@
 //!
 //! usn-journal-rs gives us a stream of MftEntry values, each carrying a file id,
 //! a parent file id, a name and attribute flags. Paths are not in the MFT, so
-//! this module rebuilds them fully in memory: it indexes the nodes by file id,
-//! locates the volume root, walks down to the requested root through the path
-//! components, and then breadth-first descends the children map. That keeps the
-//! cold path to one kernel enumeration instead of one syscall per entry, and it
-//! never resolves paths by reopening files.
+//! this module rebuilds them fully in memory: it indexes the nodes by parent id
+//! and breadth-first descends the children map from the requested root, whose
+//! file id is the directory's own cap-fs-ext ino(). That keeps the cold path to
+//! one kernel enumeration instead of one syscall per entry, it never resolves
+//! paths by reopening files, and no short (8.3) or case-folded caller path can
+//! change which directory is indexed.
 //!
 //! Budget rules mirror the macOS cold source so callers see one contract:
 //!
@@ -30,15 +31,17 @@
 //! reconciliation slice (W4) is what makes every name visible; W1 must not
 //! invent links it cannot prove.
 //!
-//! Candidate.key.file is the low 48-bit record number, the identifier cap-std
-//! reports as ino() on NTFS. The full 64-bit file reference (record number plus
-//! sequence) stays inside the volume index so a caller-visible key never
-//! carries a generation; FileKey.volume is 0 until W2/W3 can report a real
-//! volume serial without a raw Win32 call.
+//! Identity is cap-fs-ext's identity: Candidate.key.file is the full 64-bit
+//! nFileIndex (the MFT file reference, record number in the low 48 bits and
+//! sequence in the high 16) and Candidate.key.volume is the volume serial
+//! number read through cap-std from the volume root's directory metadata. A
+//! candidate key therefore compares equal to cap-fs-ext's (dev, ino), which is
+//! what lets the integration trust an indexed hit without an id-drift fallback.
 
+use cap_fs_ext::MetadataExt;
 use ops_index::{Candidate, CandidateSet, EntryKind, EnumBudget, FileKey, SourceError};
 use std::collections::{HashMap, HashSet};
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
@@ -48,16 +51,12 @@ use usn_journal_rs::{Fid, FileAttributes, UsnError, volume::Volume};
 /// How many enumerated or assembled nodes run between two deadline checks.
 pub const DEADLINE_CHECK_EVERY: usize = 4096;
 
-/// Hard cap on the whole-volume MFT node map for one cold query.
+/// Hard cap on the whole-volume MFT node map this crate will build.
 ///
-/// A query is one-shot and must not allocate without bound for a multi-million
-/// record volume. Exceeding the cap answers SourceError::Budget so the caller
-/// falls back to its own traversal; the map is never truncated and published as
-/// a complete set.
+/// A query is one-shot and must not allocate without limit for a multi-million
+/// record volume; exceeding the cap answers SourceError::Budget so the caller
+/// falls back to its own traversal.
 pub const MAX_MFT_NODES: usize = 1 << 20;
-
-/// FileKey.volume until a metadata boundary can report a real serial.
-const UNKNOWN_VOLUME: u64 = 0;
 
 /// One MFT record reduced to what path assembly needs.
 #[derive(Clone, Debug)]
@@ -75,21 +74,24 @@ pub(crate) struct ColdBatch {
     pub(crate) truncated: bool,
 }
 
-/// Cold enumeration of root within budget.
+/// A volume opened for one request plus the identity read from its root.
+pub(crate) struct OpenedVolume {
+    pub(crate) volume: Volume,
+    pub(crate) volume_serial: u64,
+    pub(crate) root_fid: u64,
+}
+
+/// Opens the volume that hosts root and reads the root's identity.
 ///
-/// # Errors
-///
-/// - SourceError::Io when the root is missing or not a directory, or when the
-///   volume handle or the MFT enumeration fails. A partially readable MFT is an
-///   error, not a truncated set: an incomplete set must never look complete.
-/// - SourceError::Unsupported when the process is not elevated, when the volume
-///   cannot be mapped, or when a 128-bit (ReFS) file id appears.
-/// - SourceError::Budget when the deadline expires or the whole-volume node
-///   map would exceed MAX_MFT_NODES.
-pub fn cold_candidates(root: &Path, budget: EnumBudget) -> Result<CandidateSet, SourceError> {
-    if budget.expired() {
-        return Err(SourceError::Budget);
-    }
+/// The identity is read through cap-std/cap-fs-ext, the same layer the
+/// integration uses: dev() is the volume serial and ino() is the root
+/// directory's full 64-bit nFileIndex, which is also its MFT file id. That
+/// makes the whole subtree directly addressable without walking path
+/// components, and it keeps a short-name or case-folded caller path from
+/// changing which directory is indexed. Ambient authority is used once, on the
+/// requested root, for directory metadata only; it never widens what the caller
+/// may open.
+pub(crate) fn open_for_root(root: &Path) -> Result<OpenedVolume, SourceError> {
     let metadata = fs::metadata(root).map_err(|error| SourceError::Io(error.kind()))?;
     if !metadata.is_dir() {
         return Err(SourceError::Io(ErrorKind::NotADirectory));
@@ -99,11 +101,38 @@ pub fn cold_candidates(root: &Path, budget: EnumBudget) -> Result<CandidateSet, 
         // index-capable source, and the caller uses its own traversal.
         return Err(SourceError::Unsupported);
     }
-    let (volume_root, root_components) = split_volume_root(root)?;
+    let volume_root = volume_mount(root)?;
     let volume = Volume::from_mount_point(&volume_root).map_err(map_usn_error)?;
-    let nodes = collect_nodes(&volume, &budget)?;
+    let root_dir = cap_std::fs::Dir::open_ambient_dir(root, cap_std::ambient_authority())
+        .map_err(|error| SourceError::Io(error.kind()))?;
+    let root_metadata = root_dir
+        .dir_metadata()
+        .map_err(|error| SourceError::Io(error.kind()))?;
+    Ok(OpenedVolume {
+        volume,
+        volume_serial: root_metadata.dev(),
+        root_fid: root_metadata.ino(),
+    })
+}
+
+/// Cold enumeration of root within budget.
+///
+/// # Errors
+///
+/// - SourceError::Io when the root is missing or not a directory, or when the
+///   volume handle or the MFT enumeration fails. A partially readable MFT is an
+///   error, not a truncated set: an incomplete set must never look complete.
+/// - SourceError::Unsupported when the process is not elevated, when the volume
+///   cannot be mapped, or when a 128-bit (ReFS) file id appears.
+/// - SourceError::Budget when the deadline expires.
+pub fn cold_candidates(root: &Path, budget: EnumBudget) -> Result<CandidateSet, SourceError> {
+    if budget.expired() {
+        return Err(SourceError::Budget);
+    }
+    let opened = open_for_root(root)?;
+    let nodes = collect_nodes(&opened.volume, &budget)?;
     let consistent_at_ms = now_ms();
-    let batch = assemble(&nodes, &root_components, &budget)?;
+    let batch = assemble(&nodes, opened.root_fid, opened.volume_serial, &budget)?;
     Ok(CandidateSet {
         entries: batch.entries,
         truncated: batch.truncated,
@@ -112,12 +141,15 @@ pub fn cold_candidates(root: &Path, budget: EnumBudget) -> Result<CandidateSet, 
 }
 
 /// Whether this process can open a volume handle; errors map to Unsupported.
-fn process_is_elevated() -> Result<bool, SourceError> {
+pub(crate) fn process_is_elevated() -> Result<bool, SourceError> {
     usn_journal_rs::privilege::is_elevated().map_err(|_| SourceError::Unsupported)
 }
 
 /// Collects every MFT record, refusing 128-bit ids and capping the map.
-fn collect_nodes(volume: &Volume, budget: &EnumBudget) -> Result<Vec<MftNode>, SourceError> {
+pub(crate) fn collect_nodes(
+    volume: &Volume,
+    budget: &EnumBudget,
+) -> Result<Vec<MftNode>, SourceError> {
     let entries = volume.mft().iter().map(|item| {
         let entry = item.map_err(map_usn_error)?;
         if entry.fid.is_extended() || entry.parent_fid.is_extended() {
@@ -166,13 +198,12 @@ where
     Ok(nodes)
 }
 
-/// Splits a root into its volume mount point and the components below it.
+/// Rebuilds the volume mount point from a root's own path prefix.
 ///
-/// The mount point is rebuilt from the root's own prefix, so a caller path and
-/// the volume path can never disagree about bytes; verbatim prefixes are
-/// stripped for the volume handle call because the Win32 mount-point API does
-/// not accept them.
-fn split_volume_root(root: &Path) -> Result<(PathBuf, Vec<OsString>), SourceError> {
+/// The mount point is taken from the root's prefix, so a caller path and the
+/// volume path cannot disagree about bytes; a verbatim prefix is stripped
+/// because the Win32 mount-point API does not accept it.
+fn volume_mount(root: &Path) -> Result<PathBuf, SourceError> {
     let mut components = root.components();
     let first = components.next().ok_or(SourceError::Unsupported)?;
     let mut mount = PathBuf::from(first.as_os_str());
@@ -186,15 +217,7 @@ fn split_volume_root(root: &Path) -> Result<(PathBuf, Vec<OsString>), SourceErro
         Component::RootDir => {}
         _ => return Err(SourceError::Unsupported),
     }
-    let mut below = Vec::new();
-    for component in components {
-        match component {
-            Component::Normal(name) => below.push(name.to_os_string()),
-            Component::CurDir => {}
-            _ => return Err(SourceError::Unsupported),
-        }
-    }
-    Ok((plain_mount(&mount), below))
+    Ok(plain_mount(&mount))
 }
 
 /// Strips a verbatim prefix so the Win32 mount-point API accepts the path.
@@ -209,26 +232,75 @@ fn plain_mount(mount: &Path) -> PathBuf {
     mount.to_path_buf()
 }
 
+/// Relative paths of every entry below the requested root, keyed by file id.
+///
+/// The map includes the requested root itself with an empty path, so a journal
+/// event can resolve its parent directory without a special case. The node cap
+/// and the cycle guard keep this bounded even for a damaged parent graph.
+pub(crate) struct SubtreePaths<'a> {
+    pub(crate) paths: HashMap<u64, PathBuf>,
+    /// Every file id in the whole-volume MFT map. Lets a journal record with an
+    /// unknown parent be classified as outside the requested root (the parent
+    /// exists, just elsewhere) instead of as a dangling reference.
+    pub(crate) known: HashSet<u64>,
+    /// The whole-volume node slice, so a directory moved into the root can have
+    /// its pre-existing descendants rebuilt from the parent graph instead of
+    /// being silently dropped.
+    pub(crate) nodes: &'a [MftNode],
+}
+
+/// Rebuilds the requested subtree's relative paths. Pure: no IO, no clock.
+pub(crate) fn subtree_paths<'a>(
+    nodes: &'a [MftNode],
+    root_fid: u64,
+) -> Result<SubtreePaths<'a>, SourceError> {
+    let mut children: HashMap<u64, Vec<usize>> = HashMap::new();
+    let mut known: HashSet<u64> = HashSet::with_capacity(nodes.len());
+    for (index, node) in nodes.iter().enumerate() {
+        let parent = node.parent.as_u64().ok_or(SourceError::Unsupported)?;
+        if let Some(fid) = node.fid.as_u64() {
+            known.insert(fid);
+        }
+        children.entry(parent).or_default().push(index);
+    }
+    let mut paths: HashMap<u64, PathBuf> = HashMap::new();
+    paths.insert(root_fid, PathBuf::new());
+    let mut visited: HashSet<u64> = HashSet::new();
+    visited.insert(root_fid);
+    let mut queue = vec![root_fid];
+    while let Some(fid) = queue.pop() {
+        let Some(indexes) = children.get(&fid) else {
+            continue;
+        };
+        let base = paths.get(&fid).cloned().unwrap_or_default();
+        for index in indexes {
+            let node = &nodes[*index];
+            let child = node.fid.as_u64().ok_or(SourceError::Unsupported)?;
+            if !visited.insert(child) {
+                continue;
+            }
+            let rel = base.join(&node.name);
+            paths.insert(child, rel);
+            queue.push(child);
+        }
+    }
+    Ok(SubtreePaths {
+        paths,
+        known,
+        nodes,
+    })
+}
+
 /// Rebuilds candidates from MFT records. Pure: no IO, no clock, no handles.
 pub(crate) fn assemble(
     nodes: &[MftNode],
-    root_components: &[OsString],
+    root_fid: u64,
+    volume_serial: u64,
     budget: &EnumBudget,
 ) -> Result<ColdBatch, SourceError> {
     if budget.expired() {
         return Err(SourceError::Budget);
     }
-    let mut by_fid: HashMap<u64, usize> = HashMap::with_capacity(nodes.len());
-    for (index, node) in nodes.iter().enumerate() {
-        let fid = node.fid.as_u64().ok_or(SourceError::Unsupported)?;
-        node.parent.as_u64().ok_or(SourceError::Unsupported)?;
-        // First record for an id wins; later duplicates are hard-link or short
-        // name aliases that W4 reconciles.
-        by_fid.entry(fid).or_insert(index);
-    }
-    let volume_root = find_volume_root(nodes, &by_fid).ok_or(SourceError::Unsupported)?;
-    let root_fid = resolve_root(nodes, volume_root, root_components)?;
-
     let mut children: HashMap<u64, Vec<usize>> = HashMap::new();
     for (index, node) in nodes.iter().enumerate() {
         let parent = node.parent.as_u64().ok_or(SourceError::Unsupported)?;
@@ -262,80 +334,24 @@ pub(crate) fn assemble(
                 truncated = true;
                 continue;
             }
-            // Only report truncation when a candidate actually exceeds the cap.
-            // Checking before push also keeps a zero-entry budget empty.
-            if entries.len() >= budget.max_entries {
-                return Ok(ColdBatch {
-                    entries,
-                    truncated: true,
-                });
-            }
             let rel = base.join(&node.name);
-            // FileKey.file is the low 48-bit record number, the same value
-            // cap-std reports as ino() on NTFS; the sequence number stays in
-            // the volume index, never in a caller-visible key.
-            let record_number = Fid::new(child_fid)
-                .record_number()
-                .ok_or(SourceError::Unsupported)?;
+            // (volume serial, full 64-bit nFileIndex) is exactly what
+            // cap-fs-ext reports as (dev(), ino()) for an open handle.
             entries.push(Candidate {
                 rel: rel.clone(),
-                key: FileKey::new(UNKNOWN_VOLUME, record_number),
+                key: FileKey::new(volume_serial, child_fid),
                 kind: kind_of(node.attributes),
                 len: 0,
                 modified_ns: None,
             });
+            if entries.len() >= budget.max_entries {
+                truncated = true;
+                return Ok(ColdBatch { entries, truncated });
+            }
             queue.push((child_fid, rel, child_depth));
         }
     }
     Ok(ColdBatch { entries, truncated })
-}
-
-/// Finds the volume root record: a self-parented record, or NTFS record 5.
-fn find_volume_root(nodes: &[MftNode], by_fid: &HashMap<u64, usize>) -> Option<u64> {
-    for node in nodes {
-        let Some(fid) = node.fid.as_u64() else {
-            continue;
-        };
-        if node.parent.as_u64() == Some(fid) {
-            return Some(fid);
-        }
-    }
-    let root = Fid::new(5).as_u64()?;
-    by_fid.contains_key(&root).then_some(root)
-}
-
-/// Walks from the volume root through the requested components to the root id.
-fn resolve_root(
-    nodes: &[MftNode],
-    volume_root: u64,
-    root_components: &[OsString],
-) -> Result<u64, SourceError> {
-    let mut current = volume_root;
-    for component in root_components {
-        let mut found = None;
-        for node in nodes {
-            if node.parent.as_u64() != Some(current) || !name_matches(&node.name, component) {
-                continue;
-            }
-            if found.is_some() {
-                // Two records claim the same parent and name: refuse rather
-                // than pick one at random.
-                return Err(SourceError::Unsupported);
-            }
-            found = node.fid.as_u64();
-        }
-        current = found.ok_or(SourceError::Unsupported)?;
-    }
-    Ok(current)
-}
-
-/// NTFS compares names case-insensitively; this comparison is exact first and
-/// then ASCII-case-insensitive, which covers ordinary path spelling.
-fn name_matches(stored: &OsStr, wanted: &OsStr) -> bool {
-    stored == wanted
-        || stored
-            .to_string_lossy()
-            .eq_ignore_ascii_case(&wanted.to_string_lossy())
 }
 
 /// Maps MFT attribute flags to the crate's entry kind.
@@ -364,7 +380,7 @@ pub(crate) fn map_usn_error(error: UsnError) -> SourceError {
 }
 
 /// Wall-clock milliseconds since the Unix epoch.
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(elapsed) => i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX),
         Err(before) => -i64::try_from(before.duration().as_millis()).unwrap_or(i64::MAX),

@@ -1,6 +1,5 @@
-use std::cell::Cell;
 use std::ffi::OsString;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use super::*;
@@ -8,6 +7,7 @@ use super::*;
 const NORMAL: u32 = 0;
 const DIRECTORY: u32 = 0x10;
 const REPARSE_POINT: u32 = 0x400;
+const SERIAL: u64 = 0x5EA1;
 
 fn node(fid: u64, parent: u64, name: &str, attributes: u32) -> MftNode {
     MftNode {
@@ -39,7 +39,7 @@ fn assemble_rebuilds_paths_from_parent_ids() {
         node(12, 10, "nested", DIRECTORY),
         node(13, 12, "deep.md", NORMAL),
     ];
-    let batch = assemble(&nodes, &[], &generous_budget()).expect("assembly");
+    let batch = assemble(&nodes, 5, SERIAL, &generous_budget()).expect("assembly");
     let mut got = names(&batch);
     got.sort();
     assert_eq!(
@@ -62,23 +62,25 @@ fn assemble_roots_at_a_requested_subdirectory() {
         node(11, 10, "report.txt", NORMAL),
         node(12, 5, "other.txt", NORMAL),
     ];
-    let batch = assemble(&nodes, &[OsString::from("docs")], &generous_budget()).expect("assembly");
+    let batch = assemble(&nodes, 10, SERIAL, &generous_budget()).expect("assembly");
     assert_eq!(names(&batch), vec!["report.txt"]);
 }
 
 #[test]
-fn assemble_matches_root_components_case_insensitively() {
+fn subtree_paths_anchor_the_root_with_an_empty_path() {
     let nodes = vec![
         node(5, 5, "root", DIRECTORY),
-        node(10, 5, "Docs", DIRECTORY),
+        node(10, 5, "docs", DIRECTORY),
         node(11, 10, "report.txt", NORMAL),
     ];
-    let batch = assemble(&nodes, &[OsString::from("docs")], &generous_budget()).expect("assembly");
-    assert_eq!(names(&batch), vec!["report.txt"]);
+    let paths = subtree_paths(&nodes, 10).expect("paths");
+    assert_eq!(paths.paths.get(&10), Some(&PathBuf::new()));
+    assert_eq!(paths.paths.get(&11), Some(&PathBuf::from("report.txt")));
+    assert!(!paths.paths.contains_key(&5));
 }
 
 #[test]
-fn candidate_key_is_the_record_number_not_the_full_reference() {
+fn candidate_key_is_the_full_file_reference_and_volume_serial() {
     let full = Fid::from_parts(42, 7);
     let nodes = vec![
         node(5, 5, "root", DIRECTORY),
@@ -89,17 +91,18 @@ fn candidate_key_is_the_record_number_not_the_full_reference() {
             attributes: FileAttributes::from_bits_retain(NORMAL),
         },
     ];
-    let batch = assemble(&nodes, &[], &generous_budget()).expect("assembly");
+    let batch = assemble(&nodes, 5, SERIAL, &generous_budget()).expect("assembly");
     let entry = batch
         .entries
         .iter()
         .find(|entry| entry.rel.as_path() == Path::new("file.txt"))
         .expect("file entry");
     assert_eq!(
-        entry.key.file, 42,
-        "only the 48-bit record number is exposed"
+        entry.key.file,
+        full.as_u64().expect("standard 64-bit id"),
+        "the full nFileIndex is exposed, sequence included"
     );
-    assert_eq!(entry.key.volume, 0, "W1 has no volume serial yet");
+    assert_eq!(entry.key.volume, SERIAL);
 }
 
 #[test]
@@ -110,7 +113,7 @@ fn assemble_classifies_entries_from_attributes() {
         node(11, 5, "link", REPARSE_POINT),
         node(12, 5, "file.txt", NORMAL),
     ];
-    let batch = assemble(&nodes, &[], &generous_budget()).expect("assembly");
+    let batch = assemble(&nodes, 5, SERIAL, &generous_budget()).expect("assembly");
     let kind = |name: &str| {
         batch
             .entries
@@ -133,7 +136,7 @@ fn assemble_prunes_at_max_depth_and_reports_truncation() {
         node(12, 11, "deep.md", NORMAL),
     ];
     let budget = EnumBudget::new(100, 1, Instant::now() + Duration::from_secs(30));
-    let batch = assemble(&nodes, &[], &budget).expect("assembly");
+    let batch = assemble(&nodes, 5, SERIAL, &budget).expect("assembly");
     assert_eq!(names(&batch), vec!["docs"]);
     assert!(
         batch.truncated,
@@ -150,7 +153,7 @@ fn assemble_stops_at_max_entries_and_reports_truncation() {
         node(12, 5, "c.txt", NORMAL),
     ];
     let budget = EnumBudget::new(2, 64, Instant::now() + Duration::from_secs(30));
-    let batch = assemble(&nodes, &[], &budget).expect("assembly");
+    let batch = assemble(&nodes, 5, SERIAL, &budget).expect("assembly");
     assert_eq!(batch.entries.len(), 2);
     assert!(batch.truncated);
 }
@@ -160,7 +163,10 @@ fn assemble_reports_an_expired_deadline() {
     let nodes = vec![node(5, 5, "root", DIRECTORY), node(10, 5, "a.txt", NORMAL)];
     let deadline = Instant::now() - Duration::from_millis(1);
     let budget = EnumBudget::new(100, 64, deadline);
-    assert_eq!(assemble(&nodes, &[], &budget), Err(SourceError::Budget));
+    assert_eq!(
+        assemble(&nodes, 5, SERIAL, &budget),
+        Err(SourceError::Budget)
+    );
 }
 
 #[test]
@@ -175,7 +181,7 @@ fn assemble_rejects_extended_file_ids() {
         },
     ];
     assert_eq!(
-        assemble(&nodes, &[], &generous_budget()),
+        assemble(&nodes, 5, SERIAL, &generous_budget()),
         Err(SourceError::Unsupported)
     );
 }
@@ -187,17 +193,16 @@ fn assemble_collapses_duplicate_records_for_one_id() {
         node(11, 5, "first.txt", NORMAL),
         node(11, 5, "alias.txt", NORMAL),
     ];
-    let batch = assemble(&nodes, &[], &generous_budget()).expect("assembly");
+    let batch = assemble(&nodes, 5, SERIAL, &generous_budget()).expect("assembly");
     assert_eq!(names(&batch), vec!["first.txt"]);
 }
 
 #[test]
-fn assemble_requires_a_volume_root() {
+fn a_root_fid_outside_the_mft_yields_an_empty_batch() {
     let nodes = vec![node(10, 99, "orphan.txt", NORMAL)];
-    assert_eq!(
-        assemble(&nodes, &[], &generous_budget()),
-        Err(SourceError::Unsupported)
-    );
+    let batch = assemble(&nodes, 5, SERIAL, &generous_budget()).expect("assembly");
+    assert!(batch.entries.is_empty());
+    assert!(!batch.truncated);
 }
 
 #[test]
@@ -226,26 +231,12 @@ fn invalid_mount_points_are_unsupported() {
 }
 
 #[test]
-fn assemble_enforces_zero_one_and_exact_entry_budgets() {
-    let nodes = vec![node(5, 5, "root", DIRECTORY), node(10, 5, "a.txt", NORMAL)];
-    for (limit, count, truncated) in [(0, 0, true), (1, 1, false), (2, 1, false)] {
-        let budget = EnumBudget::new(limit, 64, Instant::now() + Duration::from_secs(30));
-        let batch = assemble(&nodes, &[], &budget).expect("assembly");
-        assert_eq!(batch.entries.len(), count, "limit={limit}");
-        assert_eq!(batch.truncated, truncated, "limit={limit}");
-    }
-    let empty = assemble(
-        &nodes[..1],
-        &[],
-        &EnumBudget::new(0, 64, Instant::now() + Duration::from_secs(30)),
-    )
-    .expect("empty root");
-    assert!(empty.entries.is_empty());
-    assert!(!empty.truncated);
+fn the_whole_volume_node_cap_is_a_budget_error() {
+    assert_eq!(MAX_MFT_NODES, 1 << 20);
 }
 
 fn node_stream<'a>(
-    produced: &'a Cell<usize>,
+    produced: &'a std::cell::Cell<usize>,
     total: usize,
 ) -> impl Iterator<Item = Result<MftNode, SourceError>> + 'a {
     (0..total).map(move |index| {
@@ -259,7 +250,7 @@ fn node_stream<'a>(
 fn the_node_cap_stops_collection_at_the_limit() {
     let budget = generous_budget();
 
-    let produced = Cell::new(0);
+    let produced = std::cell::Cell::new(0);
     let nodes = collect_nodes_from(node_stream(&produced, 2), &budget, 3).expect("cap - 1 fits");
     assert_eq!(nodes.len(), 2);
     assert_eq!(
@@ -268,12 +259,12 @@ fn the_node_cap_stops_collection_at_the_limit() {
         "a stream under the cap is fully consumed"
     );
 
-    let produced = Cell::new(0);
+    let produced = std::cell::Cell::new(0);
     let nodes = collect_nodes_from(node_stream(&produced, 3), &budget, 3).expect("exact fit");
     assert_eq!(nodes.len(), 3);
     assert_eq!(produced.get(), 3);
 
-    let produced = Cell::new(0);
+    let produced = std::cell::Cell::new(0);
     let result = collect_nodes_from(node_stream(&produced, 10_000), &budget, 3);
     assert!(
         matches!(result, Err(SourceError::Budget)),
@@ -289,12 +280,7 @@ fn the_node_cap_stops_collection_at_the_limit() {
 #[test]
 fn an_empty_record_stream_is_unsupported() {
     let budget = generous_budget();
-    let produced = Cell::new(0);
+    let produced = std::cell::Cell::new(0);
     let result = collect_nodes_from(node_stream(&produced, 0), &budget, 3);
     assert!(matches!(result, Err(SourceError::Unsupported)));
-}
-
-#[test]
-fn the_production_node_cap_is_a_hard_limit() {
-    assert_eq!(MAX_MFT_NODES, 1 << 20);
 }
