@@ -22,7 +22,7 @@ export const LEGACY_FASTCTX_KEYS = Object.freeze(['serverName', 'enableShellTool
 export const CORE_CONFIG_KEYS = Object.freeze([
   ...LEGACY_FASTCTX_KEYS, 'binaryPath', 'required', 'shellPolicy', 'deniedHostTools', 'promptPolicy',
   'extraGuidance', 'bashPath', 'publishBashTool', 'allowSystemShellFallback', 'denyCredentialReads', 'configUpdateVersion', 'indexCache',
-  'downloadGuard',
+  'downloadGuard', 'spillRetentionDays', 'spillTotalBudgetMiB', 'spillSweepEnabled',
 ])
 
 /** Upper bound accepted for the legacy `toolCallTimeoutMs`, matching the loader's timer ceiling. */
@@ -35,6 +35,7 @@ export const SHELL_POLICIES = ['advise', 'deny-host-shell']
 export const DEFAULT_DENIED_HOST_TOOLS = ['pwsh', 'bash', 'pwsh_persistent']
 
 import { ConfigError } from './config-error.js'
+import { DEFAULT_SPILL_RETENTION_DAYS, DEFAULT_SPILL_SWEEP_ENABLED, DEFAULT_SPILL_TOTAL_BUDGET_MIB } from './shells/spill-retention.js'
 export { ConfigError } from './config-error.js'
 
 /**
@@ -80,6 +81,24 @@ function optionalBoolean(raw: Record<string, unknown>, key: string, fallback: bo
   if (value === undefined || value === null) return fallback
   if (typeof value !== 'boolean') {
     throw new ConfigError(`${key} must be a boolean, got ${JSON.stringify(value)}`)
+  }
+  return value
+}
+
+/**
+ * Read an optional bounded integer.
+ * @param raw - the whole row config.
+ * @param key - the key to read.
+ * @param fallback - the value when the key is absent.
+ * @param min - the smallest accepted value.
+ * @param max - the largest accepted value.
+ * @returns the value.
+ */
+function optionalInteger(raw: Record<string, unknown>, key: string, fallback: number, min: number, max: number): number {
+  const value = raw[key]
+  if (value === undefined || value === null) return fallback
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) {
+    throw new ConfigError(`${key} must be an integer from ${min} to ${max}, got ${JSON.stringify(value)}`)
   }
   return value
 }
@@ -166,6 +185,12 @@ export interface ResolvedConfig {
   publishBashTool: boolean
   allowSystemShellFallback: boolean
   downloadGuard: DownloadGuardConfig
+  /** Spill files older than this many days are evicted; 0 reports only. */
+  spillRetentionDays: number
+  /** Total retained spill bytes allowed, in MiB; 0 means no budget. */
+  spillTotalBudgetMiB: number
+  /** Whether an active component runs automatic bounded spill passes. */
+  spillSweepEnabled: boolean
 }
 
 /**
@@ -242,6 +267,11 @@ export function resolveConfig(rawConfig?: unknown): ResolvedConfig {
     // directory and every search keeps the live traversal.
     indexCache: optionalBoolean(raw, 'indexCache', false),
     downloadGuard: resolveDownloadGuard(raw.downloadGuard),
+    // Host subprocess spill files have no TTL upstream; these three keys bound
+    // the plugin's own ledger-driven retention (see shells/spill-retention.ts).
+    spillRetentionDays: optionalInteger(raw, 'spillRetentionDays', DEFAULT_SPILL_RETENTION_DAYS, 0, 3650),
+    spillTotalBudgetMiB: optionalInteger(raw, 'spillTotalBudgetMiB', DEFAULT_SPILL_TOTAL_BUDGET_MIB, 0, 1_048_576),
+    spillSweepEnabled: optionalBoolean(raw, 'spillSweepEnabled', DEFAULT_SPILL_SWEEP_ENABLED),
   }
 }
 

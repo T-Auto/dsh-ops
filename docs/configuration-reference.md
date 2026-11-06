@@ -112,6 +112,15 @@ Built-in sections retain validated worker/Shell settings (`binaryPath`, `require
 `discovery.allowedTools` / `discovery.alwaysLoaded` configure the built-in Native pool. Use
 `presets.<id>` for an exact fully customized profile rather than adding preset-name exceptions.
 
+Host subprocess spill retention is bounded by three more built-in keys. `spillRetentionDays`
+(default 30; `0` reports only and never deletes) is the window applied to the mtime of a spilled
+file. `spillTotalBudgetMiB` (default 256; `0` disables the budget) caps the total retained bytes,
+evicting the oldest first. `spillSweepEnabled` (default true) controls the automatic pass on
+component activation and every 256 settlements. Only paths recorded at a settlement in
+`<DSH_HOME>/ops-spill-ledger.jsonl` are eligible, at most 64 files are removed per pass, and the
+host's `dsh-subprocess-*` directories are never removed. Inspect and sweep from the CLI with
+`dsh-ops bash-runtime spill-report` (see [usage](usage.md)).
+
 The bundle's `discovery.enabled` controls built-in **Native** dynamic entry publication, not the
 PTC SDK loader. PTC loading follows `ptc.dynamicTools` and `global.dynamicTools`. The Native keys
 are `maxResults` (1–5, default 3), `allowedTools`, `alwaysLoaded`, `binaryPath`, `required` and

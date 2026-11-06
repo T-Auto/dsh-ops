@@ -18,15 +18,27 @@
           dynamicTools: true
         minimal:
           enabled: true
+          spillRetentionDays: 30
+          spillTotalBudgetMiB: 256
+          spillSweepEnabled: true
         standard:
           enabled: true
           residentTools: true
+          spillRetentionDays: 30
+          spillTotalBudgetMiB: 256
+          spillSweepEnabled: true
         ptc:
           enabled: true
           residentTools: true
+          spillRetentionDays: 30
+          spillTotalBudgetMiB: 256
+          spillSweepEnabled: true
         cordis:
           enabled: true
           residentTools: true
+          spillRetentionDays: 30
+          spillTotalBudgetMiB: 256
+          spillSweepEnabled: true
         discovery:
           enabled: true
         # Inert until template is set; off by default so an install that never
