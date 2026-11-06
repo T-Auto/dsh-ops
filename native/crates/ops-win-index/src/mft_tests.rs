@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::ffi::OsString;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -241,4 +242,59 @@ fn assemble_enforces_zero_one_and_exact_entry_budgets() {
     .expect("empty root");
     assert!(empty.entries.is_empty());
     assert!(!empty.truncated);
+}
+
+fn node_stream<'a>(
+    produced: &'a Cell<usize>,
+    total: usize,
+) -> impl Iterator<Item = Result<MftNode, SourceError>> + 'a {
+    (0..total).map(move |index| {
+        produced.set(produced.get() + 1);
+        let fid = u64::try_from(index).expect("usize fits u64") + 1;
+        Ok(node(fid, 5, "entry", NORMAL))
+    })
+}
+
+#[test]
+fn the_node_cap_stops_collection_at_the_limit() {
+    let budget = generous_budget();
+
+    let produced = Cell::new(0);
+    let nodes = collect_nodes_from(node_stream(&produced, 2), &budget, 3).expect("cap - 1 fits");
+    assert_eq!(nodes.len(), 2);
+    assert_eq!(
+        produced.get(),
+        2,
+        "a stream under the cap is fully consumed"
+    );
+
+    let produced = Cell::new(0);
+    let nodes = collect_nodes_from(node_stream(&produced, 3), &budget, 3).expect("exact fit");
+    assert_eq!(nodes.len(), 3);
+    assert_eq!(produced.get(), 3);
+
+    let produced = Cell::new(0);
+    let result = collect_nodes_from(node_stream(&produced, 10_000), &budget, 3);
+    assert!(
+        matches!(result, Err(SourceError::Budget)),
+        "over the cap is an honest Budget fallback, not a truncated set"
+    );
+    assert_eq!(
+        produced.get(),
+        4,
+        "collection stops at the first over-cap record instead of allocating the whole volume"
+    );
+}
+
+#[test]
+fn an_empty_record_stream_is_unsupported() {
+    let budget = generous_budget();
+    let produced = Cell::new(0);
+    let result = collect_nodes_from(node_stream(&produced, 0), &budget, 3);
+    assert!(matches!(result, Err(SourceError::Unsupported)));
+}
+
+#[test]
+fn the_production_node_cap_is_a_hard_limit() {
+    assert_eq!(MAX_MFT_NODES, 1 << 20);
 }

@@ -48,6 +48,14 @@ use usn_journal_rs::{Fid, FileAttributes, UsnError, volume::Volume};
 /// How many enumerated or assembled nodes run between two deadline checks.
 pub const DEADLINE_CHECK_EVERY: usize = 4096;
 
+/// Hard cap on the whole-volume MFT node map for one cold query.
+///
+/// A query is one-shot and must not allocate without bound for a multi-million
+/// record volume. Exceeding the cap answers SourceError::Budget so the caller
+/// falls back to its own traversal; the map is never truncated and published as
+/// a complete set.
+pub const MAX_MFT_NODES: usize = 1 << 20;
+
 /// FileKey.volume until a metadata boundary can report a real serial.
 const UNKNOWN_VOLUME: u64 = 0;
 
@@ -76,7 +84,8 @@ pub(crate) struct ColdBatch {
 ///   error, not a truncated set: an incomplete set must never look complete.
 /// - SourceError::Unsupported when the process is not elevated, when the volume
 ///   cannot be mapped, or when a 128-bit (ReFS) file id appears.
-/// - SourceError::Budget when the deadline expires.
+/// - SourceError::Budget when the deadline expires or the whole-volume node
+///   map would exceed MAX_MFT_NODES.
 pub fn cold_candidates(root: &Path, budget: EnumBudget) -> Result<CandidateSet, SourceError> {
     if budget.expired() {
         return Err(SourceError::Budget);
@@ -107,26 +116,49 @@ fn process_is_elevated() -> Result<bool, SourceError> {
     usn_journal_rs::privilege::is_elevated().map_err(|_| SourceError::Unsupported)
 }
 
-/// Collects every MFT record, refusing 128-bit ids.
+/// Collects every MFT record, refusing 128-bit ids and capping the map.
 fn collect_nodes(volume: &Volume, budget: &EnumBudget) -> Result<Vec<MftNode>, SourceError> {
-    let mut nodes = Vec::new();
-    let mut seen = 0usize;
-    for item in volume.mft().iter() {
-        seen += 1;
-        if seen.is_multiple_of(DEADLINE_CHECK_EVERY) && budget.expired() {
-            return Err(SourceError::Budget);
-        }
+    let entries = volume.mft().iter().map(|item| {
         let entry = item.map_err(map_usn_error)?;
         if entry.fid.is_extended() || entry.parent_fid.is_extended() {
             // ReFS: FileKey only has 64 bits for the file half.
             return Err(SourceError::Unsupported);
         }
-        nodes.push(MftNode {
+        Ok(MftNode {
             fid: entry.fid,
             parent: entry.parent_fid,
             name: entry.file_name,
             attributes: entry.file_attributes,
-        });
+        })
+    });
+    collect_nodes_from(entries, budget, MAX_MFT_NODES)
+}
+
+/// Pure collection over an injectable record stream with an explicit node cap.
+///
+/// max_nodes exists so tests can exercise the cap without a million real
+/// records; production passes MAX_MFT_NODES. The cap is checked before each
+/// push, and the first over-cap record aborts with SourceError::Budget instead
+/// of continuing to allocate. An empty volume is Unsupported, not an empty set.
+pub(crate) fn collect_nodes_from<I>(
+    items: I,
+    budget: &EnumBudget,
+    max_nodes: usize,
+) -> Result<Vec<MftNode>, SourceError>
+where
+    I: IntoIterator<Item = Result<MftNode, SourceError>>,
+{
+    let mut nodes = Vec::new();
+    let mut seen = 0usize;
+    for item in items {
+        seen += 1;
+        if seen.is_multiple_of(DEADLINE_CHECK_EVERY) && budget.expired() {
+            return Err(SourceError::Budget);
+        }
+        if nodes.len() >= max_nodes {
+            return Err(SourceError::Budget);
+        }
+        nodes.push(item?);
     }
     if nodes.is_empty() {
         return Err(SourceError::Unsupported);
