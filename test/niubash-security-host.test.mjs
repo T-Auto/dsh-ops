@@ -47,14 +47,33 @@ const node = code => {
 }
 const ok = value => { assert.equal(value.exitCode, 0, JSON.stringify(value)); assert.equal(value.status, 'completed', JSON.stringify(value)); return value }
 try {
+  await test('the execution root parent honours DSH_OPS_EXEC_ROOT', async () => {
+    const configured = path.join(root, 'exec-root')
+    const previous = process.env.DSH_OPS_EXEC_ROOT
+    process.env.DSH_OPS_EXEC_ROOT = configured
+    try {
+      const value = ok(await call(node('process.stdout.write(process.env.NIU_ROOT)')))
+      const base = path.dirname(path.dirname(value.stdout.text))
+      assert.equal(fs.realpathSync.native(base), fs.realpathSync.native(configured))
+      assert.equal(fs.existsSync(base), false, 'the configured execution root is disposed')
+    } finally {
+      if (previous === undefined) delete process.env.DSH_OPS_EXEC_ROOT
+      else process.env.DSH_OPS_EXEC_ROOT = previous
+    }
+  })
   await test('real host confines Niubash command, script, EOF stdin and native children with Unicode cwd/env', async () => {
     const value = ok(await call("printf '牛'; printf pipe | cat; read x; printf 'EOF=%s' \"$?\""))
     assert.equal(value.stdout.text, '牛pipeEOF=1'); assert.equal(value.sandbox.mode, 'workspace-write'); assert.equal(value.sandbox.enforcement, 'partial')
     fs.writeFileSync(path.join(root, '脚本 file.sh'), "printf 'SCRIPT中文'\n")
     assert.equal(ok(await call(undefined, { script_path: path.join(root, '脚本 file.sh') })).stdout.text, 'SCRIPT中文')
-    const native = ok(await call(node('process.stdout.write(JSON.stringify({cwd:process.cwd(),root:process.env.NIU_ROOT}));')))
+    const native = ok(await call(node("const fs=require('fs'),path=require('path');const base=path.dirname(process.env.NIU_ROOT);const receipt=JSON.parse(fs.readFileSync(path.join(base,'execution-provenance.json'),'utf8'));const cat=fs.statSync(path.join(process.env.NIU_ROOT,'usr/bin/cat.exe'));process.stdout.write(JSON.stringify({cwd:process.cwd(),root:process.env.NIU_ROOT,mode:receipt.mode,seal:receipt.seal,writeBits:cat.mode & 0o222,nlink:cat.nlink}));")))
     const data = JSON.parse(native.stdout.text)
     assert.equal(fs.realpathSync.native(data.cwd), fs.realpathSync.native(root)); assert.notEqual(data.root, path.dirname(file)); assert.equal(path.basename(data.root), 'winuxcmd'); assert.match(path.basename(path.dirname(data.root)), /^dsh-ops-niu-exec-/); assert.equal(fs.existsSync(data.root), false, 'execution copy disposed after settlement')
+    assert.ok(data.mode === 'hardlink' || data.mode === 'copy', JSON.stringify(data))
+    assert.equal(data.seal === 'readonly+acl' || data.seal === 'readonly', true, JSON.stringify(data))
+    assert.equal(data.writeBits, 0, 'the payload is sealed read-only while the command runs')
+    if (data.mode === 'hardlink') assert.ok(data.nlink >= 2, JSON.stringify(data))
+    else assert.equal(data.nlink, 1, JSON.stringify(data))
   })
   await test('workspace in/out and read-only effects are confined for shell and native child', async () => {
     ok(await call('printf allowed > allowed.txt'))

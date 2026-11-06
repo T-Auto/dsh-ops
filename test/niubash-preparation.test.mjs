@@ -3,6 +3,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 import { disposeNiubash, prepareNiubash } from '../lib/niubash/runtime.js'
+import { nodeTreeOps } from '../lib/niubash/execution-tree.js'
+import { removeSealedTree } from '../lib/niubash/seal.js'
 import { startSessionBash } from '../lib/shells/session-execution.js'
 import { assert, test, report, withTempDir, skipSuite } from './lib/harness.mjs'
 
@@ -28,13 +30,18 @@ if (process.platform === 'win32') {
       const file = process.env.DSH_OPS_TEST_NIUBASH
       const policy = { mode: 'read-only', workspaceRoot: root }
       const agent = { session: { id: 'preparation' } }
-      let spawns = 0, copying = false, copiedRoot
-      const original = fs.promises.cp
-      fs.promises.cp = async (source, target, options) => {
-        copying = true; copiedRoot = target
-        // Exercise the actual cancellation-aware production filter while the event loop is free.
-        try { for (let n = 0; n < 1000; n++) { options.filter(source, target); await delay(5) } }
-        finally { copying = false }
+      let spawns = 0, cloning = false, clonedRoot
+      const original = nodeTreeOps.link
+      // The clone is one link per payload member; pin the first one so the
+      // deadline/cancellation races the real production clone instead of a mock tree.
+      nodeTreeOps.link = async (source, target) => {
+        if (cloning) return original(source, target)
+        let current = path.dirname(target)
+        while (!path.basename(current).startsWith('dsh-ops-niu-exec-')) current = path.dirname(current)
+        clonedRoot = current
+        cloning = true
+        try { for (let n = 0; n < 1000; n++) await delay(5) } finally { cloning = false }
+        return original(source, target)
       }
       const ctx = { get(name) {
         if (name === 'sandboxPolicy') return { resolve: () => policy }
@@ -42,23 +49,23 @@ if (process.platform === 'win32') {
       } }
       try {
         for (const cancel of [false, true]) {
-          copiedRoot = undefined
+          clonedRoot = undefined
           const controller = new AbortController()
           const execution = startSessionBash({ ctx, bash: { file, source: 'bundled' }, active: () => true },
             { command: 'printf never', workdir: root, timeoutMs: cancel ? 10000 : 500, includeDiagnostics: true }, { agent, signal: controller.signal }, policy, policy, {}, {})
           assert.equal(execution.started, false, 'handle exists before staging completes')
           if (cancel) {
-            while (!copying) await delay(5)
+            while (!cloning) await delay(5)
             controller.abort(new Error('cancel staging'))
           }
           const value = await execution.result()
           assert.equal(cancel ? value.cancelled : value.timedOut, true, JSON.stringify(value))
-          assert.equal(spawns, 0); assert.equal(copying, false)
-          assert.ok(copiedRoot, 'injected slow copying was reached')
-          assert.equal(fs.existsSync(copiedRoot), false, 'no asynchronous staging survives cleanup')
+          assert.equal(spawns, 0); assert.equal(cloning, false)
+          assert.ok(clonedRoot, 'injected slow cloning was reached')
+          assert.equal(fs.existsSync(clonedRoot), false, 'no asynchronous staging survives cleanup')
           assert.ok(value.diagnostics.durationMs >= (cancel ? 1 : 450))
         }
-      } finally { fs.promises.cp = original }
+      } finally { nodeTreeOps.link = original }
     })
   })
   await test('production session cleanup failure preserves success and leaves no unhandled done rejection', async () => {
@@ -94,26 +101,37 @@ if (process.platform === 'win32') {
       } finally {
         process.off('unhandledRejection', listener)
         fs.promises.rm = original
-        if (executionRoot) await original(executionRoot, { recursive: true, force: true })
+        // Clear the seal before deleting the tree the failed disposal left behind.
+        if (executionRoot) await removeSealedTree(executionRoot)
       }
     })
   })
   await test('derived faces and extra executable members fail closed', async () => {
     const runtime = await prepareNiubash(process.env.DSH_OPS_TEST_NIUBASH, '', new AbortController().signal)
+    const root = path.dirname(runtime.file)
+    const face = path.join(root, 'winuxcmd/usr/bin/cat.exe')
     try {
-      const face = path.join(path.dirname(runtime.file), 'winuxcmd/usr/bin/cat.exe')
       const saved = await fs.promises.readFile(face)
+      // A privileged process can clear the seal; the stat check must still notice
+      // the size change and the missing read-only bit.
+      await runtime.unseal()
       await fs.promises.appendFile(face, 'tamper')
-      await assert.rejects(runtime.verify(), /checksum/)
+      await assert.rejects(runtime.verify(), /size mismatch/)
       await fs.promises.writeFile(face, saved)
-      const extra = path.join(path.dirname(runtime.file), 'winuxcmd/usr/bin/untrusted.exe')
+      await runtime.seal()
+      await runtime.verify()
+
+      await runtime.unseal()
+      const extra = path.join(root, 'winuxcmd/usr/bin/untrusted.exe')
       await fs.promises.writeFile(extra, 'extra')
-      await assert.rejects(runtime.verify(), /checksum/)
+      await assert.rejects(runtime.verify(), /Unsafe Niubash execution tree member/)
       await fs.promises.unlink(extra)
-      const alias = path.join(path.dirname(runtime.file), 'outside-hardlink')
+
+      const alias = path.join(root, 'outside-hardlink')
       await fs.promises.link(face, alias)
-      await assert.rejects(runtime.verify(), /Unsafe/)
+      await assert.rejects(runtime.verify(), /link count mismatch/)
       await fs.promises.unlink(alias)
+      await runtime.seal()
       await runtime.verify()
     } finally { await runtime.dispose() }
   })

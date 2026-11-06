@@ -122,6 +122,30 @@ Restricted calls run the pinned Bash from a private, verified copy under `<DSH_H
 
 An interrupted staging leaves a `stage-*` directory in the cache. Confined calls reclaim copies older than one hour automatically (the reported reclaimable bytes include them), `clean-cache --yes --all-hosts-stopped` removes all of them, and deleting them by hand while no confined shell is running is equally safe.
 
+### Windows Bash staging is slow, antivirus scans it, or the payload looks read-only
+
+Each Windows `ops_bash` call now clones the verified Niubash payload by hardlink below
+`%TEMP%\dsh-ops-niu-exec-*` and seals the shared inodes read-only for the duration of the command.
+No payload data is copied, so the clone costs metadata only; the pre-spawn check compares the path
+set, sizes, directory set, read-only seal and link counts instead of re-hashing 1.85 GiB per call.
+The execution receipt `execution-provenance.json` in that tree records `mode` (`hardlink` or
+`copy`), the source manifest digest and the seal level.
+
+- If a scanner is unhappy with the temporary directory, set `DSH_OPS_EXEC_ROOT` to an allow-listed
+  directory or to the payload's own volume. A root on another volume falls back to copying the tree,
+  which the receipt records as `"mode": "copy"`. The root must not be inside the payload.
+- An `EXECUTOR_UNAVAILABLE` naming a size, seal or link-count mismatch means the clone changed
+  between creation and spawn. Nothing was executed; retry once, and restore the pinned payload if
+  it repeats.
+- While a command runs, the payload files are read-only (the Windows READONLY attribute plus a
+  deny-write/deny-delete ACL) and `winuxcmd.exe` with all argv0 faces share one inode. Disposal,
+  `provision-shells --force`, upgrade and `uninstall` unseal first. Because unsealing is per inode,
+  concurrent calls for the same payload defer their removal until the last one finishes, so a
+  finishing call cannot hand a writable window to a running sibling. A privileged process that can
+  rewrite ACLs or clear READONLY can still write through the hardlinks, so this is a robustness
+  boundary, not a security boundary against administrators.
+- `NIUBASH_VERIFY=deep` restores the full per-call re-hash of the source payload and the clone.
+
 ### A second restricted Bash fails while another Bash is still running
 
 The `CreateFileMapping S-<user SID>.<version>, Win32 error 5` failure in #363 came
