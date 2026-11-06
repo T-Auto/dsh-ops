@@ -132,8 +132,10 @@ await test('a cross-device link rebuilds the whole tree as copies and records th
     for (const face of Object.keys(DERIVED)) {
       assert.equal(fs.readFileSync(path.join(root, face), 'utf8'), CONTENT['bin/winuxcmd.exe'], face)
     }
-    assert.notEqual(fs.lstatSync(path.join(root, 'bin/cat.exe')).ino, fs.lstatSync(path.join(root, 'bin/winuxcmd.exe')).ino)
-    assert.notEqual(fs.lstatSync(path.join(root, 'bin/winuxcmd.exe')).ino, fs.lstatSync(path.join(source, 'bin/winuxcmd.exe')).ino)
+    if (process.platform !== 'win32') {
+      assert.notEqual(fs.lstatSync(path.join(root, 'bin/cat.exe')).ino, fs.lstatSync(path.join(root, 'bin/winuxcmd.exe')).ino)
+      assert.notEqual(fs.lstatSync(path.join(root, 'bin/winuxcmd.exe')).ino, fs.lstatSync(path.join(source, 'bin/winuxcmd.exe')).ino)
+    }
     await verifyTreeStat({ root, sizes: clone.sizes, links: clone.links,
       directories: [...DIRECTORIES, ...STATE_DIRECTORIES], sealed: false })
   } finally { await tidy(base) }
@@ -245,9 +247,13 @@ await test('stat-only verification rejects every structural deviation without re
     await sealReadOnly([...filesOf(root, clone), path.join(root, RECEIPT)].filter(file => fs.existsSync(file)))
     await assert.rejects(verify(), /Incomplete/u)
 
-    fs.symlinkSync(path.join(root, 'bin/helper.dll'), path.join(root, 'alias.dll'))
+    // A junction works without the Windows symlink privilege, and a link entry is
+    // rejected the same way on every platform.
+    const alias = path.join(root, 'alias-dir')
+    fs.symlinkSync(path.join(root, 'bin'), alias, process.platform === 'win32' ? 'junction' : 'dir')
     await assert.rejects(verify(), /Unsafe Niubash (?:execution )?tree member/u)
-    fs.unlinkSync(path.join(root, 'alias.dll'))
+    if (process.platform === 'win32') fs.rmdirSync(alias)
+    else fs.unlinkSync(alias)
   } finally { await tidy(base) }
 }))
 
