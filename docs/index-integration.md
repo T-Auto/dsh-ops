@@ -21,9 +21,10 @@ and what still falls back.
   source for the build target and asks the revalidating traversal (`Scan::walk_indexed`) for an
   answer. Only `glob` requests take this path (G3 boundary); `grep` reads file content and keeps
   the live traversal until its own integration slice. The platform crates are target-gated
-  dependencies: Windows builds link `ops-win-index`, Linux builds `ops-linux-index`, macOS builds
-  `ops-mac-index`; only one is ever compiled, and the pure `ops-index` crate keeps no platform
-  dependency.
+  dependencies: Linux builds link `ops-linux-index`, macOS builds `ops-mac-index`; only one is ever
+  compiled, and the pure `ops-index` crate keeps no platform dependency. Windows is **opt-in**
+  through the `win-index` feature (#718), because the MFT/USN crate pulls COM calls into the worker
+  import table: a default Windows build selects `NullSource` and never links `ops-win-index`.
 - **A source-kind cursor.** A continuation token names the traversal that produced its snapshot
   (`s1:` for the walk, `s2:` for the index path). Page two is bound to that kind; if the traversal
   that serves it differs, the page is rejected as `SEARCH_STALE` instead of mixing snapshot

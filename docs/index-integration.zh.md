@@ -15,9 +15,10 @@
   参数：任何 `ops_glob`/`ops_grep` 参数都不能设置或覆盖它，worker 只把它当作提示。
 - **按请求选择数据源**：存在 `cache_dir` 时，`ops-search` 按构建目标构造平台 source，并交给复验
   遍历（`Scan::walk_indexed`）回答。只有 `glob` 请求走这条路径（G3 边界）；`grep` 读取文件内容，
-  在它自己的集成切片之前继续使用 live walk。平台 crate 是 target 门控依赖：Windows 构建链接
-  `ops-win-index`，Linux 构建链接 `ops-linux-index`，macOS 构建链接 `ops-mac-index`；同一时刻只
-  编译一个，纯 `ops-index` crate 不引入任何平台依赖。
+  在它自己的集成切片之前继续使用 live walk。平台 crate 是 target 门控依赖：Linux 构建链接
+  `ops-linux-index`，macOS 构建链接 `ops-mac-index`；同一时刻只编译一个，纯 `ops-index` crate
+  不引入任何平台依赖。Windows 通过 `win-index` feature **显式可选**（#718）：MFT/USN crate 会把
+  COM 调用带进 worker 导入表，所以默认 Windows 构建选择 `NullSource`、从不链接 `ops-win-index`。
 - **cursor 绑定 source 种类**：续页 token 记录产生该快照的遍历种类（walk 为 `s1:`，索引路径为
   `s2:`）。第二页被绑定到该种类；若实际服务它的遍历不同，返回 `SEARCH_STALE`，绝不混用两个
   快照域。

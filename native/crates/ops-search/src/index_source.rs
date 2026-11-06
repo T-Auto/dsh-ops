@@ -21,6 +21,12 @@
 //! The crates are `#![cfg(target_os = ...)]` libraries: only the matching one
 //! is compiled, and the dependencies are target-gated in `Cargo.toml`, so a
 //! Linux build never compiles the Windows or macOS crate.
+//!
+//! Windows is also feature-gated (#718). `ops-win-index` depends on
+//! `usn-journal-rs`, whose COM calls make the linked worker import OLEAUT32;
+//! that is a startup regression for a default install, so the source is opt-in
+//! (`--features win-index`). Without the feature the Windows arm answers with
+//! `NullSource`, exactly like an unsupported target: every request walks.
 
 use ops_index::FsDataSource;
 
@@ -32,9 +38,17 @@ pub fn platform_source() -> Box<dyn FsDataSource> {
     target_source()
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, feature = "win-index"))]
 fn target_source() -> Box<dyn FsDataSource> {
     Box::new(ops_win_index::WinFsSource::new())
+}
+
+/// A default Windows build: no MFT/USN source, so no OLEAUT32/COM imports from
+/// `usn-journal-rs` reach the worker (#718). Behaves like an unsupported
+/// target, which `walk_indexed` turns into the live walk.
+#[cfg(all(windows, not(feature = "win-index")))]
+fn target_source() -> Box<dyn FsDataSource> {
+    Box::new(ops_index::NullSource)
 }
 
 #[cfg(target_os = "linux")]

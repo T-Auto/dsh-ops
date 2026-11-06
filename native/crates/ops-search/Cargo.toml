@@ -24,8 +24,18 @@ uuid = { version = "1.26", features = ["v4"] }
 # `#![cfg(target_os = ...)]`, so only the matching one contributes code and the
 # others are never built. `ops-search` names them; the pure `ops-index` crate
 # stays free of platform dependencies.
+#
+# Windows is additionally feature-gated (#718). `ops-win-index` pulls
+# `usn-journal-rs`, whose COM calls make the linked worker import OLEAUT32;
+# a default Windows worker must start without those imports, so the MFT source
+# is opt-in (`--features win-index`) until that dependency is lazy-loaded or
+# replaced. Linux and macOS stay unconditional, so their behaviour is unchanged.
+[features]
+default = []
+win-index = ["dep:ops-win-index"]
+
 [target.'cfg(windows)'.dependencies]
-ops-win-index = { path = "../ops-win-index" }
+ops-win-index = { path = "../ops-win-index", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ops-linux-index = { path = "../ops-linux-index" }

@@ -6,6 +6,31 @@ is `#![cfg(windows)]` and every dependency lives under
 resolve no Windows package at build time. The lockfile still records the Windows-target packages
 because Cargo locks every target; the workspace's `--locked` checks therefore cover them too.
 
+## Opt-in feature: `win-index` (#718)
+
+`ops-win-index` is **not compiled by default**. `ops-search` declares it as an optional dependency
+behind the `win-index` feature (`default = []`), because `usn-journal-rs` issues COM calls that make
+the linked worker import `OLEAUT32.dll`; a default Windows install must start without that
+dependency. Without the feature `platform_source()` answers `NullSource` on Windows, so every search
+keeps the live walk and the counters are unchanged.
+
+Enable it only when evaluating W1's cold enumeration:
+
+```console
+cargo build --release --features win-index            # from native/
+cargo build --release --features ops-search/win-index # from the workspace
+npm run build:ptc                                     # keep the staged runtime in sync
+```
+
+Default Windows worker evidence (cross-compiled `x86_64-pc-windows-gnu`, 2026-11-06):
+**7,817,886 bytes**, sha256 `dadad4db93ed6559facbb00bfd541f2f0fadb573f772fc7df6911236a6435006`;
+PE import table: `advapi32.dll`, `api-ms-win-core-synch-l1-2-0.dll`, `bcryptprimitives.dll`,
+`kernel32.dll`, `msvcrt.dll`, `ntdll.dll`, `userenv.dll`, `ws2_32.dll` — **no `oleaut32.dll` /
+`ole32.dll`**. The same build with `--features ops-search/win-index` is **8,014,093 bytes** and
+imports `oleaut32.dll`, which shows the feature is exactly what gates the COM dependency.
+`dumpbin` is not available on the Linux build host; the equivalents are
+`x86_64-w64-mingw32-objdump -p <exe>` and its DLL-import table.
+
 This page is the dependency record for the crate. Every direct dependency names an exact version and
 its crates.io publication date (checked against the crates.io API on 2026-11-04 UTC+08); the
 lockfile pins the transitive graph. Full licence texts are in

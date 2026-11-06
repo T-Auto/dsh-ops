@@ -31,6 +31,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Keep the Windows MFT index source opt-in behind the `win-index` feature (default off): the default Windows worker no longer links `ops-win-index`/`usn-journal-rs` and therefore imports no `OLEAUT32`/COM, restoring startup on plain installs; without the feature Windows selects `NullSource` and every search keeps the live walk (#718).
+- Windows 的 MFT 索引 source 改为 `win-index` feature 显式可选（默认关闭）：默认 Windows worker 不再链接 `ops-win-index`/`usn-journal-rs`，因此不导入 `OLEAUT32`/COM，恢复普通安装的启动；未启用时 Windows 选择 `NullSource`，所有搜索继续 live walk（#718）。
 - Fail index A/B benchmarks on failed or incomplete cold calls even when both arms return identical bytes; retain cold exit, timeout and completeness evidence.
 - 索引 A/B 基准对冷态失败或不完整调用判失败，即使两臂字节相同；保留冷态退出码、超时与完整性证据。
 

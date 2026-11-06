@@ -298,3 +298,31 @@ fn grep_never_consults_an_index_source() {
         "grep must never enumerate a source"
     );
 }
+
+#[cfg(all(windows, not(feature = "win-index")))]
+#[test]
+fn a_default_windows_build_never_serves_an_index() {
+    let fixture = Fixture::new("win-default");
+    fixture.file("a.txt", "a");
+    let cache = fixture.root.join("cache");
+    std::fs::create_dir(&cache).unwrap();
+    let source = platform_source();
+    assert!(
+        matches!(source.state(&fixture.root), SourceState::Unsupported),
+        "the default Windows build must not link the MFT source (#718)"
+    );
+    let walked = glob(&request(&fixture.root, None, glob_args(&fixture.root))).unwrap();
+    let with_cache = glob(&request(&fixture.root, Some(&cache), glob_args(&fixture.root))).unwrap();
+    assert_eq!(walked, with_cache, "the gated source still falls back to the walk");
+}
+
+#[cfg(all(windows, feature = "win-index"))]
+#[test]
+fn the_opt_in_windows_source_is_selected_but_never_ready() {
+    let fixture = Fixture::new("win-optin");
+    let source = platform_source();
+    assert!(
+        !matches!(source.state(&fixture.root), SourceState::Ready { .. }),
+        "W1 has no watcher yet, so an opted-in build still walks"
+    );
+}

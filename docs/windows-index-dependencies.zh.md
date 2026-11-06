@@ -5,6 +5,29 @@
 构建只编译空库、构建期不解析任何 Windows 包。lockfile 仍会记录 Windows 目标包（Cargo 锁定所有
 目标），所以 workspace 的 `--locked` 检查同样覆盖它们。
 
+## 可选 feature：`win-index`（#718）
+
+`ops-win-index` **默认不参与编译**。`ops-search` 把它声明为可选依赖，挂在 `win-index` feature 下
+（`default = []`），因为 `usn-journal-rs` 会发起 COM 调用，使链接后的 worker 导入
+`OLEAUT32.dll`；默认的 Windows 安装必须在没有该依赖的情况下启动。未启用 feature 时
+`platform_source()` 在 Windows 上返回 `NullSource`，所有搜索继续走 live walk，计数不变。
+
+仅在评估 W1 冷枚举时显式启用：
+
+```console
+cargo build --release --features win-index            # 在 native/ 下
+cargo build --release --features ops-search/win-index # 在工作区根目录
+npm run build:ptc                                     # 同步已 staged 的 runtime
+```
+
+默认 Windows worker 证据（交叉编译 `x86_64-pc-windows-gnu`，2026-11-06）：**7,817,886 字节**，sha256
+`dadad4db93ed6559facbb00bfd541f2f0fadb573f772fc7df6911236a6435006`；PE 导入表为
+`advapi32.dll`、`api-ms-win-core-synch-l1-2-0.dll`、`bcryptprimitives.dll`、`kernel32.dll`、
+`msvcrt.dll`、`ntdll.dll`、`userenv.dll`、`ws2_32.dll` —— **没有 `oleaut32.dll` / `ole32.dll`**。
+同一构建加上 `--features ops-search/win-index` 后为 **8,014,093 字节** 且导入 `oleaut32.dll`，
+说明正是该 feature 门控了 COM 依赖。Linux 构建机上没有 `dumpbin`；等价命令是
+`x86_64-w64-mingw32-objdump -p <exe>` 及其 DLL 导入表。
+
 本文是该 crate 的依赖台账：直接依赖给出精确版本与 crates.io 发布时间（2026-11-04 UTC+08 依据
 crates.io API 核对），传递依赖由 lockfile 固定。完整许可证正文见
 [`licenses/windows-index/THIRD-PARTY-NOTICES.txt`](../licenses/windows-index/THIRD-PARTY-NOTICES.txt)。
