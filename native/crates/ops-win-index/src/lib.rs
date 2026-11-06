@@ -4,6 +4,8 @@
 //! Windows file-name index data source (W2: cold MFT plus journal tail).
 //! Windows file-name index data source (W1 cold MFT enumeration, W3 raw FSCTL
 //! fallback, W4 hard-link reconciliation).
+//! Windows file-name index data source (W2: cold MFT plus journal tail; W3: raw
+//! FSCTL fallback).
 //!
 //! This crate is the Windows member of the platform data-source crates designed
 //! in #584. The cold half enumerates FSCTL_ENUM_USN_DATA through
@@ -21,16 +23,20 @@
 //! inside `winfs`: `winfs::sys` for `FSCTL_*` and `winfs::links` for W4's
 //! `FindFirstFileNameW`/`FindNextFileNameW`; each sits behind a safe boundary
 //! with `unsafe_op_in_unsafe_fn` denied and a SAFETY comment on every block.
+//! in `ops_index::usn`; the crate's only `unsafe` lives in that module, behind
+//! a safe `VolumeHandle`/`VolumeIo` boundary, with `unsafe_op_in_unsafe_fn`
+//! denied and a SAFETY comment on every block.
 //!
 //! The whole crate body is behind #![cfg(windows)], so every other target
 //! compiles an empty library and the workspace stays green. The Windows-only
 //! dependencies are target-gated for the same reason. usn-journal-rs keeps its
-//! unsafe in its own crate: nothing here uses unsafe, names a raw Win32 type, or
-//! writes a platform cfg branch. cap-std/cap-fs-ext are used only to read the
-//! volume root's metadata, which is what makes Candidate.key match the
-//! integration's (dev, ino) exactly.
+//! own unsafe in its own crate; `winfs` is the single, documented island here.
+//! cap-std/cap-fs-ext are used only to read the volume root's metadata, which is
+//! what makes Candidate.key match the integration's (dev, ino) exactly.
 //!
 //! What this slice still does NOT claim:
+//! What this crate does NOT claim:
+//!
 //! - No file size or modification time. FSCTL_ENUM_USN_DATA and the journal
 //!   carry names, attributes and ids only, so Candidate.len is 0 and
 //!   modified_ns is None until a later enrichment slice fills them.

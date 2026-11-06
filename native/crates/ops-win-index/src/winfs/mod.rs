@@ -32,6 +32,11 @@
 //! sits in a block with a SAFETY comment naming its invariant. No other module
 //! in this crate names a raw Win32 type, and `cfg(any(...))` branches stay
 //! absent: the whole crate is `cfg(windows)`.
+//! The crate root denies `unsafe_code`; only `sys` is allowed to break it;
+//! `unsafe_op_in_unsafe_fn` is denied, so every raw call sits in a block with a
+//! SAFETY comment naming its invariant. No other module in this crate names a
+//! raw Win32 type, and `cfg(any(...))` branches stay absent: the whole crate is
+//! `cfg(windows)`.
 
 #[allow(unsafe_code)]
 mod sys;
