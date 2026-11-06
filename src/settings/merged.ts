@@ -18,6 +18,7 @@ import { resolveDiscoveryConfig } from '../discovery/config.js'
 import { resolveConfig, type DownloadGuardConfig } from '../config.js'
 import { resolvePanelConfig } from '../panel/collect.js'
 import { resolveActivityConfig } from '../tui/activity.js'
+import { resolveDiskConfig, type DiskConfig } from '../disk/ownership.js'
 import { PRESET_SETTINGS } from './preset-schema.js'
 import { customPresets, type CustomPreset } from './presets.js'
 import { editable, settingsConfig, type Field } from './schema.js'
@@ -30,7 +31,7 @@ type ActivityConfig = ReturnType<typeof resolveActivityConfig>
 export const MODES = MODE_IDS
 export type ModeKey = typeof MODES[number]
 /** Every section the row accepts. */
-export const FEATURES = [...MODES, 'discovery', 'download-guard', 'panel', 'tui', 'other'] as const
+export const FEATURES = [...MODES, 'discovery', 'download-guard', 'panel', 'tui', 'disk', 'other'] as const
 export type Feature = typeof FEATURES[number]
 
 /** Bundle-wide switches; resident publication is deliberately mode-local. */
@@ -61,6 +62,7 @@ export interface MergedConfig {
   readonly 'download-guard': FeatureState<DownloadGuardConfig>
   readonly panel: FeatureState<PanelConfig>
   readonly tui: FeatureState<ActivityConfig>
+  readonly disk: FeatureState<DiskConfig>
   readonly other: FeatureState<{ pwsh7Link: boolean }>
 }
 
@@ -68,7 +70,9 @@ const ENABLED_BY_DEFAULT: Readonly<Record<Feature, boolean>> = Object.freeze({
   minimal: true, standard: true, ptc: true, cordis: true, discovery: true,
   // The download guard is off until an operator names a downloader: mounting it
   // against an empty template would register a listener that can never act.
-  'download-guard': false, panel: false, tui: false, other: false,
+  'download-guard': false, panel: false, tui: false,
+  // Disk status is an operator report, not a mount: the section carries policy keys only.
+  disk: true, other: false,
 })
 
 function object(name: string, value: unknown): Record<string, unknown> {
@@ -142,6 +146,7 @@ export function resolveMergedConfig(raw?: unknown): MergedConfig {
     'download-guard': downloadGuardState(input['download-guard']),
     panel: panelState(input.panel),
     tui: tuiState(input.tui),
+    disk: diskState(input.disk),
     other: otherState(input.other),
   }
 }
@@ -172,6 +177,13 @@ function panelState(value: unknown): FeatureState<PanelConfig> {
   return resolved === undefined
     ? { enabled, config: resolvePanelConfig(rest), raw: rest }
     : { enabled, config: resolved as PanelConfig }
+}
+
+function diskState(value: unknown): FeatureState<DiskConfig> {
+  const { enabled, rest, resolved } = split('disk', value)
+  return resolved === undefined
+    ? { enabled, config: resolveDiskConfig(rest), raw: rest }
+    : { enabled, config: resolved as DiskConfig }
 }
 
 function otherState(value: unknown): FeatureState<{ pwsh7Link: boolean }> {

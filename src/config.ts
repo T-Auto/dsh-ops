@@ -22,7 +22,7 @@ export const LEGACY_FASTCTX_KEYS = Object.freeze(['serverName', 'enableShellTool
 export const CORE_CONFIG_KEYS = Object.freeze([
   ...LEGACY_FASTCTX_KEYS, 'binaryPath', 'required', 'shellPolicy', 'deniedHostTools', 'promptPolicy',
   'extraGuidance', 'bashPath', 'publishBashTool', 'allowSystemShellFallback', 'denyCredentialReads', 'configUpdateVersion', 'indexCache',
-  'downloadGuard',
+  'downloadGuard', 'disk',
 ])
 
 /** Upper bound accepted for the legacy `toolCallTimeoutMs`, matching the loader's timer ceiling. */
@@ -35,6 +35,8 @@ export const SHELL_POLICIES = ['advise', 'deny-host-shell']
 export const DEFAULT_DENIED_HOST_TOOLS = ['pwsh', 'bash', 'pwsh_persistent']
 
 import { ConfigError } from './config-error.js'
+import { resolveDiskConfig } from './disk/ownership.js'
+import type { DiskConfig } from './disk/ownership.js'
 export { ConfigError } from './config-error.js'
 
 /**
@@ -166,6 +168,7 @@ export interface ResolvedConfig {
   publishBashTool: boolean
   allowSystemShellFallback: boolean
   downloadGuard: DownloadGuardConfig
+  disk: DiskConfig
 }
 
 /**
@@ -242,6 +245,7 @@ export function resolveConfig(rawConfig?: unknown): ResolvedConfig {
     // directory and every search keeps the live traversal.
     indexCache: optionalBoolean(raw, 'indexCache', false),
     downloadGuard: resolveDownloadGuard(raw.downloadGuard),
+    disk: resolveDiskConfig(raw.disk),
   }
 }
 

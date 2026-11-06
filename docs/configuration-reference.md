@@ -18,6 +18,10 @@ Plugin authors can also mount the [public integration API](integration-api.md) i
 | `discovery` | Enabled; default built-in Native pool, maxResults 3, no always-loaded selections |
 | `panel`, `tui` | Disabled by default; opt-in capture and read-only sidebar |
 | `other.pwsh7Link` | When absent follows companion detection; saved boolean wins |
+| `disk` | Read-only ownership report; `status.includeRepository` false and `status.maxEntries` 5000 by default; the `retention` block is a validated contract only (no eviction in this release) |
+
+`disk.status.*` and the reserved `disk.retention.*` keys are YAML-only. See [Disk and cache](disk-and-cache.md) for
+the resource inventory, the read-only `dsh-ops disk status` report and what it deliberately never scans.
 
 The page uses native Switch controls. Built-in cards start collapsed. Disabling a card greys its
 switches without erasing saved values. Standard/PTC/Cordis have `residentTools` (default true),

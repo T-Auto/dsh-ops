@@ -31,6 +31,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Add the read-only `dsh-ops disk status [--json]` report: an ownership registry for every disk family the plugin writes (R1–R13), a bounded measurement that never follows links, per-category default actions, reclaim evidence with blocked reasons, and a validated `disk.status`/`disk.retention` config skeleton (the retention keys are a contract only; this release deletes nothing).
+- 新增只读的 `dsh-ops disk status [--json]`：为插件写入的每个磁盘家族（R1–R13）建立归属清单，提供不跟随链接的有界测量、按类别的默认动作、带阻塞原因的回收证据，以及经校验的 `disk.status`/`disk.retention` 配置骨架（retention 键只是契约，本版不删除任何内容）。
+
 - Keep zero-byte ERROR_MORE_DATA completions incomplete instead of treating them as end-of-data.
 - ERROR_MORE_DATA 零字节完成保留不完整状态，不再误报数据结束。
 - Preserve PTC paging of session-owned legacy snapshots and batch audits through the shared result adapter, while Native still accepts only ref:// references. Refuse result storage when the active PTC parent's presentation changes or its inspection fails before cache IO. Await shared publication readiness and roll back permanent delayed initialization failures.
