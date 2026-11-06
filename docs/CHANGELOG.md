@@ -5,6 +5,17 @@ All notable changes to this package are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-11-06 — Stable release
+
+- This stable release summarizes the user- and developer-facing changes since v0.4.0, including the 0.4.1-0.4.4 patch releases and the 0.5.0 previews. **Breaking:** the 0.5 series targets DSH 0.2.2-rc.1 and later 0.2.2 releases only; older hosts are no longer supported.
+- 本正式版汇总自 v0.4.0 起（含 0.4.1-0.4.4 补丁版与 0.5.0 预览版）的用户与开发者相关变更。**破坏性变更**：0.5 系列仅面向 DSH 0.2.2-rc.1 起的 0.2.2 发行线，不再支持旧宿主。
+
+- The built-in Minimal, Standard, PTC and Cordis presets now hide the host PowerShell by default, still only while their Bash replacement is callable, the global gate allows it and the dsh-win-pwsh7 link is off; saved explicit values, custom presets and the global veto are unchanged.
+- 内置极简、标准、PTC 与创造预设默认隐藏宿主 PowerShell，但仍要求其 Bash 替代工具可调用、总闸允许且未开启 dsh-win-pwsh7 联动；已保存的显式值、自定义预设与总闸否决保持不变。
+
+- Plugin detail pages now show a curated introduction through the locale meta.detail entry instead of the repository README.
+- 插件详情页通过 locale 的 meta.detail 展示专门编写的介绍，不再直接使用仓库 README。
+
 ## [Unreleased]
 
 - Preserve PTC paging of session-owned legacy snapshots and batch audits through the shared result adapter, while Native still accepts only ref:// references. Refuse result storage when the active PTC parent's presentation changes or its inspection fails before cache IO. Await shared publication readiness and roll back permanent delayed initialization failures.

@@ -62,7 +62,7 @@ for (const bash of [false, true]) for (const pwsh of [false, true]) {
   await test(`Bash=${bash}, host pwsh=${pwsh}: independent schemas and prompt slots`, () => withTempDir('shell-slot-matrix', async cwd => {
     const { ctx, mint, names, assemble } = await boot(cwd)
     try {
-      const row = await ctx.plugin(Bundle, { ...minimalOnly, global: { bash }, other: { pwsh7Link: false } })
+      const row = await ctx.plugin(Bundle, { ...minimalOnly, global: { bash, hidePwsh: false }, other: { pwsh7Link: false } })
       const agent = await mint('matrix', { pwsh })
       const assembly = await assemble(agent)
       assert.equal(assembly.variables.os, process.platform, 'Bash never rewrites the host OS variable')
@@ -164,14 +164,15 @@ for (const preset of ['standard', 'cordis']) {
 }
 
 for (const [label, config, hidden] of [
-  ['global allow alone', { global: { hidePwsh: true } }, false],
+  ['default intent', { global: { hidePwsh: true } }, true],
+  ['explicit opt-out', { minimal: { hidePwsh: false } }, false],
   ['explicit intent', { global: { hidePwsh: true }, minimal: { hidePwsh: true } }, true],
   ['legacy explicit intent without global', { minimal: { hidePwsh: true } }, true],
   ['global veto', { global: { hidePwsh: false }, minimal: { hidePwsh: true } }, false],
   ['link on without companion', { minimal: { hidePwsh: true }, other: { pwsh7Link: true } }, false],
   ['link off without companion', { minimal: { hidePwsh: true }, other: { pwsh7Link: false } }, true],
   ['missing Bash', { minimal: { hidePwsh: true, bashPath: path.resolve('absent-shell-slot.exe') } }, false],
-]) await test(`${label}: hide PowerShell only with explicit, ready, unlinked intent`, () => withTempDir('shell-slot-hide', async cwd => {
+]) await test(`${label}: hide PowerShell only with enabled, ready, unlinked intent`, () => withTempDir('shell-slot-hide', async cwd => {
   const { ctx, mint, names, assemble } = await boot(cwd)
   try {
     await ctx.plugin(Bundle, { ...minimalOnly, ...config })
