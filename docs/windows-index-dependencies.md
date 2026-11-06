@@ -36,15 +36,21 @@ its crates.io publication date (checked against the crates.io API on 2026-11-04 
 lockfile pins the transitive graph. Full licence texts are in
 [`licenses/windows-index/THIRD-PARTY-NOTICES.txt`](../licenses/windows-index/THIRD-PARTY-NOTICES.txt).
 
-## Direct dependency (1)
+## Direct dependency (3)
 
 | Crate | Pin | Published (UTC) | License | Why |
 | --- | --- | --- | --- | --- |
-| `usn-journal-rs` | `=0.5.0` | 2026-10-13 | MIT | Safe wrappers over `FSCTL_ENUM_USN_DATA` for W1's cold MFT enumeration and, from W2, over the USN change journal. It owns the slice's only Win32 code: this crate stays `#![forbid(unsafe_code)]` and names no raw Windows type. Runtime operation requires Administrator privileges, which is the documented fallback. MSRV 1.88, equal to this crate's floor. |
+| `usn-journal-rs` | `=0.5.0` | 2026-10-13 | MIT | Safe wrappers over `FSCTL_ENUM_USN_DATA` for the cold MFT enumeration and over the USN change journal for the tail. It owns the slice's only Win32 code: this crate stays `#![forbid(unsafe_code)]` and names no raw Windows type. Runtime operation requires Administrator privileges, which is the documented fallback. MSRV 1.88, equal to this crate's floor. |
+| `cap-std` | `3.4.6` | 2026-08-20 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | Opens the volume root and reads its directory metadata, so `Candidate.key.volume` is exactly the serial cap-fs-ext reports as `dev()`. The same crate the integration already uses for its candidate re-verification, so the two cannot drift. Ambient authority is used once, on the volume root, for metadata only. |
+| `cap-fs-ext` | `3.4.6` | 2026-08-20 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | The `MetadataExt` implementation behind `dev()` and `ino()`: `Candidate.key.file` is the full 64-bit nFileIndex cap reports as `ino()`. Already resolved in `native/Cargo.lock` through the workspace root; this slice adds the direct edge only. |
 
-The dependency is target-gated because `usn-journal-rs` itself contains
-`#[cfg(not(windows))] compile_error!`. It must never appear in `ops-index` or in any other
-platform-agnostic crate.
+All three are target-gated. `usn-journal-rs` itself contains
+`#[cfg(not(windows))] compile_error!`, so it must never appear in `ops-index` or in any other
+platform-agnostic crate. `cap-std`/`cap-fs-ext` are the same safe metadata layer the
+integration uses: reading the volume serial and file index through it is what makes
+`Candidate.key` compare equal to the integration's `(dev, ino)` instead of drifting into a
+fallback. Both were already direct dependencies of the workspace root and remain locked at 3.4.6;
+this slice adds no package, only the two edges and their licence texts.
 
 ## Transitive packages resolved for the Windows target
 
