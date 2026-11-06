@@ -21,6 +21,18 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Load `@deepseek-ai/dsh-scope` from the copy the host uses. A linked development checkout resolves its own
+  `node_modules` first, and that second copy tags contexts with its own `Symbol('dsh.scope')`, so `scopeOf`
+  returned `undefined`, every ancestor lookup collapsed to the key itself, and creating a session failed with
+  `Publication scope must match its registration context`. The adapter now compares where the bare import
+  resolves: a copy installed inside this package belongs to the development checkout, so the host's copy is
+  resolved from the profile tree instead.
+- 从宿主实际使用的那份 `@deepseek-ai/dsh-scope` 加载 scope 助手。`link:` 开发检出会先解析到自己的
+  `node_modules`，而第二份副本用各自的 `Symbol('dsh.scope')` 标记上下文，导致 `scopeOf` 返回
+  `undefined`、祖先查找退化成键本身，新建会话时报
+  `Publication scope must match its registration context`。adapter 现在比较裸导入的解析位置：落在本包
+  内部的副本属于开发检出，因此改为从 profile 目录树解析宿主那份。
+
 - Preserve PTC paging of session-owned legacy snapshots and batch audits through the shared result adapter, while Native still accepts only ref:// references. Refuse result storage when the active PTC parent's presentation changes or its inspection fails before cache IO. Await shared publication readiness and roll back permanent delayed initialization failures.
 - 共享 result 适配器保留 PTC 对会话自有旧快照与 batch 审计的分页，Native 仍仅接受 ref:// 引用；活动 PTC 父调用的展示变化或检查失败时，在缓存 IO 前拒绝存储。等待共享发布就绪，并回滚延迟初始化的永久失败。
 
