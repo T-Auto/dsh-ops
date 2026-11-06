@@ -19,8 +19,50 @@ npm run build && npm run build:ptc     # lib/ + 原生 worker
 
 ```console
 npm i -g @deepseek-ai/dsh
-node bench/cli.mjs setup              # 会自动添加 2 个 headless profile（base、dsh），然后在 dsh 上面安装本地代码 build 出来的插件
+node bench/cli.mjs setup              # 自动添加 bench-base / bench-ops 两个 headless profile；默认 --plugin local 以 link 测量工作区（测编译产物见下一节 / default links the working tree; see the next section for the built package）
 ```
+
+### 测编译后的插件 / Benchmark the built artifact
+
+`setup` 默认的 `--plugin local` 会把 checkout 以 `link:` 装进 candidate，用来测工作区里的代码，改完源码不必重新安装。这个形态下，插件对宿主包的运行时 `import` 可能解析到 checkout 自己的 `devDependencies`；`@deepseek-ai/dsh-scope` 的 scope key 是模块内私有 `Symbol`，一旦插件和宿主各自加载一份，`scopeOf(agent.ctx)` 就读不到宿主的标记，启动时报 `Publication scope must match its registration context`。
+
+要测“编译后的插件”，把当前 checkout 打成 tarball 再安装。tarball 属于 profile 层，宿主会把 `@deepseek-ai/dsh-scope` 统一解析到自己的副本，不再出现双实例。
+
+Windows PowerShell：
+
+```console
+npm run build
+npm pack --pack-destination $env:TEMP
+node bench/cli.mjs setup --plugin "$env:TEMP\dsh-ops-0.5.0.tgz" --reinstall
+node bench/cli.mjs ab --task csv-sum
+```
+
+bash：
+
+```console
+npm run build
+npm pack --pack-destination /tmp
+node bench/cli.mjs setup --plugin /tmp/dsh-ops-0.5.0.tgz --reinstall
+node bench/cli.mjs ab --task csv-sum
+```
+
+改完源码后重复 `build → pack → setup --reinstall`；profile 记录的是 tarball 的 `file:` 路径，临时文件被清理后需要重新安装。要回到测工作区的 link 形态：
+
+```console
+node bench/cli.mjs setup --plugin local --reinstall
+```
+
+Windows 上跑 sweep 前先让 `PSModulePath` 使用机器级值（或从新的 cmd.exe 启动），避免 PowerShell 7 的 Core 模块根排在 5.1 前面：
+
+```powershell
+$env:PSModulePath = [Environment]::GetEnvironmentVariable('PSModulePath','Machine')
+```
+
+The default `--plugin local` links the checkout into the candidate so the working tree is what runs, with no reinstall after edits. In that linked shape a runtime host-package import can resolve the checkout's own `devDependencies`. `@deepseek-ai/dsh-scope` keys scopes with a module-local `Symbol`; when the plugin and the host load two copies, `scopeOf(agent.ctx)` cannot see the host's tag and startup fails with `Publication scope must match its registration context`.
+
+To benchmark the built artifact, pack the checkout and install the tarball. A tarball is a profile-layer package, so the host resolves `@deepseek-ai/dsh-scope` to its own copy and the duplicate instance disappears. Use the Windows PowerShell or bash commands above, then repeat `build → pack → setup --reinstall` after source changes. The profile records the tarball's `file:` path, so removing the temporary file requires another install. Return to the linked working-tree shape with `setup --plugin local --reinstall`.
+
+On Windows, run the sweep with the machine-level `PSModulePath` (or from a fresh `cmd.exe`) so a PowerShell 7 Core module root does not precede the in-box 5.1 directory; use the PowerShell line above. This is separate from the tarball fix: it prevents candidate-side shell bootstrap failures in the poisoned environment.
 
 ### 配 LLM 链接
 
