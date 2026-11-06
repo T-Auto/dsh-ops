@@ -34,7 +34,9 @@ await test('the browser seam exports the native controls and nothing else', () =
 await test('the adapter keeps scope discovery lazy', () => {
   const text = fs.readFileSync(path.join(adapter, 'host.ts'), 'utf8')
   assert.match(text, /async function loadScopes/u)
-  assert.match(text, /return import\('@deepseek-ai\/dsh-scope'\)/u)
+  // The package is chosen at call time and imported dynamically; a static
+  // import would evaluate a second module instance at plugin load.
+  assert.match(text, /import\(chooseScopeSource\(/u)
   assert.doesNotMatch(text, /^import .*dsh-scope/m)
 })
 
