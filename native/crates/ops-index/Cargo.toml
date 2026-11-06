@@ -7,6 +7,10 @@ rust-version = "1.88"
 publish = false
 
 [dependencies]
+# Advisory file lock for the snapshot writer. Already in the workspace lock
+# through ops-files; fs2 0.4.3 was published 2018-01-06, well past the seven-day
+# rule. This is the one whitelist exception (#584), required by #586.
+fs2 = "=0.4.3"
 # Canonical normalization for the fold key: APFS/HFS+ deliver NFD names while
 # NTFS and ext4 deliver NFC, so the two spellings must match. Exact pin keeps
 # MSRV 1.88 truthful; 0.1.26 was published 2026-10-16.
