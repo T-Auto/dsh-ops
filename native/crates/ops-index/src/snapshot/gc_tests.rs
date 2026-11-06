@@ -159,6 +159,27 @@ fn temporary_names_are_derived_from_the_published_name() {
 }
 
 #[test]
+fn uninstall_cleanup_removes_the_nested_index_cache_store() {
+    // The host-owned cache lives at <DSH_HOME>/dsh-ops/index-cache; uninstall
+    // must clear that store without deleting the host's dsh-ops directory.
+    let home = TestDir::new("uninstall-home");
+    let store_dir = home.path().join("dsh-ops").join("index-cache");
+    fs::create_dir_all(&store_dir).unwrap();
+    publish(&store_dir, 24);
+    residue(&store_dir, 0, 6);
+    drop(SnapshotLock::acquire(&store_dir).unwrap());
+    let report = remove_all(&store_dir).unwrap();
+    assert_eq!(report.removed_published, 1);
+    assert_eq!(report.removed_temporary, 1);
+    assert!(report.removed_lock);
+    assert!(!store_dir.exists(), "the cache store is removed");
+    assert!(
+        home.path().join("dsh-ops").is_dir(),
+        "the host directory survives"
+    );
+}
+
+#[test]
 fn gc_errors_carry_a_stable_code() {
     let error = GcError::Io(std::io::Error::other("boom"));
     assert_eq!(error.code(), "INDEX_SNAPSHOT_GC_IO");
