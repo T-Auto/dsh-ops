@@ -33,6 +33,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - Keep zero-byte ERROR_MORE_DATA completions incomplete instead of treating them as end-of-data.
 - ERROR_MORE_DATA 零字节完成保留不完整状态，不再误报数据结束。
+
+- Record deferred result-cache cleanup for a root before its first caller can use it, retry it with bounded exponential backoff when workspace-write authority returns or at the next start-up, and reclaim idle roots that no session references. The native purge deliberately keeps the root, its scope directory and the lock; the new host-side sweep reclaims empty and lock-only roots by default, validates the whole directory structure before deleting a name, skips and reports any root with an unknown entry, excludes this process's live roots, and applies aggregate root/byte budgets only when `resultCache.maxRoots`/`maxTotalBytes` opt in. A session whose cache root was removed externally now recreates it instead of failing. `dsh-ops result-cache status|reclaim [--apply]` exposes the same bounded pass (#721).
+- 在首个调用可使用结果缓存根之前登记该根的延迟清理；恢复 workspace-write 授权或下次启动时按有界指数退避重试，并回收已无会话引用的空闲根。native purge 有意保留根目录、作用域目录与锁，新的宿主侧清扫默认回收空根与只剩 lock 的根，删除任何名字前校验完整目录结构，遇未知条目整根跳过并报告，排除本进程活跃根，且仅在 `resultCache.maxRoots`/`maxTotalBytes` 显式开启时应用聚合根数/字节预算。缓存根被外部删除后，会话会重建它而不是报错。`dsh-ops result-cache status|reclaim [--apply]` 暴露同一次有界清扫（#721）。
 - Preserve PTC paging of session-owned legacy snapshots and batch audits through the shared result adapter, while Native still accepts only ref:// references. Refuse result storage when the active PTC parent's presentation changes or its inspection fails before cache IO. Await shared publication readiness and roll back permanent delayed initialization failures.
 - 共享 result 适配器保留 PTC 对会话自有旧快照与 batch 审计的分页，Native 仍仅接受 ref:// 引用；活动 PTC 父调用的展示变化或检查失败时，在缓存 IO 前拒绝存储。等待共享发布就绪，并回滚延迟初始化的永久失败。
 

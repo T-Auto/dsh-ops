@@ -23,6 +23,7 @@ import { commandLadder } from '../lib/cli/report.js'
 import { commandProvisionShells } from '../lib/cli/provision-shells.js'
 import { commandUpgradeHostPwsh } from '../lib/cli/pwsh-upgrade.js'
 import { commandBashRuntime } from '../lib/cli/bash-runtime.js'
+import { commandResultCache } from '../lib/cli/result-cache.js'
 import { commandUninstall } from '../lib/cli/uninstall.js'
 import { commandPanel } from '../lib/cli/panel.js'
 
@@ -66,6 +67,9 @@ Usage:
                                   remove previews unless --yes.
                                   clean-cache previews old private runtime generations; apply only
                                   after stopping all OPS hosts with --yes --all-hosts-stopped.
+  dsh-ops result-cache [status|reclaim] [--apply] [--json] [--config <file>]
+                                  Report result-cache roots under the temp directory; reclaim
+                                  previews unless --apply. Stop every OPS host before applying.
   dsh-ops upgrade-host-pwsh [--yes] [--dry-run]
                                   Preview/run standard Windows PowerShell 7 installation through
                                   WinGet. Restart DSH; custom host pwshPath remains authoritative.
@@ -118,6 +122,7 @@ async function main() {
       'purge-fastctx': { type: 'boolean', default: false },
       'all-hosts-stopped': { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
+      apply: { type: 'boolean', default: false },
       json: { type: 'boolean', default: false },
       config: { type: 'string' },
       bash: { type: 'boolean', default: false },
@@ -130,7 +135,7 @@ async function main() {
     },
   })
   const command = positionals[0] ?? 'help'
-  if (positionals.length > (command === 'bash-runtime' || command === 'panel' ? 2 : 1)) throw new Error('Unexpected positional arguments.')
+  if (positionals.length > (command === 'bash-runtime' || command === 'panel' || command === 'result-cache' ? 2 : 1)) throw new Error('Unexpected positional arguments.')
   // Declared globally so `panel --serve` parses, but it is meaningful for that command only.
   if (values.serve === true && command !== 'panel') throw new Error('--serve only applies to the panel command.')
   if (command === 'install' || (['uninstall', 'status'].includes(command) && values.profile !== undefined)) {
@@ -143,6 +148,8 @@ async function main() {
   switch (command) {
     case 'upgrade-host-pwsh':
       return commandUpgradeHostPwsh({ yes: values.yes, dryRun: values['dry-run'] })
+    case 'result-cache':
+      return commandResultCache(positionals[1], { apply: values.apply === true, json: values.json === true, configFile: values.config })
     case 'bash-runtime':
       return commandBashRuntime(positionals[1], { yes: values.yes, dryRun: values['dry-run'], force: values.force, configFile: values.config, path: values.path, allHostsStopped: values['all-hosts-stopped'] })
     case 'ladder':

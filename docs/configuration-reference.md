@@ -17,6 +17,7 @@ Plugin authors can also mount the [public integration API](integration-api.md) i
 | `presets` | Empty by default; map of exact preset ids to explicit consumer options |
 | `discovery` | Enabled; default built-in Native pool, maxResults 3, no always-loaded selections |
 | `panel`, `tui` | Disabled by default; opt-in capture and read-only sidebar |
+| `resultCache` | Enabled; sweeps idle result-cache roots at start-up and after the last owner unloads. `maxRoots`/`maxTotalBytes` default 0 (report only), `maxAgeMs` defaults to 3600000 (idle grace), `sweepEnabled` defaults true |
 | `other.pwsh7Link` | When absent follows companion detection; saved boolean wins |
 
 The page uses native Switch controls. Built-in cards start collapsed. Disabling a card greys its
@@ -111,6 +112,10 @@ Built-in sections retain validated worker/Shell settings (`binaryPath`, `require
 `publishBashTool` alias for `bash`. `ptc.allowedTools` / `ptc.alwaysLoaded` control typed SDK APIs;
 `discovery.allowedTools` / `discovery.alwaysLoaded` configure the built-in Native pool. Use
 `presets.<id>` for an exact fully customized profile rather than adding preset-name exceptions.
+`resultCache` is a YAML section: the default sweep only reclaims roots with no snapshot data left
+(empty roots, or scope directories holding just the lock), and the aggregate root/byte budgets
+default to 0, which reports without evicting data. `dsh-ops result-cache status|reclaim [--apply]`
+reports and runs the same bounded pass.
 
 The bundle's `discovery.enabled` controls built-in **Native** dynamic entry publication, not the
 PTC SDK loader. PTC loading follows `ptc.dynamicTools` and `global.dynamicTools`. The Native keys

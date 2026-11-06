@@ -22,7 +22,7 @@ export const LEGACY_FASTCTX_KEYS = Object.freeze(['serverName', 'enableShellTool
 export const CORE_CONFIG_KEYS = Object.freeze([
   ...LEGACY_FASTCTX_KEYS, 'binaryPath', 'required', 'shellPolicy', 'deniedHostTools', 'promptPolicy',
   'extraGuidance', 'bashPath', 'publishBashTool', 'allowSystemShellFallback', 'denyCredentialReads', 'configUpdateVersion', 'indexCache',
-  'downloadGuard',
+  'downloadGuard', 'resultCache',
 ])
 
 /** Upper bound accepted for the legacy `toolCallTimeoutMs`, matching the loader's timer ceiling. */
@@ -150,6 +150,33 @@ function resolveDownloadGuard(rawConfig: unknown): DownloadGuardConfig {
   return { template, ...(shell === undefined ? {} : { shell }) }
 }
 
+/**
+ * Retention policy for the result-cache roots under the system temp directory.
+ *
+ * The native quota (100 MiB per cache root) is a per-nonce limit and never a global budget, so
+ * the aggregate limits below are the only thing that stops a long-lived machine from accumulating
+ * one root per session. Both aggregate limits default to 0, which means "report, never evict a
+ * root that still holds data"; the default sweep only reclaims roots whose cache data is gone.
+ */
+export interface ResultCacheConfig {
+  /** Aggregate root count; 0 reports without evicting roots that still hold data. */
+  maxRoots: number
+  /** Aggregate byte count; 0 reports without evicting roots that still hold data. */
+  maxTotalBytes: number
+  /** Minimum idle time before a root is touched; 0 disables the grace period. */
+  maxAgeMs: number
+  /** Whether the start-up/shutdown sweep may remove anything at all. */
+  sweepEnabled: boolean
+}
+
+/** Shipped retention defaults; `cordis.patch.yml` repeats them and must stay equal. */
+export const DEFAULT_RESULT_CACHE: ResultCacheConfig = Object.freeze({
+  maxRoots: 0,
+  maxTotalBytes: 0,
+  maxAgeMs: 3_600_000,
+  sweepEnabled: true,
+})
+
 /** The resolved configuration, with every default applied. */
 export interface ResolvedConfig {
   configUpdateVersion: number
@@ -166,6 +193,7 @@ export interface ResolvedConfig {
   publishBashTool: boolean
   allowSystemShellFallback: boolean
   downloadGuard: DownloadGuardConfig
+  resultCache: ResultCacheConfig
 }
 
 /**
@@ -242,6 +270,39 @@ export function resolveConfig(rawConfig?: unknown): ResolvedConfig {
     // directory and every search keeps the live traversal.
     indexCache: optionalBoolean(raw, 'indexCache', false),
     downloadGuard: resolveDownloadGuard(raw.downloadGuard),
+    resultCache: resolveResultCacheConfig(raw.resultCache),
+  }
+}
+
+/**
+ * Validate the `resultCache` block.
+ *
+ * Absent is the normal state and resolves to the shipped defaults. A malformed block fails loud
+ * and names the offending key, matching the rest of this file, because a budget typo that silently
+ * became "unlimited" is the failure mode this feature exists to remove.
+ * @param rawConfig - the raw `resultCache` value, or undefined.
+ * @returns the resolved retention policy.
+ */
+export function resolveResultCacheConfig(rawConfig: unknown): ResultCacheConfig {
+  if (rawConfig === undefined || rawConfig === null) return { ...DEFAULT_RESULT_CACHE }
+  if (typeof rawConfig !== 'object' || Array.isArray(rawConfig)) {
+    throw new ConfigError(`resultCache must be an object, got ${JSON.stringify(rawConfig)}`)
+  }
+  const raw = rawConfig as Record<string, unknown>
+  rejectUnknownKeys(raw, ['maxRoots', 'maxTotalBytes', 'maxAgeMs', 'sweepEnabled'])
+  const count = (key: keyof typeof DEFAULT_RESULT_CACHE): number => {
+    const value = raw[key]
+    if (value === undefined || value === null) return DEFAULT_RESULT_CACHE[key] as number
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+      throw new ConfigError(`resultCache.${key} must be a non-negative safe integer, got ${JSON.stringify(value)}`)
+    }
+    return value
+  }
+  return {
+    maxRoots: count('maxRoots'),
+    maxTotalBytes: count('maxTotalBytes'),
+    maxAgeMs: count('maxAgeMs'),
+    sweepEnabled: optionalBoolean(raw, 'sweepEnabled', DEFAULT_RESULT_CACHE.sweepEnabled),
   }
 }
 
