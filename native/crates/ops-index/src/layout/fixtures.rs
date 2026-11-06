@@ -444,3 +444,150 @@ pub fn put_u64(bytes: &mut [u8], at: usize, value: u64) {
 pub fn put_i64(bytes: &mut [u8], at: usize, value: i64) {
     bytes[at..at + 8].copy_from_slice(&value.to_le_bytes());
 }
+
+/// A satellite chain every file entry of a page will point at.
+#[derive(Clone, Copy, Debug)]
+enum SharedChain {
+    /// One shared name chain: every entry carries a single code unit.
+    Names { entries: usize },
+    /// One shared name chain whose entries carry a longer payload.
+    NamePayload {
+        entries: usize,
+        units_per_entry: usize,
+    },
+    /// One shared stream chain: every entry carries an empty identifier.
+    Streams { entries: usize },
+}
+
+/// Renders a page whose every file entry points at one shared name chain.
+///
+/// This is the shape that makes per-chain cycle guards insufficient: no chain
+/// loops, every offset is legal, and the page stays small, yet decoding it
+/// would repeat the whole chain once per file. The parser must reject it
+/// through its page-wide budget instead of amplifying.
+pub fn build_shared_name_chain(files: usize, names: usize) -> Page {
+    build_shared_page(files, SharedChain::Names { entries: names })
+}
+
+/// Renders a page whose every file entry points at one shared name chain with
+/// units_per_entry UTF-16 units per name, to drive the payload budget.
+pub fn build_shared_name_payload(files: usize, names: usize, units_per_entry: usize) -> Page {
+    build_shared_page(
+        files,
+        SharedChain::NamePayload {
+            entries: names,
+            units_per_entry,
+        },
+    )
+}
+
+/// Renders a page whose every file entry points at one shared stream chain.
+pub fn build_shared_stream_chain(files: usize, streams: usize) -> Page {
+    build_shared_page(files, SharedChain::Streams { entries: streams })
+}
+fn build_shared_page(files: usize, chain: SharedChain) -> Page {
+    assert!(files > 0, "a shared-chain page needs at least one file");
+    let mut bytes = vec![0u8; OUTPUT_HEADER_LEN];
+    put_u32(&mut bytes, 0, files as u32);
+    put_u32(&mut bytes, 4, OUTPUT_HEADER_LEN as u32);
+
+    let file_area = OUTPUT_HEADER_LEN;
+    let shared_start = file_area + files * FILE_ENTRY_LEN;
+    // Reserve the file area so the shared chain starts after it; every file
+    // then reaches the chain by a legal relative offset (the last one by
+    // exactly FILE_ENTRY_LEN, which the guard accepts).
+    bytes.resize(shared_start, 0);
+
+    match chain {
+        SharedChain::Names { entries } => write_shared_names(&mut bytes, entries, 1),
+        SharedChain::NamePayload {
+            entries,
+            units_per_entry,
+        } => write_shared_names(&mut bytes, entries, units_per_entry),
+        SharedChain::Streams { entries } => write_shared_streams(&mut bytes, entries),
+    }
+
+    let mut rendered = Page {
+        bytes,
+        files: Vec::with_capacity(files),
+    };
+    for index in 0..files {
+        let file_offset = file_area + index * FILE_ENTRY_LEN;
+        if index + 1 < files {
+            put_u32(
+                &mut rendered.bytes,
+                file_offset + FILE_NEXT_FILE_OFFSET,
+                FILE_ENTRY_LEN as u32,
+            );
+        }
+        put_u64(
+            &mut rendered.bytes,
+            file_offset + FILE_REFERENCE_OFFSET,
+            (index as u64) + 1,
+        );
+        let relative = (shared_start - file_offset) as u32;
+        match chain {
+            SharedChain::Names { .. } | SharedChain::NamePayload { .. } => put_u32(
+                &mut rendered.bytes,
+                file_offset + FILE_FIRST_NAME_OFFSET,
+                relative,
+            ),
+            SharedChain::Streams { .. } => put_u32(
+                &mut rendered.bytes,
+                file_offset + FILE_FIRST_STREAM_OFFSET,
+                relative,
+            ),
+        }
+        rendered.files.push(FileOffsets {
+            file: file_offset,
+            ..FileOffsets::default()
+        });
+    }
+    rendered
+}
+fn write_shared_names(bytes: &mut Vec<u8>, entries: usize, units_per_entry: usize) {
+    let mut previous: Option<usize> = None;
+    for _ in 0..entries {
+        let offset = bytes.len();
+        bytes.resize(offset + NAME_ENTRY_HEADER_LEN, 0);
+        if let Some(previous) = previous {
+            put_u32(
+                bytes,
+                previous + NAME_NEXT_NAME_OFFSET,
+                (offset - previous) as u32,
+            );
+        }
+        put_u32(
+            bytes,
+            offset + NAME_FLAGS_OFFSET,
+            FILE_LAYOUT_NAME_ENTRY_PRIMARY,
+        );
+        put_u32(
+            bytes,
+            offset + NAME_FILE_NAME_LENGTH_OFFSET,
+            (units_per_entry * 2) as u32,
+        );
+        for _ in 0..units_per_entry {
+            bytes.extend_from_slice(&(u16::from(b'a')).to_le_bytes());
+        }
+        previous = Some(offset);
+    }
+}
+
+fn write_shared_streams(bytes: &mut Vec<u8>, entries: usize) {
+    let mut previous: Option<usize> = None;
+    for _ in 0..entries {
+        let offset = bytes.len();
+        bytes.resize(offset + STREAM_ENTRY_LEN, 0);
+        if let Some(previous) = previous {
+            put_u32(
+                bytes,
+                previous + STREAM_NEXT_STREAM_OFFSET,
+                (offset - previous) as u32,
+            );
+        }
+        put_i64(bytes, offset + STREAM_END_OF_FILE_OFFSET, 7);
+        put_u32(bytes, offset + STREAM_IDENTIFIER_LENGTH_OFFSET, 0);
+        previous = Some(offset);
+    }
+}

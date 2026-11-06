@@ -15,8 +15,8 @@ use super::names;
 use super::streams;
 use super::wire::{self, FILE_ENTRY_LEN, FileEntry, OUTPUT_HEADER_LEN, OutputHeader};
 use super::{FILE_ATTRIBUTE_DIRECTORY, LayoutFile};
-use crate::Result;
 use crate::ids::RecordId;
+use crate::{Error, Result};
 
 /// Largest capacity pre-reserved from `FileEntryCount`.
 ///
@@ -39,6 +39,57 @@ const MAX_ENTRY_CAPACITY: u32 = 4096;
 /// advance, an odd UTF-16 length, or a name above the 255-code-unit limit. A
 /// bad page is discarded as a whole and the caller falls back to a fresh
 /// traversal; see the module docs for why partial results are not an option.
+/// Page-wide allowance for decoded structures and payload bytes.
+///
+/// Created once per page with the page length as the allowance for both
+/// counters: spend_step charges one decoded structure, spend_payload charges
+/// payload bytes (UTF-16 names and stream identifiers). Both counters only
+/// decrease, so the work and allocation one page can request stay linear in its
+/// length no matter how many files point at the same chain. The allowance is
+/// exact for well-formed pages, where every structure occupies at least 24
+/// bytes and every payload byte appears once; only shared chains reach it, and
+/// they are rejected as a whole page.
+pub(super) struct PageBudget {
+    steps_left: usize,
+    payload_left: usize,
+    limit: usize,
+}
+
+impl PageBudget {
+    /// A fresh allowance of page_len steps and page_len payload bytes.
+    pub(super) fn new(page_len: usize) -> Self {
+        Self {
+            steps_left: page_len,
+            payload_left: page_len,
+            limit: page_len,
+        }
+    }
+
+    /// Charges one decoded structure.
+    pub(super) fn spend_step(&mut self, what: &'static str) -> Result<()> {
+        let Some(left) = self.steps_left.checked_sub(1) else {
+            return Err(Error::PageBudgetExceeded {
+                what,
+                limit: self.limit,
+            });
+        };
+        self.steps_left = left;
+        Ok(())
+    }
+
+    /// Charges len payload bytes.
+    pub(super) fn spend_payload(&mut self, what: &'static str, len: usize) -> Result<()> {
+        let Some(left) = self.payload_left.checked_sub(len) else {
+            return Err(Error::PayloadBudgetExceeded {
+                what,
+                limit: self.limit,
+            });
+        };
+        self.payload_left = left;
+        Ok(())
+    }
+}
+
 pub fn walk_layout_buffer(page: &[u8]) -> Result<Vec<LayoutFile>> {
     if page.is_empty() {
         return Ok(Vec::new());
@@ -48,6 +99,7 @@ pub fn walk_layout_buffer(page: &[u8]) -> Result<Vec<LayoutFile>> {
         return Ok(Vec::new());
     }
     let mut files = Vec::with_capacity(header.entry_count.min(MAX_ENTRY_CAPACITY) as usize);
+    let mut budget = PageBudget::new(page.len());
     let mut file_offset = wire::follow_offset(
         page,
         0,
@@ -56,8 +108,9 @@ pub fn walk_layout_buffer(page: &[u8]) -> Result<Vec<LayoutFile>> {
         "QUERY_FILE_LAYOUT_OUTPUT.FirstFileOffset",
     )?;
     loop {
+        budget.spend_step("FILE_LAYOUT_ENTRY")?;
         let entry = FileEntry::parse(page, file_offset)?;
-        files.push(parse_file(page, file_offset, &entry)?);
+        files.push(parse_file(page, file_offset, &entry, &mut budget)?);
         if entry.next_file_offset == 0 {
             break;
         }
@@ -74,12 +127,17 @@ pub fn walk_layout_buffer(page: &[u8]) -> Result<Vec<LayoutFile>> {
 
 /// Decodes one file entry and its three satellite chains, in chain order:
 /// names, extra info, streams.
-fn parse_file(page: &[u8], file_offset: usize, entry: &FileEntry) -> Result<LayoutFile> {
+fn parse_file(
+    page: &[u8],
+    file_offset: usize,
+    entry: &FileEntry,
+    budget: &mut PageBudget,
+) -> Result<LayoutFile> {
     let attributes = entry.attributes;
     let is_dir = attributes & FILE_ATTRIBUTE_DIRECTORY != 0;
-    let names = names::parse_names(page, file_offset, entry.first_name_offset)?;
-    let mtime_ft = streams::parse_mtime(page, file_offset, entry)?;
-    let size = streams::parse_size(page, file_offset, entry, is_dir)?;
+    let names = names::parse_names(page, file_offset, entry.first_name_offset, budget)?;
+    let mtime_ft = streams::parse_mtime(page, file_offset, entry, budget)?;
+    let size = streams::parse_size(page, file_offset, entry, is_dir, budget)?;
     Ok(LayoutFile {
         reference: RecordId::new(entry.file_reference),
         attributes,

@@ -14,6 +14,7 @@
 //! rather than reading past the contract; only the 24 prefix bytes actually
 //! read are bounds-checked.
 
+use super::walk::PageBudget;
 use super::wire::{
     self, FILE_ENTRY_LEN, FileEntry, INFO_ENTRY_LEGACY_LEN, INFO_PREFIX_LEN, STREAM_ENTRY_LEN,
     StreamEntry,
@@ -43,10 +44,12 @@ pub(crate) fn parse_mtime(
     page: &[u8],
     file_offset: usize,
     entry: &FileEntry,
+    budget: &mut PageBudget,
 ) -> Result<Option<i64>> {
     if entry.extra_info_offset == 0 {
         return Ok(None);
     }
+    budget.spend_step("FILE_LAYOUT_INFO_ENTRY")?;
     let info_offset = wire::follow_offset(
         page,
         file_offset,
@@ -79,6 +82,7 @@ pub(crate) fn parse_size(
     file_offset: usize,
     entry: &FileEntry,
     is_dir: bool,
+    budget: &mut PageBudget,
 ) -> Result<Option<u64>> {
     if entry.first_stream_offset == 0 {
         return Ok(None);
@@ -92,6 +96,7 @@ pub(crate) fn parse_size(
         "FILE_LAYOUT_ENTRY.FirstStreamOffset",
     )?;
     loop {
+        budget.spend_step("STREAM_LAYOUT_ENTRY")?;
         let stream = StreamEntry::parse(page, stream_offset)?;
         if !stream.identifier_length.is_multiple_of(2) {
             return Err(Error::OddUtf16Length {
@@ -100,6 +105,10 @@ pub(crate) fn parse_size(
                 len: stream.identifier_length,
             });
         }
+        budget.spend_payload(
+            "STREAM_LAYOUT_ENTRY.StreamIdentifier",
+            stream.identifier_length as usize,
+        )?;
         let identifier = wire::read_bytes(
             page,
             stream_offset + STREAM_ENTRY_LEN,

@@ -14,6 +14,7 @@
 //!
 //! A 511-byte name therefore reports `NameTooLong`, not `OddUtf16Length`.
 
+use super::walk::PageBudget;
 use super::wire::{self, FILE_ENTRY_LEN, MAX_NAME_BYTES, NAME_ENTRY_HEADER_LEN, NameEntry};
 use super::{FILE_LAYOUT_NAME_ENTRY_DOS, FILE_LAYOUT_NAME_ENTRY_PRIMARY, LayoutName};
 use crate::ids::RecordId;
@@ -29,6 +30,7 @@ pub(crate) fn parse_names(
     page: &[u8],
     file_offset: usize,
     first_name_offset: u32,
+    budget: &mut PageBudget,
 ) -> Result<Vec<LayoutName>> {
     if first_name_offset == 0 {
         return Ok(Vec::new());
@@ -42,6 +44,7 @@ pub(crate) fn parse_names(
         "FILE_LAYOUT_ENTRY.FirstNameOffset",
     )?;
     loop {
+        budget.spend_step("FILE_LAYOUT_NAME_ENTRY")?;
         let entry = NameEntry::parse(page, name_offset)?;
         let name_length = entry.name_length;
         if name_length > MAX_NAME_BYTES {
@@ -59,6 +62,7 @@ pub(crate) fn parse_names(
                 len: name_length,
             });
         }
+        budget.spend_payload("FILE_LAYOUT_NAME_ENTRY.FileName", name_length as usize)?;
         let raw = wire::read_bytes(
             page,
             name_offset + NAME_ENTRY_HEADER_LEN,

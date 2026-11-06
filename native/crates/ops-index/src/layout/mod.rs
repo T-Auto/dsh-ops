@@ -21,6 +21,14 @@
 //!   the offset ([`crate::Error::OffsetCycle`]), names are capped at
 //!   [`MAX_NAME_BYTES`] before any allocation, and `FileEntryCount` is only a
 //!   capacity hint — the offset chain decides what is parsed.
+//! - **Page-wide budget.** Every decoded file, name, stream and info structure
+//!   costs one step, and every name or stream-identifier byte costs one payload
+//!   byte; both allowances equal the page length and are shared by the whole
+//!   page. Well-formed pages stay far below them because each structure
+//!   occupies at least its own header bytes; the budget only trips when several
+//!   files point at the same satellite chain, which would otherwise decode one
+//!   small page into quadratic work and allocation. Exceeding either budget
+//!   rejects the page like a structural defect.
 //!
 //! Field offsets are read from bytes, never from a Rust struct layout, so a
 //! page may start at any address and records need no alignment padding between
