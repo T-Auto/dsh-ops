@@ -103,11 +103,12 @@ export async function invoke(ctx: Context, file: string, tool: string, args: unk
     return failure('EXECUTOR_UNAVAILABLE', 'DSH file authority or preparation is unavailable; no unrestricted fallback was attempted.')
   }
 }
-async function invokeTrusted(ctx: Context, file: string, tool: string, args: unknown, exec: ToolRunContext, signal: AbortSignal, cwd: string, config?: WorkerInvokeConfig): Promise<unknown> {
+
+async function invokeTrusted(ctx: Context, file: string, tool: string, args: unknown, exec: ToolRunContext, signal: AbortSignal, cwd: string, config?: WorkerInvokeConfig, candidates?: readonly string[]): Promise<unknown> {
   const session = exec?.agent?.session
   if (!session?.id || typeof cwd !== 'string' || !path.isAbsolute(cwd)) return failure('EXECUTOR_UNAVAILABLE', 'An authoritative session identity and cwd are required.')
   // A tool that declares its own executor is answered here, before the worker is ever considered.
-  if (inProcAst(tool)) return invokeAst(tool, ctx, args, exec, signal)
+  if (inProcAst(tool)) return invokeAst(tool, ctx, args, exec, signal, candidates)
   const policyService: SandboxPolicyService | undefined = ctx.get('sandboxPolicy')
   const subprocess: SubprocessRuntime | undefined = ctx.get('subprocess')
   if (!policyService?.resolve || !subprocess?.spawn) return failure('EXECUTOR_UNAVAILABLE', 'DSH policy and subprocess services are required.')

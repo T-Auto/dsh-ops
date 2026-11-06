@@ -143,7 +143,11 @@ function canonical(value: Receipt, mayWrite: boolean): Receipt {
  * @param exec - execution binding (session + abort signal)
  * @param signal - the call's abort signal
  */
-export async function invokeAst(tool: string, ctx: Context, args: unknown, exec: ToolRunContext, signal: AbortSignal): Promise<unknown> {
+/**
+ * @param candidates - files a faster scan already narrowed to, used by `ast_locate` alone. The
+ *   engine still fences and anchors every one; this only saves parsing the rest of the tree.
+ */
+export async function invokeAst(tool: string, ctx: Context, args: unknown, exec: ToolRunContext, signal: AbortSignal, candidates?: readonly string[]): Promise<unknown> {
   try {
     // The catalogue decides which names exist and what they require; this bridge owns no list.
     const entry = capability(tool)
@@ -205,7 +209,8 @@ export async function invokeAst(tool: string, ctx: Context, args: unknown, exec:
     const handler = source[tool.slice('ast_'.length) as 'locate' | 'refactor' | 'audit'] as unknown as (request: unknown, base: string, opts: { bounds?: readonly string[]; deny?: readonly string[]; cache?: boolean; signal?: AbortSignal; writeRoots?: readonly string[] }) => Promise<unknown> | unknown
     // Scope is the bridge's call: full access lifts the bound, enumeration always skips credentials.
     const bounds = policy.mode === 'danger-full-access' ? undefined : [policy.workspaceRoot, cwd]
-    const value = await handler(input, cwd, { bounds, deny: credentialRoots(), cache: policy.mode !== 'read-only', signal, writeRoots })
+    const value = await handler(input, cwd, { bounds, deny: credentialRoots(), cache: policy.mode !== 'read-only', signal, writeRoots,
+      ...(candidates && candidates.length > 0 ? { candidates } : {}) })
     if (record(value) && value.status === 'ok' && tool === 'ast_refactor' && input.mode === 'apply' && Array.isArray(value.files)) {
       const applied: string[] = []
       for (const item of value.files) {
