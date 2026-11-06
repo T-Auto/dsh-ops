@@ -51,12 +51,20 @@ await test('default provision uses fixed Niubash home, verifies reuse, rejects c
   verifyNiubashTree(target)
   const inventory = managedBashInventory()
   assert.equal(inventory.find(entry => entry.backend === 'niubash')?.owned, true)
-  const selected = selectBashRuntime('managed', { platform: 'win32', arch: 'x64' })
-  assert.equal(selected.file, path.join(target, 'niu.exe')); assert.equal(selected.restricted.compatible, true)
+  const selected = selectBashRuntime('niubash', { platform: 'win32', arch: 'x64' })
+  assert.equal(selected.clear, true)
+  assert.equal(selected.engine, 'niubash')
+  assert.equal(selected.file, path.join(target, 'niu.exe'))
+  assert.match(selected.restriction, /verified|sandbox/i)
   assert.equal(removeManagedBash().action, 'preview'); assert.equal(fs.existsSync(target), true)
   removeManagedBash({ yes: true })
   assert.equal(fs.existsSync(target), false); assert.deepEqual(managedBashInventory(), [])
-  assert.throws(() => selectBashRuntime('managed', { platform: 'win32', arch: 'x64' }), /install/)
+  // The choice itself never throws: with no copy left it either reports the packaged
+  // payload or states that none is installed, instead of pinning a stale path.
+  const afterRemoval = selectBashRuntime('niubash', { platform: 'win32', arch: 'x64' })
+  assert.equal(afterRemoval.clear, true)
+  assert.ok(afterRemoval.file === undefined || /niu\.exe$/i.test(afterRemoval.file))
+  if (afterRemoval.file === undefined) assert.match(afterRemoval.detail, /bash-runtime install/)
   } finally {
     if (savedHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = savedHome

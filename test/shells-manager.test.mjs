@@ -98,8 +98,12 @@ await test('the default rung is a removal, and a legacy provisioned copy stays s
     // No payload in this home: the answer is either the packaged payload or a stated absence.
     assert.ok(niubash.file === undefined || /niu\.exe$/i.test(niubash.file))
     if (niubash.file === undefined) assert.match(niubash.detail, /bash-runtime install/)
-    const directory = seed(home, '2.0')
-    assert.equal(selectBashRuntime('git', { env: { DSH_HOME: home }, platform: 'win32', arch: 'x64' }).file, path.join(directory, 'bin/bash.exe'))
+    // A legacy provisioned copy stays a candidate, and naming it selects it exactly;
+    // a scan answers with whatever real installation it finds first.
+    const directory = seed(home, '2.0'), legacy = path.join(directory, 'bin/bash.exe')
+    const env = { DSH_HOME: home }
+    assert.ok(gitBashCandidates({ env, platform: 'win32' }).includes(legacy))
+    assert.equal(selectBashRuntime('git', { env, platform: 'win32', arch: 'x64', path: legacy }).file, legacy)
   })
 })
 
