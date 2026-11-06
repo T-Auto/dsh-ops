@@ -73,9 +73,10 @@ if (process.platform === 'win32') {
       const warnings = [], unhandled = []
       const listener = error => unhandled.push(error)
       const policy = { mode: 'danger-full-access', workspaceRoot: root }
+      let spawned = 0
       const ctx = { logger: { warn: text => warnings.push(text) }, get(name) {
         if (name === 'sandboxPolicy') return { resolve: () => policy }
-        if (name === 'subprocess') return { spawn() { return { done: Promise.resolve({ exitCode: 0 }), collected: {
+        if (name === 'subprocess') return { spawn() { spawned += 1; return { done: Promise.resolve({ exitCode: 0 }), collected: {
           stdout: { readFrom: () => ({ text: 'preserved', nextOffset: 9, lossy: false }) },
           stderr: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) },
         } } } }
@@ -83,7 +84,9 @@ if (process.platform === 'win32') {
       const original = fs.promises.rm
       let executionRoot
       fs.promises.rm = async (target, options) => {
-        if (path.basename(target).startsWith('dsh-ops-niu-exec-')) {
+        // Only the post-command disposal is failed here; the cross-volume clone
+        // fallback also removes its scratch root before the command is spawned.
+        if (spawned > 0 && path.basename(target).startsWith('dsh-ops-niu-exec-')) {
           executionRoot = target
           throw Object.assign(new Error('deterministic locked execution tree'), { code: 'EPERM' })
         }
