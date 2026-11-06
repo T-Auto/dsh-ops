@@ -4,7 +4,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { gunzipSync } from 'node:zlib'
-import { errorMessage } from '../shells/types.js'
 import manifest from './niubash-payload-manifest.json' with { type: 'json' }
 
 Object.freeze(manifest.files)
@@ -14,6 +13,9 @@ export const NIUBASH_PIN = Object.freeze(manifest)
 export const NIUBASH_RECEIPT = 'provenance.json'
 export const NIUBASH_PACKAGE_PATH = 'runtime/win32-x64/niubash'
 export const NIUBASH_HOME_PATH = 'dsh-ops/shells/niubash'
+/** One message from an unknown throwable; this module stays inside the release module closure, so it
+ * borrows no host-side helper. */
+const errorText = (error: unknown): string => (error instanceof Error && typeof error.message === 'string' ? error.message : String(error))
 const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
 export const niubashFileHash = (file: string) => digest(fs.readFileSync(file))
 const files: Readonly<Record<string, string>> = manifest.files
@@ -239,7 +241,7 @@ export function stageNiubashArchive(archive: string, target: string) {
     try {
       fs.rmSync(previous, { recursive: true, force: true })
     } catch (error) {
-      console.error('dsh-ops: could not remove the previous Niubash tree ' + previous + ': ' + errorMessage(error))
+      console.error('dsh-ops: could not remove the previous Niubash tree ' + previous + ': ' + errorText(error))
     }
   }
   return path.join(target, manifest.executable)
@@ -339,10 +341,10 @@ export function reclaimNiubashSiblings(target: string, {
     if (dryRun) return { action: 'removed', path: full, bytes }
     const aside = full + '.reclaim-' + now.toString(36)
     try { rename(full, aside) } catch (error) {
-      return { action: 'kept', path: full, bytes, detail: 'could not move it aside: ' + errorMessage(error) }
+      return { action: 'kept', path: full, bytes, detail: 'could not move it aside: ' + errorText(error) }
     }
     try { remove(aside) } catch (error) {
-      return { action: 'kept', path: aside, bytes, detail: 'could not remove it: ' + errorMessage(error) }
+      return { action: 'kept', path: aside, bytes, detail: 'could not remove it: ' + errorText(error) }
     }
     return { action: 'removed', path: full, bytes }
   }
@@ -354,7 +356,7 @@ export function reclaimNiubashSiblings(target: string, {
     if (!fs.existsSync(target)) {
       if (!dryRun) {
         try { rename(staged.path, target) } catch (error) {
-          decisions.push({ action: 'kept', path: staged.path, bytes: staged.bytes, detail: 'could not reuse it: ' + errorMessage(error) })
+          decisions.push({ action: 'kept', path: staged.path, bytes: staged.bytes, detail: 'could not reuse it: ' + errorText(error) })
           continue
         }
       }
@@ -372,7 +374,7 @@ export function reclaimNiubashSiblings(target: string, {
     if (!fs.existsSync(target)) {
       if (!dryRun) {
         try { rename(kept.path, target) } catch (error) {
-          decisions.push({ action: 'kept', path: kept.path, bytes: kept.bytes, detail: 'could not restore it: ' + errorMessage(error) })
+          decisions.push({ action: 'kept', path: kept.path, bytes: kept.bytes, detail: 'could not restore it: ' + errorText(error) })
           continue
         }
       }
