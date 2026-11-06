@@ -21,7 +21,7 @@
 export const LEGACY_FASTCTX_KEYS = Object.freeze(['serverName', 'enableShellTools', 'toolCallTimeoutMs'])
 export const CORE_CONFIG_KEYS = Object.freeze([
   ...LEGACY_FASTCTX_KEYS, 'binaryPath', 'required', 'shellPolicy', 'deniedHostTools', 'promptPolicy',
-  'extraGuidance', 'bashPath', 'publishBashTool', 'allowSystemShellFallback', 'denyCredentialReads', 'configUpdateVersion',
+  'extraGuidance', 'bashPath', 'publishBashTool', 'allowSystemShellFallback', 'denyCredentialReads', 'configUpdateVersion', 'indexCache',
   'downloadGuard',
 ])
 
@@ -156,6 +156,8 @@ export interface ResolvedConfig {
   binaryPath: string | undefined
   required: boolean
   denyCredentialReads: boolean
+  /** Whether the host may prepare the optional index cache directory. */
+  indexCache: boolean
   shellPolicy: 'advise' | 'deny-host-shell'
   deniedHostTools: string[]
   promptPolicy: boolean
@@ -236,6 +238,9 @@ export function resolveConfig(rawConfig?: unknown): ResolvedConfig {
     // needs one of them can turn the fence off for this row; the environment
     // variable only ever widens the list, so a model cannot open it.
     denyCredentialReads: optionalBoolean(raw, 'denyCredentialReads', true),
+    // Index caching is off by default: an unconfigured install prepares no
+    // directory and every search keeps the live traversal.
+    indexCache: optionalBoolean(raw, 'indexCache', false),
     downloadGuard: resolveDownloadGuard(raw.downloadGuard),
   }
 }

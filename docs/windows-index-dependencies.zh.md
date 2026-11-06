@@ -9,14 +9,27 @@
 crates.io API 核对），传递依赖由 lockfile 固定。完整许可证正文见
 [`licenses/windows-index/THIRD-PARTY-NOTICES.txt`](../licenses/windows-index/THIRD-PARTY-NOTICES.txt)。
 
-## 直接依赖（1 个）
+## 直接依赖（2 个）
 
 | crate | 精确版本 | 发布时间（UTC） | 许可证 | 用途 |
 | --- | --- | --- | --- | --- |
-| `usn-journal-rs` | `=0.5.0` | 2026-10-13 | MIT | 为 W1 的 MFT 冷枚举提供 `FSCTL_ENUM_USN_DATA` 安全封装，W2 起提供 USN 变更日志封装。本切片唯一的 Win32 代码都在它内部：本 crate 保持 `#![forbid(unsafe_code)]`，源码不出现任何裸 Windows 类型。运行期需要 Administrator 权限，未提权即按文档回退。MSRV 1.88，与本 crate 地板相同。 |
+| `usn-journal-rs` | `=0.5.0` | 2026-10-13 | MIT | 为 W1 的 MFT 冷枚举提供 `FSCTL_ENUM_USN_DATA` 安全封装，W2 起提供 USN 变更日志封装；它自己的 Win32 unsafe 收敛在其 crate 内。运行期需要 Administrator 权限，未提权即按文档回退。MSRV 1.88，与本 crate 地板相同。 |
+| `windows-sys` | `=0.61.2` | 2025-10-06 | MIT OR Apache-2.0 | W4 的硬链接枚举：`FindFirstFileNameW`、`FindNextFileNameW`、`FindClose` 与 `GetLastError`，features 为 `Win32_Foundation` + `Win32_Storage_FileSystem`。该包此前已通过 workspace 其它 Windows crate 进入 `native/Cargo.lock`，本片不新增包，只新增直接依赖边。MSRV 1.71。 |
 
-该依赖必须 target-gate，因为 `usn-journal-rs` 自身包含
-`#[cfg(not(windows))] compile_error!`；它绝不能出现在 `ops-index` 或其它平台无关 crate。
+两个依赖都必须 target-gate：`usn-journal-rs` 自身包含 `#[cfg(not(windows))] compile_error!`，
+而 `windows-sys` 必须保持在 workspace 唯一的 0.61 线上；二者都不得出现在 `ops-index` 或其它
+平台无关 crate。
+
+### 本 crate 唯一的 unsafe 边界（W4）
+
+W4 之前本 crate 是 `#![forbid(unsafe_code)]`。`FindFirstFileNameW`/`FindNextFileNameW` 在已锁定的
+crate 中没有安全封装，因此 W4 只开一个边界：
+
+- crate 根全局 deny `unsafe_code`，同时 deny `unsafe_op_in_unsafe_fn`；
+- `#[allow(unsafe_code)]` 只加在 `winfs` 模块上；
+- `src/winfs/links.rs` 的每个 unsafe 块都有 `SAFETY:` 说明，搜索句柄由 drop guard 恰好关闭一次。
+
+这样 Windows FFI 面可以在一处审查，同时不放松 crate 的其余部分。
 
 ## Windows 目标实际解析的传递依赖
 
