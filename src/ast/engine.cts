@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os'
 /* ── Types borrowed from @ast-grep/napi itself: `import type` erases, so the require stays lazy. ── */
 
 import type { NapiConfig, SgNode as NapiNode } from '@ast-grep/napi'
+import { prefilterAsync, srcOf, type Candidate } from './prefilter.cjs'
 
 type NapiRoot = NapiNode
 type NapiModule = typeof import('@ast-grep/napi')
@@ -29,7 +30,7 @@ const parseTree = (lang: string, text: string): NapiRoot => napi().parse(lang, t
 /* ── Receipts and internal values ── */
 
 /** Source-file value object: one shape everywhere. `text === null` means unreadable. */
-export interface SourceFile { file: string; text: string | null; error: string | null }
+export interface SourceFile { file: string; text: string | null; error?: string | null }
 export interface SourceHit { file: string; lang: string; lines: [number, number]; signature: string; body?: string }
 export interface DiscoverStats { total: number; truncated: boolean; truncatedBy?: 'deadline' | 'page' | null; continuation?: string | null; reusedDirs?: number; scannedDirs?: number }
 export interface LocateReceipt {
@@ -104,7 +105,6 @@ export interface LocateRequest { symbol?: string; file?: string; roots?: string[
 export interface RefactorRequest extends LocateRequest { pattern?: string; rewrite?: string; mode?: 'preview' | 'apply'; detail?: boolean }
 export interface AuditRequest { file?: string; beforeFile?: string }
 
-interface Candidate extends SourceFile { }
 interface Plan { rel: string; target: string; text: string; after: string; delta: { addedLines: number; removedLines: number }; audit: AuditFacts; edits: number }
 interface Conflict { file: string; code: string; message: string; audit?: AuditFacts }
 
@@ -124,16 +124,9 @@ const MAX_BYTES = 2 << 20
 const CAP = 20000
 const BUDGET_MS = 400
 const BODY_BUDGET = 8 * 1024
-/** IO-bound reads: 64 lanes measured 112 ms against 32 lanes' 129 ms on 10 000 files. */
-const PREFILTER_CONCURRENCY = 64
-const CONTENT_CACHE_CHARS = 16 << 20
 const LOCATE_PARSE_MAX = 48
 const ROOT_CACHE_ENTRIES = 8
 const ROOT_CACHE_CHARS = 4 << 20
-
-const contentCache = new Map<string, { mtimeMs: number; size: number; text: string; needle?: string; hit?: boolean }>()
-/** Accounting unit is the UTF-16 code unit (`text.length`), not bytes. */
-let contentCacheChars = 0
 
 const safeName = (n: unknown): n is string => typeof n === 'string' && n.length > 0 && n.length < 255 && !n.includes('/') && !n.includes('\\') && n !== '.' && n !== '..'
 
@@ -339,8 +332,6 @@ function rootGuard(roots: readonly string[], bounds: readonly string[]): string 
   return null
 }
 
-const srcOf = (file: string, text: string | null = null, error: string | null = null): SourceFile => ({ file, text, error })
-
 function readSource(file: string): SourceFile | null {
   let st
   try { st = statSync(file) } catch { return srcOf(file, null, 'E_NOT_FOUND') }
@@ -358,65 +349,6 @@ const extsOf = (req: { ext?: string[] }): Set<string> =>
 /* ── Prefilter ── */
 
 /** Substring prefilter across 32 lanes. Matching text leaves with the candidate and joins the 16 MB cache. */
-async function prefilterAsync(files: string[], needle: string | null, signal?: AbortSignal): Promise<Candidate[]> {
-  if (!needle) return files.map((file) => srcOf(file))
-  const needleBuf = Buffer.from(needle, 'utf8')
-  const decoder = new TextDecoder('utf-8', { fatal: true })
-  const out: Array<Candidate | undefined> = new Array(files.length)
-  let next = 0
-  const worker = async (): Promise<void> => {
-    if (signal?.aborted) return
-    while (next < files.length) {
-      const i = next++
-      const f = files[i]
-      let st
-      try { st = await fsp.stat(f) } catch { continue }
-      if (!st.isFile() || st.size > MAX_BYTES) continue
-      const cached = contentCache.get(f)
-      let text: string | null
-      if (cached && cached.mtimeMs === st.mtimeMs && cached.size === st.size) {
-        if (cached.needle === needle) {
-          if (cached.hit) out[i] = srcOf(f, cached.text)
-          continue
-        }
-        text = cached.text
-        contentCache.delete(f)
-        contentCache.set(f, cached)
-      } else {
-        let buf: Buffer
-        try { buf = await fsp.readFile(f) } catch { continue }
-        if (buf.includes(0)) continue
-        try { text = decoder.decode(buf) } catch {
-          text = null
-          if (!buf.toString('latin1').includes(needle)) continue
-        }
-        if (text !== null) {
-          if (contentCache.size === 0 && contentCacheChars !== 0) contentCacheChars = 0
-          if (contentCacheChars + text.length <= CONTENT_CACHE_CHARS) {
-            const stale = contentCache.get(f)
-            if (stale) contentCacheChars -= stale.text.length
-            contentCache.set(f, { mtimeMs: st.mtimeMs, size: st.size, text })
-            contentCacheChars += text.length
-            while (contentCacheChars > CONTENT_CACHE_CHARS && contentCache.size > 1) {
-              const oldestKey = contentCache.keys().next().value as string
-              const oldest = contentCache.get(oldestKey) as { text: string }
-              contentCacheChars -= oldest.text.length
-              contentCache.delete(oldestKey)
-            }
-          }
-        }
-      }
-      if (text === null) { if (needleBuf.length > 0) out[i] = srcOf(f, null, 'E_ENCODING'); continue }
-      const hit = text.includes(needle)
-      const entry = contentCache.get(f)
-      if (entry) { entry.needle = needle; entry.hit = hit }
-      if (hit) out[i] = srcOf(f, text)
-    }
-  }
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(PREFILTER_CONCURRENCY, files.length)) }, worker))
-  const hits = out.filter((c): c is Candidate => c !== undefined)
-  return hits
-}
 
 /* ── Locate ── */
 
