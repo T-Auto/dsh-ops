@@ -135,11 +135,13 @@ if (process.platform === 'win32') {
       await assert.rejects(runtime.verify(), /Unsafe Niubash execution tree member/)
       await fs.promises.unlink(extra)
 
-      const alias = path.join(root, 'outside-hardlink')
+      // Link the inode from OUTSIDE the tree so the failure is the recorded link
+      // count, not an unknown member name inside the tree.
+      await runtime.seal()
+      const alias = path.join(path.dirname(root), 'outside-hardlink')
       await fs.promises.link(face, alias)
       await assert.rejects(runtime.verify(), /link count mismatch/)
       await fs.promises.unlink(alias)
-      await runtime.seal()
       await runtime.verify()
     } finally { await runtime.dispose() }
   })
