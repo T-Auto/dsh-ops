@@ -11,6 +11,8 @@ const CONVERSATION_LIMIT = 20_000
 const TOOL_NAME_LIMIT = 64
 /** Characters of a tool name line kept in a trace preview. */
 const PREVIEW_CHARS = 120
+/** Call ids whose tool name stays resolvable for a later `job/*` record. */
+const CALL_NAME_LIMIT = 2_048
 /** The four core usage buckets in `bench/run.schema.json` order, and the optional ones. */
 const USAGE_BUCKETS: readonly CoreBucket[] = Object.freeze(['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens'])
 const OPTIONAL_BUCKETS: readonly UsageBucket[] = Object.freeze(['reasoningTokens', 'totalTokens'])
@@ -65,6 +67,7 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
   const conversation: Row[] = []
   const trace: Row[] = []
   const pending = new Map<string, { name: string; startedAt: number }>()
+  const callNames = new Map<string, string>()
   const usage = emptyUsage()
   const bucketNames = new Set<string>()
   const eventTypes: Record<string, number> = {}
@@ -144,7 +147,12 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
         const name = record.name ?? '(unnamed)'
         const key = Object.hasOwn(toolCallsByName, name) || Object.keys(toolCallsByName).length < TOOL_NAME_LIMIT ? name : '(other)'
         toolCallsByName[key] = (toolCallsByName[key] ?? 0) + 1
-        if (record.callId !== undefined) pending.set(record.callId, { name, startedAt: time })
+        if (record.callId !== undefined) {
+          pending.set(record.callId, { name, startedAt: time })
+          callNames.set(record.callId, name)
+          const oldest = callNames.keys().next()
+          if (callNames.size > CALL_NAME_LIMIT && oldest.done !== true) callNames.delete(oldest.value)
+        }
         pushTrace(traceRow(record, 'tool_call', 'tool_call', {
           name, callId: record.callId, step: record.step, text: preview(record.arguments?.text),
         }))
@@ -163,6 +171,35 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
         }))
         break
       }
+      case 'tool/ptc-dispatch-start': case 'tool/ptc-dispatch': {
+        const settled = record.type === 'tool/ptc-dispatch'
+        const failed = settled && record.isError === true
+        pushTrace(traceRow(record, failed ? 'error' : 'tool_result', failed ? 'ptc_dispatch_error' : settled ? 'ptc_dispatch' : 'ptc_dispatch_start', {
+          name: record.name, callId: record.callId, isError: failed, errorCode: record.errorCode,
+          text: failed
+            ? `${record.name ?? 'tool'} failed${record.errorCode === undefined ? '' : ` (${record.errorCode})`}`
+            : preview(record.payload?.text ?? record.arguments?.text),
+        }))
+        break
+      }
+      case 'job/registered': case 'job/settled': {
+        // The job only carries the call id; resolve the tool name from the tool/call record.
+        const toolName = record.callId === undefined ? undefined : callNames.get(record.callId)
+        pushTrace(traceRow(record, record.status === 'failed' || record.status === 'killed' ? 'error' : 'milestone',
+          record.type === 'job/settled' ? 'job_settled' : 'job_registered', {
+            jobId: record.jobId, name: toolName ?? record.kind, jobKind: record.kind, callId: record.callId,
+            status: record.status, text: preview(record.payload?.text),
+          }))
+        break
+      }
+      case 'agent/inbox/spliced':
+        pushTrace(traceRow(record, 'milestone', 'inbox_spliced', {
+          target: record.target, inserted: record.insertedCount ?? 0, removed: record.removedCount ?? 0, text: preview(record.payload?.text),
+        }))
+        break
+      case 'todo/write':
+        pushTrace(traceRow(record, 'milestone', 'todo_write', { text: preview(record.payload?.text) }))
+        break
       case 'step/start': case 'step/end':
         if (record.type === 'step/start') counters.steps += 1
         pushTrace(traceRow(record, 'milestone', record.type === 'step/start' ? 'step_start' : 'step_end', {
