@@ -17,4 +17,4 @@ usn-journal-rs = "=0.5.0"
 # W4's hard-link enumeration is the crate's only raw Win32 boundary:
 # FindFirstFileNameW/FindNextFileNameW/FindClose plus GetLastError. The exact
 # 0.61.2 package is already locked by the workspace's other Windows crate.
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
