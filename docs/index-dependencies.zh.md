@@ -5,12 +5,12 @@
 依赖都记录精确版本、crates.io 发布时间（2026-11-04 UTC+08 依据 crates.io API 核对）与引入理由。
 完整许可证正文见 [`licenses/index/THIRD-PARTY-NOTICES.txt`](../licenses/index/THIRD-PARTY-NOTICES.txt)。
 
-## 运行时依赖（3 个）
+## 运行时依赖（2 个）
 
 | crate | 精确版本 | 发布时间（UTC） | 许可证 | 用途 |
 | --- | --- | --- | --- | --- |
 | `unicode-normalization` | `=0.1.26` | 2026-10-16 | MIT OR Apache-2.0 AND Unicode-3.0 | 为大小写折叠键做 NFC/NFD 规范化（P1）。APFS/HFS+ 给出 NFD 名字，NTFS/ext4 给出 NFC；不归一化会把同一个名字索引成两条。纯 Rust、无构建脚本、无 OS 调用。 |
-| `fs2` | `=0.4.3` | 2018-01-06 | MIT OR Apache-2.0 | 快照写者的 advisory 文件锁（PS2，#600）。已通过 `ops-files` 存在于 workspace lock；精确 pin，MIT 正文见 `licenses/index/THIRD-PARTY-NOTICES.txt`。这是 #584 白名单的唯一显式例外，#586 要求用它做加锁发布与 GC 串行化。 |
+| `memchr` | `=2.8.3` | 2026-07-08 | Unlicense OR MIT | 查询预过滤在连续的 folded 名字 arena 上做 SIMD 双向子串搜索（P7）。该版本已通过其它 crate 存在于 `native/Cargo.lock`，因此 lock 只增加一条依赖边、不新增包；可选择的许可中选用 MIT。 |
 
 该 crate 内嵌 Unicode 数据文件，因此许可证除 MIT/Apache-2.0 外还需要 `Unicode-3.0` 标识；在可
 选择时本项目选用 MIT。
@@ -31,7 +31,6 @@
 | --- | --- | --- | --- | --- |
 | `hashbrown` | `=0.17.1` | 2026-05-09 | MIT OR Apache-2.0 | 名字 intern 表只存 4 字节 id（P5）。已通过 `indexmap` 存在于 workspace lock。 |
 | `rustc-hash` | `=2.1.3` | 2026-07-02 | Apache-2.0 OR MIT | 稀疏 record map 的 `FxHashMap`（P5）。 |
-| `memchr` | `=2.8.3` | 2026-07-08 | Unlicense OR MIT | 查询 pattern 的 SIMD 子串搜索（P7）。已通过其它 crate 存在于 lock。 |
 | `rayon` | `=1.12.0` | 2026-04-14 | MIT OR Apache-2.0 | 查询 API 内部确定性的并行名字扫描（P7）。结果按分块顺序合并，绝不按完成顺序。 |
 
 白名单是封闭的：不使用 `zerocopy`（derive 生成 `unsafe impl`，与 crate 级

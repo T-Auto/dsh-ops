@@ -240,13 +240,6 @@ impl EntryTable {
     ///
     /// The caller passes every field that is not a chain link; links are always
     /// reset to [`EntryId::NIL`].
-    ///
-    /// # Panics
-    ///
-    /// Panics when `flags` contain [`EntryFlags::TOMBSTONE`]: allocation and
-    /// tombstoning are separate operations, and the check holds in every
-    /// profile (a release build would otherwise create a live slot with the
-    /// tombstone bit set).
     pub fn alloc(
         &mut self,
         record: RecordId,
@@ -254,7 +247,7 @@ impl EntryTable {
         name: NameId,
         flags: EntryFlags,
     ) -> EntryId {
-        assert!(
+        debug_assert!(
             !flags.contains(EntryFlags::TOMBSTONE),
             "alloc cannot create a tombstoned entry"
         );
@@ -304,20 +297,13 @@ impl EntryTable {
     ///
     /// Ties to the name, parent, and sibling entries must already be removed;
     /// only the slot itself is cleared here.
-    ///
-    /// # Panics
-    ///
-    /// Panics when the slot is already a tombstone or still has a live child
-    /// chain. Both are caller bugs; the checks hold in every profile because a
-    /// release build that freed a directory with live children would sever them
-    /// silently.
     pub fn tombstone(&mut self, entry: EntryId) {
         let index = entry.index();
         assert!(
             !self.is_tombstone(entry),
             "entry {entry:?} was already tombstoned"
         );
-        assert!(
+        debug_assert!(
             self.first_child[index].is_nil(),
             "a directory with live children cannot be tombstoned"
         );

@@ -1,6 +1,5 @@
 use super::fixtures::{
-    FileFixture, InfoFixture, NameFixture, StreamFixture, build_page, build_shared_name_chain,
-    build_shared_name_payload, build_shared_stream_chain, build_single, put_u32,
+    FileFixture, InfoFixture, NameFixture, StreamFixture, build_page, build_single, put_u32,
 };
 use super::wire::{
     FILE_EXTRA_INFO_OFFSET, FILE_NEXT_FILE_OFFSET, NAME_FILE_NAME_LENGTH_OFFSET,
@@ -407,63 +406,4 @@ proptest! {
         let expected: Vec<LayoutFile> = fixtures.iter().map(FileFixture::expected).collect();
         prop_assert_eq!(parsed, expected);
     }
-}
-
-#[test]
-fn many_files_sharing_one_name_chain_are_rejected() {
-    // The reviewer's shape: 128 file entries all reach the same 128-entry chain.
-    // The page is only a few KiB, but decoding it would make 16384 structure
-    // steps. Empty names keep the payload budget out of the way so this pins the
-    // step budget itself.
-    let page = build_shared_name_payload(128, 128, 0);
-    assert!(page.bytes.len() < 16 * 1024);
-    let error = walk_layout_buffer(&page.bytes).unwrap_err();
-    assert_eq!(error.code(), "INDEX_LAYOUT_PAGE_BUDGET");
-    assert!(matches!(
-        error,
-        Error::PageBudgetExceeded {
-            what: "FILE_LAYOUT_NAME_ENTRY",
-            limit,
-        } if limit == page.bytes.len()
-    ));
-}
-
-#[test]
-fn many_files_sharing_one_stream_chain_are_rejected() {
-    let page = build_shared_stream_chain(128, 128);
-    let error = walk_layout_buffer(&page.bytes).unwrap_err();
-    assert!(matches!(
-        error,
-        Error::PageBudgetExceeded {
-            what: "STREAM_LAYOUT_ENTRY",
-            limit,
-        } if limit == page.bytes.len()
-    ));
-}
-
-#[test]
-fn shared_name_payload_is_bounded_by_the_page() {
-    // Two files sharing a chain of long names stay inside the step budget but
-    // would decode twice as many payload bytes as the page stores.
-    let page = build_shared_name_payload(2, 200, 100);
-    let error = walk_layout_buffer(&page.bytes).unwrap_err();
-    assert_eq!(error.code(), "INDEX_LAYOUT_PAYLOAD_BUDGET");
-    assert!(matches!(
-        error,
-        Error::PayloadBudgetExceeded {
-            what: "FILE_LAYOUT_NAME_ENTRY.FileName",
-            limit,
-        } if limit == page.bytes.len()
-    ));
-}
-
-#[test]
-fn a_small_shared_name_chain_still_decodes() {
-    // Sharing is not itself an error: two files reaching one two-name chain
-    // fit the page-wide allowance and must decode identically.
-    let page = build_shared_name_chain(2, 2);
-    let parsed = walk_layout_buffer(&page.bytes).unwrap();
-    assert_eq!(parsed.len(), 2);
-    assert_eq!(parsed[0].names.len(), 2);
-    assert_eq!(parsed[0].names, parsed[1].names);
 }

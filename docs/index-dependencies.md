@@ -7,12 +7,12 @@ version, its crates.io publication date (checked against the crates.io API on 20
 the reason it is needed. Full license texts are in
 [`licenses/index/THIRD-PARTY-NOTICES.txt`](../licenses/index/THIRD-PARTY-NOTICES.txt).
 
-## Runtime dependencies (3)
+## Runtime dependency (2)
 
 | Crate | Pin | Published (UTC) | License | Why |
 | --- | --- | --- | --- | --- |
 | `unicode-normalization` | `=0.1.26` | 2026-10-16 | MIT OR Apache-2.0 AND Unicode-3.0 | Canonical NFC/NFD normalization for the case-fold key (P1). APFS/HFS+ deliver NFD names and NTFS/ext4 deliver NFC; without normalization the same name would index as two. Pure Rust, no build script, no OS call. |
-| `fs2` | `=0.4.3` | 2018-01-06 | MIT OR Apache-2.0 | Advisory file lock for the snapshot writer (PS2, #600). Already in the workspace lock through `ops-files`; exact pin, MIT text in `licenses/index/THIRD-PARTY-NOTICES.txt`. This is the one explicit exception to the #584 whitelist, required by #586 for locked publication and GC serialisation. |
+| `memchr` | `=2.8.3` | 2026-07-08 | Unlicense OR MIT | SIMD two-way substring search over the contiguous folded-name arena for the query prefilter (P7). Already resolved in `native/Cargo.lock` through other crates, so the lock gains one dependency edge and no new package; MIT is the selected alternative. |
 
 The license needs the `Unicode-3.0` identifier in addition to MIT/Apache-2.0 because the crate
 embeds Unicode data files. MIT is the selected alternative where a choice exists.
@@ -34,7 +34,6 @@ rule; each slice still commits `native/Cargo.lock` and extends
 | --- | --- | --- | --- | --- |
 | `hashbrown` | `=0.17.1` | 2026-05-09 | MIT OR Apache-2.0 | Name intern table that stores only a 4-byte id (P5). It is already in the workspace lock through `indexmap`. |
 | `rustc-hash` | `=2.1.3` | 2026-07-02 | Apache-2.0 OR MIT | `FxHashMap` for the sparse record map (P5). |
-| `memchr` | `=2.8.3` | 2026-07-08 | Unlicense OR MIT | SIMD substring search for query patterns (P7). Already in the workspace lock through other crates. |
 | `rayon` | `=1.12.0` | 2026-04-14 | MIT OR Apache-2.0 | Deterministic parallel name scan behind the query API (P7). Results are merged in chunk order, never in completion order. |
 
 The whitelist is closed: `zerocopy` (its derive emits `unsafe impl`, which collides with the

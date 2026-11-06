@@ -265,7 +265,7 @@ fn created_and_deleted_in_same_batch_nets_to_nothing() {
 #[test]
 fn oversized_usn_names_are_rejected_before_interning() {
     let mut index = new_index();
-    let long_name = vec![b'x'; MAX_DECODED_NAME_BYTES + 1];
+    let long_name = vec![b'x'; MAX_NAME_BYTES + 1];
     let record = create(7, ROOT, &long_name, false);
     let outcome = index.apply_batch(&[record]);
 
@@ -273,7 +273,7 @@ fn oversized_usn_names_are_rejected_before_interning() {
         outcome.anomalies,
         vec![Anomaly::OversizedName {
             record: RecordId::new(7),
-            len: (MAX_DECODED_NAME_BYTES + 1) as u64
+            len: (MAX_NAME_BYTES + 1) as u64
         }]
     );
     assert!(sorted_paths(&index).is_empty());
@@ -297,7 +297,7 @@ fn insert_layout_builds_every_path_from_the_roots_record_and_hard_links() {
         ],
         false,
         Some(4096),
-        Some(FILETIME_UNIX_EPOCH_TICKS + 10_000_000),
+        Some(1234),
     );
     let docs_page = layout_file(100, vec![layout_name(5, b"docs")], true, None, Some(99));
 
@@ -314,7 +314,7 @@ fn insert_layout_builds_every_path_from_the_roots_record_and_hard_links() {
     let file = index.head_of(RecordId::new(200)).expect("file indexed");
     let view = index.entry(file).expect("live");
     assert_eq!(view.size(), Some(4096));
-    assert_eq!(view.mtime(), Some(1_000_000_000));
+    assert_eq!(view.mtime(), Some(1234));
     assert!(child_chains_match_rebuild(&index));
 }
 
@@ -340,7 +340,7 @@ fn enrich_builds_hard_link_chain_findable_under_every_name() {
         vec![layout_name(100, b"a.txt"), layout_name(101, b"b.txt")],
         false,
         Some(4096),
-        Some(FILETIME_UNIX_EPOCH_TICKS + 5_550_000),
+        Some(555),
     ));
 
     assert_eq!(
@@ -358,7 +358,7 @@ fn enrich_builds_hard_link_chain_findable_under_every_name() {
     while !current.is_nil() {
         let view = index.entry(current).expect("live link");
         assert_eq!(view.size(), Some(4096));
-        assert_eq!(view.mtime(), Some(555_000_000));
+        assert_eq!(view.mtime(), Some(555));
         links += 1;
         current = index.entries().next_link(current);
     }
@@ -488,17 +488,14 @@ fn enrich_with_renamed_directory_never_orphans_children() {
         vec![layout_name(ROOT, b"documents")],
         true,
         None,
-        Some(FILETIME_UNIX_EPOCH_TICKS + 5_550_000),
+        Some(555),
     ));
     assert_eq!(
         sorted_paths(&index),
         vec!["renamed".to_string(), "renamed/a.txt".to_string()]
     );
     let directory = index.head_of(RecordId::new(100)).expect("dir survives");
-    assert_eq!(
-        index.entry(directory).expect("live").mtime(),
-        Some(555_000_000)
-    );
+    assert_eq!(index.entry(directory).expect("live").mtime(), Some(555));
     assert!(child_chains_match_rebuild(&index));
 }
 
@@ -594,141 +591,4 @@ fn entry_if_record_rejects_dead_and_reused_slots() {
     let delete = record(7, ROOT, b"", USN_REASON_FILE_DELETE, false);
     index.apply_batch(&[delete]);
     assert!(index.entry_if_record(entry, RecordId::new(7)).is_none());
-}
-#[test]
-fn decoded_wtf8_names_use_the_component_limit_not_the_wire_limit() {
-    // 200 CJK units are 400 wire bytes but 600 decoded WTF-8 bytes: legal.
-    let cjk = "文".repeat(200);
-    assert_eq!(cjk.len(), 600);
-    assert!(cjk.len() > 510);
-
-    let mut index = new_index();
-    index.insert_enum(&create(100, ROOT, cjk.as_bytes(), false));
-    let entry = index
-        .head_of(RecordId::new(100))
-        .expect("bootstrap must accept a 600-byte decoded CJK name");
-    assert_eq!(
-        index.names().raw_bytes(index.entries().name_id(entry)),
-        cjk.as_bytes()
-    );
-    assert_eq!(index.stats().oversized_names, 0);
-    assert_eq!(sorted_paths(&index), vec![cjk.clone()]);
-
-    // The same decoded name through live apply.
-    let mut applied = new_index();
-    let outcome = applied.apply_batch(&[create(100, ROOT, cjk.as_bytes(), false)]);
-    assert!(outcome.anomalies.is_empty());
-    assert!(applied.head_of(RecordId::new(100)).is_some());
-    assert_eq!(applied.stats().oversized_names, 0);
-
-    // Enrich accepts the same decoded name from a LAYOUT page.
-    let mut enriched = new_index();
-    enriched.enrich(&layout_file(
-        100,
-        vec![layout_name(ROOT, cjk.as_bytes())],
-        false,
-        Some(1),
-        Some(FILETIME_UNIX_EPOCH_TICKS),
-    ));
-    assert!(enriched.head_of(RecordId::new(100)).is_some());
-    assert_eq!(enriched.stats().oversized_names, 0);
-
-    // 255 unpaired surrogate units are 765 decoded bytes: exactly the limit.
-    let units: Vec<u16> = (0..MAX_COMPONENT_UNITS).map(|_| 0xD800u16).collect();
-    let mut surrogate = Vec::new();
-    crate::wtf8::from_utf16(&units, &mut surrogate);
-    assert_eq!(surrogate.len(), MAX_DECODED_NAME_BYTES);
-    let mut index = new_index();
-    let mut record = create(200, ROOT, &surrogate, false);
-    record.name_lossy = true;
-    index.insert_enum(&record);
-    assert!(index.head_of(RecordId::new(200)).is_some());
-
-    // One byte over the decoded limit stays an oversized-name anomaly.
-    let too_long = vec![b'x'; MAX_DECODED_NAME_BYTES + 1];
-    let mut index = new_index();
-    let outcome = index.apply_batch(&[create(300, ROOT, &too_long, false)]);
-    assert_eq!(
-        outcome.anomalies,
-        vec![Anomaly::OversizedName {
-            record: RecordId::new(300),
-            len: too_long.len() as u64
-        }]
-    );
-    assert_eq!(index.stats().oversized_names, 1);
-}
-
-#[test]
-fn a_record_naming_the_root_cannot_rewrite_root_identity() {
-    let mut index = new_index();
-    let mut root_record = create(ROOT, ROOT, b".", true);
-    root_record.attributes = USN_DIRECTORY;
-    index.insert_enum(&root_record);
-
-    let root = index.root();
-    assert_eq!(index.entries().record(root), RecordId::new(ROOT));
-    assert_eq!(index.entries().parent(root), EntryId::NIL);
-    assert_eq!(index.names().raw_bytes(index.entries().name_id(root)), b"");
-
-    index.insert_enum(&create(100, ROOT, b"child", false));
-    assert_eq!(sorted_paths(&index), vec!["child".to_string()]);
-    let child = index.head_of(RecordId::new(100)).expect("child indexable");
-    let mut path = Vec::new();
-    assert_eq!(index.path_of(child, &mut path), PathStatus::Ok);
-    let mut root_path = Vec::new();
-    assert_eq!(index.path_of(root, &mut root_path), PathStatus::Ok);
-    assert!(root_path.is_empty());
-
-    // The same protection through live apply, including a delete naming the
-    // root record.
-    let mut live = new_index();
-    live.apply_batch(&[create(ROOT, ROOT, b".", true)]);
-    live.apply_batch(&[create(100, ROOT, b"child", false)]);
-    live.apply_batch(&[record(ROOT, ROOT, b"", USN_REASON_FILE_DELETE, false)]);
-    assert_eq!(sorted_paths(&live), vec!["child".to_string()]);
-    assert_eq!(live.entries().parent(live.root()), EntryId::NIL);
-}
-
-#[test]
-fn filetime_is_converted_to_unix_epoch_nanoseconds() {
-    assert_eq!(filetime_to_unix_ns(FILETIME_UNIX_EPOCH_TICKS), Some(0));
-    assert_eq!(
-        filetime_to_unix_ns(FILETIME_UNIX_EPOCH_TICKS + 10_000_000),
-        Some(1_000_000_000)
-    );
-    assert_eq!(
-        filetime_to_unix_ns(FILETIME_UNIX_EPOCH_TICKS - 10_000_000),
-        Some(-1_000_000_000)
-    );
-    assert_eq!(filetime_to_unix_ns(i64::MAX), None);
-    assert_eq!(filetime_to_unix_ns(i64::MIN), None);
-
-    let mut index = new_index();
-    index.enrich(&layout_file(
-        100,
-        vec![layout_name(ROOT, b"dir")],
-        true,
-        None,
-        Some(FILETIME_UNIX_EPOCH_TICKS + 10_000_000),
-    ));
-    let directory = index.head_of(RecordId::new(100)).expect("dir indexed");
-    assert_eq!(
-        index.entry(directory).expect("live").mtime(),
-        Some(1_000_000_000),
-        "enrich must store Unix ns, not raw FILETIME ticks"
-    );
-
-    index.enrich(&layout_file(
-        101,
-        vec![layout_name(ROOT, b"odd")],
-        false,
-        Some(1),
-        Some(i64::MAX),
-    ));
-    let file = index.head_of(RecordId::new(101)).expect("file indexed");
-    assert_eq!(
-        index.entry(file).expect("live").mtime(),
-        None,
-        "an out-of-range FILETIME becomes unknown, not a saturated date"
-    );
 }

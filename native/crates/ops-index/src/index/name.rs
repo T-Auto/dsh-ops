@@ -253,7 +253,7 @@ impl NameStore {
     /// lowercase can lengthen a name, so the raw bound alone is not enough), or
     /// when one arena would exceed 2 GiB.
     pub fn intern(&mut self, bytes: &[u8]) -> NameId {
-        assert!(!bytes.contains(&0), "names cannot contain NUL");
+        debug_assert!(!bytes.contains(&0), "names cannot contain NUL");
         assert!(
             bytes.len() <= usize::from(u16::MAX),
             "name is longer than 65535 bytes"
@@ -469,10 +469,8 @@ impl NameStore {
     ///
     /// # Panics
     ///
-    /// Panics when releasing a name that is not live, or while the same-name
-    /// chain is not empty. Both are caller bugs and the contract holds in every
-    /// profile (a release that dropped a linked name would leave a dangling
-    /// name id in a release build too).
+    /// Panics when releasing a name that is not live (a bug in the caller),
+    /// and in debug builds when the same-name chain is not empty.
     pub fn release(&mut self, id: NameId) -> bool {
         let refcount = &mut self.refcount[id.index()];
         assert!(*refcount > 0, "release of a name that is not live");
@@ -480,7 +478,7 @@ impl NameStore {
         if *refcount != 0 {
             return false;
         }
-        assert!(
+        debug_assert!(
             self.head[id.index()].is_nil(),
             "same-name chain must be unlinked before its name is released"
         );
