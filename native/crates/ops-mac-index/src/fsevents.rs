@@ -461,35 +461,52 @@ impl EventStream {
 /// way to resolve symlinks; this function intentionally never touches the file
 /// system.
 pub fn relative_path(roots: &[PathBuf], path: &Path) -> Option<PathBuf> {
-    if let Some(relative) = exact_relative(roots, path) {
-        return Some(relative);
-    }
-    folded_relative(roots, path)
+    match_root(roots, path).map(|(_, relative)| relative)
 }
 
-/// Longest root that is a literal prefix of `path`.
-fn exact_relative(roots: &[PathBuf], path: &Path) -> Option<PathBuf> {
-    let mut best: Option<&PathBuf> = None;
-    for root in roots {
+/// Path relative to the longest matching root, plus that root's index.
+///
+/// The index is what lets a caller keep two roots apart when they contain the
+/// same relative paths: coalescing groups by (root, relative path), so
+/// /a/x and /b/x are two changes, not one. The matching rules are the same as
+/// [relative_path]: the exact prefix wins over the component-wise
+/// ASCII-case-insensitive fallback, and among eligible roots the one with the
+/// most components wins. Two roots with the same component count keep slice
+/// order (the first one wins), which is deterministic.
+pub(crate) fn match_root(roots: &[PathBuf], path: &Path) -> Option<(usize, PathBuf)> {
+    if let Some(found) = exact_root(roots, path) {
+        return Some(found);
+    }
+    folded_root(roots, path)
+}
+
+/// Longest root that is a literal prefix of path, with its index.
+fn exact_root(roots: &[PathBuf], path: &Path) -> Option<(usize, PathBuf)> {
+    let mut best: Option<usize> = None;
+    for (index, root) in roots.iter().enumerate() {
         if !path.starts_with(root) {
             continue;
         }
-        if best.is_none_or(|current| root.components().count() > current.components().count()) {
-            best = Some(root);
+        if best
+            .is_none_or(|current| root.components().count() > roots[current].components().count())
+        {
+            best = Some(index);
         }
     }
-    best.map(|root| {
-        path.strip_prefix(root)
-            .map(Path::to_path_buf)
-            .unwrap_or_default()
-    })
+    let index = best?;
+    let relative = path
+        .strip_prefix(&roots[index])
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    Some((index, relative))
 }
 
-/// Longest root that matches `path` component-wise ignoring ASCII case.
-fn folded_relative(roots: &[PathBuf], path: &Path) -> Option<PathBuf> {
+/// Longest root that matches path component-wise ignoring ASCII case, with its
+/// index.
+fn folded_root(roots: &[PathBuf], path: &Path) -> Option<(usize, PathBuf)> {
     let path_components: Vec<Component<'_>> = path.components().collect();
     let mut best: Option<usize> = None;
-    for root in roots {
+    for (index, root) in roots.iter().enumerate() {
         let root_components: Vec<Component<'_>> = root.components().collect();
         if root_components.is_empty() || root_components.len() > path_components.len() {
             continue;
@@ -498,19 +515,20 @@ fn folded_relative(roots: &[PathBuf], path: &Path) -> Option<PathBuf> {
             .iter()
             .zip(&path_components)
             .all(|(left, right)| component_eq_folded(left, right));
-        if matches && best.is_none_or(|current| root_components.len() > current) {
-            best = Some(root_components.len());
+        if matches
+            && best
+                .is_none_or(|current| root_components.len() > roots[current].components().count())
+        {
+            best = Some(index);
         }
     }
-    best.map(|len| {
-        let mut relative = PathBuf::new();
-        for component in &path_components[len..] {
-            relative.push(component.as_os_str());
-        }
-        relative
-    })
+    let index = best?;
+    let mut relative = PathBuf::new();
+    for component in &path_components[roots[index].components().count()..] {
+        relative.push(component.as_os_str());
+    }
+    Some((index, relative))
 }
-
 /// Whether two path components are equal, ignoring ASCII case.
 fn component_eq_folded(left: &Component<'_>, right: &Component<'_>) -> bool {
     match (left, right) {

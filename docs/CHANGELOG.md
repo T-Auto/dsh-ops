@@ -31,6 +31,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Keep root identity in coalesced changes: the same relative path under two watched roots now yields two changes, and a rename across roots is a removal in the old root plus an addition in the new one instead of silently dropping either.
+- 合并变更保留 root 身份：两个被监视 root 下相同相对路径会产出两条变更；跨 root 重命名拆为旧 root 删除加新 root 新增，不再静默丢项。
 - Retain the old-name removal when a paired rename target is replaced later in the batch.
 - 配对重命名的目标在同批次被替换时，保留旧路径的删除操作。
 - Seed live FSEvents cursors with the current journal id instead of persisting the SINCE_NOW sentinel.

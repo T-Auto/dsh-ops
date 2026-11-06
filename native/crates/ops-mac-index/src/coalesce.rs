@@ -10,6 +10,15 @@
 //! path, keeping the highest event id per reduced change so a caller can still
 //! persist a cursor.
 //!
+//! ## Root identity
+//!
+//! A caller can watch several roots, and two roots can contain the same
+//! relative path (for example /Users/a/data and /Volumes/backup/data). Those
+//! are two different entries, so grouping is keyed by (root index, relative
+//! path), never by the relative path alone, and every change carries the root
+//! index it belongs to. Failing to keep them apart would silently drop one of
+//! the two changes and still let the batch look complete, which is the
+//! completeness lie this module exists to prevent.
 //! ## Net effect, not history
 //!
 //! The machine tracks what the batch says about one path relative to the
@@ -51,29 +60,35 @@
 //! replay would be the exact lie M3 exists to prevent. Events under a Time
 //! Machine mount are dropped and counted, never indexed.
 
-use crate::fsevents::{Event, EventFlags, EventId, relative_path};
+use crate::fsevents::{Event, EventFlags, EventId, match_root};
 use crate::rescan::is_time_machine_path;
 use ops_index::ChangeAction;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// One net change for one path.
+/// One net change for one path in one watched root.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CoalescedChange {
-    /// Path relative to the root it belongs to.
+    /// Index into the roots slice the caller passed to [coalesce].
+    ///
+    /// Two roots can contain the same relative path, and those are two
+    /// different entries: this index is what keeps them apart. Callers that
+    /// keep one table per root use it to pick the table; callers with a single
+    /// root always see 0.
+    pub root: usize,
+    /// Path relative to that root.
     pub rel: PathBuf,
     /// Net action the index has to apply.
     pub action: ChangeAction,
-    /// File id when the event carried one (always present for `Renamed`).
+    /// File id when the event carried one (always present for Renamed).
     pub file_id: Option<u64>,
     /// Highest event id merged into this change.
     pub id: EventId,
 }
-
 /// Result of coalescing one batch.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CoalescedBatch {
-    /// Net changes, ordered by event id and then path.
+    /// Net changes, ordered by event id, then root index, then path.
     pub changes: Vec<CoalescedChange>,
     /// Highest event id in the input; `None` when the batch carried no events.
     pub latest: Option<EventId>,
@@ -132,12 +147,12 @@ where
         }
     }
 
-    let mut pending: BTreeMap<PathBuf, Pending> = BTreeMap::new();
+    let mut pending: BTreeMap<(usize, PathBuf), Pending> = BTreeMap::new();
     for event in events {
         let Some(kind) = kind_of(event.flags) else {
             continue;
         };
-        let Some(rel) = relative_path(roots, &event.path) else {
+        let Some((root, rel)) = match_root(roots, &event.path) else {
             result.ignored += 1;
             continue;
         };
@@ -145,12 +160,13 @@ where
             result.excluded += 1;
             continue;
         }
+        let key = (root, rel);
         if let Some(direction) = directions.get(&event.id) {
             if event.path == direction.old {
-                // The old name: the paired `Renamed` change on the new name
+                // The old name: the paired Renamed change on the new name
                 // already describes this move. Any later event for this path
                 // overrides the suppression.
-                let source = pending.entry(rel).or_default();
+                let source = pending.entry(key).or_default();
                 source.file_id = event.file_id;
                 source.last_id = event.id;
                 source.suppressed = true;
@@ -158,27 +174,27 @@ where
             }
             if event.path == direction.new {
                 pending
-                    .entry(rel)
+                    .entry(key)
                     .or_default()
                     .rename_in(event, Some(direction.file_id));
                 continue;
             }
         }
         match kind {
-            Kind::Created => pending.entry(rel).or_default().create(event),
-            Kind::Removed => pending.entry(rel).or_default().remove(event),
-            Kind::Modified => pending.entry(rel).or_default().modify(event),
+            Kind::Created => pending.entry(key).or_default().create(event),
+            Kind::Removed => pending.entry(key).or_default().remove(event),
+            Kind::Modified => pending.entry(key).or_default().modify(event),
             Kind::Renamed => {
                 // An unpaired rename: the path either still exists (a new name
                 // appeared) or is gone (an old name vanished). The existing
                 // case is a creation from the index's point of view — its
                 // identity may be reused, but nothing here can prove the path
-                // kept its metadata. `Modified` would claim "same path, new
+                // kept its metadata. Modified would claim "same path, new
                 // metadata", which is not what happened.
                 if exists(&event.path) {
-                    pending.entry(rel).or_default().create(event);
+                    pending.entry(key).or_default().create(event);
                 } else {
-                    pending.entry(rel).or_default().remove(event);
+                    pending.entry(key).or_default().remove(event);
                 }
             }
         }
@@ -188,18 +204,18 @@ where
     // that same identity-preserving move. A later replacement or another move
     // may erase it; retain the source removal in that case.
     for direction in directions.values() {
-        let Some(old) = relative_path(roots, &direction.old) else {
+        let Some((root, old)) = match_root(roots, &direction.old) else {
             continue;
         };
-        let Some(new) = relative_path(roots, &direction.new) else {
+        let Some((new_root, new)) = match_root(roots, &direction.new) else {
             continue;
         };
-        let move_survives = pending.get(&new).is_some_and(|state| {
+        let move_survives = pending.get(&(new_root, new)).is_some_and(|state| {
             state.action() == Some(ChangeAction::Renamed)
                 && state.file_id == Some(direction.file_id)
         });
         if !move_survives
-            && let Some(source) = pending.get_mut(&old)
+            && let Some(source) = pending.get_mut(&(root, old))
             && source.suppressed
         {
             source.state = State::Absent;
@@ -209,11 +225,12 @@ where
     }
 
     let mut changes = Vec::with_capacity(pending.len());
-    for (rel, state) in pending {
+    for ((root, rel), state) in pending {
         let Some(action) = state.action() else {
             continue;
         };
         changes.push(CoalescedChange {
+            root,
             rel,
             action,
             file_id: state.file_id,
@@ -223,6 +240,7 @@ where
     changes.sort_by(|left, right| {
         left.id
             .cmp(&right.id)
+            .then_with(|| left.root.cmp(&right.root))
             .then_with(|| left.rel.cmp(&right.rel))
     });
     result.changes = changes;
@@ -275,8 +293,9 @@ fn invalidates_snapshot(flags: EventFlags) -> bool {
         || flags.intersects(EventFlags::UNMOUNT)
 }
 
-/// One attributable rename: the old and new absolute names plus the identity
-/// that ties them together.
+/// One attributable rename: the old and new absolute names and the identity
+/// that ties them together. Both names belong to one watched root, which the
+/// caller recovers with the same match it used for grouping.
 struct RenameDirection {
     old: PathBuf,
     new: PathBuf,
@@ -284,7 +303,11 @@ struct RenameDirection {
 }
 
 /// Decides which of two same-id rename events is the old and which the new
-/// path.
+/// path, when both belong to the same watched root.
+///
+/// A move across two roots is not returned: a single Renamed change names one
+/// root, so the honest reduction is a removal in the old root plus an addition
+/// in the new one (the per-event fallback then produces exactly that).
 fn rename_pair<F>(pair: &[&Event], roots: &[PathBuf], exists: &F) -> Option<RenameDirection>
 where
     F: Fn(&Path) -> bool,
@@ -304,10 +327,13 @@ where
     {
         return None;
     }
-    // Both names have to belong to a watched root for the move to be applied
-    // through the same index.
-    relative_path(roots, &first.path)?;
-    relative_path(roots, &second.path)?;
+    // Both names have to belong to the same watched root for the move to be
+    // applied as one change.
+    let (first_root, _) = match_root(roots, &first.path)?;
+    let (second_root, _) = match_root(roots, &second.path)?;
+    if first_root != second_root {
+        return None;
+    }
     match (exists(&first.path), exists(&second.path)) {
         (false, true) => Some(RenameDirection {
             old: first.path.clone(),
@@ -323,7 +349,6 @@ where
         _ => None,
     }
 }
-
 #[derive(Clone, Copy, Debug)]
 enum State {
     /// Nothing said about the path yet.

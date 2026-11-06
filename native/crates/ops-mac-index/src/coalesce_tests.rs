@@ -32,6 +32,7 @@ fn a_single_create_is_an_added_change() {
     assert_eq!(
         batch.changes,
         vec![CoalescedChange {
+            root: 0,
             rel: PathBuf::from("a.txt"),
             action: ChangeAction::Added,
             file_id: None,
@@ -124,6 +125,7 @@ fn a_rename_pair_with_a_file_id_becomes_one_renamed_change() {
     assert_eq!(
         batch.changes,
         vec![CoalescedChange {
+            root: 0,
             rel: PathBuf::from("new.txt"),
             action: ChangeAction::Renamed,
             file_id: Some(9),
@@ -405,4 +407,105 @@ fn replacing_a_rename_target_does_not_erase_a_recreated_source() {
         .expect("recreated source");
     assert_eq!(source.action, ChangeAction::Added);
     assert_eq!(source.file_id, Some(33));
+}
+
+#[test]
+fn the_same_relative_path_under_two_roots_stays_two_changes() {
+    // The reviewed reproduction: /a/x and /b/x are different entries. Grouping
+    // by relative path alone dropped one of them and still looked complete.
+    let roots = vec![PathBuf::from("/a"), PathBuf::from("/b")];
+    let events = [
+        event(11, EventFlags::ITEM_CREATED, "/a/x"),
+        event(22, EventFlags::ITEM_CREATED, "/b/x"),
+    ];
+    let batch = coalesce_with(&events, &roots, |_| false);
+    assert_eq!(batch.changes.len(), 2);
+    let roots_of: Vec<usize> = batch.changes.iter().map(|change| change.root).collect();
+    assert_eq!(roots_of, vec![0, 1]);
+    assert!(batch.changes.iter().all(
+        |change| change.rel.as_path() == Path::new("x") && change.action == ChangeAction::Added
+    ));
+}
+
+#[test]
+fn a_directory_under_two_roots_keeps_both_changes() {
+    let roots = vec![PathBuf::from("/a"), PathBuf::from("/b")];
+    let flags =
+        EventFlags::from_raw(EventFlags::ITEM_CREATED.raw() | EventFlags::ITEM_IS_DIR.raw());
+    let events = [event(11, flags, "/a/dir"), event(12, flags, "/b/dir")];
+    let batch = coalesce_with(&events, &roots, |_| false);
+    assert_eq!(batch.changes.len(), 2);
+    assert_eq!(batch.changes[0].root, 0);
+    assert_eq!(batch.changes[1].root, 1);
+    assert!(
+        batch
+            .changes
+            .iter()
+            .all(|change| change.action == ChangeAction::Added)
+    );
+}
+
+#[test]
+fn relative_paths_are_relative_to_their_own_root() {
+    let roots = vec![PathBuf::from("/a"), PathBuf::from("/b")];
+    let events = [
+        event(11, EventFlags::ITEM_CREATED, "/a/sub/x"),
+        event(22, EventFlags::ITEM_CREATED, "/b/sub/x"),
+    ];
+    let batch = coalesce_with(&events, &roots, |_| false);
+    assert_eq!(batch.changes.len(), 2);
+    assert_eq!(batch.changes[0].rel, PathBuf::from("sub/x"));
+    assert_eq!(batch.changes[1].rel, PathBuf::from("sub/x"));
+    assert_eq!(batch.changes[0].root, 0);
+    assert_eq!(batch.changes[1].root, 1);
+}
+
+#[test]
+fn a_cross_root_rename_is_a_removal_and_an_addition() {
+    // One Renamed change names one root, so a move from /a to /b cannot be
+    // expressed as a rename; the honest reduction is a removal in the old root
+    // plus an addition in the new one. Nothing is dropped.
+    let roots = vec![PathBuf::from("/a"), PathBuf::from("/b")];
+    let events = [
+        identified(event(5, EventFlags::ITEM_RENAMED, "/a/old"), 9),
+        identified(event(5, EventFlags::ITEM_RENAMED, "/b/new"), 9),
+    ];
+    let batch = coalesce_with(&events, &roots, probe(&["/b/new"]));
+    assert_eq!(batch.changes.len(), 2);
+    let removed = batch
+        .changes
+        .iter()
+        .find(|change| change.root == 0)
+        .expect("the old root keeps its removal");
+    assert_eq!(removed.rel, PathBuf::from("old"));
+    assert_eq!(removed.action, ChangeAction::Removed);
+    let added = batch
+        .changes
+        .iter()
+        .find(|change| change.root == 1)
+        .expect("the new root gets its addition");
+    assert_eq!(added.rel, PathBuf::from("new"));
+    assert_eq!(added.action, ChangeAction::Added);
+    assert!(
+        batch
+            .changes
+            .iter()
+            .all(|change| change.action != ChangeAction::Renamed)
+    );
+}
+
+#[test]
+fn ordering_breaks_ties_by_root_index() {
+    let roots = vec![PathBuf::from("/a"), PathBuf::from("/b")];
+    let events = [
+        event(7, EventFlags::ITEM_CREATED, "/b/x"),
+        event(7, EventFlags::ITEM_CREATED, "/a/x"),
+    ];
+    let batch = coalesce_with(&events, &roots, |_| false);
+    let order: Vec<(usize, &Path)> = batch
+        .changes
+        .iter()
+        .map(|change| (change.root, change.rel.as_path()))
+        .collect();
+    assert_eq!(order, vec![(0, Path::new("x")), (1, Path::new("x"))]);
 }
