@@ -68,26 +68,38 @@ await test('cache cleanup is preview-only until all hosts are explicitly stopped
   })
 })
 
-await test('Git selection prints an absolute config and never chooses a PATH WSL launcher', async () => {
+await test('Git selection prints an absolute executable and never chooses a PATH WSL launcher', async () => {
   await withTempDir('manager-git', root => {
     const file = path.join(root, 'programs/Git/bin/bash.exe'), wsl = path.join(root, 'system/System32/bash.exe')
     for (const target of [file, wsl]) { fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, 'fixture') }
     const env = { ProgramFiles: path.join(root, 'programs'), SystemRoot: path.join(root, 'system'), PATH: path.dirname(wsl), DSH_HOME: root }
     assert.deepEqual(gitBashCandidates({ env, platform: 'win32' }).filter(value => value.startsWith(root)), [file])
     const selected = selectBashRuntime('git', { env, platform: 'win32' })
-    assert.equal(selected.config.bashPath, file); assert.equal(selected.restricted.compatible, false)
+    assert.equal(selected.clear, false)
+    assert.equal(selected.engine, 'msys')
+    assert.equal(selected.file, file)
+    assert.match(selected.restriction, /verified|restricted|restricted-mode|MSYS|compatib|msys-2\.0/i)
+    // A path the scan does not know is still usable, and it wins over the scan.
+    const custom = path.join(root, 'elsewhere/bash.exe')
+    fs.mkdirSync(path.dirname(custom), { recursive: true }); fs.writeFileSync(custom, 'fixture')
+    assert.equal(selectBashRuntime('git', { env, platform: 'win32', path: custom }).file, custom)
+    assert.throws(() => selectBashRuntime('git', { env, platform: 'win32', path: 'bin/bash.exe' }), /must be absolute/)
     assert.equal(fs.existsSync(path.join(root, 'config.json')), false)
     assert.deepEqual(gitBashCandidates({ env, platform: 'linux' }), [])
   })
 })
 
-await test('managed selection retains the provisioned store layout and absence is actionable', async () => {
+await test('the default rung is a removal, and a legacy provisioned copy stays selectable', async () => {
   await withTempDir('manager-select', home => {
     assert.deepEqual(managedBashInventory({ env: { DSH_HOME: home } }), [])
-    assert.throws(() => selectBashRuntime('managed', { env: { DSH_HOME: home }, platform: 'win32', arch: 'x64' }), /bash-runtime install/)
-    seed(home, '9.0', false)
+    const niubash = selectBashRuntime('niubash', { env: { DSH_HOME: home }, platform: 'win32', arch: 'x64' })
+    assert.equal(niubash.clear, true)
+    assert.equal(niubash.engine, 'niubash')
+    // No payload in this home: the answer is either the packaged payload or a stated absence.
+    assert.ok(niubash.file === undefined || /niu\.exe$/i.test(niubash.file))
+    if (niubash.file === undefined) assert.match(niubash.detail, /bash-runtime install/)
     const directory = seed(home, '2.0')
-    assert.equal(selectBashRuntime('managed', { env: { DSH_HOME: home }, platform: 'win32', arch: 'x64' }).file, path.join(directory, 'bin/bash.exe'))
+    assert.equal(selectBashRuntime('git', { env: { DSH_HOME: home }, platform: 'win32', arch: 'x64' }).file, path.join(directory, 'bin/bash.exe'))
   })
 })
 

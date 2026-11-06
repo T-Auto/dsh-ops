@@ -59,9 +59,11 @@ Usage:
   dsh-ops provision-shells [--bash] [--pwsh] [--force] [--dry-run] [--pin <file>]
                                   Download the pinned upstream bash and/or PowerShell 7, verify
                                   their digests, and install them under <DSH_HOME>/dsh-ops/shells
-  dsh-ops bash-runtime [status|install|remove|git|managed|clean-cache] [--yes] [--dry-run]
-                                  Manage optional Bash; git/managed prints a bashPath selection
-                                  for the host config editor. remove previews unless --yes.
+  dsh-ops bash-runtime [status|install|remove|git|niubash|clean-cache] [--path <exe>] [--yes] [--dry-run]
+                                  Manage optional Bash; install provisions the pinned Niubash
+                                  payload. git/niubash print the bashPath facts for the host
+                                  config editor (git also takes --path).
+                                  remove previews unless --yes.
                                   clean-cache previews old private runtime generations; apply only
                                   after stopping all OPS hosts with --yes --all-hosts-stopped.
   dsh-ops upgrade-host-pwsh [--yes] [--dry-run]
@@ -121,6 +123,7 @@ async function main() {
       bash: { type: 'boolean', default: false },
       pwsh: { type: 'boolean', default: false },
       pin: { type: 'string' },
+      path: { type: 'string' },
       serve: { type: 'boolean', default: false },
       port: { type: 'string' },
       target: { type: 'string' },
@@ -141,7 +144,7 @@ async function main() {
     case 'upgrade-host-pwsh':
       return commandUpgradeHostPwsh({ yes: values.yes, dryRun: values['dry-run'] })
     case 'bash-runtime':
-      return commandBashRuntime(positionals[1], { yes: values.yes, dryRun: values['dry-run'], force: values.force, configFile: values.config, allHostsStopped: values['all-hosts-stopped'] })
+      return commandBashRuntime(positionals[1], { yes: values.yes, dryRun: values['dry-run'], force: values.force, configFile: values.config, path: values.path, allHostsStopped: values['all-hosts-stopped'] })
     case 'ladder':
       return commandLadder({ json: values.json === true, configFile: values.config })
     case 'panel': {

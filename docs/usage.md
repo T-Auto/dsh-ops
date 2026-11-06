@@ -91,13 +91,13 @@ On Windows the pinned Bash payload arrives with the install; `bash-runtime` rema
 ```console
 dsh-ops bash-runtime status
 dsh-ops bash-runtime install
-dsh-ops bash-runtime git
-dsh-ops bash-runtime managed
+dsh-ops bash-runtime git [--path <exe>]
+dsh-ops bash-runtime niubash
 dsh-ops bash-runtime remove            # preview only
 dsh-ops bash-runtime remove --yes      # remove receipt-marked managed versions
 ```
 
-`git` and `managed` print an absolute `bashPath` configuration for the host config editor; they do not edit a profile or PATH. Reload the mode row after applying the selection or installing/removing its runtime. Stop running Bash jobs before removal. Removal refuses links in the managed path and preserves unmarked versions, system Git and PowerShell. `install` reuses the pinned download and checksum checks from `provision-shells --bash`; `--dry-run` makes no download or change. Windows restricted modes still require the pinned MSYS IPC compatibility match. A different Git Bash remains a full-access choice; approval never repairs an incompatible restricted runtime. Linux/macOS continue using host Bash.
+`niubash` reports the default executor the deployment resolves and states that the mode rows' `bashPath` must be removed for it; `git` prints an absolute `bashPath` for the host config editor (the first scanned installation when `--path` is omitted). Neither edits a profile or PATH. The settings page's **Bash executor** card is the same choice with a UI: switch to Niubash, click a scanned Git Bash, or type a path; the host validates it before the save is written. Reload the mode row after applying the selection or installing/removing its runtime. Stop running Bash jobs before removal. Removal refuses links in the managed path and preserves unmarked versions, system Git and PowerShell. `install` reuses the pinned download and checksum checks from `provision-shells --bash`; `--dry-run` makes no download or change. Windows restricted modes still require the pinned MSYS IPC compatibility match. A different Git Bash remains a full-access choice; approval never repairs an incompatible restricted runtime. Linux/macOS continue using host Bash.
 
 Windows confined calls stage a private MSYS tree under `<DSH_HOME>/dsh-ops/bash-ipc`. Identical verified payloads share a content-addressed generation across profiles using the same DSH home; separate homes remain isolated. Lifecycle locking and durable process leases protect selected runtimes, including the interval before a child starts. Automatic reclamation retains the current generation and one predecessor, plus leased, legacy or uncertain entries. `bash-runtime status` and `ladder` expose observed cache usage. To reclaim historical copies, first run `dsh-ops bash-runtime clean-cache` to preview. Stop **all** OPS hosts and Bash jobs, then run `dsh-ops bash-runtime clean-cache --yes --all-hosts-stopped` against the intended `DSH_HOME`; `--dry-run` never removes anything. Only recognized marker-owned generations are eligible; unrelated directories and linked paths are not removed. The selected generation and one predecessor remain. Removed caches are rebuilt on demand. Do not manually delete caches while any OPS host or shell may still use them.
 

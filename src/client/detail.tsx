@@ -36,8 +36,42 @@ export interface StatusView { readonly summary: string; readonly facts: readonly
 
 const none = (t: Translator): string => t('statusNone')
 
+/** One label for the shell implementation behind a resolved path. */
+function engineLabel(engine: string, t: Translator): string {
+  if (engine === 'niubash') return t('engineNiubash')
+  if (engine === 'msys') return t('engineMsys')
+  return none(t)
+}
+
+/** One label for where the resolved Bash came from. */
+function sourceLabel(source: string, t: Translator): string {
+  switch (source) {
+    case 'config': return t('sourceConfig')
+    case 'provisioned': return t('sourceProvisioned')
+    case 'bundled': return t('sourceBundled')
+    case 'path': return t('sourcePath')
+    case 'well-known': return t('sourceWellKnown')
+    default: return none(t)
+  }
+}
+
+/** The one sentence that states where the running executor came from. */
+function summaryFor(engine: string, source: string, t: Translator): string {
+  if (engine === 'niubash') {
+    if (source === 'bundled') return t('summaryNiubashBundled')
+    if (source === 'provisioned') return t('summaryNiubashProvisioned')
+    return t('summaryNiubashConfigured')
+  }
+  if (engine === 'msys') return source === 'config' ? t('summaryGitConfigured') : t('summaryGitSystem')
+  return t('summaryMissing')
+}
+
 /**
  * Map a runtime snapshot onto the facts an operator can verify.
+ *
+ * The summary is derived from what the Host actually resolves per mode, never from
+ * an inventory list: a payload shipped inside the package is a working executor
+ * even though nothing was installed into `<DSH_HOME>`.
  * @param snapshot - the Host answer, or undefined before the first one.
  * @param t - the row's locale.
  * @returns the fact list and the footnote.
@@ -46,15 +80,26 @@ export function statusView(snapshot: RuntimeSnapshot | undefined, t: Translator)
   const note = t('runtimeHelp')
   if (snapshot === undefined) return { summary: t('summaryNone'), facts: [], note }
   const managed = [...new Set(snapshot.managed.map(entry => entry.version))].join(', ')
+  const running = snapshot.modes.filter(mode => mode.enabled && mode.publishesBash)
+  const uniform = snapshot.bash
+  const summary = snapshot.modes.length > 0 && running.length === 0 ? t('summaryNoShell')
+    : running.length === 0 ? t('summaryMissing')
+      : uniform === undefined ? t('summaryMixed')
+        : !uniform.available ? t('summaryMissing')
+          : summaryFor(uniform.engine, uniform.source, t)
+  const executor = uniform !== undefined
+    ? `${engineLabel(uniform.engine, t)}（${sourceLabel(uniform.source, t)}）`
+    : running.length === 0 ? none(t) : running.map(mode => `${mode.id}=${engineLabel(mode.engine, t)}`).join(', ')
   const facts: StatusFact[] = [
     { label: t('statusPlatform'), value: snapshot.platform },
+    { label: t('statusExecutor'), value: executor },
+    { label: t('statusBashPath'), value: uniform?.file ?? none(t) },
     { label: t('statusManaged'), value: managed === '' ? none(t) : managed },
     { label: t('statusGit'), value: snapshot.git.length === 0 ? none(t) : snapshot.git.join(', ') },
     { label: t('statusPwsh'), value: snapshot.powerShell.supported
       ? `${t('statusPwshReady')}${snapshot.powerShell.version === undefined ? '' : `（${snapshot.powerShell.version}）`}`
       : (snapshot.powerShell.unavailable ?? none(t)) },
   ]
-  const summary = snapshot.managed.length > 0 ? t('summaryManaged') : snapshot.git.length > 0 ? t('summaryGit') : t('summaryNone')
   return { summary, facts, note }
 }
 

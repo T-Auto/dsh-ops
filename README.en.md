@@ -48,10 +48,10 @@ Supported: Windows x64, Linux x64, and macOS 13+ on Apple Silicon or Intel
   capture and TUI start off. Custom presets use the same assembler as built-ins, while unlisted
   presets remain unchanged. Move legacy row overrides into the single row; the Compatibility row
   is removed. See [settings](docs/configuration-reference.md) and [architecture](docs/internal-architecture.md).
-- Built-in preset consumers are enabled by default: Windows uses the pinned Bash payload
-  declared by the main package — `@dsh-ops/bash-win32-x64@0.2.1` in `optionalDependencies`, so npm
-  installs the independent **bash 5.3.15** (PortableGit `v2.56.0.windows.2`) that ships with ops,
-  and `bashPath` can point `ops_bash` at Git Bash instead; Linux/macOS use the distribution's own
+- Built-in preset consumers are enabled by default: on Windows the package embeds the pinned
+  **official Niubash 1.5.0 portable payload** and downloads no Git Bash optional package; the
+  settings page's **Bash executor** card switches between that payload and a Git Bash/MSYS
+  executable you scan or type in (saved as `bashPath`). Linux/macOS use the distribution's own
   Bash, overridable with `config.bashPath`. `dsh-ops bash-runtime install` remains the path for
   installing, repairing and selecting a managed copy. PowerShell stays host-managed; its upgrade
   command previews the standard installation and requires `--yes` to execute.

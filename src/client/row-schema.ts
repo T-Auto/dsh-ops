@@ -204,3 +204,99 @@ export function changedFields(draft: RowDraft, raw: Record<string, unknown>, opt
   }
   return operations
 }
+
+/** The Bash executor a row page offers: the packaged Niubash rung, an explicit path, or a disagreement. */
+export type ExecutorEngine = 'niubash' | 'git' | 'mixed'
+
+/** The executor choice as the page holds it, before it is written. */
+export interface ExecutorChoice {
+  readonly engine: ExecutorEngine
+  /** The explicit executable; empty unless `engine` is `git`. */
+  readonly path: string
+}
+
+/** The mode sections that publish ops_bash and therefore own `bashPath`. */
+export const EXECUTOR_SECTIONS = Object.freeze(['minimal', 'standard', 'ptc', 'cordis'] as const)
+
+/** One `bashPath` the saved config already carries, mode or custom preset. */
+interface SavedBashPath { readonly path: readonly string[]; readonly value: string }
+
+function objectAt(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+/**
+ * Every saved `bashPath` the row owns. Custom presets count only when they
+ * already carry one: their options are theirs, so a new choice is never
+ * smuggled into a preset the operator has not configured.
+ * @param raw - the saved row config.
+ * @returns the saved paths, mode sections first.
+ */
+function savedBashPaths(raw: Record<string, unknown>): SavedBashPath[] {
+  const list: SavedBashPath[] = []
+  for (const section of EXECUTOR_SECTIONS) {
+    const value = objectAt(raw[section]).bashPath
+    if (typeof value === 'string' && value.trim() !== '') list.push({ path: [section, 'bashPath'], value: value.trim() })
+  }
+  for (const [id, options] of Object.entries(objectAt(raw.presets))) {
+    const value = objectAt(options).bashPath
+    if (typeof value === 'string' && value.trim() !== '') list.push({ path: ['presets', id, 'bashPath'], value: value.trim() })
+  }
+  return list
+}
+
+/** Whether a path names the Niubash executable rather than an MSYS bash. */
+const niubashPath = (value: string): boolean => /(^|[\/])niu\.exe$/i.test(value)
+
+/**
+ * Read the executor the saved row stands for.
+ * @param raw - the saved row config.
+ * @returns the packaged default, one explicit path, or `mixed` when the modes disagree.
+ */
+export function readExecutor(raw: Record<string, unknown>): ExecutorChoice {
+  const saved = savedBashPaths(raw)
+  if (saved.length === 0) return { engine: 'niubash', path: '' }
+  const values = new Set(saved.map(entry => entry.value))
+  if (values.size > 1) return { engine: 'mixed', path: '' }
+  const value = saved[0]!.value
+  // An explicit Niubash tree is still the default rung: choosing it again clears
+  // the key instead of pinning one provisioned copy.
+  return niubashPath(value) ? { engine: 'niubash', path: '' } : { engine: 'git', path: value }
+}
+
+/**
+ * Whether the page's choice still differs from what is saved.
+ * @param choice - the operator's current choice.
+ * @param raw - the saved row config.
+ * @returns true when saving must write something.
+ */
+export function executorDiffers(choice: ExecutorChoice, raw: Record<string, unknown>): boolean {
+  const baseline = readExecutor(raw)
+  if (choice.engine !== baseline.engine) return true
+  return choice.engine === 'git' && choice.path.trim() !== baseline.path
+}
+
+/**
+ * The write operations that turn the saved row into the reviewed selection.
+ * @param raw - the saved row config.
+ * @param selection - the host's verified answer for the choice.
+ * @returns `unset` for the default rung, `set` for an explicit executable.
+ */
+export function executorOps(raw: Record<string, unknown>, selection: { clear: boolean; file?: string }): SettingsPathOpView[] {
+  const saved = savedBashPaths(raw)
+  if (selection.clear) return saved.map(entry => ({ op: 'unset', path: [...entry.path] }))
+  if (selection.file === undefined) return []
+  const file = selection.file
+  const operations: SettingsPathOpView[] = []
+  for (const section of EXECUTOR_SECTIONS) {
+    const savedValue = objectAt(raw[section]).bashPath
+    if (savedValue === file) continue
+    operations.push({ op: 'set', path: [section, 'bashPath'], value: file })
+  }
+  // A custom preset is normalised only when it already opted into an explicit path.
+  for (const entry of saved) {
+    if (entry.path[0] !== 'presets' || entry.value === file) continue
+    operations.push({ op: 'set', path: [...entry.path], value: file })
+  }
+  return operations
+}

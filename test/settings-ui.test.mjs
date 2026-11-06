@@ -19,19 +19,31 @@ const TestSwitch = ({ checked, label, disabled, onChange }) => h('button', {
   onClick: () => onChange(!checked),
 })
 const ready = (value, revision = 'v1') => ({ status: 'ready', writable: true, value, base: {}, user: {}, revision })
-const snapshot = { platform: 'win32', managed: [], git: ['C:/Git/bin/bash.exe'], powerShell: { supported: true, guidance: 'Restart DSH.' } }
+const niubashMode = { id: 'ptc', enabled: true, publishesBash: true, available: true, source: 'bundled',
+  engine: 'niubash', file: 'C:/dsh-ops/runtime/win32-x64/niubash/niu.exe', detail: 'verified complete Niubash payload' }
+const { id: _modeId, enabled: _modeEnabled, publishesBash: _modePublishes, ...niubashBash } = niubashMode
+const snapshot = { platform: 'win32', bash: niubashBash, modes: [niubashMode], managed: [],
+  git: ['C:/Git/bin/bash.exe'], powerShell: { supported: true, guidance: 'Restart DSH.' } }
 const ok = value => ({ ok: true, value })
 const defaultApi = () => ({
   snapshot: async () => ok(snapshot),
-  select: async () => ok({ bashPath: snapshot.git[0], restriction: 'Partial enforcement.' }),
+  select: async request => ok(request.source === 'niubash'
+    ? { source: 'niubash', clear: true, engine: 'niubash', detail: 'Niubash 1.5.0 resolved.', restriction: '' }
+    : { source: 'git', file: String(request.path), clear: false, engine: 'msys',
+      detail: 'Explicit Git Bash selected.', restriction: 'Partial enforcement.' }),
   plan: async action => ok({ id: 'plan-id', action, available: true, details: ['Review installation first.'] }),
   execute: async () => ok({ status: 'completed', effectState: 'applied', message: 'Completed.' }),
 })
+/** The executor card's own fixture; the row page always receives one from `row-settings.tsx`. */
+const executor = (api = defaultApi()) => ({ api, snapshot, busy: false, refresh() {} })
 async function mount(component, props) {
+  // The row page is mounted directly by these tests; its executor surface is supplied
+  // by `row-settings.tsx` in the shipped bundle.
+  const withDefaults = component === RowForm && props.executor === undefined ? { ...props, executor: executor() } : props
   const container = document.createElement('div'); document.body.append(container)
   const root = createRoot(container)
-  const update = next => root.render(h(component, { view: 'page', t, ...next }))
-  await act(async () => update(props))
+  const update = next => root.render(h(component, { view: 'page', t, ...withDefaults, ...next }))
+  await act(async () => update())
   return { container, render: next => act(async () => update(next)), update, close: async () => { await act(async () => root.unmount()); container.remove() } }
 }
 const button = (container, text) => [...container.querySelectorAll('button')].find(node => node.textContent === text)
@@ -85,6 +97,45 @@ await test('the page saves only changed switches with the host revision, then re
     assert.equal(second[0][1], 'next-revision')
     assert.deepEqual(second[0][0], [{ op: 'set', path: ['ptc', 'bash'], value: false }])
   } finally { await view.close(); await shutdown(fixture.ctx) }
+})
+
+await test('the executor card switches between the packaged payload and a typed Git Bash path', async () => {
+  const writes = []
+  const form = { state: ready({ ptc: { bashPath: 'C:/Git/bin/bash.exe' } }), mutate: async ops => { writes.push(ops); return true } }
+  const view = await mount(RowForm, { form, Switch: TestSwitch })
+  try {
+    const card = group(view.container, en.executorTitle)
+    assert.ok(card, 'the executor card renders')
+    // A saved path is shown as the Git Bash choice, with its value in the input.
+    assert.equal(card.querySelector('input[type=text]').value, 'C:/Git/bin/bash.exe')
+    // A detected installation is one click away, and the host validates the path.
+    await click(button(card, 'C:/Git/bin/bash.exe'))
+    assert.match(card.textContent, /Partial enforcement/)
+    // Choosing the packaged payload clears the saved key instead of pinning a copy.
+    await click(card.querySelectorAll('input[type=radio]')[0])
+    await click(button(view.container, en.save))
+    assert.deepEqual(writes[0], [{ op: 'unset', path: ['ptc', 'bashPath'] }])
+  } finally { await view.close() }
+})
+
+await test('an invalid typed path blocks the save and names the host reason', async () => {
+  const writes = [], api = defaultApi()
+  api.select = async () => ({ ok: false, error: { message: 'The Bash executable does not exist: C:/typo/bash.exe' } })
+  const form = { state: ready({}), mutate: async ops => { writes.push(ops); return true } }
+  const view = await mount(RowForm, { form, Switch: TestSwitch, executor: executor(api) })
+  try {
+    const card = group(view.container, en.executorTitle)
+    await click(card.querySelectorAll('input[type=radio]')[1])
+    const input = card.querySelector('input[type=text]')
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set
+      setter.call(input, 'C:/typo/bash.exe')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await click(button(view.container, en.save))
+    assert.match(view.container.textContent, /does not exist/)
+    assert.deepEqual(writes, [], 'nothing is written for a path the host rejected')
+  } finally { await view.close() }
 })
 
 await test('rendered preset hints describe default conditional PowerShell hiding', async () => {
