@@ -82,10 +82,10 @@
 pub mod error;
 pub mod fold;
 pub mod ids;
-pub mod snapshot;
 pub mod index;
 pub mod layout;
 pub mod query;
+pub mod snapshot;
 pub mod source;
 pub mod usn;
 pub mod wtf8;
