@@ -16,16 +16,20 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Plugin detail pages now show a curated introduction through the locale meta.detail entry instead of the repository README.
 - 插件详情页通过 locale 的 meta.detail 展示专门编写的介绍，不再直接使用仓库 README。
 
-- The Windows default shell is now the complete official Niubash v1.5.0 payload shipped inside the package: the archive, source tree and every per-call execution copy are verified, a missing payload never falls back implicitly to ambient Bash, and managed install, status, select and remove commands are provided.
-- Windows 默认 Shell 改为随主包携带的完整官方 Niubash v1.5.0 载荷：逐条校验归档、源树与每次调用的执行副本，缺少载荷时不隐式回退到环境 Bash，并提供托管安装、状态、选择与卸载命令。
-
-## [Unreleased]
-
 - Align the runtime settings surfaces with the shipped Niubash payload. The status card reports the executor the host actually resolves per mode (packaged payload, provisioned copy, explicit path, PATH or well-known install) instead of an install inventory, names each mode when they disagree, and no longer claims no Bash exists while the packaged payload is running. The install preview now names the pinned Niubash archive, its digest, and the DSH_HOME target it really writes, replacing the leftover Git for Windows facts.
 - 设置页运行时卡片与随包 Niubash 对齐：状态按宿主对各模式的实际解析（随包载荷、托管副本、显式路径、PATH 或标准安装位置）报告执行器，模式之间不一致时逐项列出，不再在随包载荷可用时声称没有 Bash；安装预览改为真正会下载的固定 Niubash 归档、摘要与 DSH_HOME 目标，替代遗留的 Git for Windows 数据。
 
 - Add a Bash executor card to the row page. It switches every mode between the packaged Niubash rung (removing `bashPath`) and one Git Bash/MSYS executable, offers the host's scanned installations, accepts a typed absolute path, and validates the choice through the host before the revision-checked save writes `bashPath`; the CLI exposes the same choice as `bash-runtime niubash` and `bash-runtime git --path`.
 - 配置页新增 Bash 执行器卡片：在所有模式之间切换随包 Niubash（移除 `bashPath`）或一个 Git Bash/MSYS 可执行文件，列出宿主扫描到的安装、允许输入绝对路径，并在带版本校验的保存写入 `bashPath` 之前由宿主校验；CLI 以 `bash-runtime niubash` 与 `bash-runtime git --path` 暴露同一选择。
+
+- 运行时状态卡片不再把随包载荷当作“未安装”：只有在 DSH_HOME 真的存在托管副本、或随包载荷缺失需要恢复时才显示该行；同时排除 Windows Store 的 `WindowsAppsash.exe`（WSL 别名），它不会被当作 Git Bash。
+- The runtime card no longer treats the packaged payload as a missing installation: the managed-copy row appears only when one exists or when installing is the recovery, and the Windows Store `WindowsAppsash.exe` alias (WSL) is never offered as Git Bash.
+- 插件详情页说明进入设置页的路径：向下翻页后点击“包含的组件”内的“dsh-ops>”进入设置界面。
+- The plugin detail now names the navigation: scroll down, then open the settings page through “dsh-ops>” inside “Included components”.
+- The Windows default shell is now the complete official Niubash v1.5.0 payload shipped inside the package: the archive, source tree and every per-call execution copy are verified, a missing payload never falls back implicitly to ambient Bash, and managed install, status, select and remove commands are provided.
+- Windows 默认 Shell 改为随主包携带的完整官方 Niubash v1.5.0 载荷：逐条校验归档、源树与每次调用的执行副本，缺少载荷时不隐式回退到环境 Bash，并提供托管安装、状态、选择与卸载命令。
+
+## [Unreleased]
 
 - Preserve PTC paging of session-owned legacy snapshots and batch audits through the shared result adapter, while Native still accepts only ref:// references. Refuse result storage when the active PTC parent's presentation changes or its inspection fails before cache IO. Await shared publication readiness and roll back permanent delayed initialization failures.
 - 共享 result 适配器保留 PTC 对会话自有旧快照与 batch 审计的分页，Native 仍仅接受 ref:// 引用；活动 PTC 父调用的展示变化或检查失败时，在缓存 IO 前拒绝存储。等待共享发布就绪，并回滚延迟初始化的永久失败。
