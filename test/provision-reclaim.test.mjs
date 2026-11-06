@@ -13,6 +13,7 @@ import {
   PENDING_KEEP_AGE_MS, pendingRoot, planPendingSweep, recordPendingScratch, sweepPendingScratch,
 } from '../lib/cli/pending-scratch.js'
 import { reclaimNiubashSiblings } from '../lib/cli/niubash-payload.js'
+import { shellReceiptText } from '../lib/cli/provision-shells.js'
 
 /** A 64-character hex digest that differs per index. */
 const digest = (index) => index.toString(16).padStart(2, '0').repeat(32)
@@ -28,6 +29,21 @@ function seedScratch(scratchRoot, home, { name, bytes, at, kind = 'pwsh', pinInd
   })
   return directory
 }
+
+
+await test('the receipt one provisioned version carries is exactly one JSON document', async () => {
+  const text = shellReceiptText({
+    name: 'pwsh', platform: 'win32', arch: 'x64', version: '0.0.1', assetFile: 'a.zip',
+    url: 'https://example.invalid/a.zip', sha256: 'a'.repeat(64), bytes: 1,
+    extractor: 'zip', extractTo: 'bin', executableRelativePath: 'bin/pwsh.exe',
+  })
+  assert.ok(text.endsWith('\n'), 'the receipt ends with one newline')
+  const receipt = JSON.parse(text)
+  assert.equal(receipt.sha256, 'a'.repeat(64))
+  assert.equal(receipt.version, '0.0.1')
+  assert.equal(receipt.executable, 'bin/pwsh.exe')
+  assert.equal(receipt.schemaVersion, 1)
+})
 
 await test('a sweep reclaims only the registered directories outside the count budget', async () => {
   await withTempDir('pending-budget', (root) => {

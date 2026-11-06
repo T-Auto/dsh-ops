@@ -629,7 +629,7 @@ await test('a second provision run reclaims the download the first failure kept,
     // Seed what an earlier failed provision leaves behind: a kept download at the
     // canonical temporary root and the durable record that owns it.
     const sha = 'c'.repeat(64)
-    const scratch = path.join(fs.realpathSync(os.tmpdir()), 'dsh-ops-pwsh-reclaimseed')
+    const scratch = path.join(fs.realpathSync.native(os.tmpdir()), 'dsh-ops-pwsh-reclaimseed')
     fs.mkdirSync(scratch, { recursive: true })
     fs.writeFileSync(path.join(scratch, 'payload.bin'), Buffer.alloc(2048))
     const pending = path.join(home, 'dsh-ops', 'pending')

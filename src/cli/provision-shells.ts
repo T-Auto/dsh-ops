@@ -403,7 +403,7 @@ export function readShellReceipt(file: string): Record<string, unknown> | undefi
  * @returns {string} the JSON document, with a trailing newline.
  */
 export function shellReceiptText(pin: ShellPin) {
-  return `${JSON.stringify({
+  return JSON.stringify({
     schemaVersion: SHELL_RECEIPT_VERSION,
     name: pin.name,
     version: pin.version,
@@ -420,7 +420,7 @@ export function shellReceiptText(pin: ShellPin) {
     provisionedBy: 'dsh-ops provision-shells',
     provisionedAt: new Date().toISOString(),
     dshHome: dshHome(),
-  }, null, 2)}\\n`
+  }, null, 2) + '\n'
 }
 
 export function provisionShell(pin: ShellPin, { force, dryRun }: { force: boolean; dryRun: boolean }) {
@@ -449,14 +449,14 @@ export function provisionShell(pin: ShellPin, { force, dryRun }: { force: boolea
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), `dsh-ops-${pin.name}-`))
   const pending = pendingRoot(dshHome())
   /** Keep the bytes an operator needs to act on a failed install, and register them. */
-  const keepForDiagnosis = (reason: string): false => {
+  const keepForDiagnosis = (reason: string, reported: string = scratch): false => {
     const record = recordPendingScratch({ root: pending, kind: pin.name, pinSha256: pin.sha256, scratch, reason })
     if (record.bytes === 0) {
       fs.rmSync(scratch, { recursive: true, force: true })
       console.error('  nothing kept: the download left no bytes in ' + scratch)
       return false
     }
-    console.error(`  kept for diagnosis: ${scratch}`)
+    console.error(`  kept for diagnosis: ${reported}`)
     console.error(`  registered for reclamation: ${formatBytes(record.bytes)} under ${pending}`)
     return false
   }
@@ -472,7 +472,7 @@ export function provisionShell(pin: ShellPin, { force, dryRun }: { force: boolea
   if (actual !== pin.sha256) {
     console.error(`${pin.name}: ${pin.assetFile} hashed to ${actual}, not the pinned ${pin.sha256}`)
     console.error('  refusing to install bytes this distribution did not pin')
-    return keepForDiagnosis('the downloaded archive did not match the pinned sha256')
+    return keepForDiagnosis('the downloaded archive did not match the pinned sha256', downloaded.file)
   }
   console.log(`${pin.name}: verified sha256 ${actual}`)
 
@@ -487,20 +487,20 @@ export function provisionShell(pin: ShellPin, { force, dryRun }: { force: boolea
     if (!('ok' in unpacked)) {
       console.error(`${pin.name}: ${unpacked.error}`)
       for (const line of unpacked.stderr) console.error(`  ${line}`)
-      return keepForDiagnosis('the archive did not unpack: ' + unpacked.error)
+      return keepForDiagnosis('the archive did not unpack: ' + unpacked.error, downloaded.file)
     }
     const stagedExecutable = path.join(staged, pin.executableRelativePath)
     if (!fs.existsSync(stagedExecutable)) {
       console.error(`${pin.name}: the archive unpacked without ${pin.executableRelativePath}`)
       console.error(`  expected it at ${stagedExecutable}`)
-      return keepForDiagnosis('the archive unpacked without the pinned executable')
+      return keepForDiagnosis('the archive unpacked without the pinned executable', downloaded.file)
     }
     if (pin.executableSha256 !== undefined) {
       const executableActual = sha256File(stagedExecutable)
       if (executableActual !== pin.executableSha256) {
         console.error(`${pin.name}: the provisioned ${pin.executableRelativePath} hashed to ${executableActual}, `
           + `not the pinned ${pin.executableSha256}`)
-        return keepForDiagnosis('the provisioned executable did not match the pinned sha256')
+        return keepForDiagnosis('the provisioned executable did not match the pinned sha256', downloaded.file)
       }
     }
     fs.writeFileSync(path.join(staged, SHELL_RECEIPT_FILE), shellReceiptText(pin))
@@ -524,7 +524,7 @@ export function provisionShell(pin: ShellPin, { force, dryRun }: { force: boolea
         }
       }
       console.error(`${pin.name}: could not move the verified copy into place: ${errorMessage(error)}`)
-      return keepForDiagnosis('the verified copy could not be moved into place')
+      return keepForDiagnosis('the verified copy could not be moved into place', downloaded.file)
     }
     if (displaced) {
       try {
