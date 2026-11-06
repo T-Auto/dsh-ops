@@ -1,4 +1,4 @@
-# Native PTC enhancement — Windows x64, Linux x64, macOS arm64/x64
+# Native PTC enhancement — Windows x64, Linux x64, Linux arm64 (locally staged), macOS arm64/x64
 
 0.4.0 PTC callers use [Outcome contracts](ptc-outcomes.md) / [PTC 结果契约](PTC结果契约.md).
 The historical worker/recovery details below remain applicable; SDK results now wrap canonical facts in `data`.
@@ -9,7 +9,7 @@ background component has been removed.
 
 ## Runtime-bearing installation and original DSH permission linkage
 
-The current release ships native workers for `win32-x64`, `linux-x64`, `darwin-arm64` and `darwin-x64`, each with a version/checksum receipt, plus the Windows Bash IPC proxies. 0.3.1 shipped the first three; current support adds Intel macOS on macOS 13+. Formal `verify:release` requires all four target pairs and validates every PE/ELF/Mach-O worker and the Windows IPC binary/source closure. Local `check --staged` verifies only local development outputs. Windows/Linux ARM64 are not supported. macOS 12 lacks `CLONE_ACL`; its write-path fallback is a separate follow-up, not part of this support claim. The Windows Bash payload remains a Windows-only optional dependency; PowerShell is host-managed. POSIX uses host Bash. There is no postinstall download/build. Source builds use `npm run build:ptc`, plus `npm run build:bash-ipc` on Windows.
+The current release ships native workers for `win32-x64`, `linux-x64`, `darwin-arm64` and `darwin-x64`, each with a version/checksum receipt, plus the Windows Bash IPC proxies. 0.3.1 shipped the first three; current support adds Intel macOS on macOS 13+. Formal `verify:release` requires all four target pairs and validates every PE/ELF/Mach-O worker and the Windows IPC binary/source closure. Local `check --staged` verifies only local development outputs. Windows ARM64 is not supported; Linux arm64 is accepted as a locally staged source build but is not part of the published release matrix. macOS 12 lacks `CLONE_ACL`; its write-path fallback is a separate follow-up, not part of this support claim. The Windows Bash payload remains a Windows-only optional dependency; PowerShell is host-managed. POSIX uses host Bash. There is no postinstall download/build. Source builds use `npm run build:ptc`, plus `npm run build:bash-ipc` on Windows.
 
 PTC/Bash use original per-call sandboxPolicy and sandbox.confine, reporting the
 host's full/partial enforcement honestly. Read-only permits existing result pages

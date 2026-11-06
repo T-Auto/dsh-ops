@@ -1,16 +1,19 @@
-# Building and running dsh-ops on Linux x64
+# Building and running dsh-ops on Linux x64 and arm64
 
-Linux x64 is a supported target for the **file**, **ptc** and **shell**
-components. On Linux the shell component's `ops_bash` runs the distribution's own
-bash (see [Configuring the shell lane](#configuring-the-shell-lane)); the bundled
-PowerShell 7 and the bash IPC proxies remain Windows x64 only.
+Linux x64 and Linux arm64 (aarch64) are supported targets for the **file**,
+**ptc** and **shell** components. On Linux the shell component's `ops_bash` runs
+the distribution's own bash (see [Configuring the shell lane](#configuring-the-shell-lane));
+the bundled PowerShell 7 and the bash IPC proxies remain Windows x64 only.
 
 Nothing on Linux is downloaded with the package: the native workers are staged
 locally from source, which is why this page exists. The npm package still
 carries the Windows x64 payloads (`@dsh-ops/*-win32-x64`); Linux has no payload
-packages to fetch.
+packages to fetch. `linux-arm64` is a **locally staged** target: the published
+release matrix (`RELEASE_TARGETS`) still ships only `win32-x64`, `linux-x64`,
+`darwin-arm64` and `darwin-x64`; an arm64 host builds the worker from source and
+stages it under `runtime/linux-arm64` with its own provenance receipt.
 
-| Component | Linux x64 | Notes |
+| Component | Linux x64 / arm64 | Notes |
 | --- | --- | --- |
 | `dsh-ops/mode-standard` | yes | resident OPS file tools and `ops_bash` over the host bash; no official tool is replaced on Linux |
 | `dsh-ops/mode-cordis` | yes | same surface as Standard, with its own routing section |

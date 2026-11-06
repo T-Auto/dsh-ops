@@ -5,6 +5,11 @@ All notable changes to this package are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+- Accept `linux-arm64` as a locally staged native target. The resolver (`PLATFORMS`), the profile installer (`SUPPORTED_TARGETS.linux`) and the plugin manifest now allow it, while the new `RELEASE_TARGETS` keeps the published matrix at the four release targets, so `bin/check-release.mjs` and the release workflow are unchanged. Build the worker on the host with `npm run build:ptc`, stage it with `node bin/native-runtime.mjs stage --platform linux-arm64`, and validate it with `node bin/native-runtime.mjs check --staged` or `--platform linux-arm64`. A release tarball still carries `win32-x64`, `linux-x64`, `darwin-arm64` and `darwin-x64` only.
+- 接受 `linux-arm64` 作为“本机 staged”的原生目标：解析器（`PLATFORMS`）、profile 安装器（`SUPPORTED_TARGETS.linux`）与插件清单放行；新增的 `RELEASE_TARGETS` 让发布矩阵仍是四个发布目标，`bin/check-release.mjs` 与发布 workflow 行为不变。宿主上用 `npm run build:ptc` 构建后 `node bin/native-runtime.mjs stage --platform linux-arm64` 落盘，再用 `check --staged` 或 `--platform linux-arm64` 校验。发布 tarball 仍只携带 `win32-x64`、`linux-x64`、`darwin-arm64`、`darwin-x64`。
+
 ## [0.5.0] — 2026-11-06 — Stable release
 
 - This stable release summarizes the user- and developer-facing changes since v0.4.0, including the 0.4.1-0.4.4 patch releases and the 0.5.0 previews. **Breaking:** the 0.5 series targets DSH 0.2.2-rc.1 and later 0.2.2 releases only; older hosts are no longer supported.

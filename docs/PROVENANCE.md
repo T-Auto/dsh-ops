@@ -52,7 +52,7 @@ repository history and in the published tarballs of the versions that carried th
 
 ## Current target matrix (0.4.x)
 
-The current package declares `win32-x64`, `linux-x64`, `darwin-arm64` and `darwin-x64`.
+The current package declares `win32-x64`, `linux-x64`, `darwin-arm64` and `darwin-x64` as its release targets (`RELEASE_TARGETS`). The resolver's `PLATFORMS` additionally accepts `linux-arm64` as a locally staged source build: it is validated by `check --staged` / `--platform linux-arm64` but is not carried by a published release tarball.
 The 0.3.1 record below is historical: it shipped Apple Silicon only and did not include
 Intel. macOS 12's `CLONE_ACL` fallback is a separate follow-up; see [macOS](macos.md).
 

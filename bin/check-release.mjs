@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { parseArgs } from 'node:util'
-import { PLATFORMS } from '../lib/execution/runtime.js'
+import { PLATFORMS, RELEASE_TARGETS } from '../lib/execution/runtime.js'
 const { values } = parseArgs({ options: { root: { type: 'string' } } })
 const root = path.resolve(values.root ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'))
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
@@ -17,7 +17,8 @@ const declared = components[0].targets ?? []
 const sameSet = (a, b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort())
 if (!sameSet(declared, PLATFORMS)) throw Error(`Declared scope ${JSON.stringify(declared)} and resolver PLATFORMS ${JSON.stringify(PLATFORMS)} disagree`)
 // npm os/cpu filters cannot express paired targets. The component's exact targets
-// and runtime resolver are authoritative; Windows/Linux arm64 stay rejected.
+// and runtime resolver are authoritative; PLATFORMS also accepts linux-arm64 for a
+// locally staged source build, while a release tarball carries RELEASE_TARGETS only.
 if (!sameSet(pkg.os ?? [], PLATFORMS.map(target => target.split('-')[0]).filter((value, index, all) => all.indexOf(value) === index)) ||
     !sameSet(pkg.cpu ?? [], [...new Set(PLATFORMS.map(target => target.split('-')[1]))])) throw Error('Package os/cpu and exact target declarations disagree')
 // Shell payloads are carried in the main runtime tree; never fetch legacy Git Bash implicitly.
@@ -27,10 +28,10 @@ for (const name of ['@dsh-ops/bash-win32-x64', '@dsh-ops/pwsh-win32-x64']) {
 if (pkg.scripts?.postinstall) throw Error('Release must not download shell payloads from postinstall')
 const runtimeDir = path.join(root, 'runtime')
 const staged = fs.existsSync(runtimeDir) ? fs.readdirSync(runtimeDir, { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name).sort() : []
-const unexpected = staged.filter(target => !declared.includes(target))
+const unexpected = staged.filter(target => !RELEASE_TARGETS.includes(target))
 if (unexpected.length) throw Error(`Unexpected runtime targets in release: ${unexpected.join(', ')}`)
-const missing = declared.filter(target => !staged.includes(target))
-if (missing.length) throw Error(`Release is missing ${missing.join(', ')}; every declared target is required`)
+const missing = RELEASE_TARGETS.filter(target => !staged.includes(target))
+if (missing.length) throw Error(`Release is missing ${missing.join(', ')}; every release target is required`)
 const check = spawnSync(process.execPath, [path.join(root, 'bin/native-runtime.mjs'), 'check', '--root', root], { stdio: 'inherit' })
 if (check.status !== 0) throw Error('Native runtime gate failed')
 const hash = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex')

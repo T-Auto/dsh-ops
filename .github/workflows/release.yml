@@ -26,10 +26,11 @@ name: Release
 # checksum manifest (docs/PROVENANCE.md), not a second, unmaintained mechanism, and an
 # attestation would need `id-token: write` / `attestations: write` on the repository.
 #
-# SCOPE: exactly the four declared targets in lib/ptc/runtime.js — win32-x64,
-# linux-x64, darwin-arm64 and darwin-x64. Windows arm64 and Linux arm64 are outside the
-# matrix; `bin/native-runtime.mjs` refuses them, and `bin/check-release.mjs` fails the
-# run if any other target appears under `runtime/`.
+# SCOPE: exactly the four release targets in lib/ptc/runtime.js — win32-x64,
+# linux-x64, darwin-arm64 and darwin-x64. Linux arm64 is a locally staged source target
+# (`PLATFORMS`) and must not appear under `runtime/` here; Windows arm64 is outside the
+# matrix. `bin/native-runtime.mjs` refuses unknown targets, and `bin/check-release.mjs`
+# fails the run if any target outside RELEASE_TARGETS appears under `runtime/`.
 on:
   push:
     tags:
