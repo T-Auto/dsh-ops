@@ -58,16 +58,42 @@ export function isNiubashExecutable(file: string): boolean {
   return path.basename(file).toLowerCase() === 'niu.exe'
 }
 
+/** The directory created below a volume root when the temp directory is on another volume. */
+const SAME_VOLUME_EXEC_DIRECTORY = 'dsh-ops-exec'
+
+/**
+ * The root component of a path, lowercased so `C:\` and `c:\` compare equal.
+ * On POSIX this is always `/`, so the same-volume test is trivially true there
+ * and the OS temporary directory stays the default as before.
+ */
+function volumeRoot(pathname: string): string {
+  return path.parse(path.resolve(pathname)).root.toLowerCase()
+}
+
+/** Whether two paths live on the same volume — the precondition `fs.link` needs. */
+export function sameVolume(left: string, right: string): boolean {
+  return volumeRoot(left) === volumeRoot(right)
+}
+
 /**
  * The parent directory the per-call execution tree is created below.
  *
  * `DSH_OPS_EXEC_ROOT` moves it to an antivirus allow-list or a specific volume
- * (issue #715); the default stays the OS temporary directory. The value is
- * resolved against the process working directory and created on demand.
+ * (issue #715) and always wins when set. Otherwise the OS temporary directory
+ * is used — **unless the payload lives on another volume**: `fs.link` then fails
+ * with `EXDEV` and the clone silently falls back to copying 786 MiB per call.
+ * In that case a private directory on the payload's volume is returned, so the
+ * default configuration still takes the hardlink path.
+ *
+ * The returned directory may not be creatable (an unprivileged account cannot
+ * write to a volume root); callers fall back to `os.tmpdir()` in that case.
  */
-export function niubashExecutionRootParent(env: NodeJS.ProcessEnv = process.env): string {
+export function niubashExecutionRootParent(env: NodeJS.ProcessEnv = process.env, source?: string): string {
   const configured = env.DSH_OPS_EXEC_ROOT?.trim()
-  return configured === undefined || configured === '' ? os.tmpdir() : path.resolve(configured)
+  if (configured !== undefined && configured !== '') return path.resolve(configured)
+  const temporary = os.tmpdir()
+  if (source === undefined || sameVolume(temporary, source)) return temporary
+  return path.join(volumeRoot(source), SAME_VOLUME_EXEC_DIRECTORY)
 }
 
 /** Whether `NIUBASH_VERIFY=deep` asks for the per-call full re-hash escape hatch. */
@@ -104,6 +130,29 @@ async function assertExecutionRoot(parent: string, source: string): Promise<void
     if (isInside(path.relative(base, candidate))) {
       throw new Error(`DSH_OPS_EXEC_ROOT must not be inside the Niubash payload: ${parent}`)
     }
+  }
+}
+
+/**
+ * Create the execution-root parent and return the directory actually used.
+ *
+ * A same-volume root below a volume root (`D:\dsh-ops-exec`) is not always
+ * writable for an unprivileged account, and the payload's volume may be
+ * read-only. Falling back to the OS temporary directory keeps the call working;
+ * the clone then records `copy` mode, which is the documented `EXDEV` path. The
+ * fallback is reported because it silently costs ~786 MiB per call.
+ */
+async function ensureExecutionRoot(parent: string, source: string): Promise<string> {
+  try {
+    await fs.promises.mkdir(parent, { recursive: true })
+    return parent
+  } catch (error) {
+    const temporary = os.tmpdir()
+    if (parent === temporary) throw error
+    console.error(`dsh-ops: could not create the same-volume execution root ${parent}: ${error instanceof Error ? error.message : String(error)}; falling back to ${temporary}, where the clone copies the payload instead of linking it`)
+    await assertExecutionRoot(temporary, source)
+    await fs.promises.mkdir(temporary, { recursive: true })
+    return temporary
   }
 }
 
@@ -158,10 +207,9 @@ export async function prepareNiubash(file: string, inheritedPath = process.env.P
   const source = path.dirname(file)
   const deep = niubashDeepVerification()
   await verifySourceTree(source, deep, signal)
-  const parent = niubashExecutionRootParent()
+  const parent = niubashExecutionRootParent(process.env, source)
   await assertExecutionRoot(parent, source)
-  await fs.promises.mkdir(parent, { recursive: true })
-  const root = await fs.promises.mkdtemp(path.join(parent, EXECUTION_ROOT_PREFIX))
+  const root = await fs.promises.mkdtemp(path.join(await ensureExecutionRoot(parent, source), EXECUTION_ROOT_PREFIX))
   // Sealing is per inode, so concurrent calls for the same payload share one
   // reference count; disposal of the first must not unseal a sibling's tree.
   let released = false

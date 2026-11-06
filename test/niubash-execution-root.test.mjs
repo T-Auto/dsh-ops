@@ -26,7 +26,7 @@ import {
   sealTree,
   unsealTree,
 } from '../lib/niubash/seal.js'
-import { niubashDeepVerification, niubashExecutionRootParent, prepareNiubash } from '../lib/niubash/runtime.js'
+import { niubashDeepVerification, niubashExecutionRootParent, prepareNiubash, sameVolume } from '../lib/niubash/runtime.js'
 import { NIUBASH_PIN, niubashExecutionReceipt } from '../lib/cli/niubash-payload.js'
 
 const CONTENT = {
@@ -323,6 +323,34 @@ await test('the execution root parent and the deep escape hatch come from the en
   assert.equal(niubashDeepVerification({ NIUBASH_VERIFY: 'deep' }), true)
   assert.equal(niubashDeepVerification({ NIUBASH_VERIFY: 'DEEP' }), false)
   assert.equal(niubashDeepVerification({}), false)
+})
+
+await test('a same-volume payload keeps the OS temporary directory', () => {
+  // Without a source there is nothing to compare against.
+  assert.equal(niubashExecutionRootParent({}), os.tmpdir())
+  // A payload below the temp directory is on the same volume by construction.
+  assert.equal(niubashExecutionRootParent({}, path.join(os.tmpdir(), 'payload', 'niubash')), os.tmpdir())
+  assert.equal(sameVolume(os.tmpdir(), path.join(os.tmpdir(), 'payload')), true)
+})
+
+await test('a payload on another volume moves the execution root onto that volume', () => {
+  const temporary = path.parse(os.tmpdir()).root.toLowerCase()
+  // POSIX collapses every absolute path to `/`, so only Windows has volumes to
+  // separate; the fallback there is the documented EXDEV path and stays covered
+  // by the copy-mode tests.
+  if (temporary !== 'c:' && temporary !== 'c:\\') return
+  const other = 'z:'
+  const payload = `${other}\\some\\payload\\niubash`
+  const parent = niubashExecutionRootParent({}, payload)
+  // `path.parse().root` keeps the separator (`z:\`); compare through sameVolume so
+  // the assertion does not depend on that spelling.
+  assert.equal(path.parse(parent).root.toLowerCase(), `${other}\\`)
+  assert.match(parent, /dsh-ops-exec$/u)
+  assert.equal(sameVolume(parent, payload), true)
+  assert.equal(sameVolume(os.tmpdir(), payload), false)
+  // An explicit operator choice always wins over the same-volume heuristic.
+  assert.equal(niubashExecutionRootParent({ DSH_OPS_EXEC_ROOT: 'D:\\custom-root' }, payload),
+    path.resolve('D:\\custom-root'))
 })
 
 await test('a hardlink refusal builds a complete copy tree and records the cause', async () => withTempDir('niu-fallback', async base => {

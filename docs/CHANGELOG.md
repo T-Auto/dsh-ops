@@ -5,6 +5,11 @@ All notable changes to this package are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+- The per-call Niubash execution root now follows the payload's volume. When `DSH_OPS_EXEC_ROOT` is unset and `os.tmpdir()` sits on another volume, the clone is created below `<payload volume>\dsh-ops-exec`, so the default configuration keeps the zero-copy hardlink path instead of silently falling back to copying 785 MiB per call. A volume root the account cannot write still falls back to the temp directory and reports why.
+- 每次调用的 Niubash 执行根改为跟随载荷所在卷：未设置 `DSH_OPS_EXEC_ROOT` 且 `os.tmpdir()` 与之不同卷时，克隆改在 `<载荷所在卷>\dsh-ops-exec` 下创建，默认配置因此保持零拷贝硬链接路径，而不是静默回退为每次调用复制 785 MiB。该卷根对当前账户不可写时仍回退到临时目录并报告原因。
+
 ## [0.5.0] — 2026-11-06 — Stable release
 
 - This stable release summarizes the user- and developer-facing changes since v0.4.0, including the 0.4.1-0.4.4 patch releases and the 0.5.0 previews. **Breaking:** the 0.5 series targets DSH 0.2.2-rc.1 and later 0.2.2 releases only; older hosts are no longer supported.
