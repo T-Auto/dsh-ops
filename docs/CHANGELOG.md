@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Record the fields four host events already carry instead of keeping their type alone: `tool/ptc-dispatch(-start)` keeps the dispatched tool name, arguments and outcome, `job/registered`/`job/settled` keep the job id, its kind, its status and the call id the panel resolves back to the tool name, `agent/inbox/spliced` keeps its target, splice counts and merged text, and `todo/write` keeps the written todos. Like `turn` on `tool/call`, this only widens what a reader can see in the capture; no tool behaviour changes (#698).
+- 四种宿主事件不再只记类型，改为保留宿主已经给出的字段：`tool/ptc-dispatch(-start)` 保留内层工具名、参数与结果，`job/registered`/`job/settled` 保留 job id、类别、状态以及供面板回溯工具名的 call id，`agent/inbox/spliced` 保留目标、增删计数与被并入的文本，`todo/write` 保留写入的待办。与 `tool/call` 上的 `turn` 一样，这只扩大采集里能看见的内容，工具行为不变（#698）。
+
 ## [0.5.3] — 2026-11-11 — Patch release
 
 - The batch trigger now analyses the **root `run_code` program text** instead of counting repeated writes. Three independently latched categories — `bypass` (file work through the shell or `node:fs`), `plan` (no `// plan:` on the first physical line) and `shape` (a single operation in its own round trip) — each speak once per turn; a program that complies re-arms its category, so a regression inside the same turn speaks again, with no per-turn cap. Only the root call is inspected, delivery priority is `bypass` → `plan` → `shape`, and the notice rides the triggering result as `additionalContexts` without changing the tool value, its content or the system prompt.

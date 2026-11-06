@@ -32,6 +32,17 @@ function joined(message: unknown, type: string): string {
 function toolNames(message: unknown): string[] {
   return blocks(message, 'tool-call').flatMap(block => typeof block.name === 'string' ? [block.name] : [])
 }
+/** Text a content value carries: a plain string, or the text blocks of a block array. */
+function contentText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (!Array.isArray(value)) return ''
+  const text: string[] = []
+  for (const block of value) {
+    const part = field(block, 'text')
+    if (typeof part === 'string') text.push(part)
+  }
+  return text.join('\n')
+}
 
 /** Project one usage report onto the core buckets plus the optional ones actually sent. */
 function projectUsage(usage: unknown) {
@@ -87,6 +98,43 @@ export function projectEvent(event: unknown, config: PanelConfig = PANEL_DEFAULT
         ...base, turn: integer(data.turn), step: integer(data.step),
         reason: string(field(data.reason, 'kind')) ?? string(field(data.reason, 'message')),
       }
+    // A `run_code` program reaches every tool through PTC, so these two events are the
+    // only record of which inner tool ran, what it was given, and what it answered.
+    case 'tool/ptc-dispatch-start':
+      return {
+        ...base, callId: string(data.subCallId), name: string(data.name) ?? '(unnamed)',
+        arguments: clamp(typeof data.arguments === 'string' ? data.arguments : '', config.textLimit),
+      }
+    case 'tool/ptc-dispatch':
+      return {
+        ...base, callId: string(data.subCallId), name: string(data.name) ?? '(unnamed)', isError: data.isError === true,
+        errorCode: string(field(data.error, 'code')),
+        arguments: clamp(typeof data.arguments === 'string' ? data.arguments : '', config.textLimit),
+        payload: clamp(contentText(data.content), config.textLimit),
+      }
+    // Job lifecycle: without the id, a registration that never settles cannot be attributed.
+    // The host names no tool here: `toolCall` carries only `callId`, so the reader joins
+    // that id against the `tool/call` record instead of inventing a name from `kind`.
+    case 'job/registered': case 'job/settled':
+      return {
+        ...base, jobId: string(data.jobId), callId: string(field(data.toolCall, 'callId')),
+        kind: string(data.kind), status: string(data.status),
+        payload: clamp([string(data.label), string(data.detail)].filter(Boolean).join(' — '), config.textLimit),
+      }
+    // An inbox splice can merge away a pending turn; keep what it merged and how much.
+    case 'agent/inbox/spliced': {
+      const inserted = Array.isArray(data.inserted) ? data.inserted : []
+      return {
+        ...base, target: string(data.target), insertedCount: inserted.length,
+        removedCount: integer(data.removedCount) ?? 0,
+        payload: clamp(inserted.map((message: unknown) => joined(message, 'text')).filter(text => text !== '').join('\n'), config.textLimit),
+      }
+    }
+    case 'todo/write': {
+      const todos = Array.isArray(data.todos) ? data.todos : []
+      const lines = todos.map((todo: unknown) => `${string(field(todo, 'status')) ?? 'unknown'}: ${string(field(todo, 'content')) ?? ''}`)
+      return { ...base, payload: clamp(lines.join('\n'), config.textLimit) }
+    }
     default:
       return base
   }

@@ -12,6 +12,7 @@ export interface CaptureEvent {
   callId?: string; name?: string; reason?: string; errorCode?: string; interrupted?: unknown; isError?: unknown
   payload?: TextField | null; reasoning?: TextField | null; arguments?: TextField | null
   toolCalls?: unknown[]; usage?: Usage | null; usageReported?: unknown; usageBuckets?: string[]
+  jobId?: string; status?: string; kind?: string; target?: string; insertedCount?: number; removedCount?: number
 }
 export interface ArchiveMember { path: string; bytes: number; sha256: string; role: string }
 export interface EventFile { path: string; events: number; sha256: string }
@@ -45,9 +46,11 @@ function textField(value: unknown): value is TextField | null | undefined {
 export function foldEvent(value: Row): value is Row & CaptureEvent {
   if (typeof value.type !== 'string' || !value.type || typeof value.seq !== 'number' || !Number.isSafeInteger(value.seq) || value.seq < 0
     || !finite(value.time) || value.time < 0 || value.time > 8_640_000_000_000_000) return false
-  if (!['role', 'callId', 'name', 'reason', 'errorCode'].every(key => optionalString(value[key]))) return false
+  if (!['role', 'callId', 'name', 'reason', 'errorCode', 'jobId', 'status', 'kind', 'target'].every(key => optionalString(value[key]))) return false
   if (![value.payload, value.reasoning, value.arguments].every(textField)) return false
   if (value.toolCalls !== undefined && !Array.isArray(value.toolCalls)) return false
+  if (!['insertedCount', 'removedCount'].every(key => value[key] === undefined
+    || (Number.isSafeInteger(value[key]) && (value[key] as number) >= 0))) return false
   if (value.usageBuckets !== undefined && (!Array.isArray(value.usageBuckets) || !value.usageBuckets.every(item => typeof item === 'string'))) return false
   if (value.usage != null) {
     if (!object(value.usage) || Array.isArray(value.usage)) return false
