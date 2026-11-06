@@ -18,9 +18,17 @@
 //! the output it produces without an index. The dangerous state would be
 //! `Ready` without a caught-up watcher, and the type makes that unconstructible
 //! outside this crate.
+//!
+//! L3 adds one override ABOVE the phase: a root on an unsupported file system
+//! ([`crate::fs`]) is `Unavailable` whatever the phase says, and so is a root
+//! whose classification failed (unreadable mount table, uncanonicalizable path)
+//! — the source fails closed. That is why a `Live` watcher on NFS/FUSE/SMB/9p/
+//! Ceph/AFS or procfs/sysfs/debugfs/tracefs/securityfs/cgroup never produces
+//! `Ready`.
 
 use ops_index::source::{CandidateSet, Change, EnumBudget, FsDataSource};
 use ops_index::{SnapshotId, SourceError, SourceState};
+use std::io;
 use std::path::Path;
 
 /// What the source knows about a root's freshness.
@@ -73,11 +81,25 @@ impl LinuxSource {
     pub fn phase(&self) -> Phase {
         self.phase
     }
-}
 
-impl FsDataSource for LinuxSource {
-    fn state(&self, _root: &Path) -> SourceState {
-        match self.phase {
+    /// Maps a classification result to a source state.
+    ///
+    /// Fails closed: a root that is on an unsupported file system, or whose
+    /// classification itself failed (unreadable mount table, uncanonicalizable
+    /// root), is `Unavailable` — the walk is the only answer we can prove is
+    /// safe. Only a successfully classified local root keeps the phase state.
+    pub(crate) fn state_with(
+        phase: Phase,
+        classification: io::Result<crate::fs::Classification>,
+    ) -> SourceState {
+        match classification {
+            Ok(classification) if !classification.is_offline() => Self::phase_state(phase),
+            Ok(_) | Err(_) => SourceState::Unavailable,
+        }
+    }
+
+    fn phase_state(phase: Phase) -> SourceState {
+        match phase {
             Phase::Unwatched => SourceState::Unsupported,
             Phase::CatchingUp => SourceState::Unavailable,
             Phase::Live {
@@ -88,6 +110,17 @@ impl FsDataSource for LinuxSource {
                 consistent_at_ms,
             },
         }
+    }
+}
+
+impl FsDataSource for LinuxSource {
+    fn state(&self, root: &Path) -> SourceState {
+        // A remote or kernel pseudo file system is Offline regardless of the
+        // watcher phase: no local event source can keep its snapshot
+        // consistent, so an index-backed answer would be a correctness bug.
+        // A classification failure is Offline too (fail closed). The caller
+        // falls back to the existing walk, exactly as for `Unsupported`.
+        Self::state_with(self.phase, crate::fs::classify_root(root))
     }
 
     fn enumerate(&self, root: &Path, budget: EnumBudget) -> Result<CandidateSet, SourceError> {
