@@ -1,3 +1,4 @@
+import { selectExecutor, executeCall, prepareStep } from './executor.mjs'
 /** Real host mount checks, also run before the legacy mount suite's runtime gate. */
 import { registerNativeProvider } from '../../lib/file/result-provider.js'
 import { createScope } from '@deepseek-ai/dsh-scope'
@@ -57,9 +58,64 @@ function warningsFrom(ctx) {
 const replacement = (ctx, name) => registerNativeProvider(ctx, [tool(publicToolName(name))], definition => ctx.tools.register(definition))
 const replacements = ctx => Promise.all(FILE_TOOLS.map(name => replacement(ctx, name)))
 const assemble = (ctx, agent) => ctx.get('systemPrompt').assemble({ scope: agent })
-const execute = (ctx, agent, name) => ctx.get('tools').execute({ agent, name, arguments: {}, callId: 'hide-test', signal: new AbortController().signal })
+const execute = async (ctx, agent, name) => {
+  const signal = new AbortController().signal
+  const toolSet = await ctx.get('tools').resolve({ agent, modelSelection: { provider: 'fixture', model: 'scripted' }, signal })
+  try { return await executeCall(ctx, { agent, name, arguments: {}, callId: 'hide-test', signal, toolSet }) } finally { toolSet.dispose() }
+}
 
 export async function officialToolHidingMountChecks() {
+  await test('a guarded dispatch reconciles through the view, not a schema projection', async () => {
+    // The snapshot key, the readiness plan and the post-restrict leak check all read the
+    // visible surface. Built from `schemas()` they deep-copy every definition before every
+    // dispatch; a revert to `tools.schemas` makes `projected` non-zero here.
+    const { ctx } = await bootHost()
+    try {
+      await replacements(ctx)
+      for (const name of ['read', 'glob', 'grep', 'foreign']) ctx.tools.register(tool(name))
+      const agent = await mint(ctx, 'reconcile-cost-agent')
+      await mount(ctx)
+      const tools = ctx.get('tools')
+      let projected = 0
+      const original = tools.schemas
+      tools.schemas = function (...args) { ++projected; return original.apply(this, args) }
+      try {
+        await execute(ctx, agent, 'foreign')
+        assert.equal(projected, 0, 'the guard must reconcile through view identities; a schemas() projection here is the copy the memo exists to skip')
+      } finally { tools.schemas = original }
+    } finally { await shutdown(ctx) }
+  })
+  await test('a registration after the memo is warm still reconciles through the view', async () => {
+    // The cold-path case above is covered by the harness's own timing: the agent attaches on the
+    // first dispatch, so a surface-change reconcile happens regardless. A host that already lists
+    // its agents attaches during `apply`, and from then on a dispatch hits the memo. This warms the
+    // memo first, registers a tool, and requires the next dispatch to reconcile again — still
+    // without projecting a schema.
+    const { ctx } = await bootHost()
+    try {
+      await replacements(ctx)
+      for (const name of ['read', 'glob', 'grep', 'foreign']) ctx.tools.register(tool(name))
+      await mount(ctx)
+      // Minted after the mount, so `agent/created` attaches the scope before any dispatch: the
+      // memo is already warm by the time the registration below lands.
+      const agent = await mint(ctx, 'warm-memo-agent')
+      const tools = ctx.get('tools')
+      let projected = 0
+      const original = tools.schemas
+      tools.schemas = function (...args) { ++projected; return original.apply(this, args) }
+      try {
+        await execute(ctx, agent, 'foreign')
+        ctx.tools.register(tool('late-registered'))
+        assert.ok(scopedToolNames(ctx, agent).includes('late-registered'), 'a late registration is visible in its scope')
+        // Count only what the dispatch below asks for: other listeners of `tools/change` project
+        // schemas for their own reasons, and this assertion is about our reconcile path.
+        projected = 0
+        await execute(ctx, agent, 'foreign')
+        assert.equal(projected, 0, 'a dispatch after a registration stays on the view path')
+      } finally { tools.schemas = original }
+    } finally { await shutdown(ctx) }
+  })
+
   await test('selected replacements remove official schemas and dispatch, preserves unrelated scopes, and lifts on unload', async () => {
     const { ctx } = await bootHost()
     try {
@@ -183,11 +239,11 @@ export async function officialToolHidingMountChecks() {
       const warnings = warningsFrom(ctx)
       await mount(ctx)
       const agent = await mint(ctx, 'transport-not-exempt')
-      const lift = agent.ctx.tools.presentAs('ptc')
+      const lift = selectExecutor(agent.ctx, 'ptc')
       const assembly = await assemble(ctx, agent)
       assert.ok(assembly.tools.some(schema => schema.name === 'run_code'))
       assert.deepEqual(warnings.filter(message => message.includes('dsh-ops hide-official')), [])
-      lift()
+      lift(); selectExecutor(agent.ctx, 'native')
       await assemble(ctx, agent)
     } finally { await shutdown(ctx) }
   })
@@ -297,7 +353,7 @@ export async function officialToolHidingMountChecks() {
     const { ctx } = await bootHost({ withTools: false })
     try {
       // API-drift fixture, not an override of any shared registry method.
-      ctx.provide('tools', { schemas: () => FILE_TOOLS.map(n => ({ name: publicToolName(n) })), get() {} })
+      ctx.provide('tools', { definitions: () => FILE_TOOLS.map(n => ({ name: publicToolName(n) })), schemas: () => [], get() {} })
       await mount(ctx)
       const agent = await mint(ctx, 'missing-host-api')
       await assert.rejects(() => assemble(ctx, agent), /missing host API: restrict, guard/)
@@ -359,6 +415,7 @@ export async function officialToolHidingMountChecks() {
     try {
       // Infrastructure fixture exposes a schema without a registered definition.
       ctx.provide('tools', {
+        definitions: () => [{ name: publicToolName('inspect_local_file') }],
         schemas: () => [{ name: publicToolName('inspect_local_file') }],
         get: () => undefined,
         restrict: () => () => {},
@@ -369,20 +426,22 @@ export async function officialToolHidingMountChecks() {
       await assert.rejects(() => assemble(ctx, agent), /missing OPS surface: read -> ops_inspect_local_file/)
     } finally { await shutdown(ctx) }
   })
-  await test('assembled injection of a hidden tool is rejected even when registry masking succeeded', async () => {
+  await test('waterfall tool arrays cannot override the host-owned admitted surface', async () => {
     const { ctx } = await bootHost()
     try {
       await replacements(ctx); ctx.tools.register(tool('read'))
       await mount(ctx)
       const agent = await mint(ctx, 'assembly-verification')
-      ctx.on('system-prompt/assemble', async (assembly, _context, next) => {
+      ctx.on('system-prompt/assemble', async (_assembly, _context, next) => {
         const result = await next()
-        result.tools.push({ name: 'read', description: 'injected', parameters: {} })
+        result.tools = [{ name: 'read', description: 'injected', parameters: {} }]
         return result
       })
-      await assert.rejects(() => assemble(ctx, agent), /assembled surface still contains hidden official tools: read/)
-      assert.equal(scopedToolNames(ctx, agent).includes('read'), false, 'assembly failure preserves the verified registry mask')
-      await assert.rejects(() => assemble(ctx, agent), /assembled surface still contains hidden official tools: read/)
+      const step = await prepareStep(ctx, agent)
+      try {
+        assert.equal(step.assembly.tools.some(t => t.name === 'read'), false)
+        assert.equal((await executeCall(ctx, { agent, name: 'read', arguments: {}, toolSet: step.toolSet })).isError, true)
+      } finally { step.dispose() }
     } finally { await shutdown(ctx) }
   })
   await test('a host that appends tools after assembly still verifies the visible surface', async () => {
@@ -443,7 +502,7 @@ export async function officialToolHidingMountChecks() {
       })
       await mount(ctx)
       const agent = await mint(ctx, 'ptc-deferred-after-assembly')
-      const lift = agent.ctx.tools.presentAs('ptc')
+      const lift = selectExecutor(agent.ctx, 'ptc')
       const assembly = await assemble(ctx, agent)
       assert.ok(assembly.tools.some(entry => entry.name === 'run_code'), 'the transport survives the deferred array')
       assert.equal(scopedToolNames(ctx, agent).includes('read'), false, 'the replacement mask still applies')

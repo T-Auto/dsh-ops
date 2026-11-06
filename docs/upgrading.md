@@ -2,6 +2,22 @@
 
 中文：[升级与卸载](升级与卸载.md).
 
+## Binary locations and update cleanup
+
+This candidate embeds complete Niubash 1.5.0; `@latest` remains the published release until publication. These locations apply equally to marketplace installs, `npx dsh-ops install --profile ...`, official `plugin ... add`, local tarballs, and direct npm/pnpm installs:
+
+| Ownership | Binary location | Update/removal behavior |
+| --- | --- | --- |
+| Installed package | `<installed dsh-ops>/runtime/<platform>-<arch>/dsh-ops-worker[.exe]`; Windows Niubash at `runtime/win32-x64/niubash/niu.exe` with its complete sibling tree | Upgrade the same profile/package, not a new folder per version. The package manager replaces its package; do not manually copy binaries beside it. pnpm may resolve the package into its store. |
+| Explicit provisioning | `<DSH_HOME>/dsh-ops/shells/niubash/niu.exe` | One fixed directory. Staging verifies a fresh sibling, rolls back replacement failure, and removes the previous tree after successful replacement. It does not accumulate version directories on successful updates. Normally the bundled payload needs no separate provisioning. |
+| Per-call execution | `<OS temp>/dsh-ops-niu-exec-*` | A verified disposable copy is removed after completion/cancellation. Cleanup failure is reported; crashes may leave copies. Stop all OPS hosts/jobs before investigating only these exact task-owned remnants; no automatic sweep of arbitrary temp directories. |
+| Legacy managed Git Bash / IPC | `<DSH_HOME>/dsh-ops/shells/bash/<version>`; `<DSH_HOME>/dsh-ops/bash-ipc/` | Old state is not silently deleted by npm upgrade. Inspect `bash-runtime status`; preview managed removal with `bash-runtime remove --dry-run`, then use `remove --yes` only when all listed managed copies are unwanted. This removes managed Niubash too, not just legacy Bash. IPC cleanup requires `bash-runtime clean-cache --yes --all-hosts-stopped` after stopping every host/job. |
+| User-selected shell / shared stores | Explicit `bashPath`, system installations, npm/pnpm stores and npm `_npx` cache | Not OPS-owned: never automatically removed by OPS. `npx` may cache a separate full package; do not use it for every runtime invocation. Package-manager retention/pruning is separate from uninstalling the plugin. |
+
+Direct npm installs live under the selected project's `node_modules/dsh-ops`; global installs use `npm root -g`. DSH installs normally resolve under `<DSH_HOME>/profiles/<profile>/node_modules/dsh-ops`; follow the actual resolved package location, not a guessed store path. Each profile may intentionally own a separate package. `bash-runtime status` reports the selected executor and managed directories.
+
+There is **no automatic npm update/uninstall cleanup hook**: it cannot safely determine active jobs, shared stores or user-owned shells. Install-time hooks remain prohibited by the manifest gate. Existing fixed-directory replacement and per-call cleanup prevent normal owned-copy accumulation; receipt-scoped, explicit cleanup handles legacy state. Future cross-version sweeping needs ownership and live-process evidence, not directory-name guessing. Never run the broad legacy `uninstall --yes` merely to reclaim one shell: it can remove other explicitly provisioned OPS state.
+
 ## Stop the affected profile before replacing packages
 
 On Windows, an active Bash, old bundled PowerShell or legacy FastCtx process can
@@ -57,8 +73,9 @@ previous installation's source after restart. Read the operation's pnpm log to
 identify the rejected entry and active source; `npm config get registry` alone
 does not establish the registry used by the host's pnpm.
 
-For the currently pinned Windows payload, check the exact version rather than
-the `latest` tag before retrying the operation:
+For a legacy 0.4.x profile that still pins the old optional Git Bash package, check
+that exact version rather than `latest` before retrying (this candidate no longer
+requests the package by default):
 
 ```powershell
 npm view @dsh-ops/bash-win32-x64@0.2.1 version dist.integrity --registry=https://registry.npmjs.org

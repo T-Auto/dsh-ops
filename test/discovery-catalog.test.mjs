@@ -6,15 +6,17 @@ import { renderNativeDirectory, NATIVE_DIRECTORY_LIMIT } from '../lib/discovery/
 import { searchCapabilities } from '../lib/discovery/candidates.js'
 import { capability } from '../lib/capabilities/registry.js'
 import { assert, test, report, waitFor, withTempDir } from './lib/harness.mjs'
+import { prepareStep, executeCall, selectExecutor } from './lib/executor.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
 
 let sequence = 0
 const DISCOVER = 'ops_discover_tools'
-const step = (ctx, agent) => ctx.waterfall('agent/pre-step', {
-  agent, messages: [], turn: 1, step: ++sequence, signal: new AbortController().signal,
-}, async () => ({ kind: 'continue' }))
-const call = (ctx, agent, name, args = {}, signal = new AbortController().signal) => ctx.get('tools').execute({
-  agent, name, arguments: args, callId: 'catalog-' + ++sequence, signal,
+async function step(ctx, agent) {
+  ctx.emit('session/event', agent.session, { type: 'step/end', turn: 1, step: ++sequence })
+  agent.prepared?.dispose(); agent.prepared = await prepareStep(ctx, agent)
+}
+const call = (ctx, agent, name, args = {}, signal = new AbortController().signal) => executeCall(ctx, {
+  agent, toolSet: agent.prepared.toolSet, name, arguments: args, callId: 'catalog-' + ++sequence, signal,
 })
 const definition = (name, execute = () => ({ status: 'completed', answer: 42 })) => ({
   name, description: 'Look up project inventory.', parameters: { type: 'object', properties: {} },
@@ -33,6 +35,8 @@ async function setup(dir, { allowed = ['acme_lookup'], disabled = [], builtins =
       external: { allowed, disabled, alwaysLoaded: [] },
     })
   } })
+  await waitFor(() => ctx.get('tools') && ctx.get('systemPrompt'))
+  for (let i = 0; i < 3; i++) await new Promise(resolve => setImmediate(resolve))
   const row = await mount()
   const mint = async (mode = 'workspace-write', parent) => {
     const id = 'catalog-' + ++sequence
@@ -40,10 +44,14 @@ async function setup(dir, { allowed = ['acme_lookup'], disabled = [], builtins =
     agent.ctx = createScope(parent?.ctx ?? ctx, agent, parent ? { parent } : undefined).ctx
     agents.push(agent)
     await ctx.serial('agent/created', { agent })
+    await waitFor(() => tools.get(DISCOVER, agent), { what: 'discovery lifecycle initialization' })
+    agent.prepared = await prepareStep(ctx, agent)
     return agent
   }
   const assemble = async agent => {
-    const assembly = await prompt.assemble({ scope: agent })
+    agent.prepared?.dispose()
+    agent.prepared = await prepareStep(ctx, agent)
+    const assembly = await prompt.assemble({ scope: agent, toolSet: agent.prepared.toolSet })
     return { assembly, text: assembly.sections.filter(section => section.name.startsWith('dsh-ops:discovery-tools')).map(section => section.text).join('\n') }
   }
   const provider = (target = ctx, options = {}) => registerNativeCapability(target, {
@@ -88,18 +96,29 @@ await test('actual assembly advertises eligible unloaded tools and real dispatch
     assert.ok(first.text.includes('acme_lookup: "inventory project lookup"'), first.text)
     assert.ok(first.text.includes('NOT callable or authorized'))
     assert.ok(first.text.includes('resident/callable tools first'))
-    assert.ok(!tools.get('acme_lookup', owner))
+    assert.ok(!tools.executable('acme_lookup', owner, owner.prepared.toolSet))
     assert.equal(authorized, 0)
     const selection = await call(ctx, owner, DISCOVER, { query: 'inventory' })
     assert.deepEqual(selection.value.activated, ['acme_lookup'])
     assert.equal(authorized, 0, 'query cannot invoke an execution authorization callback')
-    assert.ok(!tools.get('acme_lookup', owner), 'selection is not an immediate call')
+    assert.ok(!tools.executable('acme_lookup', owner, owner.prepared.toolSet), 'selection is not an immediate call')
     await step(ctx, owner)
     assert.equal((await call(ctx, owner, 'acme_lookup')).value.answer, 42)
     assert.equal(authorized, 1); assert.equal(executed, 1)
-    assert.ok(!(await assemble(owner)).text.includes('- acme_lookup:'), 'loaded tool no longer needs loading')
+    // The guidance section reads the scope view, not a schema projection. An assembly that
+    // called `schemas()` would deep-copy every visible definition once per prompt — the cost
+    // this change exists to remove — so pin the absence instead of a wall-clock number. This
+    // covers the whole assembly chain on purpose: a new section that projects schemas owes the
+    // same argument, and the fix then is to narrow it to the discovery section, not to drop it.
+    let projected = 0
+    const schemasOf = tools.schemas
+    tools.schemas = function (...args) { ++projected; return schemasOf.apply(this, args) }
+    try {
+      assert.ok(!(await assemble(owner)).text.includes('- acme_lookup:'), 'loaded tool no longer needs loading')
+    } finally { tools.schemas = schemasOf }
+    assert.equal(projected, 0, 'assembling the discovery guidance must not project schemas')
     assert.ok((await assemble(other)).text.includes('- acme_lookup:'), 'other agent retains its own unselected directory')
-    assert.ok(!tools.get('acme_lookup', other))
+    assert.ok(!tools.executable('acme_lookup', other, other.prepared.toolSet))
     assert.equal((await assemble(owner)).assembly.sections.find(section => section.name === 'acme:own-guidance').text, 'Provider-owned usage {{literal}}')
     await row.dispose()
     assert.equal((await assemble(owner)).text, '')
@@ -179,13 +198,16 @@ await test('PTC-only presentation suppresses Native directory and loader without
   try {
     await provider()
     const owner = await mint(), other = await mint()
-    const lift = prompt.section({ name: 'tools:ptc-only', order: 800, text: ({ scope }) => scope === owner ? 'PTC SDK only' : '' })
+    ctx.provide('ptcRuntime', { language: 'typescript' })
+    const executor = await owner.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, 'ptc') } })
     const current = await assemble(owner)
     assert.equal(current.text, '')
-    assert.ok(!tools.get(DISCOVER, owner))
+    assert.ok(!tools.executable(DISCOVER, owner, owner.prepared.toolSet))
     assert.ok((await assemble(other)).text.includes('- acme_lookup:'))
-    assert.equal(current.assembly.sections.find(section => section.name === 'tools:ptc-only').text, 'PTC SDK only')
-    lift(); await step(ctx, owner)
+    assert.ok(current.assembly.sections.find(section => section.name === 'tools:ptc-only').text)
+    await executor.dispose()
+    await owner.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, 'native') } })
+    await step(ctx, owner)
     assert.ok((await assemble(owner)).text.includes('- acme_lookup:'))
   } finally { await shutdown(ctx) }
 }))
@@ -201,11 +223,11 @@ await test('provider unload/reload withdraws catalog and stale calls, without re
     await assemble(owner)
     assert.ok(!tools.get('acme_lookup', owner))
     assert.ok(!(await assemble(owner)).text.includes('acme_lookup'))
-    assert.equal((await cached.execute({}, { agent: owner })).error.code, 'POLICY_DENIED')
+    assert.equal((await cached.execute({}, { agent: owner, signal: new AbortController().signal, toolSet: owner.prepared.toolSet })).error.code, 'POLICY_DENIED')
     await provider()
     await assemble(owner)
     assert.ok((await assemble(owner)).text.includes('- acme_lookup:'))
-    assert.ok(!tools.get('acme_lookup', owner), 'reload does not reuse an old selection token')
+    assert.ok(!tools.executable('acme_lookup', owner, owner.prepared.toolSet), 'reload does not reuse an old selection token')
     let changes = 0
     const stop = ctx.on('tools/change', () => { ++changes })
     for (let i = 0; i < 10; ++i) await assemble(owner)
@@ -227,7 +249,7 @@ await test('aborted lookup does not activate tools and unloading cancels a real 
     controller.abort()
     await call(ctx, owner, DISCOVER, { query: 'inventory' }, controller.signal)
     await step(ctx, owner)
-    assert.ok(!tools.get('acme_lookup', owner))
+    assert.ok(!tools.executable('acme_lookup', owner, owner.prepared.toolSet))
     await call(ctx, owner, DISCOVER, { query: 'inventory' }); await step(ctx, owner)
     const running = call(ctx, owner, 'acme_lookup')
     await entered; remove()
@@ -246,19 +268,19 @@ await test('pending visibility withdrawal and component reload discard stale sel
     await call(ctx, owner, DISCOVER, { query: 'inventory' })
     visible = false
     await step(ctx, owner)
-    assert.ok(!tools.get('acme_lookup', owner), 'visibility withdrawn before next-step commit')
+    assert.ok(!tools.executable('acme_lookup', owner, owner.prepared.toolSet), 'visibility withdrawn before next-step commit')
     assert.ok(!(await assemble(owner)).text.includes('acme_lookup'))
     visible = true
     await call(ctx, owner, DISCOVER, { query: 'inventory' }); await step(ctx, owner)
     const cached = tools.get('acme_lookup', owner)
     await row.dispose()
     assert.equal((await assemble(owner)).text, '')
-    assert.equal((await cached.execute({}, { agent: owner })).error.code, 'POLICY_DENIED')
+    assert.equal((await cached.execute({}, { agent: owner, signal: new AbortController().signal, toolSet: owner.prepared.toolSet })).error.code, 'POLICY_DENIED')
     await mount()
     await waitFor(() => tools.get(DISCOVER, owner))
     const rebuilt = await assemble(owner)
     assert.ok(rebuilt.text.includes('- acme_lookup:'))
-    assert.ok(!tools.get('acme_lookup', owner), 'a new controller cannot inherit an old selection')
+    assert.ok(!tools.executable('acme_lookup', owner, owner.prepared.toolSet), 'a new controller cannot inherit an old selection')
     assert.equal(rebuilt.assembly.sections.filter(section => section.name.startsWith('dsh-ops:discovery-tools')).length, 1)
   } finally { await shutdown(ctx) }
 }))
@@ -310,7 +332,7 @@ await test('explicit visibility hooks expose only synchronous true in both direc
         }
         assert.equal(authorized, 0, label + ': search is not execution authorization')
         await step(ctx, owner)
-        assert.equal(Boolean(tools.get('acme_lookup', owner)), visible, label + ': publication')
+        assert.equal(Boolean(tools.executable('acme_lookup', owner, owner.prepared.toolSet)), visible, label + ': publication')
         assert.equal(authorized, 0, label + ': selection is not execution authorization')
         if (visible) {
           assert.equal((await call(ctx, owner, 'acme_lookup')).value.answer, 42, label + ': dispatch')

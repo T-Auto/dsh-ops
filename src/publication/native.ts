@@ -3,17 +3,19 @@ import type { Context, Fiber } from '../adapter/dsh/types.js'
 import type { Agent } from '../adapter/dsh/types.js'
 import type {} from '../adapter/dsh/types.js'
 import { NativeFileTools } from '../projections/native/runtime.js'
-import { registerNativeProviderAtScope } from './providers.js'
+import { registerNativeProviderAtScope, nativeProviderReady } from './providers.js'
 import { resolveWorker } from '../execution/files.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
-import { modeSectionName, MODE_SECTION_ORDERS, renderToolingPolicy } from '../policy.js'
+import { publicToolName, modeSectionName, MODE_SECTION_ORDERS, renderToolingPolicy } from '../policy.js'
 import { visibleNames } from './surface.js'
-import { claimPresentationRebuild, isNativePresentation, isPresentationProbe } from './presentation.js'
-import { onToolChange } from './changes.js'
+import { activationIsPtc, isNativePresentation, isPresentationProbe } from './presentation.js'
 import type { ResolvedConfig } from '../config.js'
 import { ownScopes } from './ownership.js'
 import { failure } from '../execution/files.js'
+import { acquireSharedFile, isSharedFileApi } from './scope-owner.js'
 import type { PublicationGate } from './types.js'
+import { publicationError, publicationReady, publicationRegistration } from './reentry.js'
+import type { PublicationLease } from './registrar.js'
 
 type ResidentName = Parameters<NativeFileTools['definition']>[0]
 
@@ -53,7 +55,6 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
     const entries = new Map<Agent, Entry>()
     let stopped = false, mutating = false
     const ownership = await ownScopes(ctx, 'native-files', () => reconcile(), gate.allows)
-    const native = new Map<Agent, boolean>()
     const clear = (entry: Entry): void => {
       entry.owned.clear()
       for (const dispose of entry.disposers.splice(0)) {
@@ -62,25 +63,43 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
       entry.runtime.cancel('Mode row ownership changed')
       void entry.runtime.stop().catch(error => ctx.logger.warn(`dsh-ops: ${mode} native runtime stop failed: ${String(error)}`))
     }
-    const publish = (agent: Agent, entry: Entry): void => {
+    const publish = async (agent: Agent, entry: Entry): Promise<void> => {
       if (!entry.ctx) return
       const scope = agent
-      const definitions = names.map(name => {
+      const leases: PublicationLease[] = [], registrations: (() => void)[] = []
+      for (const api of names.filter(isSharedFileApi)) {
+        const lease = await acquireSharedFile(agent, api, { workerPath: worker, required: true, denyCredentialReads: config.denyCredentialReads })
+        if (stopped || entries.get(agent) !== entry || !cover(agent)) { lease.dispose(); return }
+        entry.disposers.push(() => lease.dispose())
+        lease.grant({ consumer: entry, agent, token: {}, entitled: true,
+          dispatch: async () => undefined,
+          present: async activation => activation.agent === agent && cover(agent) && !await activationIsPtc(prompt, activation) })
+        leases.push(lease)
+        entry.owned.add(publicToolName(api))
+      }
+      const definitions = names.filter(name => !isSharedFileApi(name)).map(name => {
         const definition = entry.runtime.definition(name)
         return { ...definition, execute: async (args: unknown, exec: Parameters<typeof definition.execute>[1]) => {
           if (stopped || entries.get(agent) !== entry || !cover(agent) || exec.agent !== agent
             || !await isNativePresentation(prompt, agent, exec.signal).catch(() => false) || stopped || !cover(agent)
-            || tools.get(definition.name, agent) !== registration(definition.name)) {
+            || tools.executable(definition.name, agent, exec.toolSet) !== registration(definition.name)) {
             return failure('POLICY_DENIED', 'Native capability belongs to a different or inactive scope.')
           }
           return definition.execute(args, exec)
         } }
       })
       const registration = (name: string) => definitions.find(definition => definition.name === name)
-      const dispose = registerNativeProviderAtScope(entry.ctx, scope, definitions,
-        tool => entry.ctx!.tools.register(tool), { inheritable: false, priority: 10 })
-      entry.disposers.push(dispose)
+      if (definitions.length) {
+        const dispose = registerNativeProviderAtScope(entry.ctx, scope, definitions, tool => {
+          const remove = publicationRegistration(entry.ctx!, () => entry.ctx!.tools.register(tool, { when: async activation => activation.agent === agent && cover(agent)
+            && !await activationIsPtc(prompt, activation) }))
+          registrations.push(remove)
+          return remove
+        }, { inheritable: false, priority: 10 })
+        entry.disposers.push(dispose)
+      }
       for (const definition of definitions) entry.owned.add(definition.name)
+      await Promise.all([...leases.map(lease => lease.ready()), ...registrations.map(publicationReady), ...entry.disposers.map(nativeProviderReady)])
     }
     const cover = (agent: Agent): boolean => gate.allows(agent) && ownership.owns(agent)
     const attach = (agent: Agent): void => {
@@ -88,22 +107,31 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
       const entry: Entry = { agent, runtime: new NativeFileTools({ ctx, config: { workerPath: worker, required: config.required, denyCredentialReads: config.denyCredentialReads } }),
         owned: new Set(), disposers: [], ready: Promise.resolve() }
       entries.set(agent, entry)
-      entry.fiber = agent.ctx.plugin({ inject: ['tools'], apply(scoped) { entry.ctx = scoped } })
-      entry.ready = Promise.resolve(entry.fiber).then(() => {
+      entry.ready = Promise.resolve().then(async () => {
+        if (stopped || entries.get(agent) !== entry || !cover(agent)) return
+        entry.fiber = agent.ctx!.plugin({ inject: ['tools'], apply(scoped) { entry.ctx = scoped } })
+        await entry.fiber
         if (stopped || entries.get(agent) !== entry || !entry.ctx) return
-        return entry.runtime.start([]).then(async () => {
-          if (native.get(agent) === false || !await isNativePresentation(prompt, agent).catch(() => false)) return
-          if (stopped || entries.get(agent) !== entry || !cover(agent)) return
-          publish(agent, entry)
-        })
-      }).catch(error => ctx.logger.warn(`dsh-ops: ${mode} mode publication failed: ${String(error)}`))
+        await entry.runtime.start([])
+        if (stopped || entries.get(agent) !== entry || !cover(agent)) return
+        await publish(agent, entry)
+      }).catch(async error => {
+        try {
+          if (entries.get(agent) === entry) { detach(agent); await entry.fiber?.dispose() }
+        } catch { ctx.logger.warn(`dsh-ops: ${mode} native attachment cleanup failed`) }
+        ctx.logger.warn(`dsh-ops: ${mode} mode publication failed: ${publicationError(error)}`)
+        throw error
+      })
+      void entry.ready.catch(() => {})
     }
     const detach = (agent: Agent): void => {
       const entry = entries.get(agent)
       if (!entry) return
       entries.delete(agent)
       clear(entry)
-      void entry.fiber?.dispose()
+      void Promise.resolve().then(() => entry.fiber?.dispose()).catch(error => {
+        ctx.logger.warn(`dsh-ops: ${mode} native scope disposal failed: ${String(error)}`)
+      })
     }
     const reconcile = (): void => {
       if (stopped || mutating) return
@@ -114,24 +142,15 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
       } finally { mutating = false }
     }
     ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
-      if (isPresentationProbe(context)) return next()
-      const agent = context.scope as Agent
-      await entries.get(agent)?.ready
       const result = await next()
-      if (!agent || !gate.allows(agent)) return result
-      const allowed = !result.sections.some(section => section.name === 'tools:ptc-only' && section.text.trim())
-      if (native.get(agent) !== allowed) {
-        native.set(agent, allowed)
-        if (!allowed) detach(agent)
-        else attach(agent)
-        if (entries.has(agent)) await entries.get(agent)?.ready
-        // Same one-rebuild budget as every other publication hook: the surface
-        // this hook reacts to is the one another hook is retiring right now.
-        return claimPresentationRebuild(context) ? prompt.assemble(context) : result
+      if (!isPresentationProbe(context) && result.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))) {
+        entries.get(context.scope as Agent)?.runtime.cancel('Native presentation withdrawn')
       }
       return result
     })
-    ctx.on('agent/created', ({ agent }) => { if (cover(agent)) attach(agent) })
+    ctx.on('agent/created', async ({ agent }) => {
+      if (cover(agent)) { attach(agent); await entries.get(agent)?.ready }
+    })
     ctx.on('agent/disposed', ({ agent }) => detach(agent))
     ctx.on('session/event', (_session, event) => {
       // A blank session may select another preset before its first turn; the mode
@@ -140,11 +159,11 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
     })
     if (gate.watch) ctx.effect(() => gate.watch!(reconcile), `dsh-ops: ${mode} publication observer`)
     for (const agent of ctx.get('agents')?.list?.() ?? []) if (cover(agent)) attach(agent)
-    const renderGuidance = (agent: Agent): string => {
+    const renderGuidance = (agent: Agent, toolSet?: import('../adapter/dsh/types.js').ResolvedToolSet): string => {
       if (!agent || stopped || section === null || !config.promptPolicy || !cover(agent)) return ''
       const entry = entries.get(agent)
       if (!entry || entry.owned.size === 0) return ''
-      const visible = new Set(visibleNames(tools, agent))
+      const visible = new Set(visibleNames(tools, agent, toolSet))
       const published = [...entry.owned].filter(name => visible.has(name))
       // The same consumer's live Bash section owns deployment guidance first.
       return renderToolingPolicy({ published, shellComponent: false,
@@ -155,7 +174,7 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
       const suffix = section
       ctx.effect(() => prompt.section({
         name: modeSectionName(suffix), order: MODE_SECTION_ORDERS[suffix] ?? 3250, interpolate: false,
-        text: context => renderGuidance(context.agent ?? context.scope as Agent),
+        text: context => renderGuidance(context.agent ?? context.scope as Agent, context.toolSet),
       }), `dsh-ops: ${mode} tooling guidance`)
     }
     ctx.effect(() => () => {
@@ -163,6 +182,7 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
       for (const agent of [...entries.keys()]) detach(agent)
       ownership.dispose()
     }, `dsh-ops: ${mode} native lifecycle`)
+    await Promise.all([...entries.values()].map(entry => entry.ready))
     ownership.refresh()
   })
   return agent => ownsGuidance(agent)

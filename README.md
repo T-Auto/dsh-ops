@@ -40,6 +40,8 @@
 
 ## 安装、更新、卸载
 
+> 本分支候选的 Windows 默认载荷为完整 Niubash 1.5.0，随 `dsh-ops` 主包管理，不再默认下载 Git Bash 可选包。所有 npm、市场和 CLI 更新入口的二进制位置与清理边界见[升级与卸载](docs/升级与卸载.md#二进制位置与更新清理)。`@latest` 仍指已发布版本，不代表此 PR 已发布。
+
 ### 官方插件市场
 
 在目标 DSH 应用的插件市场中输入 npm 包名 **`dsh-ops`**，选择自定义地址，输入 `https://mirrors.huaweicloud.com/repository/npm/`，安装后选择启用。目前不推荐用npmmirror安装，有bug。
@@ -81,7 +83,7 @@ dsh plugin --profile dsh-tui add dsh-ops
 
 #### 更新方法
 
-宿主兼容范围明确声明为 DSH **0.2.0-rc.2 与 0.2.1-rc.2**。
+宿主支持从 DSH **0.2.2-rc.1** 起；0.5 系列不再支持 0.2.0/0.2.1 或更早的 0.2.2 预览版。保留 DSH adapter 结构，按 0.2.2 原生工具准入和执行器接口接入。
 组件图标导出、profile 刷新及配置/schema 检查见
 [宿主兼容范围与展示元数据](docs/使用指南.md#宿主兼容范围与展示元数据)。
 
@@ -94,7 +96,7 @@ npx --yes dsh-ops@latest status --profile desktop
 npx --yes dsh-ops@latest uninstall --profile desktop
 ```
 
-把 `desktop` 换成 `web` 或 `tui` 即可。也可在市场卸载，或执行官方 `dsh plugin --profile ... remove dsh-ops`。插件依赖（含 Windows bash 可选载荷）随 profile 管理；单独 provision 的 Bash 用 `dsh-ops bash-runtime remove --yes` 移除，不误删系统 shell、其它 profile 的副本或包管理器共享缓存。
+把 `desktop` 换成 `web` 或 `tui` 即可。也可在市场卸载，或执行官方 `dsh plugin --profile ... remove dsh-ops`。随包二进制由 profile 的包管理器管理；显式 provision 的副本不会随 npm 卸载，先查看 `dsh-ops bash-runtime status`，再用 `dsh-ops bash-runtime remove --dry-run` 预览、`remove --yes` 确认。不要误删系统 shell、其它 profile 或共享缓存。详见[二进制位置与更新清理](docs/升级与卸载.md#二进制位置与更新清理)。
 
 旧版显式 provision 的 `<DSH_HOME>/dsh-ops/` 文件（provision 的 shell，以及早期版本可 provision 的 FastCtx 运行时）需单独清理：`npx --yes dsh-ops@latest uninstall --yes`。已移除的后台组件留下的 `~/.fastctx/` 状态默认不删；需要时显式加 `--purge-fastctx`。
 
@@ -126,7 +128,7 @@ Windows Bash 自检：`dsh-ops ladder` 分别报告映像/祖先路径完整性�
 
 当前 `dsh-ops` 源码以 **MIT** 许可分发，见 [LICENSE](LICENSE)。`0.3.2` 之前的版本曾内置以 Apache-2.0 许可的 FastCtx 源码；该源码随后台组件一并移除，当前发行版不再包含任何 FastCtx 代码或二进制。FastCtx 的许可文本与上游声明保留在 `licenses/fastctx/`，历史归属见 [NOTICE](NOTICE)。
 
-独立的 Windows bash 载荷包（npm 可选依赖 `@dsh-ops/bash-win32-x64`）另按上游组件许可证分发：Git for Windows 包含 GPL-2.0 等许可组件，其原始许可证、声明及来源记录随载荷保留；PowerShell 由宿主管理，按其 MIT 与第三方组件许可分发。插件的 MIT 许可不替代这些许可。详见 [PROVENANCE.md](docs/PROVENANCE.md)。
+Windows 随包 Niubash 及其 WinuxCmd、Git 等组件分别遵循上游许可证；原始许可证、NOTICE 与来源记录随完整载荷保留。Git Bash 仅保留为显式 legacy 后端与源码路径，不再默认下载其可选包。插件 MIT 许可不替代任何第三方许可；见 [NOTICE](NOTICE) 和[升级与卸载](docs/升级与卸载.md)。
 
 ## 联动！
 

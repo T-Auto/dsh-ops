@@ -1,3 +1,4 @@
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
@@ -25,14 +26,14 @@ await test('real Native and Node PTC dispatch enforce the configured guard and d
     const mint = async mode => {
       const agent = { id: mode, session: { id: mode, header: { cwd: root }, append() {}, read() { return [] } } }
       agent.ctx = createScope(ctx, agent).ctx
-      await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.presentAs(mode) } })
+      await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, mode) } })
       agents.push(agent); await ctx.serial('agent/created', { agent })
       return agent
     }
     const native = await mint('native')
     const fiber = await ctx.plugin(guard, { downloadGuard: { template: 'fetch --output {file} -- {url}' } })
     const ptc = await mint('ptc')
-    const execute = (agent, name, args) => ctx.get('tools').execute({ agent, name, callId: `download-${++sequence}`, arguments: args, signal: AbortSignal.timeout(15_000) })
+    const execute = (agent, name, args) => executeCall(ctx, { agent, name, callId: `download-${++sequence}`, arguments: args, signal: AbortSignal.timeout(15_000) })
     calls = 0
     const denied = await execute(native, toolName, { command })
     assert.equal(denied.isError, true, JSON.stringify(denied))

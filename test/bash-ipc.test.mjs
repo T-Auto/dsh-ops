@@ -6,6 +6,7 @@ import { pinnedBashExecutable } from '../lib/shells/pinned.js'
 import { patchMsys, proxyDefinition } from '../lib/bash-pe.js'
 import { confinedBash, quarantineGeneration, renameWithRetry, restrictedCompatibility, RENAME_RETRY_DELAYS_MS } from '../lib/bash-ipc.js'
 import { markManaged } from '../lib/bash-ipc-lifecycle.js'
+import { copyFixtureModules, NIUBASH_MODULES } from './lib/niubash-distribution-fixture.mjs'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 await test('PE patch rejects non-PE input without writing anything', () => {
   assert.throws(()=>patchMsys(Buffer.from('not a DLL')),/Expected PE/)
@@ -147,9 +148,8 @@ await test('malformed IPC proxy receipts fail before staging a runtime', async (
     fs.writeFileSync(path.join(plugin, 'package.json'), JSON.stringify({ type: 'module' }))
     // The isolated install must carry every module the copied graph imports; a missing one makes
     // the fixture fail with ERR_MODULE_NOT_FOUND instead of the receipt condition it tests (#512).
-    for (const file of ['bash-ipc.js', 'bash-ipc-lifecycle.js', 'bash-runtime-failure.js', 'bash-pe.js', 'shells/types.js']) {
-      fs.copyFileSync(path.resolve('lib', file), path.join(plugin, 'lib', file))
-    }
+    copyFixtureModules(plugin, ['bash-ipc.js', 'bash-ipc-lifecycle.js', 'bash-runtime-failure.js',
+      'bash-pe.js', 'shells/types.js', ...NIUBASH_MODULES])
     const dll = Buffer.from('receipt validation must precede PE parsing')
     fs.writeFileSync(path.join(payload, 'usr/bin/msys-2.0.dll'), dll)
     fs.writeFileSync(path.join(plugin, 'runtime/win32-x64/bash-ipc/provenance.json'), JSON.stringify({

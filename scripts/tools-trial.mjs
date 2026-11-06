@@ -28,7 +28,8 @@ const foreignHome = process.env.DSH_HOME !== undefined
   && !path.resolve(process.env.DSH_HOME).startsWith(path.resolve(tempRoot))
 const ownedHome = process.env.DSH_HOME === undefined || foreignHome
 if (ownedHome) process.env.DSH_HOME = mkdtempSync(path.join(tempRoot, 'dsh-ops-trial-home-'))
-const { bootHost, callTool, scopedToolNames, shutdown } = await import('../test/lib/host.mjs')
+const { bootHost, scopedToolNames, shutdown } = await import('../test/lib/host.mjs')
+const { selectExecutor, executeCall } = await import('../test/lib/executor.mjs')
 
 const REPORT = 'tools-trial-report.md'
 const results = []
@@ -76,6 +77,7 @@ try {
   const { createScope } = await import('@deepseek-ai/dsh-scope')
   await ctx.plugin({ inject: ['tools'], apply(inner) { agentScope = createScope(inner, agent) } })
   agent.ctx = agentScope.ctx
+  await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, 'native') } })
   await ctx.serial('agent/created', { agent, source: 'startup' })
   // Scoped publication is asynchronous. Wait for every file scenario, not a global count;
   // optional Bash may legitimately be absent (for example, on a POSIX bare host).
@@ -99,7 +101,7 @@ try {
       return undefined
     }
     try {
-      const { value } = await callTool(ctx, name, args, new AbortController().signal, agent)
+      const { value } = await executeCall(ctx, { name, arguments: args, agent })
       const body = JSON.stringify(value)
       if (value?.status !== undefined && value.status !== 'completed') {
         record(name, 'failed', `status=${value.status} ${body.slice(0, 160)}`)

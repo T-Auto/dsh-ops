@@ -23,6 +23,7 @@ import {
   shellExecutable,
   shellUpstreamPin,
 } from '../lib/shells.js'
+import { gitBashCandidates } from '../lib/shells/manager.js'
 import { assert, TEST_HOME, report, test, withTempDir } from './lib/harness.mjs'
 import {
   config,
@@ -84,8 +85,8 @@ await test('the bundled copy outranks PATH and the well-known install locations'
       platform: process.platform,
       arch: process.arch,
     })
-    assert.equal(resolved.bash.source, 'bundled')
-    assert.equal(resolved.bash.file, bundledBash)
+    assert.equal(resolved.bash.source, process.platform === 'win32' ? 'missing' : 'bundled')
+    assert.equal(resolved.bash.file, process.platform === 'win32' ? undefined : bundledBash)
     assert.equal(resolved.pwsh.source, 'host')
     assert.equal(resolved.pwsh.file, undefined)
     assert.equal(fs.existsSync(bundledPwsh), true, 'legacy files are not removed')
@@ -106,14 +107,14 @@ await test('with no bundled copy, PATH is searched before the well-known locatio
       platform: process.platform,
       arch: process.arch,
     })
-    assert.equal(resolved.bash.source, 'path')
-    assert.equal(resolved.bash.file, onPathBash)
+    assert.equal(resolved.bash.source, process.platform === 'win32' ? 'missing' : 'path')
+    assert.equal(resolved.bash.file, process.platform === 'win32' ? undefined : onPathBash)
     assert.equal(resolved.pwsh.available, false)
     assert.equal(resolved.pwsh.source, 'host')
   })
 })
 
-await test('a Windows deployment finds the well-known Git for Windows install for bash', async () => {
+await test('a Windows deployment does not implicitly select a well-known Git install', async () => {
   await withTempDir('shells-wellknown', async (dir) => {
     const programFiles = path.join(dir, 'Program Files')
     const gitBash = makeExecutable(path.join(programFiles, 'Git', 'bin', 'bash.exe'))
@@ -126,11 +127,35 @@ await test('a Windows deployment finds the well-known Git for Windows install fo
       platform: 'win32',
       arch: 'x64',
     })
-    assert.equal(resolved.bash.available, true)
-    assert.equal(resolved.bash.source, 'well-known')
-    assert.equal(resolved.bash.file, gitBash)
+    assert.equal(resolved.bash.available, false)
+    assert.equal(resolved.bash.source, 'missing')
+    assert.equal(resolved.bash.file, undefined)
     assert.equal(resolved.pwsh.available, false)
     assert.equal(resolved.pwsh.source, 'host')
+  })
+})
+
+await test('the Store WindowsApps bash alias is never resolved as Git Bash', async () => {
+  await withTempDir('shells-wsl-alias', async (dir) => {
+    const localAppData = path.join(dir, 'AppData')
+    const alias = makeExecutable(path.join(localAppData, 'Microsoft', 'WindowsApps', 'bash.exe'))
+    const gitBash = makeExecutable(path.join(dir, 'Git', 'bin', 'bash.exe'))
+    const env = {
+      DSH_HOME: TEST_HOME,
+      PATH: path.dirname(alias),
+      LOCALAPPDATA: localAppData,
+      ProgramFiles: path.join(dir, 'Program Files'),
+    }
+    const resolved = resolveShells(config({ allowSystemShellFallback: true }), {
+      bundleRoot: path.join(dir, 'plugin'), env, platform: 'win32', arch: 'x64',
+    })
+    // The alias is a WSL distribution, not the Git Bash the operator asked for.
+    assert.notEqual(resolved.bash.file, alias)
+    // It is not offered as a candidate either.
+    const candidates = gitBashCandidates({ env, platform: 'win32' })
+    assert.equal(candidates.includes(alias), false)
+    assert.equal(candidates.includes(gitBash), false, 'a non-Git directory on PATH is not a Git install claim')
+    assert.ok(gitBash.length > 0)
   })
 })
 
@@ -153,12 +178,12 @@ await test('the System32 WSL launcher is skipped even when it is first on PATH',
       arch: 'x64',
     })
     assert.notEqual(resolved.bash.file, launcher)
-    assert.equal(resolved.bash.file, gitBash)
-    assert.equal(resolved.bash.source, 'well-known')
+    assert.equal(resolved.bash.file, undefined)
+    assert.equal(resolved.bash.source, 'missing')
   })
 })
 
-await test('a bundled shell is not a system shell, so it survives allowSystemShellFallback:false', async () => {
+await test('legacy bundled Bash cannot substitute for a missing verified Niubash tree', async () => {
   await withTempDir('shells-nofallback', async (dir) => {
     // The Windows payload: there the bundled copy is what `allowSystemShellFallback` guards.
     const bundled = makeExecutable(bundledShellPath({
@@ -170,9 +195,9 @@ await test('a bundled shell is not a system shell, so it survives allowSystemShe
       platform: 'win32',
       arch: 'x64',
     })
-    assert.equal(withBundle.bash.available, true)
-    assert.equal(withBundle.bash.source, 'bundled')
-    assert.equal(withBundle.bash.file, bundled)
+    assert.equal(withBundle.bash.available, false)
+    assert.equal(withBundle.bash.source, 'missing')
+    assert.equal(withBundle.bash.file, undefined)
 
     const withoutBundle = resolveShells(config({ allowSystemShellFallback: false }), {
       bundleRoot: path.join(dir, 'no-plugin'),
@@ -181,7 +206,7 @@ await test('a bundled shell is not a system shell, so it survives allowSystemShe
       arch: 'x64',
     })
     assert.equal(withoutBundle.bash.available, false)
-    assert.equal(withoutBundle.bash.source, 'disabled')
+    assert.equal(withoutBundle.bash.source, 'missing')
   })
 })
 
@@ -272,8 +297,8 @@ await test('the package-missing reason reaches the rung it belongs to', async ()
       arch: 'x64',
     })
     assert.equal(resolved.bash.available, false)
-    assert.equal(resolved.bash.source, 'disabled')
-    assert.ok(resolved.bash.detail.includes(`is installed without bin/${shellExecutable('bash', process.platform)}`))
+    assert.equal(resolved.bash.source, 'missing')
+    assert.match(resolved.bash.detail, /Niubash.*missing/)
   })
 })
 
@@ -299,8 +324,7 @@ await test('a package the registry never carried and a broken tree get different
   let missing
   await withTempDir('shells-cause-missing', async (dir) => {
     missing = detailFor(dir, { install: false, binary: false })
-    assert.ok(missing.includes('is declared but not installed'), missing)
-    assert.ok(missing.includes('may not carry that platform package'), missing)
+    assert.match(missing, /Niubash.*missing/)
     assert.ok(missing.includes('provision-shells --bash'), missing)
     assert.equal(/\brepair(s|ing)?\b/u.test(missing), false, missing)
   })
@@ -308,12 +332,11 @@ await test('a package the registry never carried and a broken tree get different
   let corrupt
   await withTempDir('shells-cause-corrupt', async (dir) => {
     corrupt = detailFor(dir, { install: true, binary: false })
-    assert.ok(corrupt.includes(`is installed without bin/${shellExecutable('bash', process.platform)}`), corrupt)
-    assert.match(corrupt, /repairs that/u)
+    assert.match(corrupt, /Niubash.*missing/)
     assert.ok(corrupt.includes('provision-shells --bash'), corrupt)
   })
 
-  assert.notEqual(missing, corrupt)
+  assert.equal(missing, corrupt, 'legacy npm package state cannot change the native-backend remedy')
 })
 
 await test('bundledShell names the machine-readable cause of every miss', async () => {
@@ -438,6 +461,12 @@ await test('provisioned Bash outranks other copies while legacy PowerShell remai
       platform: process.platform,
       arch: process.arch,
     })
+    if (process.platform === 'win32') {
+      assert.equal(resolved.bash.available, false)
+      assert.equal(resolved.bash.source, 'missing', 'legacy provisioned Bash cannot replace Niubash')
+      assert.equal(fs.existsSync(provisionedBash), true, 'legacy install remains operator-owned')
+      return
+    }
     assert.equal(resolved.bash.available, true, resolved.bash.detail)
     assert.equal(resolved.bash.source, 'provisioned', resolved.bash.detail)
     assert.equal(resolved.bash.file, provisionedBash)

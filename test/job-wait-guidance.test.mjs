@@ -1,3 +1,4 @@
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
@@ -32,7 +33,7 @@ await test('the owning consumer observes real Native/PTC results and keeps untri
     const mint = async mode => {
       const agent = { id: `${mode}-${++sequence}`, session: { id: `${mode}-${sequence}`, header: { cwd: root }, append() {}, read() { return [] } } }
       agent.ctx = createScope(ctx, agent).ctx
-      await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.presentAs(mode) } })
+      await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, mode) } })
       agents.push(agent); await ctx.serial('agent/created', { agent }); return agent
     }
     const mount = promptPolicy => ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) {
@@ -44,7 +45,7 @@ await test('the owning consumer observes real Native/PTC results and keeps untri
     const sections = async agent => (await ctx.get('systemPrompt').assemble({ scope: agent })).sections
     const hints = async agent => (await sections(agent)).filter(section => section.text.includes(JOB_WAIT_GUIDANCE))
     const before = JSON.stringify(await sections(untouched))
-    const execute = (agent, name, args) => ctx.get('tools').execute({ agent, name, arguments: args, callId: `wait-${++sequence}`, signal: AbortSignal.timeout(15_000) })
+    const execute = (agent, name, args) => executeCall(ctx, { agent, name, arguments: args, callId: `wait-${++sequence}`, signal: AbortSignal.timeout(15_000) })
     assert.equal((await hints(native)).length, 0)
     for (const command of ['sleep 1', 'for x in a; do sleep 50; done', 'echo normal']) await execute(native, BASH_TOOL, { command })
     assert.equal((await hints(native)).length, 0)

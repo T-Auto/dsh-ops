@@ -2,14 +2,19 @@
 import { randomUUID, createHash } from 'node:crypto'
 import path from 'node:path'
 import type { TypertGatewayBinding } from '../adapter/dsh/types.js'
-import { PACKAGE_ROOT } from '../paths.js'
-import { gitBashCandidates, managedBashInventory, removeManagedBash, selectBashRuntime } from '../shells/manager.js'
-import { shellUpstreamPin, provisionedShellVersionDir } from '../shells/pins.js'
+import { NIUBASH_HOME_PATH, NIUBASH_PIN } from '../cli/niubash-payload.js'
+import { MODE_IDS } from '../presets/types.js'
+import { resolveModeConfig } from '../presets/config.js'
+import { PACKAGE_ROOT, dshHome } from '../paths.js'
+import { resolveShells } from '../shells.js'
+import { bashEngine, gitBashCandidates, managedBashInventory, removeManagedBash, selectBashRuntime } from '../shells/manager.js'
 import { hostPwshUpgradePlan, upgradeHostPwsh, hostPwshVersion } from '../shells/pwsh-upgrade.js'
 import { companionVersion } from './companion.js'
+import { effectiveMode, resolveMergedConfig } from './merged.js'
 import type { UpgradeProcessResult } from '../shells/pwsh-upgrade.js'
-import { parseAction, parseSource } from './runtime-contract.js'
-import type { RuntimeAction, RuntimePlan, RuntimeResult, RuntimeSnapshot, RuntimeSelection, BashSource } from './runtime-contract.js'
+import { parseAction, parseSelection } from './runtime-contract.js'
+import type { RuntimeAction, RuntimePlan, RuntimeResult, RuntimeSnapshot, RuntimeSelection, RuntimeSelectionRequest,
+  BashResolutionView, BashSourceKind, ModeBashView } from './runtime-contract.js'
 
 export type RuntimeProcessRunner = (argv: readonly string[], signal: AbortSignal) => Promise<UpgradeProcessResult>
 export interface RuntimeActionOptions {
@@ -18,6 +23,8 @@ export interface RuntimeActionOptions {
   platform?: NodeJS.Platform
   arch?: string
   now?: () => number
+  /** The composed row configuration the mounted fiber owns, for the shell resolutions. */
+  config?: () => unknown
 }
 type Preview = Omit<RuntimePlan, 'id'>
 const failure = (status: RuntimeResult['status'], message: string, effectState: RuntimeResult['effectState'] = 'none'): RuntimeResult => ({ status, message, effectState })
@@ -25,7 +32,7 @@ const digest = (value: unknown): string => createHash('sha256').update(JSON.stri
 
 export class RuntimeActions {
   readonly typertRemote: TypertGatewayBinding<this> = Object.freeze({ service: this, serviceKey: 'opsSettings', namespace: 'opsSettings' })
-  private readonly options: Required<Omit<RuntimeActionOptions, 'run'>> & Pick<RuntimeActionOptions, 'run'>
+  private readonly options: Required<Omit<RuntimeActionOptions, 'run' | 'config'>> & Pick<RuntimeActionOptions, 'run' | 'config'>
   private readonly plans = new Map<string, { action: RuntimeAction; fingerprint: string; expires: number }>()
   private readonly lifetime = new AbortController()
   private busy = false
@@ -35,17 +42,49 @@ export class RuntimeActions {
   }
   snapshot(): RuntimeSnapshot {
     const powerShell = hostPwshUpgradePlan(this.options)
-    return { platform: this.options.platform, managed: managedBashInventory(this.options), git: gitBashCandidates(this.options),
+    const modes = this.modeViews()
+    const running = modes.filter(mode => mode.enabled && mode.publishesBash)
+    const signatures = new Set(running.map(mode => `${mode.engine}|${mode.source}|${mode.file ?? ''}|${mode.available}`))
+    // Only an unambiguous answer may be called "the executor": a deployment whose
+    // modes disagree reports each of them instead of picking a favourite.
+    const uniform = signatures.size === 1 ? running[0] : undefined
+    const bash: BashResolutionView | undefined = uniform === undefined ? undefined
+      : { available: uniform.available, source: uniform.source, engine: uniform.engine, detail: uniform.detail,
+        ...(uniform.file === undefined ? {} : { file: uniform.file }) }
+    return { platform: this.options.platform, ...(bash === undefined ? {} : { bash }), modes,
+      git: gitBashCandidates(this.options), managed: managedBashInventory(this.options),
       ...(companionVersion(this.options) === undefined ? {} : { companion: companionVersion(this.options) }),
       powerShell: { supported: powerShell.supported, guidance: powerShell.guidance,
         ...(powerShell.unavailable ? { unavailable: powerShell.unavailable } : {}),
         ...(hostPwshVersion(this.options) === undefined ? {} : { version: hostPwshVersion(this.options) }) } }
   }
-  select(source: BashSource): RuntimeSelection {
-    const selected = selectBashRuntime(parseSource(source), this.options)
-    return { bashPath: selected.file, restriction: selected.restricted.compatible
-      ? 'This Bash has verified restricted-mode IPC compatibility.'
-      : String(selected.restricted.reason ?? 'Restricted modes cannot use this Bash. A supported sandbox/executor remains required.') }
+  /**
+   * Every mode's own resolution, resolved from the same row config the fiber mounted.
+   * A mode that cannot be resolved reports why instead of borrowing another's answer.
+   * @returns one view per built-in mode, in page order.
+   */
+  private modeViews(): ModeBashView[] {
+    let merged
+    try { merged = resolveMergedConfig(this.options.config?.()) } catch { merged = resolveMergedConfig({}) }
+    const linked = typeof merged.other.raw?.pwsh7Link === 'boolean' ? merged.other.raw.pwsh7Link
+      : companionVersion({ sweep: false }) !== undefined
+    return MODE_IDS.map(id => {
+      const state = merged[id]
+      try {
+        const effective = resolveModeConfig(effectiveMode(state, merged.global, linked), id)
+        const resolved = resolveShells(effective, this.options).bash
+        return { id, enabled: state.enabled, publishesBash: effective.bash !== false,
+          available: resolved.available, source: resolved.source as BashSourceKind, engine: bashEngine(resolved.file),
+          detail: resolved.detail, ...(resolved.file === undefined ? {} : { file: resolved.file }) }
+      } catch (error) {
+        return { id, enabled: state.enabled, publishesBash: true, available: false, source: 'missing',
+          engine: 'none', detail: error instanceof Error ? error.message : String(error) }
+      }
+    })
+  }
+  select(request: RuntimeSelectionRequest): RuntimeSelection {
+    const parsed = parseSelection(request)
+    return selectBashRuntime(parsed.source, { ...this.options, ...(parsed.path === undefined ? {} : { path: parsed.path }) })
   }
   private preview(action: RuntimeAction): { public: Preview; fingerprint: string } {
     let preview: Preview, facts: unknown
@@ -62,21 +101,20 @@ export class RuntimeActions {
           ...inventory.versions.map(entry => entry.directory), ...inventory.kept.map(entry => `Keep unowned directory: ${entry.directory}`)],
         ...(!inventory.versions.length ? { reason: 'No receipt-owned managed Bash installation to remove.' } : {}) }
     } else {
-      const rawPin = shellUpstreamPin({ kind: 'bash', ...this.options })
-      const pin = rawPin && 'url' in rawPin && typeof rawPin.url === 'string'
-        && 'version' in rawPin && typeof rawPin.version === 'string'
-        && 'bytes' in rawPin && typeof rawPin.bytes === 'number'
-        && 'sha256' in rawPin && typeof rawPin.sha256 === 'string'
-        ? { url: rawPin.url, version: rawPin.version, bytes: rawPin.bytes, sha256: rawPin.sha256 } : undefined
+      // The action provisions the pinned Niubash payload; the preview must name
+      // those bytes, not a legacy Git for Windows archive it will never fetch.
+      const supported = this.options.platform === 'win32' && this.options.arch === 'x64'
+      const pin = { url: NIUBASH_PIN.url, version: NIUBASH_PIN.upstreamVersion, bytes: NIUBASH_PIN.archiveBytes, sha256: NIUBASH_PIN.archiveSha256 }
+      const target = path.join(dshHome(this.options.env), NIUBASH_HOME_PATH)
       const inventory = managedBashInventory(this.options)
       const unowned = inventory.filter(entry => !entry.owned)
-      facts = { pin: pin ?? null, inventory }
-      preview = { action, available: Boolean(pin) && !unowned.length, details: pin ? [
+      facts = { pin: supported ? pin : null, inventory }
+      preview = { action, available: supported && !unowned.length, details: supported ? [
         `Download ${pin.url}`, `Version: ${pin.version}; bytes: ${pin.bytes}; SHA-256: ${pin.sha256}`,
-        `Install into ${provisionedShellVersionDir({ kind: 'bash', version: pin.version, env: this.options.env })}`,
-        'The pinned archive and executable are verified. No profile setting is changed. Reload the mode row after selecting the executor.',
+        `Install into ${target}`,
+        'The pinned archive and executable are verified. No profile setting is changed. Choose Niubash on the row page afterwards.',
         ...inventory.map(entry => 'Old managed version may be replaced: ' + entry.directory),
-      ] : [], ...(!pin ? { reason: 'Managed Bash installation is available only for supported Windows builds.' } : {}),
+      ] : [], ...(!supported ? { reason: 'Niubash installation is available only on Windows x64; other hosts keep their own Bash.' } : {}),
         ...(unowned.length ? { reason: 'Unowned directories exist in the managed Bash store. Resolve them manually before installing.' } : {}) }
     }
     return { public: preview, fingerprint: digest(facts) }

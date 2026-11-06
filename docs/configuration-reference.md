@@ -80,7 +80,7 @@ falling back to the built-in surface; scoped diagnostics remain accessible.
 | `discovery` | true except shell profile; false removes the selector/SDK loader, not explicit startup selections |
 | `allowedTools` | all supported loadable tools when discovery is enabled, otherwise empty |
 | `alwaysLoaded` | empty; must be allowed; separate from the Native residentNames profile |
-| `replaceOfficial` | false; hides ready reviewed file counterparts only; does not hide arbitrary tools |
+| `replaceOfficial` | false; replaces only ready, admitted file counterparts; conditional official tools may remain visible |
 | `promptPolicy` | true; guidance names only actually published tools |
 | `extraGuidance` | empty; Native-only guidance, rejected in PTC |
 | `externalTools` / `externalAlwaysLoaded` / `externalDisabled` | empty; explicit external allow/startup/deny lists, disabled wins |
@@ -89,7 +89,9 @@ falling back to the built-in surface; scoped diagnostics remain accessible.
 | `denyCredentialReads` | true; Native-only override, PTC rejects overrides and retains its boundary |
 | `downloadGuard.template` | empty; inert until set. A suggested command with standalone unquoted `{url}` (required) and optional `{file}` arguments; never executed automatically |
 | `downloadGuard.shell` | `bash` by default; `pwsh` quotes suggested arguments for PowerShell. See [download guard](download-guard.md) for the opt-in row section and detection limits |
-| `allowSystemShellFallback` | false; Windows automatic fallback is opt-in |
+| `allowSystemShellFallback` | false; retained for compatibility, never enables implicit Windows Bash fallback; use explicit `bashPath` |
+
+In 0.5, enabling official-tool replacement does not guarantee that a conditional official tool disappears from the model's tool table. When the OPS counterpart has conditional admission, OPS keeps the official registration visible and guards its dispatch only when the same captured step toolSet admits the counterpart and the consumer still has current authority. An absent, revoked or not-yet-ready counterpart cannot disable the official tool as well. Safe unconditional resident replacements may still use host restrictions. OPS never wraps official definitions or hides tools from inside admission conditions or prompt assembly.
 
 `shell: false` retains explicit `bashPath`, `allowSystemShellFallback` and `hidePwsh` intent,
 but does not publish Bash or hide the host shell. Re-enabling Shell applies those saved choices.

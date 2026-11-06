@@ -186,10 +186,9 @@ jobs:
     timeout-minutes: 35
     env:
       CARGO_BUILD_JOBS: '3'
-      # Runners are shared and sometimes loaded: give each suite more headroom than a workstation
-      # needs, and let a deadline be retried once — a timeout is the environment answering, and the
-      # retry prints, so a green summary still shows it happened.
-      DSH_OPS_SUITE_TIMEOUT_MS: '300000'
+      # The clean consumer includes verified cold staging and a real 120s descendant deadline.
+      # Match the full-payload suite watchdog; production command limits remain unchanged.
+      DSH_OPS_SUITE_TIMEOUT_MS: '600000'
       DSH_OPS_RETRY_TIMEOUTS: '1'
     steps:
       - uses: actions/checkout@v7
@@ -216,17 +215,8 @@ jobs:
           restore-keys: ops-031-${{ runner.os }}-${{ runner.arch }}-
       - name: Install locked dependencies
         run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
-      # An optionalDependency that npm silently skipped (bad pin, a registry without the
-      # version, --omit=optional) must fail here, not be papered over by a download.
-      - name: The declared Windows Bash payload must be installed
-        if: matrix.target == 'win32-x64'
-        shell: bash
-        run: node -e "const fs=require('fs'),p=require('./package.json');const v=p.optionalDependencies?.['@dsh-ops/bash-win32-x64'];if(!v)throw Error('package.json lost the pinned Bash payload');if(!fs.existsSync('node_modules/@dsh-ops/bash-win32-x64/bin/bash.exe'))throw Error('npm ci did not install @dsh-ops/bash-win32-x64@'+v)"
-      # The gate, not `npm run verify`: it runs the same suites with `DSH_OPS_REQUIRE_RUNTIME=1`
-      # on POSIX (a runtime-absence skip is a failure, not a pass), refuses any skip outside this
-      # platform's known set, fails when a suite file on disk was never collected, and checks the
-      # packed artifact. It builds the plugin before its CLI, then builds/tests the worker and
-      # Windows IPC proxies using the pinned Bash payload installed by npm ci (or DSH_OPS_TEST_BASH). Build success is not behaviour.
+      # The gate stages and verifies the complete frozen Niubash archive before tests/pack,
+      # and acquires a separate explicit legacy MSYS fixture for compatibility tests.
       - name: Functional gate (skips, suite inventory, packed artifact)
         shell: bash
         run: node scripts/verify-gate.mjs --skip-install

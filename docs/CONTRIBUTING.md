@@ -46,7 +46,7 @@ conventions a pull request is reviewed against. 中文版：[贡献指南.md](�
 | --- | --- |
 | Node.js | `^22.19` or `>=24` (`package.json#engines`; CI uses 24) |
 | Rust | `1.97.1` (the toolchain CI pins); needed to build the native worker |
-| Target host | DSH `0.2.0-rc.2` |
+| Target host | DSH `0.2.2-rc.1` (0.5 series; older hosts are unsupported) |
 | Linux only | the `acl` package for the POSIX ACL checks |
 
 ```console
@@ -78,7 +78,7 @@ npm run build:ptc
 npm pack
 ```
 
-On Windows the pinned Bash payload is installed by `npm ci`; if it is missing (for example a checkout installed with `--omit=optional`), run `node bin/dsh-ops.mjs bash-runtime install`, then `npm run build:bash-ipc` before packing. For an offline build, set `DSH_OPS_TEST_BASH` to the absolute pinned `bin/bash.exe`; the build/test helper verifies its digest. The gate acquires its own temporary fixture unless this variable is provided. Install the resulting
+Before packing on **any host**, run `npm run stage:niubash -- --archive <absolute-frozen-v1.5.0.tar.gz> --offline` (or omit `--archive`/`--offline` to acquire the fixed official archive through the configured proxy). `prepack` verifies this complete tree and fails closed if missing. The release gate stages it before tests and pack; set `DSH_OPS_NIUBASH_ARCHIVE` and `DSH_OPS_OFFLINE=1` for offline gate runs. On Windows, the gate sets `DSH_OPS_TEST_NIUBASH` to the verified staged executable and separately acquires the committed legacy MSYS pin for compatibility tests and `build:bash-ipc`. `DSH_OPS_TEST_BASH` is only an explicit verified legacy fixture override, not the default backend. Install the resulting
 `dsh-ops-<version>.tgz` with the DSH CLI for your target profile (see the README). `npm pack` runs
 the build through `prepack`, unless lifecycle scripts are disabled. An unbuilt Git checkout has
 no `lib/` and is not ready to load; there is no install-time lifecycle hook. Keep development
@@ -129,6 +129,20 @@ What a skip means locally:
   packed artifact.
 - `node test/run.mjs <filter>` runs only the suites whose file names contain `<filter>`, e.g.
   `node test/run.mjs mount file-operations`.
+
+The four full-payload suites (`niubash-payload-integration`, `niubash-preparation`,
+`niubash-security-host`, `niubash-consumer`) default to a 600-second suite watchdog; other suites
+keep 120 seconds. A positive finite `DSH_OPS_SUITE_TIMEOUT_MS` overrides either default. The clean
+consumer reserves 60 seconds of that budget for packing/installing, leaving 540 seconds by default
+for its real host checks. Bash commands retain their production 120-second default, including
+verified staging of the complete execution tree; the suite watchdog is a separate outer limit.
+The descendant timeout test proves that a child starts before its deadline and cannot write afterward.
+On a loaded Windows host, provide a larger explicit outer budget without changing command deadlines:
+
+```powershell
+$env:DSH_OPS_SUITE_TIMEOUT_MS = '1800000'
+node test/run.mjs niubash
+```
 
 How to read the gate and the expected numbers per host: [verify-locally.md](verify-locally.md).
 CI runs on every pull request and every push to `main`, `0.3.2` and `release/0.4.0`. The two blocking POSIX legs (`validate-posix`: Linux x64, macOS arm64) block a merge. The Windows x64 leg (`validate-windows`) and the macOS Intel leg (`validate-macos-intel`) still run on every event but are non-blocking — a red run there is a defect to fix, not a reason to hold the merge (#316; the Intel leg measured 318 s).
@@ -251,19 +265,19 @@ The credential fence, trusted path anchors and permission helpers are strict Typ
 `src/index.ts` types the component entry against the public Cordis `Context` and `Agent` contracts. Raw configuration remains `unknown` until validation; callbacks and tool-denial decisions retain their public host signatures. Runtime imports remain `.js`, and host dependencies remain type-only at module load. `node test/run.mjs kernel-types mount bundle-startup progressive-loop` checks the type boundary, scoped startup/disposal and next-step publication.
 
 The settings integration tests use exact development-only host settings, profile boot and config
-editor packages at `0.2.0-rc.2`, with matching Cordis loader/group/include, CosmoKit and Schemastery
+editor packages at `0.2.2-rc.1`, with matching Cordis loader/group/include, CosmoKit and Schemastery
 patch versions. They exercise the real profile writer and component reload instead of substituting
 an in-memory save. These packages are not production dependencies or host runtime imports.
 
 Browser settings are strict TSX. The build uses the existing TypeScript compiler to produce the
 host's lazy `./client` factory, with React supplied by the host. Exact development-only React 18.3.1,
-React type packages, jsdom 26.1.0 and the pinned `0.2.0-rc.2` client contracts support compilation,
+React type packages, jsdom 26.1.0 and the pinned `0.2.2-rc.1` client contracts support compilation,
 DOM interactions and the real host slot lifecycle tests. No browser bundler or production dependency
 is added. `settings-ui`, `settings-client`, `settings-host` and `settings-runtime` suites cover the
 form-to-profile and reviewed-action boundaries.
 
 The browser-page regression also uses development-only `@deepseek-ai/dsh-client-modules`
-`0.2.0-rc.2` (published 2026-09-29) to assert actual client registry activation, teardown and
+`0.2.2-rc.1` to assert actual client registry activation, teardown and
 restart against temporary installed profiles. `settings-client` covers exact composition,
 backups and atomic rollback; it never migrates a developer profile.
 

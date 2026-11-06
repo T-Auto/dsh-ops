@@ -68,26 +68,42 @@ await test('cache cleanup is preview-only until all hosts are explicitly stopped
   })
 })
 
-await test('Git selection prints an absolute config and never chooses a PATH WSL launcher', async () => {
+await test('Git selection prints an absolute executable and never chooses a PATH WSL launcher', async () => {
   await withTempDir('manager-git', root => {
     const file = path.join(root, 'programs/Git/bin/bash.exe'), wsl = path.join(root, 'system/System32/bash.exe')
     for (const target of [file, wsl]) { fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, 'fixture') }
     const env = { ProgramFiles: path.join(root, 'programs'), SystemRoot: path.join(root, 'system'), PATH: path.dirname(wsl), DSH_HOME: root }
     assert.deepEqual(gitBashCandidates({ env, platform: 'win32' }).filter(value => value.startsWith(root)), [file])
     const selected = selectBashRuntime('git', { env, platform: 'win32' })
-    assert.equal(selected.config.bashPath, file); assert.equal(selected.restricted.compatible, false)
+    assert.equal(selected.clear, false)
+    assert.equal(selected.engine, 'msys')
+    assert.equal(selected.file, file)
+    assert.match(selected.restriction, /verified|restricted|restricted-mode|MSYS|compatib|msys-2\.0/i)
+    // A path the scan does not know is still usable, and it wins over the scan.
+    const custom = path.join(root, 'elsewhere/bash.exe')
+    fs.mkdirSync(path.dirname(custom), { recursive: true }); fs.writeFileSync(custom, 'fixture')
+    assert.equal(selectBashRuntime('git', { env, platform: 'win32', path: custom }).file, custom)
+    assert.throws(() => selectBashRuntime('git', { env, platform: 'win32', path: 'bin/bash.exe' }), /must be absolute/)
     assert.equal(fs.existsSync(path.join(root, 'config.json')), false)
     assert.deepEqual(gitBashCandidates({ env, platform: 'linux' }), [])
   })
 })
 
-await test('managed selection retains the provisioned store layout and absence is actionable', async () => {
+await test('the default rung is a removal, and a legacy provisioned copy stays selectable', async () => {
   await withTempDir('manager-select', home => {
     assert.deepEqual(managedBashInventory({ env: { DSH_HOME: home } }), [])
-    assert.throws(() => selectBashRuntime('managed', { env: { DSH_HOME: home }, platform: 'win32', arch: 'x64' }), /bash-runtime install/)
-    seed(home, '9.0', false)
-    const directory = seed(home, '2.0')
-    assert.equal(selectBashRuntime('managed', { env: { DSH_HOME: home }, platform: 'win32', arch: 'x64' }).file, path.join(directory, 'bin/bash.exe'))
+    const niubash = selectBashRuntime('niubash', { env: { DSH_HOME: home }, platform: 'win32', arch: 'x64' })
+    assert.equal(niubash.clear, true)
+    assert.equal(niubash.engine, 'niubash')
+    // No payload in this home: the answer is either the packaged payload or a stated absence.
+    assert.ok(niubash.file === undefined || /niu\.exe$/i.test(niubash.file))
+    if (niubash.file === undefined) assert.match(niubash.detail, /bash-runtime install/)
+    // A legacy provisioned copy stays a candidate, and naming it selects it exactly;
+    // a scan answers with whatever real installation it finds first.
+    const directory = seed(home, '2.0'), legacy = path.join(directory, 'bin/bash.exe')
+    const env = { DSH_HOME: home }
+    assert.ok(gitBashCandidates({ env, platform: 'win32' }).includes(legacy))
+    assert.equal(selectBashRuntime('git', { env, platform: 'win32', arch: 'x64', path: legacy }).file, legacy)
   })
 })
 
@@ -108,7 +124,7 @@ await test('the real CLI previews removal and applies it only with yes', async (
     assert.notEqual(call(['invalid']).status, 0)
     const install = call(['install', '--dry-run'])
     assert.equal(install.status, process.platform === 'win32' ? 0 : 1, install.stderr)
-    if (process.platform === 'win32') assert.match(install.stdout, /dry run: no download, no writes/)
+    if (process.platform === 'win32') assert.match(install.stdout, /would provision complete Niubash/)
   })
 })
 
@@ -140,18 +156,17 @@ await test('bash-runtime status reports the private runtime cache without writin
   })
 })
 
-await test('the Windows Bash payload is a declared, locked and assembled optional dependency', async () => {
+await test('default distribution embeds Niubash and only explicit legacy assembly describes a Bash platform package', async () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'package.json'), 'utf8'))
   const lock = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'package-lock.json'), 'utf8'))
-  assert.equal(manifest.optionalDependencies?.['@dsh-ops/bash-win32-x64'], '0.2.1')
-  assert.equal(lock.packages['']?.optionalDependencies?.['@dsh-ops/bash-win32-x64'], '0.2.1')
-  assert.equal(lock.packages['node_modules/@dsh-ops/bash-win32-x64']?.version, '0.2.1')
+  assert.equal(manifest.optionalDependencies?.['@dsh-ops/bash-win32-x64'], undefined)
+  assert.equal(lock.packages['']?.optionalDependencies?.['@dsh-ops/bash-win32-x64'], undefined)
   const { describePackages } = await import('../scripts/lib/build/assemble.js')
-  const packages = describePackages('win32', 'x64', 'unused')
+  assert.deepEqual(describePackages('win32', 'x64', 'unused'), [])
+  const packages = describePackages('win32', 'x64', 'unused', 'git-bash')
   assert.equal(packages.length, 1)
   assert.equal(packages[0].name, '@dsh-ops/bash-win32-x64')
-  assert.equal(packages[0].kind, 'bash')
-  assert.equal(packages[0].version, '0.2.1', 'the payload version comes from the committed pin, never the main version')
+  assert.equal(packages[0].version, '0.2.1')
 })
 
 report('shells-manager')

@@ -10,8 +10,11 @@ import { isPresentationProbe } from './publication/presentation.js'
 import { resolveHidingConfig } from './config.js'
 export { resolveHidingConfig } from './config.js'
 import { OFFICIAL_REPLACEMENTS } from './official-tool-catalog.js'
+import { surfaceOf, visibleNames } from './publication/surface.js'
 import { safeDispose } from './teardown.js'
 import { retired as retiredLegacyRow } from './settings/legacy.js'
+import { publicationRegistration, publicationPending } from './publication/reentry.js'
+import { ownsPublication } from './publication/registrar.js'
 
 interface Entry { context: Context; lifts: (() => void)[]; cleanupError?: string; error?: string; reported?: string
   /** Set from the assembled surface: this scope presents one program entry, so its
@@ -37,7 +40,7 @@ export function apply(root: Context, raw?: unknown): void {
     let stopped = false, mutating = false
     let lastSurface: string | undefined
     const tools = ctx.get('tools')!
-    const apiError = (['schemas', 'get', 'restrict', 'guard'] as const).filter(api => typeof tools[api] !== 'function')
+    const apiError = (['schemas', 'get', 'restrict', 'guard', 'executable'] as const).filter(api => typeof tools[api] !== 'function')
     const fail = (message: string): void => ctx.logger?.error?.(message)
     const clear = (entry: Entry): boolean => {
       const pending = entry.lifts.splice(0)
@@ -51,16 +54,32 @@ export function apply(root: Context, raw?: unknown): void {
     }
     // Readiness examines the unmasked scope. It never accepts ops_<same-name>
     // as an equivalence claim, nor uses run_code as a native replacement.
-    const readiness = (agent: object): boolean[] => {
+    const readiness = (agent: object, toolSet?: import('./adapter/dsh/types.js').ResolvedToolSet): boolean[] => {
       const owned = new Set(typeof tools.get === 'function' ? nativeProviders(ctx, agent).map(provider => provider.definition) : [])
       return replaceTools.map(tool => {
-        const visible = typeof tools.get === 'function' ? tools.get(OFFICIAL_REPLACEMENTS[tool], agent) : undefined
-        return visible !== undefined && owned.has(visible)
+        const counterpart = OFFICIAL_REPLACEMENTS[tool]
+        const visible = toolSet ? (typeof tools.executable === 'function' ? tools.executable(counterpart, agent, toolSet) : undefined)
+          : typeof tools.get === 'function' ? tools.get(counterpart, agent) : undefined
+        return visible !== undefined && (owned.has(visible) || ownsPublication(ctx, visible))
       })
     }
+    const maskable = (agent: object): Set<string> => {
+      if (typeof tools.executable !== 'function') return new Set()
+      const owned = new Set(nativeProviders(ctx, agent).map(provider => provider.definition))
+      return new Set(replaceTools.filter(tool => {
+        const counterpart = tools.executable(OFFICIAL_REPLACEMENTS[tool], agent)
+        return counterpart !== undefined && owned.has(counterpart)
+      }))
+    }
     const prepare = (agent: object, entry: Entry): Plan => {
-      const names = typeof tools.schemas === 'function' ? tools.schemas(agent).map(schema => schema.name) : []
-      const hidden = names.filter(hideable)
+      // No capability guard here: `visibleNames` already answers for a registry with no
+      // projection, and gating it on `schemas` a second time reported every selected replacement
+      // as absent on a host that serves a view without one — the plan then hid nothing.
+      const names = visibleNames(tools, agent)
+      // A conditional counterpart cannot justify an unconditional restriction.
+      // Its official schema stays visible; the captured step decides dispatch.
+      const masks = maskable(agent)
+      const hidden = names.filter(name => masks.has(name))
       const ready = readiness(agent)
       const missing = replaceTools.flatMap((tool, index) => {
         const replacement = OFFICIAL_REPLACEMENTS[tool]
@@ -79,10 +98,16 @@ export function apply(root: Context, raw?: unknown): void {
     // Compare public surfaces before touching masks. Other components also
     // reconcile tools/change; emitting a fresh restriction for an unchanged
     // surface would otherwise cause a publication/withdrawal feedback loop.
-    // Schema bytes alone cannot detect a foreign tool shadowing an OPS definition.
-    const snapshot = (): string => JSON.stringify([tools.schemas(), ...[...entries.keys()].map(agent => [tools.schemas(agent), readiness(agent)])])
+    // Names alone cannot detect a foreign tool shadowing an OPS definition, so each entry is
+    // paired with the identity of the definition it currently resolves to — one view read,
+    // no schema projection: the guard runs before every dispatch and this waterfall twice
+    // per prompt, so a key that deep-copied the catalogue would cost more than it saves.
+    const snapshot = (): string => JSON.stringify([surfaceOf(tools), ...[...entries.keys()].map(agent => [surfaceOf(tools, agent), readiness(agent)])])
     const reconcile = () => {
       if (stopped || mutating) return
+      // A deferred restriction emits tools/change before its returned undo can
+      // be stored. Do not revoke that in-flight mask from its own notification.
+      if ([...entries.values()].some(entry => entry.lifts.some(publicationPending))) return
       try { if (snapshot() === lastSurface) return } catch { /* reported by per-agent verification below */ }
       mutating = true
       try {
@@ -103,8 +128,10 @@ export function apply(root: Context, raw?: unknown): void {
           try {
             // One restriction per complete plan; never partially hide when a
             // single required replacement is absent.
-            if (plan.deny.length) entry.lifts.push(entry.context.tools.restrict({ deny: plan.deny }))
-            const leaked = tools.schemas(agent).map(schema => schema.name).filter(hideable)
+            if (plan.deny.length) entry.lifts.push(publicationRegistration(entry.context, () => entry.context.tools.restrict({ deny: plan.deny })))
+            if (entry.lifts.some(publicationPending)) continue
+            const masks = maskable(agent)
+            const leaked = visibleNames(tools, agent).filter(name => masks.has(name))
             if (leaked.length) throw new Error(`host scoped restriction cannot hide own-scope tools: ${leaked.join(', ')}`)
             entry.error = undefined
           } catch (error) { clear(entry); entry.error = blocked(message(error)) }
@@ -144,6 +171,7 @@ export function apply(root: Context, raw?: unknown): void {
       // promise is that they never execute, in any presentation.
       const transport = entry?.collapsed === true && exec.name === RUN_CODE
       if (entry?.error && !transport) return entry.error
+      if (!transport && !readiness(exec.agent, exec.toolSet).every(Boolean)) return blocked('selected OPS counterparts are not admitted for the captured step')
       return hideable(exec.name)
         ? blocked(`official tool ${exec.name} is selected for replacement`) : undefined
     }
@@ -162,40 +190,20 @@ export function apply(root: Context, raw?: unknown): void {
       try { result = await next() }
       catch (error) { throw block(context.scope, `agent prompt assembly could not be verified: ${message(error)}`) }
       reconcile()
-      const wire = Array.isArray(result?.tools) ? result.tools.map(schema => schema.name) : []
-      // A collapsed scope receives one program entry and nothing else: its selected
-      // official tools are not native duplicates there, and their OPS counterparts can
-      // only ever be SDK functions, so readiness is unprovable by construction. Fail
-      // closed on the assembled surface instead: a scope that really kept a selected
-      // official tool still throws, while a run_code scope owns no mask and no error.
-      // A host that transforms the presentation here attaches the tool array only after
-      // this waterfall, so the wire proves nothing then. The host also publishes the
-      // `tools:ptc-only` section for a real program presentation and renders it empty
-      // otherwise, and the section survives the deferred array — judge the scope by it
-      // rather than by the configuration view, which answers for the declaration alone.
-      const ptcOnly = Array.isArray(result?.sections)
-        && result.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
-      const collapsed = Array.isArray(result?.tools)
-        ? wire.length > 0 && wire.every(name => name === RUN_CODE)
-        : ptcOnly
+      // DSH 0.2.2 keeps tools provider-owned; this waterfall contains text only.
+      const collapsed = result.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
       const entry = entries.get(context.scope)
       if (entry) entry.collapsed = collapsed
       if (entry?.error) {
         if (!collapsed) throw new Error(entry.error)
         clear(entry); entry.error = undefined
       }
-      // DSH 0.2.1 transforms a presentation here and attaches the tool array only
-      // after the waterfall, so the payload proves nothing about the assembled
-      // surface. Ask the scope view instead: an official tool this component
-      // selected is either still resolvable there or genuinely hidden. A host
-      // that still supplies schemas keeps the stricter assembled-surface check.
-      // A collapsed scope keeps the selected official names resolvable on purpose (the
-      // program calls their OPS counterparts) and owns no mask, so there is no assembled
-      // surface to leak there; the guard still refuses to dispatch them.
-      const leaked = collapsed ? []
-        : Array.isArray(result?.tools)
-          ? wire.filter(hideable)
-          : replaceTools.filter(tool => typeof tools.get === 'function' && tools.get(tool, context.scope) !== undefined)
+      if (!collapsed && !readiness(context.scope, context.toolSet).every(Boolean)) {
+        throw block(context.scope, 'selected OPS counterparts are not admitted for the captured step')
+      }
+      // Restrictions affect future admission; inspect this step's captured set.
+      const masks = maskable(context.scope)
+      const leaked = collapsed ? [] : tools.definitions(context.scope, context.toolSet).map(tool => tool.name).filter(name => masks.has(name))
       if (leaked.length) throw block(context.scope, `assembled surface still contains hidden official tools: ${leaked.join(', ')}`)
       return result
     })

@@ -22,7 +22,10 @@
  * @module dsh-ops/shells/resolve
  */
 
+import fs from 'node:fs'
+import path from 'node:path'
 import { PACKAGE_ROOT } from '../paths.js'
+import { isNiubashExecutable, niubashCandidates, verifiedNiubash } from '../niubash/runtime.js'
 import type { ResolvedConfig } from '../config.js'
 import type { BundledCause, ShellResolution } from './paths.js'
 import {
@@ -197,6 +200,30 @@ export function resolveShells(config: ShellConfig | undefined, options: ShellRes
     }
   }
 
+  // Explicit custom Bash stays authoritative; an invalid selected Niubash tree never falls
+  // through to MSYS or PATH. Presence of an incomplete distribution is also fail-closed.
+  if (platform === 'win32') {
+    const candidates = config?.bashPath !== undefined
+      ? (isNiubashExecutable(config.bashPath) ? [{ file: config.bashPath, source: 'config' }] : [])
+      : arch === 'x64' ? niubashCandidates(bundleRoot, env).filter(candidate => {
+        try { fs.lstatSync(path.dirname(candidate.file)); return true }
+        catch (error) { return (error as NodeJS.ErrnoException).code !== 'ENOENT' }
+      }) : []
+    const candidate = candidates[0]
+    if (candidate) {
+      try {
+        if (arch !== 'x64') throw new Error('Niubash requires Windows x64')
+        const runtime = verifiedNiubash(candidate.file)
+        return { bash: { available: true, file: runtime.file, source: candidate.source,
+          detail: 'verified complete Niubash v1.5.0 portable runtime' }, pwsh }
+      } catch (error) {
+        return { bash: { available: false, source: candidate.source,
+          detail: error instanceof Error ? error.message : String(error) }, pwsh }
+      }
+    }
+    if (config?.bashPath === undefined) return { bash: { available: false, source: 'missing',
+      detail: 'Pinned complete Niubash v1.5.0 is missing or unsupported. Run dsh-ops provision-shells --bash to restore it, or configure an explicit absolute bashPath. No automatic Git Bash or system shell fallback.' }, pwsh }
+  }
   const bashBundled = bundledShell({ kind: 'bash', ...probe })
   return {
     bash: resolveBash({

@@ -1,3 +1,4 @@
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createScope } from '@deepseek-ai/dsh-scope'
@@ -14,7 +15,7 @@ import { legacyComponent } from './lib/legacy-component.mjs'
 const ptc = legacyComponent(ptcModule)
 requireWorker('ptc-departure')
 let sequence = 0
-const names = (ctx, agent) => ctx.get('tools').schemas(agent).map(tool => tool.name).sort()
+const names = async (ctx, agent) => { const step = await prepareStep(ctx, agent); try { return ctx.get('tools').definitions(agent, step.toolSet).map(tool => tool.name).sort() } finally { step.dispose() } }
 // A stall must fail the check, not hang the suite: the timer is cleared so it cannot
 // outlive the race and keep the process alive past report().
 const bounded = async (work, ms) => { let timer; try { return await Promise.race([work, new Promise(resolve => { timer = setTimeout(() => resolve('timeout'), ms) })]) } finally { clearTimeout(timer) } }
@@ -27,7 +28,7 @@ async function setup(dir) {
   async function mint(mode = 'native') {
     const id = 'departure-' + ++sequence, agent = { id, session: { id, mode: 'workspace-write', header: { cwd: dir }, append() {}, read() { return [] } } }
     agent.ctx = createScope(ctx, agent).ctx
-    await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.presentAs(mode) } })
+    await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, mode) } })
     agents.push(agent)
     await ctx.serial('agent/created', { agent })
     return agent
@@ -44,17 +45,18 @@ await test('an agent departure republishes without re-probing the survivors', ()
     prompt.assemble = context => { if (isPresentationProbe(context)) ++probes; return assemble(context) }
     try {
     const keep = await mint('ptc'), leave = await mint('ptc')
-    await waitFor(() => names(ctx, keep).includes('run_code') && names(ctx, leave).includes('run_code'))
+    await waitFor(async () => (await names(ctx, keep)).includes('ops_load_sdk') && (await names(ctx, leave)).includes('ops_load_sdk'))
     await wait(200)
     const before = probes
     const settled = await bounded(ctx.serial('agent/disposed', { agent: leave }).then(() => 'done'), 5000)
     assert.equal(settled, 'done', 'a departure must not stall its own event')
     assert.equal(probes, before, 'a departure names no agent to probe, so the survivors keep the verdict they already have')
-    assert.ok(names(ctx, keep).includes('run_code'), 'the surviving agent keeps the PTC surface the departure left intact')
-    // run_code stays visible: presentAs('ptc') is the departing scope's own layer,
+    const survivor = await prepareStep(ctx, keep)
+    try { assert.deepEqual(survivor.assembly.tools.map(tool => tool.name), ['run_code']) } finally { survivor.dispose() }
+    // run_code stays visible: the real PTC executor is the departing scope's own layer,
     // while the PTC row's own APIs are what a departure must withdraw.
-    assert.equal(names(ctx, keep).filter(name => name.startsWith('ops_')).includes('ops_load_sdk'), true)
-    assert.equal(names(ctx, leave).filter(name => name.startsWith('ops_')).includes('ops_load_sdk'), false)
+    assert.equal((await names(ctx, keep)).filter(name => name.startsWith('ops_')).includes('ops_load_sdk'), true)
+    assert.equal((await names(ctx, leave)).filter(name => name.startsWith('ops_')).includes('ops_load_sdk'), false)
     } finally { prompt.assemble = assemble }
   } finally { await shutdown(ctx) }
 }))

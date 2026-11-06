@@ -25,8 +25,7 @@ await test('a missing bash publishes nothing and warns instead of failing', asyn
     const { ctx, live, registrations } = fakeRegistry()
     ctx.logger = { warn: (message) => warnings.push(message) }
     const publish = config({ allowSystemShellFallback: false })
-    // The wording this case pins is the pinned-Windows-payload remedy (`provision-shells`), so the
-    // platform is Windows; a POSIX host resolves its own bash and has no such rung.
+    // Windows defaults to the complete frozen Niubash tree, not a Git Bash package.
     const shells = resolveShells(publish, {
       bundleRoot: path.join(dir, 'plugin'),
       env: { DSH_HOME: TEST_HOME, PATH: '' },
@@ -40,15 +39,9 @@ await test('a missing bash publishes nothing and warns instead of failing', asyn
     assert.equal(registrations.length, 0)
     assert.equal(warnings.length, 1)
     assert.match(warnings[0], /bash is unavailable/)
-    // AC-7's assembly channel, pinned at the unit level: the logger receives
-    // the same detail the ladder reports, and that detail carries the action.
-    // This root has no manifest at all, so the wording comes from the default
-    // branch of the cause mapping (D8) — never a bare statement of the problem.
-    assert.ok(warnings[0].includes('provision-shells --bash'), warnings[0])
-    assert.ok(
-      warnings[0].includes('run `dsh-ops provision-shells --bash` to install the pinned upstream copy'),
-      warnings[0],
-    )
+    assert.ok(warnings[0].includes('Pinned complete Niubash v1.5.0 is missing or unsupported.'), warnings[0])
+    assert.ok(warnings[0].includes('Run dsh-ops provision-shells --bash to restore it, or configure an explicit absolute bashPath.'), warnings[0])
+    assert.ok(warnings[0].includes('No automatic Git Bash or system shell fallback.'), warnings[0])
     assert.equal(typeof dispose, 'function')
     dispose()
     dispose()

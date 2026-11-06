@@ -90,13 +90,3 @@ export function useRuntime(api: RuntimeRemote): RuntimeState {
     dismiss: () => setPlan(undefined),
   }
 }
-
-/** One detected executor the operator may copy into the row's own configuration. */
-export interface DetectedBash {
-  /** Absolute path the Host reported. */
-  readonly path: string
-  /** Where it came from, as a short operator-facing label. */
-  readonly source: 'managed' | 'git'
-  /** Managed installation version, when the Host reports one. */
-  readonly version?: string
-}

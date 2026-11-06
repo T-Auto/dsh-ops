@@ -6,6 +6,7 @@ import Registry from '@deepseek-ai/dsh-typert-registry'
 import Gateway from '@deepseek-ai/dsh-api-gateway'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { RuntimeActions } from '../lib/settings/runtime-actions.js'
+import { gitBashCandidates } from '../lib/shells/manager.js'
 import { RUNTIME_DESCRIPTORS } from '../lib/settings/runtime-contract.js'
 import { runtimeProcessRunner, mountRuntimeSettings } from '../lib/settings/runtime-host.js'
 import { assert, test, report, TEST_HOME } from './lib/harness.mjs'
@@ -31,7 +32,7 @@ await test('runtime previews never start a process and unknown/unavailable actio
   assert.equal(calls, 0)
   assert.equal(service.plan('remove-bash').available, false)
   assert.throws(() => service.plan('command'), /Expected one of/)
-  assert.throws(() => service.select('system'), /Expected one of/)
+  assert.throws(() => service.select({ source: 'system' }), /Expected one of/)
   const unsupported = new RuntimeActions(options('posix', { platform: 'linux' }))
   assert.equal(unsupported.plan('install-bash').available, false)
   assert.equal(unsupported.plan('upgrade-pwsh').available, false)
@@ -133,6 +134,9 @@ await test('real gateway validates exact named inputs before action and withdraw
     await assert.rejects(invoke('plan', { action: 'command' }), /failed boundary validation/)
     await assert.rejects(invoke('plan', { action: 'install-bash', command: 'arbitrary' }), /unexpected/)
     await assert.rejects(invoke('execute', { id: 'not-a-plan' }), /failed boundary validation/)
+    // The selection is one strict object; the legacy bare string and stray keys are refused.
+    await assert.rejects(invoke('select', { source: 'niubash' }), /args fields do not match the descriptor/)
+    await assert.rejects(invoke('select', { selection: { source: 'niubash', path: 'x' } }), /failed boundary validation/)
     const plan = await invoke('plan', { action: 'install-bash' })
     assert.equal(calls, 0)
     assert.equal((await invoke('execute', { id: plan.id })).status, 'completed')
@@ -175,11 +179,61 @@ await test('the shell settings seam waits for host services and owns its teardow
 await test('managed selection returns an absolute setting and reports restricted-mode incompatibility', () => {
   const opts = options('select-managed'), service = new RuntimeActions(opts)
   const directory = managed(opts.env, '2.56.0.2')
-  const selected = service.select('managed')
-  assert.equal(selected.bashPath, path.join(directory, 'bin/bash.exe'))
-  assert.ok(path.isAbsolute(selected.bashPath))
-  assert.match(selected.restriction, /verified|restricted|restricted-mode|MSYS|compatib/i)
+  const selected = service.select({ source: 'git', path: path.join(directory, 'bin/bash.exe') })
+  assert.equal(selected.clear, false)
+  assert.equal(selected.engine, 'msys')
+  assert.equal(selected.file, path.join(directory, 'bin/bash.exe'))
+  assert.ok(path.isAbsolute(selected.file))
+  assert.match(selected.restriction, /verified|restricted|restricted-mode|MSYS|compatib|msys-2\.0/i)
   assert.deepEqual(service.snapshot().managed.map(entry => entry.version), ['2.56.0.2'])
+})
+await test('the executor choice is validated by the host, never by the page', () => {
+  const opts = options('select-validated'), service = new RuntimeActions(opts)
+  const directory = managed(opts.env, '2.56.0.2'), file = path.join(directory, 'bin/bash.exe')
+  // The default rung is a removal, not a pinned copy.
+  const niubash = service.select({ source: 'niubash' })
+  assert.equal(niubash.clear, true)
+  assert.equal(niubash.engine, 'niubash')
+  assert.match(niubash.detail, /no verified Niubash|Niubash/i)
+  // A typed path must be absolute and on disk; a relative one is refused outright.
+  assert.throws(() => service.select({ source: 'git', path: 'bin/bash.exe' }), /must be absolute/)
+  assert.throws(() => service.select({ source: 'git', path: path.join(directory, 'bin/missing.exe') }), /does not exist/)
+  // Omitting the path takes the first detected installation instead of guessing.
+  const detected = gitBashCandidates({ env: opts.env, platform: 'win32' })[0]
+  if (detected !== undefined) assert.equal(service.select({ source: 'git' }).file, path.resolve(detected))
+  // `path` beside the packaged rung is a caller mistake, not something to ignore.
+  assert.throws(() => service.select({ source: 'niubash', path: file }), /path applies only to the git source/)
+})
+await test('the snapshot reports every mode resolution and one shared executor', () => {
+  const opts = options('snapshot-modes'), directory = managed(opts.env, '2.56.0.2')
+  const file = path.join(directory, 'bin/bash.exe')
+  const configured = new RuntimeActions({ ...opts, config: () => ({
+    minimal: { bashPath: file }, standard: { bashPath: file }, ptc: { bashPath: file }, cordis: { bashPath: file },
+  }) })
+  const snapshot = configured.snapshot()
+  assert.deepEqual(snapshot.modes.map(mode => mode.id), ['minimal', 'standard', 'ptc', 'cordis'])
+  assert.ok(snapshot.modes.every(mode => mode.file === file && mode.engine === 'msys' && mode.source === 'config'))
+  assert.equal(snapshot.bash?.file, file)
+  // A disagreement is not flattened into a single answer.
+  const split = new RuntimeActions({ ...opts, config: () => ({ minimal: { bashPath: file }, standard: { bashPath: path.join(directory, 'bin/sh.exe') } }) })
+  assert.equal(split.snapshot().bash, undefined)
+  // Nothing configured: every mode answers from the deployment's own payload, or says it is missing.
+  const empty = new RuntimeActions({ ...opts, config: () => ({}) }).snapshot()
+  assert.equal(empty.modes.length, 4)
+  assert.ok(empty.bash !== undefined)
+  assert.ok(['niubash', 'none'].includes(empty.bash.engine))
+  if (empty.bash.engine === 'none') assert.match(empty.bash.detail, /Niubash/i)
+})
+await test('the install preview names the pinned Niubash bytes it will actually fetch', () => {
+  const plan = new RuntimeActions(options('preview-niubash')).plan('install-bash')
+  assert.equal(plan.available, true)
+  assert.match(plan.details.join('\n'), /unixwin\/niubash\/releases\/download\/v1\.5\.0/)
+  assert.match(plan.details.join('\n'), /Version: 1\.5\.0; bytes: \d+; SHA-256: [a-f0-9]{64}/)
+  assert.match(plan.details.join('\n'), /shells[\\/]niubash/)
+  // A POSIX host keeps its own Bash and has no pinned payload to install.
+  const posix = new RuntimeActions(options('preview-posix', { platform: 'linux', arch: 'x64' })).plan('install-bash')
+  assert.equal(posix.available, false)
+  assert.match(posix.reason, /Windows x64/)
 })
 await test('installer failures never report applied effects without successful startup', async () => {
   for (const [label, facts, effect] of [

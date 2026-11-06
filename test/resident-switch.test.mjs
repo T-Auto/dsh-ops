@@ -11,6 +11,7 @@ import { NATIVE_RESIDENT_RAW } from '../lib/modes/plan.js'
 import { PTC_RESIDENT_TOOLS } from '../lib/ptc/config.js'
 import { publicToolName, BASH_TOOL } from '../lib/policy.js'
 import { bootHost, shutdown, scopedToolNames } from './lib/host.mjs'
+import { prepareStep, executeCall, selectExecutor } from './lib/executor.mjs'
 import { assert, test, report, waitFor, withTempDir } from './lib/harness.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
 
@@ -40,11 +41,13 @@ await test('resident settings exist only on enhanced presets, default on, and ha
 
 requireWorker('resident-switch')
 let sequence = 0
-const names = (ctx, agent) => scopedToolNames(ctx, agent)
-const call = (ctx, agent, raw, args) => ctx.get('tools').execute({ agent, name: publicToolName(raw), arguments: args,
+const names = (ctx, agent) => ctx.get('tools').definitions(agent, agent.prepared?.toolSet).map(tool => tool.name).sort()
+const call = (ctx, agent, raw, args) => executeCall(ctx, { agent, toolSet: agent.prepared.toolSet, name: publicToolName(raw), arguments: args,
   callId: 'resident-' + ++sequence, signal: new AbortController().signal })
-const step = (ctx, agent) => ctx.waterfall('agent/pre-step', { agent, messages: [], turn: 1, step: ++sequence,
-  signal: new AbortController().signal }, async () => ({ kind: 'continue' }))
+async function step(ctx, agent) {
+  ctx.emit('session/event', agent.session, { type: 'step/end', turn: 1, step: ++sequence })
+  agent.prepared?.dispose(); agent.prepared = await prepareStep(ctx, agent)
+}
 async function scoped(parent, key, parentKey) {
   let result
   await parent.plugin({ inject: ['tools'], apply(inner) {
@@ -69,7 +72,7 @@ async function setup(cwd, mode, switches, global = {}, override = {}) {
     parameters: { type: 'object', properties: {} }, output: { schema: { type: 'object' }, render: () => [] }, execute: async () => ({}) })
   const agent = { id, session: { id, mode: 'danger-full-access', header: { cwd }, append() {}, read() { return [] } } }
   agent.ctx = await scoped(preset, agent, scopeOf(preset))
-  if (mode === 'ptc') await agent.ctx.plugin({ inject: ['tools'], apply: inner => { inner.tools.presentAs('ptc') } })
+  if (mode === 'ptc') await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply: inner => { selectExecutor(inner, 'ptc') } })
   agents.push(agent)
   await ctx.serial('agent/created', { agent })
   await step(ctx, agent)
@@ -110,7 +113,7 @@ for (const residentTools of [true, false]) for (const dynamicTools of [true, fal
       assert.equal(names(ctx, agent).includes(BASH_TOOL), process.platform === 'win32', 'PTC file switches never gate Bash')
       if (dynamicTools) {
         const requested = residentTools ? ['stat'] : ['stat', 'result']
-        const selected = await ctx.get('tools').execute({ agent, name: 'run_code',
+        const selected = await executeCall(ctx, { agent, toolSet: agent.prepared.toolSet, name: 'run_code',
           arguments: { description: 'Load progressive OPS APIs', code: `const selected = await tools.ops_load_sdk({tools:${JSON.stringify(requested)}});
             const blocked = await tools.ops_load_sdk({tools:['inspect_local_file']}); return {selected,blocked}` },
           callId: 'resident-' + ++sequence, signal: new AbortController().signal })

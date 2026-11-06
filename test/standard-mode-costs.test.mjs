@@ -48,12 +48,10 @@ await test('a name-only read matches the schemas() projection for every scope sh
   }
 }))
 
-await test('a host without a reachable view still names the tools', () => withRegistry(async ({ tools, key }) => {
-  // The fallback is the correctness branch: a host whose view this module cannot reach
-  // must still produce the same names, paying the copy rather than returning nothing.
+await test('the name-only reader uses the public definitions contract', () => withRegistry(async ({ tools, key }) => {
   const projected = tools.schemas(key).map(schema => schema.name)
-  const noView = { schemas: scope => tools.schemas(scope) }
-  assert.deepEqual(visibleNames(noView, key), projected, 'the fallback names exactly what schemas() projects')
+  const publicReader = { definitions: scope => tools.definitions(scope) }
+  assert.deepEqual(visibleNames(publicReader, key), projected)
 }))
 
 await test('a tooling section renders from view names, not a projection', () => withRegistry(async ({ ctx, tools, key }) => {

@@ -3,7 +3,7 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { gzipSync } from 'node:zlib'
-import { tar, UNIX_WORKERS } from '../scripts/lib/build/tar-modes.js'
+import { tar, UNIX_WORKERS, fixUnixWorkerModes } from '../scripts/lib/build/tar-modes.js'
 import { hostPwshUpgradePlan, upgradeHostPwsh, runUpgradeProcess } from '../lib/shells/pwsh-upgrade.js'
 import { applyComponent } from '../lib/index.js'
 import { resolveShells } from '../lib/shells.js'
@@ -13,6 +13,8 @@ import { stepCheck } from '../scripts/lib/build/check.js'
 import { injectedOptionalDependencies } from '../scripts/lib/build/publish-dir.js'
 import { assert, report, test, withTempDir, TEST_HOME, PACKAGE_ROOT } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { copyFixtureModules, stageFixtureNiubash } from './lib/niubash-distribution-fixture.mjs'
+import { NIUBASH_PACKAGE_PATH } from '../lib/cli/niubash-payload.js'
 
 const ARGS = ['install', '--id', 'Microsoft.PowerShell', '--exact', '--source', 'winget', '--installer-type', 'wix']
 function fixture(root) {
@@ -22,7 +24,16 @@ function fixture(root) {
 }
 const success = { started: true, exitCode: 0, signal: null }
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
-function mainArchive(file) {
+function mainArchive(file, directory) {
+  if (directory) {
+    for (const name of [...UNIX_WORKERS, 'package/runtime/win32-x64/dsh-ops-worker.exe']) {
+      const target = path.join(directory, name.slice('package/'.length))
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.writeFileSync(target, 'fixture worker', { mode: 0o755 })
+    }
+    tar.c({ file, gzip: true, sync: true, cwd: directory, prefix: 'package' }, ['runtime', 'lib'])
+    return
+  }
   const blocks = []
   for (const name of [...UNIX_WORKERS, 'package/runtime/win32-x64/dsh-ops-worker.exe']) {
     const body = Buffer.from('fixture worker')
@@ -137,20 +148,22 @@ await test('shell mount preserves live host configuration and legacy provisioned
     assert.equal(fs.readFileSync(legacy, 'utf8'), 'legacy unchanged')
   } finally { await shutdown(ctx) }
 })
-await test('release plans and the install lock carry the Windows Bash payload and never PowerShell', () => {
+await test('default release and install lock have no Git Bash dependency; explicit legacy plans retain the pin', () => {
   const packages = describePackages('win32', 'x64', TEST_HOME)
-  assert.deepEqual(packages.map(pkg => pkg.kind), ['bash'])
-  assert.deepEqual(injectedOptionalDependencies({ packages }), { '@dsh-ops/bash-win32-x64': '0.2.1' })
+  assert.deepEqual(packages, [])
+  assert.deepEqual(injectedOptionalDependencies({ packages }), {})
+  const legacy = describePackages('win32', 'x64', TEST_HOME, 'git-bash')
+  assert.deepEqual(legacy.map(pkg => pkg.kind), ['bash'])
+  assert.deepEqual(injectedOptionalDependencies({ packages: legacy }), { '@dsh-ops/bash-win32-x64': '0.2.1' })
   for (const name of ['package.json', 'package-lock.json']) {
     const contents = fs.readFileSync(path.join(PACKAGE_ROOT, name), 'utf8')
-    assert.match(contents, /@dsh-ops\/bash-win32-x64/)
-    assert.doesNotMatch(contents, /@dsh-ops\/pwsh-win32-x64/)
+    assert.doesNotMatch(contents, /@dsh-ops\/(?:bash|pwsh)-win32-x64/)
   }
 })
 await test('a payload release records the package at its declared pin, not the main version', async () => {
   await withTempDir('release-payload', async dist => {
     const manifest = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'package.json'), 'utf8'))
-    const version = manifest.optionalDependencies['@dsh-ops/bash-win32-x64']
+    const version = describePackages('win32', 'x64', dist, 'git-bash')[0].version
     assert.notEqual(version, manifest.version, 'the payload pin is intentionally independent of the main version')
     const bytes = Buffer.from('fixture bash entry bytes')
     const pin = { upstream: 'fixture', releaseTag: 'v1', assetName: 'fixture.7z', assetBytes: bytes.length,
@@ -167,7 +180,7 @@ await test('a payload release records the package at its declared pin, not the m
     fs.writeFileSync(path.join(stage, 'provenance.json'), JSON.stringify(provenance))
     const tarball = `dsh-ops-bash-win32-x64-${version}.tgz`, tarballBytes = Buffer.from('payload tarball fixture')
     fs.writeFileSync(path.join(dist, tarball), tarballBytes)
-    const context = { dist, packages: [pkg], tarballs: { bash: { tarball, sha256: hash(tarballBytes), bytes: tarballBytes.length, files: 2, unpackedBytes: bytes.length } } }
+    const context = { backend: 'git-bash', dist, packages: [pkg], tarballs: { bash: { tarball, sha256: hash(tarballBytes), bytes: tarballBytes.length, files: 2, unpackedBytes: bytes.length } } }
     const publishDir = path.join(dist, 'publish', `${manifest.name}-${manifest.version}`)
     fs.mkdirSync(publishDir, { recursive: true })
     fs.writeFileSync(path.join(publishDir, 'package.json'), JSON.stringify({ ...manifest, optionalDependencies: injectedOptionalDependencies(context) }))
@@ -186,8 +199,13 @@ await test('main-only release records validate without shell payloads and reject
     delete manifest.private
     fs.writeFileSync(path.join(directory, 'package.json'), JSON.stringify(manifest))
     const tarball = manifest.name + '-' + manifest.version + '.tgz'
-    mainArchive(path.join(dist, tarball))
-    // A main-only record: the payload package itself is covered by the assemble/closure suites.
+    const frozen = stageFixtureNiubash(path.join(dist, 'stage/niubash-win32-x64'))
+    fs.cpSync(frozen, path.join(directory, NIUBASH_PACKAGE_PATH), { recursive: true })
+    copyFixtureModules(directory)
+    mainArchive(path.join(dist, tarball), directory)
+    // Windows does not preserve executable chmod bits; use the real release repair.
+    await fixUnixWorkerModes(path.join(dist, tarball))
+    // Main-only means no separate shell npm package, not an absent native distribution.
     const context = { dist, packages: [], tarballs: {} }
     await writeReleaseRecords(context, [])
     const record = JSON.parse(fs.readFileSync(path.join(dist, 'provenance.json'), 'utf8'))

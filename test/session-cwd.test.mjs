@@ -15,7 +15,7 @@ async function fixture(body) {
     const tools = path.join(root, 'tools'); fs.mkdirSync(tools)
     fs.writeFileSync(path.join(root, 'probe.txt'), 'ROOT\n')
     fs.writeFileSync(path.join(tools, 'probe.txt'), 'TOOLS\n')
-    const { ctx } = await bootHost()
+    const { ctx } = await bootHost({ withWorkingDirectory: false })
     const exec = { agent: { session: { id: 'live-cwd', header: { cwd: root } } }, signal: new AbortController().signal }
     let cwd = tools, ensure = 0
     const sent = [], observations = []
@@ -108,16 +108,19 @@ await test('service failures, invalid live paths and cancellation never fall bac
   assert.equal(f.sent.length, 0)
 }))
 
-await test('legacy hosts without workingDirectory explicitly report the snapshot fallback', () => withTempDir('legacy-cwd', async root => {
-  fs.writeFileSync(path.join(root, 'probe.txt'), 'LEGACY\n')
-  const { ctx } = await bootHost()
+await test('DSH 0.2.2 refuses a missing workingDirectory instead of using a stale header', () => withTempDir('missing-cwd', async root => {
+  fs.writeFileSync(path.join(root, 'probe.txt'), 'STALE\n')
+  const { ctx } = await bootHost({ withWorkingDirectory: false })
   try {
     await ctx.plugin(Subprocess)
     await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: () => ({ mode: 'read-only', workspaceRoot: root }) }))
     const exec = { agent: { session: { id: 'legacy-cwd', header: { cwd: root } } }, signal: new AbortController().signal }
     const result = await invoke(ctx, WORKER, 'read_files', { files: [{ path: 'probe.txt' }] }, exec, exec.signal)
-    assert.equal(result.items[0].items[0].text, 'LEGACY')
-    assert.equal(result.resolvedFrom, root); assert.equal(result.cwdSource, 'session.header.cwd')
+    assert.equal(result.status, 'error', JSON.stringify(result))
+    assert.equal(result.error.code, 'EXECUTOR_UNAVAILABLE')
+    assert.equal(result.error.effectState, 'none')
+    assert.match(result.error.message, /authority or preparation is unavailable/)
+    assert.doesNotMatch(JSON.stringify(result), /STALE/)
   } finally { await shutdown(ctx) }
 }))
 

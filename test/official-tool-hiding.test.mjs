@@ -82,5 +82,8 @@ await test('both component references list the reviewed mappings and explain del
     for (const term of ['replaceTools', 'expectedRevision', 'CAS', 'Rust', 'ripgrep', 'StandardSchemaV1']) assert.ok(text.includes(term), file + ': ' + term)
   }
 })
+// The snapshot key is pinned behaviourally by `officialToolHidingMountChecks` below and its
+// shape by `ptc-surface.test.mjs`; a source-text match here would only add a way to break on
+// reformatting, without catching a regression those two miss.
 await officialToolHidingMountChecks()
 report('official-tool-hiding')
