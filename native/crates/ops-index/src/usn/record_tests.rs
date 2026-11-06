@@ -500,3 +500,23 @@ proptest! {
         prop_assert_eq!(journal.next_usn, -7);
     }
 }
+
+#[test]
+fn skipped_versions_still_require_a_complete_declared_common_header() {
+    for major in [4u16, 99] {
+        for length in 1u32..8 {
+            let mut buffer = 99i64.to_le_bytes().to_vec();
+            buffer.extend_from_slice(&length.to_le_bytes());
+            buffer.extend_from_slice(&major.to_le_bytes());
+            buffer.extend_from_slice(&0u16.to_le_bytes());
+            assert_eq!(
+                walk_enum_buffer(&buffer),
+                Err(WalkError::TruncatedHeader { offset: 8 })
+            );
+            assert_eq!(
+                walk_journal_buffer(&buffer),
+                Err(WalkError::TruncatedHeader { offset: 8 })
+            );
+        }
+    }
+}
