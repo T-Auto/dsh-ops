@@ -114,14 +114,24 @@ function reasonOf(value: unknown): CleanupReason {
     || value === 'timeout' || value === 'eperm' ? value : 'other'
 }
 
+/** A directory we may write into: not a link, and private to this user where the OS says so. */
+function privateDirectory(info: fs.Stats): boolean {
+  if (!info.isDirectory() || info.isSymbolicLink()) return false
+  // Windows synthesizes meaningless POSIX mode bits for directories (usually 0o666) and reports
+  // uid 0 for every file; its actual boundary is the per-user ACL on the directory, which the
+  // native cache verifier owns. The temp directory is per-user there, so directory + no-link is
+  // the whole portable check.
+  if (process.platform === 'win32') return true
+  if ((info.mode & 0o077) !== 0) return false
+  return typeof process.getuid !== 'function' || info.uid === process.getuid()
+}
+
 /** The ledger directory must be private and ours before anything is written into it. */
 function ensureDir(): string | undefined {
   const dir = cleanupRegistryDir()
   try {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
-    const info = fs.lstatSync(dir)
-    if (!info.isDirectory() || info.isSymbolicLink() || (info.mode & 0o077) !== 0
-      || (typeof process.getuid === 'function' && info.uid !== process.getuid())) return undefined
+    if (!privateDirectory(fs.lstatSync(dir))) return undefined
     return dir
   } catch {
     return undefined
@@ -130,6 +140,35 @@ function ensureDir(): string | undefined {
 
 function recordPath(dir: string, root: string): string {
   return path.join(dir, `${createHash('sha256').update(root).digest('hex')}.json`)
+}
+
+/** How long the record rename keeps being retried; the same sharing window as #352. */
+export const RECORD_RENAME_RETRY_DELAYS_MS: readonly number[] = [100, 200, 400]
+const RETRYABLE_RENAME_CODES: ReadonlySet<string> = new Set(['EPERM', 'EBUSY', 'EACCES'])
+/** A blocking sleep, so the ledger write stays synchronous. */
+const sleepSync = (ms: number): void => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms) }
+
+/**
+ * Rename a record file, tolerating the brief window in which Windows still holds a freshly written
+ * file. Only sharing/ownership errors are retried — a permission that will never change still
+ * reports a failure after the last delay. The injection points keep the bound assertable instead
+ * of sleeping on a real Windows window in a test.
+ * @param from - the temporary record path.
+ * @param to - the final record path.
+ * @param options - rename/wait/delay overrides for tests.
+ */
+export function renameRecordFile(from: string, to: string, {
+  rename = (source: string, destination: string): void => { fs.renameSync(source, destination) },
+  delays = RECORD_RENAME_RETRY_DELAYS_MS,
+  wait = sleepSync,
+}: { rename?: (from: string, to: string) => void; delays?: readonly number[]; wait?: (ms: number) => void } = {}): void {
+  for (let attempt = 0; ; attempt += 1) {
+    try { rename(from, to); return } catch (error) {
+      const code = (error as NodeJS.ErrnoException | undefined)?.code
+      if (attempt >= delays.length || code === undefined || !RETRYABLE_RENAME_CODES.has(code)) throw error
+      wait(delays[attempt] as number)
+    }
+  }
 }
 
 /** Write one record with a temporary file plus atomic rename; a failure is reported, never thrown. */
@@ -141,7 +180,7 @@ function writeRecord(dir: string, record: CleanupRecord): boolean {
       fs.writeFileSync(descriptor, JSON.stringify(record))
       fs.fsyncSync(descriptor)
     } finally { fs.closeSync(descriptor) }
-    fs.renameSync(temporary, target)
+    renameRecordFile(temporary, target)
     return true
   } catch {
     try { fs.rmSync(temporary, { force: true }) } catch { /* the temporary never carries data */ }

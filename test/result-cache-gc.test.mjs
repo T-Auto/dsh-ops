@@ -10,8 +10,8 @@ import { DEFAULT_RESULT_CACHE, resolveConfig, resolveResultCacheConfig } from '.
 import { resolveMergedConfig } from '../lib/settings/merged.js'
 import { runResultCacheGc, configureResultCacheGc } from '../lib/kernel/result-cache-gc.js'
 import {
-  completeCleanupRoot, listPendingCleanup, markCleanupRootLive, registerCleanupRoot, releaseCleanupRootLive,
-  resetCleanupHostBoot, setCleanupRegistryDir,
+  completeCleanupRoot, listPendingCleanup, markCleanupRootLive, recordCleanupFailure, registerCleanupRoot,
+  releaseCleanupRootLive, renameRecordFile, resetCleanupHostBoot, setCleanupRegistryDir,
 } from '../lib/kernel/result-cleanup-registry.js'
 import { mountResultLifecycle } from '../lib/kernel/result-lifecycle.js'
 import { resultStorage } from '../lib/kernel/result-storage.js'
@@ -159,6 +159,45 @@ if (POSIX) await test('data-bearing roots are reported as blocked and never remo
   assert.equal(fs.existsSync(older), true)
   assert.equal(fs.existsSync(newer), true)
 }))
+
+// Runs on every platform: the Windows temp directory has no POSIX mode bits, so a POSIX-only
+// privacy check silently disabled the whole ledger there (the Windows CI leg found exactly that).
+await test('the ledger records, updates and clears a root on this platform', () => withTempDir('result-gc-ledger', dir => {
+  const root = path.join(dir, rootName('ledger-root'))
+  setCleanupRegistryDir(path.join(dir, 'registry'))
+  try {
+    assert.ok(registerCleanupRoot(root, { sessionHeading: 'heading', workspaceRoot: dir }))
+    assert.deepEqual(listPendingCleanup().map(record => record.root), [root])
+    const failed = recordCleanupFailure(root, 'timeout')
+    assert.equal(failed.attempts, 1)
+    assert.equal(listPendingCleanup()[0].lastReason, 'timeout')
+    completeCleanupRoot(root)
+    assert.deepEqual(listPendingCleanup(), [])
+  } finally {
+    resetCleanupHostBoot()
+    setCleanupRegistryDir(undefined)
+  }
+}))
+
+await test('a record rename retries the sharing window but never a permanent failure', () => {
+  const waits = []
+  let attempts = 0
+  const busy = () => {
+    attempts += 1
+    if (attempts < 3) { const error = new Error('sharing violation'); error.code = 'EPERM'; throw error }
+  }
+  renameRecordFile('from.tmp', 'to.json', { rename: busy, wait: ms => waits.push(ms), delays: [10, 20, 30] })
+  assert.equal(attempts, 3, 'a transient sharing error is retried within the bound')
+  assert.deepEqual(waits, [10, 20])
+  let hard = 0
+  const missing = () => { hard += 1; const error = new Error('gone'); error.code = 'ENOENT'; throw error }
+  assert.throws(() => renameRecordFile('a.tmp', 'b.json', { rename: missing, wait: () => assert.fail('must not wait for a permanent failure') }))
+  assert.equal(hard, 1)
+  let exhausted = 0
+  const alwaysBusy = () => { exhausted += 1; const error = new Error('sharing violation'); error.code = 'EBUSY'; throw error }
+  assert.throws(() => renameRecordFile('x.tmp', 'y.json', { rename: alwaysBusy, wait: () => undefined, delays: [10, 20] }))
+  assert.equal(exhausted, 3, 'the retry budget is bounded')
+})
 
 if (POSIX) await test('a pre-created registry directory is refused unless it is private and ours', () => withTempDir('result-gc-registry-dir', dir => {
   const send = (registry, seed) => {
