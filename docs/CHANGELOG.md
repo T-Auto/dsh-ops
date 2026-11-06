@@ -11,6 +11,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 拒绝声明长度小于公共头的 USN 记录，包括被跳过的 V4 与未知版本。
 - Enforce the name arena NUL rejection contract in release builds as well as debug builds.
 - 名字 arena 在 release 与 debug 构建中均执行 NUL 拒绝契约。
+- Apply query deadlines before scanning, during folded-arena prefiltering (including no-match spans), and before publishing scan results.
+- 查询截止时间覆盖扫描前、folded arena 预过滤（含无匹配区段）及扫描结果交付前。
 
 - Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
 - 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。

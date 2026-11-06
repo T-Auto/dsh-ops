@@ -15,6 +15,9 @@ fs2 = "=0.4.3"
 # NTFS and ext4 deliver NFC, so the two spellings must match. Exact pin keeps
 # MSRV 1.88 truthful; 0.1.26 was published 2026-10-16.
 unicode-normalization = "=0.1.26"
+# Two-way substring search for the folded-name arena prefilter. SIMD-accelerated,
+# no unsafe in its public API, MSRV 1.61; exact pin because CI runs --locked.
+memchr = "=2.8.3"
 
 [dev-dependencies]
 # Property tests for the WTF-8 round trip and the decoder's totality over

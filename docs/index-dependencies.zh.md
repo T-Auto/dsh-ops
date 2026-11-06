@@ -5,7 +5,7 @@
 依赖都记录精确版本、crates.io 发布时间（2026-11-04 UTC+08 依据 crates.io API 核对）与引入理由。
 完整许可证正文见 [`licenses/index/THIRD-PARTY-NOTICES.txt`](../licenses/index/THIRD-PARTY-NOTICES.txt)。
 
-## 运行时依赖（2 个）
+## 运行时依赖（3 个）
 
 | crate | 精确版本 | 发布时间（UTC） | 许可证 | 用途 |
 | --- | --- | --- | --- | --- |
