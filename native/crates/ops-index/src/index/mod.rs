@@ -44,8 +44,6 @@ pub use volume::{
     Anomaly, ApplyOutcome, IndexStats, LOST_FOUND_NAME, LOST_FOUND_RECORD, LinkTarget,
     MAX_COMPONENT_UNITS, MAX_DECODED_NAME_BYTES, PLACEHOLDER_NAME, VolumeIndex, WtfName,
     filetime_to_unix_ns,
-pub use storage::{NameOrder, UNRANKED};
-    MAX_NAME_BYTES, PLACEHOLDER_NAME, VolumeIndex, WtfName,
 };
 
 #[cfg(test)]

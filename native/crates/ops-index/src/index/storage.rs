@@ -232,21 +232,53 @@ impl NameOrder {
     }
 }
 
+/// A compaction plan plus the name-store revision it was built from.
+///
+/// The plan copies live names with `&self` so it can be built off the write
+/// lock, but it must be installed only while the store is unchanged: a later
+/// intern or release can shrink or grow the id space the remap was computed
+/// for, and installing it then would renumber ids the plan never saw (or panic
+/// on the length mismatch). `VolumeIndex::apply_compaction` therefore compares
+/// [`Self::revision`] with the current store revision and refuses a stale plan
+/// without touching the index.
+pub struct CompactionPlan {
+    plan: CompactPlan,
+    revision: u64,
+}
+
+impl CompactionPlan {
+    /// Revision of the name store the plan was built from.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+}
+
 impl VolumeIndex {
     /// Builds a compaction plan without mutating the index, or `None` when the
     /// arenas are not dirty enough.
-    pub fn plan_compaction(&self) -> Option<CompactPlan> {
-        self.names
-            .should_compact()
-            .then(|| self.names.plan_compact())
+    pub fn plan_compaction(&self) -> Option<CompactionPlan> {
+        self.names.should_compact().then(|| CompactionPlan {
+            plan: self.names.plan_compact(),
+            revision: self.names_revision,
+        })
     }
 
-    /// Installs a [`CompactPlan`]: swaps the compacted names, renumbers the
-    /// entry name column, and remaps/re-ranks the name order.
-    pub fn apply_compaction(&mut self, plan: CompactPlan) {
+    /// Installs a [`CompactionPlan`] if it is still current.
+    ///
+    /// Returns `false` and leaves the index untouched when any name-store
+    /// mutation happened after the plan was built; the caller re-plans under the
+    /// write lock then. On success the compacted names are swapped, the entry
+    /// name column is renumbered and the name order is remapped and re-ranked.
+    pub fn apply_compaction(&mut self, plan: CompactionPlan) -> bool {
+        if plan.revision != self.names_revision {
+            return false;
+        }
+        let CompactionPlan { plan, .. } = plan;
         self.order.remap_for_compaction(&plan);
         self.names.install_compacted(plan, &mut self.entries);
+        self.names_revision += 1;
         self.order.rebuild_after_compaction(&self.names);
+        true
     }
 
     /// One-shot storage optimization after bootstrap: switch the record map to

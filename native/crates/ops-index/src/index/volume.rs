@@ -46,15 +46,36 @@ pub const LOST_FOUND_NAME: &[u8] = b"$LostFound";
 /// Synthetic name a placeholder carries until its real record fills it in.
 pub const PLACEHOLDER_NAME: &[u8] = b"$Placeholder";
 
-/// Largest name this index accepts, in bytes.
-///
-/// Every file system this crate targets bounds one component far below this
-/// (NTFS: 255 UTF-16 units, at most 510 WTF-8 bytes); the bound exists so a
-/// corrupt page can never reach `NameStore::intern`, which rejects names whose
-/// folded form would not fit its 16-bit length.
-pub const MAX_NAME_BYTES: usize = 510;
+/// NTFS component limit: 255 UTF-16 units per name.
+pub const MAX_COMPONENT_UNITS: usize = 255;
 
-const _: () = assert!(MAX_NAME_BYTES as u32 == crate::layout::MAX_NAME_BYTES);
+/// Largest **decoded** WTF-8 name this index accepts, in bytes.
+///
+/// [`crate::layout::MAX_NAME_BYTES`] (510) is a **wire** bound: 255 UTF-16 units
+/// on a FILE_LAYOUT page. A decoded component is not bound by that number: one
+/// UTF-16 unit can decode to three WTF-8 bytes (a three-byte BMP scalar or an
+/// unpaired surrogate), so a legal 255-unit component is up to 765 bytes. USN
+/// records hand the index decoded WTF-8 already, and applying the wire bound to
+/// it would silently drop legal CJK or surrogate-heavy names. Three bytes per
+/// unit is also far below the interner's 65535-byte folded bound
+/// (765 * 1.5 < 65535), so this bound can never reach the interner's panic.
+pub const MAX_DECODED_NAME_BYTES: usize = MAX_COMPONENT_UNITS * 3;
+
+/// Windows FILETIME ticks (100 ns) between 1601-01-01 and the Unix epoch.
+pub const FILETIME_UNIX_EPOCH_TICKS: i64 = 116_444_736_000_000_000;
+
+/// Converts a Windows FILETIME to Unix-epoch nanoseconds.
+///
+/// `FILE_LAYOUT` hands the raw FILETIME (100 ns ticks since 1601), while the entry
+/// table stores nanoseconds since 1970. The intermediate `i128` keeps the
+/// subtraction and multiplication overflow-free; a result outside `i64`
+/// (roughly before 1677 or after 2262) is reported as `None` and stored as an
+/// unknown mtime instead of saturating to a date the display layer would then
+/// state as fact.
+pub fn filetime_to_unix_ns(filetime: i64) -> Option<i64> {
+    let ticks = i128::from(filetime) - i128::from(FILETIME_UNIX_EPOCH_TICKS);
+    i64::try_from(ticks.checked_mul(100)?).ok()
+}
 
 /// A name plus whether it required WTF-8 (contained unpaired surrogates).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,7 +110,8 @@ pub enum Anomaly {
         /// Dead record.
         record: RecordId,
     },
-    /// An upsert carried a name above [`MAX_NAME_BYTES`]: the page is corrupt.
+    /// An upsert carried a name above [`MAX_DECODED_NAME_BYTES`]: the page is
+    /// corrupt.
     OversizedName {
         /// Record the name belonged to.
         record: RecordId,
@@ -111,7 +133,7 @@ pub struct IndexStats {
     pub stale_slots: u64,
     /// Hard-link reconciles the caller reported as impossible.
     pub link_reconciles_dropped: u64,
-    /// Names above [`MAX_NAME_BYTES`] rejected during bootstrap or apply.
+    /// Names above [`MAX_DECODED_NAME_BYTES`] rejected during bootstrap or apply.
     pub oversized_names: u64,
 }
 
@@ -149,6 +171,10 @@ pub struct VolumeIndex {
     pub(crate) stats: IndexStats,
     /// Structural mutations since the last `take_write_count`.
     pub(crate) dirty: u64,
+    /// Revision of the name store: bumped by every intern, release and
+    /// compaction install. A [`crate::index::storage::CompactionPlan`] records
+    /// it, and a plan built before a later mutation is refused.
+    pub(crate) names_revision: u64,
 }
 
 impl VolumeIndex {
@@ -185,6 +211,7 @@ impl VolumeIndex {
             generation: 0,
             stats: IndexStats::default(),
             dirty: 0,
+            names_revision: 0,
         };
         index.link_same_name(root, root_name);
         index.link_same_name(lost_found, lost_found_name);
@@ -199,6 +226,15 @@ impl VolumeIndex {
     /// Root entry.
     pub fn root(&self) -> EntryId {
         self.root
+    }
+
+    /// Record id of the structural root.
+    ///
+    /// The root entry never moves, so a USN record for this id must never
+    /// rename it or make it its own parent: every descendant path depends on
+    /// the root's identity.
+    fn root_record(&self) -> RecordId {
+        self.entries.record(self.root)
     }
 
     /// Lost-and-found entry.
@@ -262,10 +298,12 @@ impl VolumeIndex {
 
     /// Ingests one `FSCTL_ENUM_USN_DATA` record (bootstrap). Idempotent.
     ///
-    /// A name above [`MAX_NAME_BYTES`] is skipped: the caller validated the page,
-    /// so this is defensive only (and must not reach the interner's panic).
+    /// A name above [`MAX_DECODED_NAME_BYTES`] is skipped: the caller validated
+    /// the page, so this is defensive only (and must not reach the interner's
+    /// panic). The bound is the decoded component limit, not the 510-byte wire
+    /// limit: a legal 255-unit component may decode to up to 765 WTF-8 bytes.
     pub fn insert_enum(&mut self, record: &ParsedUsnRecord) {
-        if record.name.len() > MAX_NAME_BYTES {
+        if record.name.len() > MAX_DECODED_NAME_BYTES {
             self.stats.oversized_names += 1;
             return;
         }
@@ -296,7 +334,7 @@ impl VolumeIndex {
             let desired: Vec<LinkTarget> = file
                 .names
                 .iter()
-                .filter(|name| !name.dos_only && name.name.len() <= MAX_NAME_BYTES)
+                .filter(|name| !name.dos_only && name.name.len() <= MAX_DECODED_NAME_BYTES)
                 .map(|name| LinkTarget {
                     parent: self.resolve_or_placeholder_parent(name.parent),
                     name: WtfName::new(name.name.clone(), name.name_lossy),
@@ -312,7 +350,7 @@ impl VolumeIndex {
             for name in file
                 .names
                 .iter()
-                .filter(|name| !name.dos_only && name.name.len() <= MAX_NAME_BYTES)
+                .filter(|name| !name.dos_only && name.name.len() <= MAX_DECODED_NAME_BYTES)
             {
                 let parent = self.resolve_or_placeholder_parent(name.parent);
                 if !self.chain_has_link(file.reference, parent, &name.name) {
@@ -329,8 +367,12 @@ impl VolumeIndex {
                 if !is_dir && let Some(size) = file.size {
                     self.entries.set_size(current, Some(size));
                 }
-                if let Some(mtime) = file.mtime_ft {
-                    self.entries.set_mtime(current, Some(mtime));
+                if let Some(filetime) = file.mtime_ft {
+                    // FILETIME (100 ns since 1601) -> Unix-epoch nanoseconds;
+                    // an unrepresentable date becomes unknown, not a saturated
+                    // lie.
+                    self.entries
+                        .set_mtime(current, filetime_to_unix_ns(filetime));
                 }
                 current = self.entries.next_link(current);
             }
@@ -350,7 +392,7 @@ impl VolumeIndex {
         if let Some(name) = file
             .names
             .iter()
-            .find(|name| !name.dos_only && name.name.len() <= MAX_NAME_BYTES)
+            .find(|name| !name.dos_only && name.name.len() <= MAX_DECODED_NAME_BYTES)
             .filter(|name| name.parent != file.reference)
         {
             self.upsert_link(
@@ -380,7 +422,7 @@ impl VolumeIndex {
                         name_lossy,
                         is_dir,
                     } => {
-                        if name.len() > MAX_NAME_BYTES {
+                        if name.len() > MAX_DECODED_NAME_BYTES {
                             self.stats.oversized_names += 1;
                             outcome.anomalies.push(Anomaly::OversizedName {
                                 record,
@@ -462,6 +504,7 @@ impl VolumeIndex {
         if self.names.slot_count() > before {
             self.order.push_unranked(id);
         }
+        self.names_revision += 1;
         id
     }
 
@@ -469,6 +512,7 @@ impl VolumeIndex {
     fn release_name(&mut self, id: NameId) {
         self.order.note_released(id);
         self.names.release(id);
+        self.names_revision += 1;
     }
 
     /// Pushes `entry` onto the front of `id`'s same-name chain.
@@ -577,6 +621,9 @@ impl VolumeIndex {
         name_lossy: bool,
         is_dir: bool,
     ) -> UpsertResult {
+        if record == self.root_record() {
+            return UpsertResult::Ok;
+        }
         self.reclaim_if_stale(record);
         let parent = self.resolve_or_placeholder_parent(parent);
 
@@ -659,6 +706,11 @@ impl VolumeIndex {
     }
 
     fn delete_record(&mut self, record: RecordId) -> bool {
+        if record == self.root_record() {
+            // The structural root cannot die: a record naming it is a producer
+            // artefact, and tombstoning it would leave every path pathless.
+            return true;
+        }
         let existing = self.by_record.get(record.record_number());
         let Some(head) = existing else {
             return false;
@@ -735,6 +787,9 @@ impl VolumeIndex {
     /// entries that already match by parent and name so their ids (and any
     /// children pointing at them) survive.
     fn set_chain_links(&mut self, record: RecordId, is_dir: bool, desired: &[LinkTarget]) {
+        if record == self.root_record() {
+            return;
+        }
         self.reclaim_if_stale(record);
         let key = record.record_number();
         let mut current: Vec<EntryId> = Vec::new();

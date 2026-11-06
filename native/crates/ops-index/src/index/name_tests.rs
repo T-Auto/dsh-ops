@@ -450,3 +450,9 @@ fn compaction_rebuilds_independent_raw_bytes_and_shared_references() {
     assert_eq!(store.raw_arena(), b"Alpha\0BETA\0");
     assert_eq!(table.name_id(entry), NameId::new(0));
 }
+
+#[test]
+#[should_panic(expected = "names cannot contain NUL")]
+fn intern_rejects_embedded_nul_in_every_build_profile() {
+    NameStore::new().intern(b"a b");
+}
