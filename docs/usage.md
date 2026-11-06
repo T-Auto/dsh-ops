@@ -41,7 +41,7 @@ aggregates bounded PR, claim, CI and base-head facts without adding resident too
 
 | Item | Requirement |
 | --- | --- |
-| OS | Windows x64, Linux x64 or macOS 13+ (arm64 or Intel x64); OPS Bash is on by default on all of them (pinned payload on Windows, distribution Bash on POSIX) |
+| OS | Windows x64, Linux x64/arm64 (arm64 staged locally from source) or macOS 13+ (arm64 or Intel x64); OPS Bash is on by default on all of them (pinned payload on Windows, distribution Bash on POSIX) |
 | Node.js | `^22.19 \|\| >=24` (the `engines` field in `package.json`) |
 | Host | DSH `0.2.2-rc.1` or later in the 0.2.2 series |
 | Target application | Initialized |
