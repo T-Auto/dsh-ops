@@ -36,15 +36,18 @@ function rejectedBeforeAudit(value: Record<string, unknown>): boolean {
   return record(error) && error.phase === 'preflight' && error.effectState === 'none'
     && typeof error.code === 'string' && BEFORE_AUDIT_ERRORS.has(error.code)
 }
-export async function invoke(ctx: Context, file: string, tool: string, args: unknown, exec: ToolRunContext, signal?: AbortSignal, config?: WorkerInvokeConfig): Promise<unknown> {
+const publicationDenied = () => failure('PUBLICATION_DENIED', 'PTC admission changed during preparation; no worker was started.')
+export async function invoke(ctx: Context, file: string, tool: string, args: unknown, exec: ToolRunContext, signal?: AbortSignal, config?: WorkerInvokeConfig, admission?: () => boolean): Promise<unknown> {
   try {
+    if (admission && !admission()) return publicationDenied()
     const session = exec?.agent?.session
     if (!session?.id) return failure('EXECUTOR_UNAVAILABLE', 'An authoritative session identity is required.')
     return await withResultSession(ctx, session, signal, currentSignal =>
       withCallBudget(ctx.root ?? ctx, String(session.id), currentSignal,
-        () => invokeTrusted(ctx, file, tool, args, exec, currentSignal, config)))
+        () => invokeTrusted(ctx, file, tool, args, exec, currentSignal, config, admission)))
   }
   catch (error) {
+    if (admission && !admission()) return publicationDenied()
     if (error instanceof CallBudgetError) {
       const value = failure(error.code, error.message)
       value.error.nextAction = error.message
@@ -53,7 +56,8 @@ export async function invoke(ctx: Context, file: string, tool: string, args: unk
     return failure('EXECUTOR_UNAVAILABLE', 'DSH authority or execution services are unavailable; no unrestricted fallback was attempted.')
   }
 }
-async function invokeTrusted(ctx: Context, file: string, tool: string, args: unknown, exec: ToolRunContext, signal: AbortSignal, config?: WorkerInvokeConfig): Promise<unknown> {
+async function invokeTrusted(ctx: Context, file: string, tool: string, args: unknown, exec: ToolRunContext, signal: AbortSignal, config?: WorkerInvokeConfig, admission?: () => boolean): Promise<unknown> {
+  if (admission && !admission()) return publicationDenied()
   const session = exec?.agent?.session
   if (!session?.id) return failure('EXECUTOR_UNAVAILABLE', 'An authoritative session identity is required.')
   const policyService: SandboxPolicyService | undefined = ctx.get('sandboxPolicy')
@@ -95,15 +99,19 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
     if (policy.mode !== 'danger-full-access') {
       const sandbox = ctx.get('sandbox')
       if (!sandbox?.confine) return failure('EXECUTOR_UNAVAILABLE', 'No DSH process confinement provider; refusing unconfined execution.')
+      if (admission && !admission()) return publicationDenied()
       await prepareWorkspace(policy)
+      if (admission && !admission()) return publicationDenied()
       confined = await sandbox.confine(argv, { ...policy, mode: policy.mode }, signal)
+      if (admission && !admission()) return publicationDenied()
       if (!['full', 'partial'].includes(confined?.enforcement) || !Array.isArray(confined.argv) || !confined.argv.length) {
         return failure('EXECUTOR_UNAVAILABLE', 'Invalid DSH confinement result; refusing unconfined execution.')
       }
       argv = confined.argv
     }
     const storage = await resultStorage(ctx, session, exec.agent, file, tool, policy, denyRoots,
-      (config?.denyCredentialReads ?? true) !== false, signal, confined).catch(() => undefined)
+      (config?.denyCredentialReads ?? true) !== false, signal, confined, admission).catch(() => undefined)
+    if (admission && !admission()) return publicationDenied()
     if (tool === 'result' && (args?.action === 'put' || String(args?.id ?? '').startsWith('ref://')) && !storage) {
       return failure('EXECUTOR_UNAVAILABLE', 'Session result storage is unavailable under current host authority.')
     }
@@ -121,6 +129,7 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
       if ((current.mode === 'read-only' && !(tool === 'result' && args?.action === 'page')) || (current.mode === 'workspace-write' && required === 'danger-full-access')) return denied(current, operation, required)
       return authorityChanged(current, operation)
     }
+    if (admission && !admission()) return publicationDenied()
     const result = await exchange(subprocess, { argv, cwd: policy.workspaceRoot,
       stdio: { stdin: { data: input }, stdout: { maxBytes: envelope.budget.maxBytes }, stderr: { maxBytes: 16 * 1024 } },
       graceMs: 1000, signal }, () => { spawned = true })
@@ -146,6 +155,7 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
       && (!newJob || !rejectedBeforeAudit(normalized))
     return { ...normalized, ...(tool === 'batch' ? { root: operationRoot } : {}), ...(recoverableId ? { detailsRef: jobId } : {}), sandbox: { mode: policy.mode, ...(confined ? { enforcement: confined.enforcement } : {}) } }
   } catch (error) {
+    if (!spawned && admission && !admission()) return publicationDenied()
     return errorResult(spawned ? 'RESULT_UNKNOWN' : 'EXECUTOR_UNAVAILABLE',
       `DSH execution infrastructure failed, not a user authorization denial: ${errorText(error)}`, spawned ? 'unknown' : 'none')
   }

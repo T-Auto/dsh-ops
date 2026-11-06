@@ -111,7 +111,8 @@ async function purge(ctx: StorageHost, session: ResultSession, file: string, sto
 }
 export async function resultStorage(ctx: StorageHost, session: ResultSession, scope: unknown, file: string,
   tool: string, policy: SandboxExecutionPolicy, denyRoots: string[], denyNames: boolean,
-  signal?: AbortSignal, confined?: ConfinedArgv): Promise<WorkerStorage | undefined> {
+  signal?: AbortSignal, confined?: ConfinedArgv, admission?: () => boolean): Promise<WorkerStorage | undefined> {
+  if (admission && !admission()) return undefined
   const nonce = resultSessionNonce(ctx, session), key = digest([session.id, policy.workspaceRoot, nonce])
   const owner = ctx.root ?? ctx
   let cache = locations.get(owner)
@@ -126,19 +127,26 @@ export async function resultStorage(ctx: StorageHost, session: ResultSession, sc
       if (!confined) {
         const sandbox = ctx.get('sandbox')
         if (!sandbox) return undefined
+        if (admission && !admission()) return undefined
         if (sandbox.prepareResultStorage) confined = await sandbox.prepareResultStorage([file], cachePolicy, signal)
         else {
           // DSH 0.2.2 exposes session temp grants through confine(), not a cache-only API.
           // Never narrow a full-access request merely to acquire cache storage.
           if (policy.mode === 'danger-full-access' || (policy.additionalWritableRoots?.length ?? 0) > 0) return undefined
           await prepareWorkspace(cachePolicy)
+          if (admission && !admission()) return undefined
           confined = await sandbox.confine([file], cachePolicy, signal)
         }
+        if (admission && !admission()) return undefined
       }
       if (!['full', 'partial'].includes(confined.enforcement)) return undefined
       location = windowsCacheLocation(confined.argv)
     }
-  } else location ??= posixCacheLocation(key, policy.mode !== 'read-only')
+  } else {
+    if (admission && !admission()) return undefined
+    location ??= posixCacheLocation(key, policy.mode !== 'read-only')
+  }
+  if (admission && !admission()) return undefined
   if (!location) return undefined
   if (process.platform === 'win32' && confined && policy.mode !== 'read-only') {
     const current = windowsCacheLocation(confined.argv)

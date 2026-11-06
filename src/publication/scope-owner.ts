@@ -94,6 +94,7 @@ export async function acquireSharedFile(agent: Agent, api: SharedApi, config: Na
   let disposed = false
   return {
     grant: grant => lease.grant({ ...grant, dispatch: shared.dispatch }),
+    ready: () => lease.ready(),
     dispose() {
       if (disposed) return
       disposed = true

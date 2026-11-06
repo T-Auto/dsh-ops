@@ -68,9 +68,11 @@ for (const mode of ['read-only', 'workspace-write', 'danger-full-access']) {
         await mountBundle(ctx)
         const names = agent => ctx.get('tools').schemas(agent).map(tool => tool.name)
         const admitted = async agent => { const step = await prepareStep(ctx, agent); try { return step.assembly.tools.map(tool => tool.name) } finally { step.dispose() } }
-        // `scope` drives the tool projection; route-section text additionally
-        // reads the live `agent`.
-        const assembled = agent => ctx.get('systemPrompt').assemble({ scope: agent, agent, signal: new AbortController().signal })
+        // Model-facing guidance uses the same captured admission as its wire tools.
+        const assembled = async agent => {
+          const step = await prepareStep(ctx, agent)
+          try { return step.assembly } finally { step.dispose() }
+        }
 
         // A Standard-preset agent receives the resident native file tools, their
         // discovery entry, and no replaced official file tools.

@@ -2,6 +2,7 @@
 import type { Agent, Context, ToolGuard } from '../adapter/dsh/types.js'
 import type {} from '../adapter/dsh/types.js'
 import { onToolChange, withToolChange } from './changes.js'
+import { publicationRegistration } from './reentry.js'
 import { isPresentationProbe } from './presentation.js'
 import { visibleNames } from './surface.js'
 import { loadScopes } from '../adapter/dsh/host.js'
@@ -101,7 +102,7 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
       try {
         // Attributed like the lift: this registration is this Agent's own change,
         // not a global one that every other live Agent has to be re-checked for.
-        entry.lifts.push(withToolChange([agent], () => agent.ctx.tools.restrict({ deny })))
+        entry.lifts.push(publicationRegistration(agent.ctx, () => withToolChange([agent], () => agent.ctx.tools.restrict({ deny }))))
         entry.deny = deny
       } catch (error) { ctx.logger.warn(`dsh-ops: ${mode} replacement could not hide ${deny.join(', ')}: ${String(error)}`) }
     }

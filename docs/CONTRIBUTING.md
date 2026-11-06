@@ -130,6 +130,20 @@ What a skip means locally:
 - `node test/run.mjs <filter>` runs only the suites whose file names contain `<filter>`, e.g.
   `node test/run.mjs mount file-operations`.
 
+The four full-payload suites (`niubash-payload-integration`, `niubash-preparation`,
+`niubash-security-host`, `niubash-consumer`) default to a 600-second suite watchdog; other suites
+keep 120 seconds. A positive finite `DSH_OPS_SUITE_TIMEOUT_MS` overrides either default. The clean
+consumer reserves 60 seconds of that budget for packing/installing, leaving 540 seconds by default
+for its real host checks. Bash commands retain their production 120-second default, including
+verified staging of the complete execution tree; the suite watchdog is a separate outer limit.
+The descendant timeout test proves that a child starts before its deadline and cannot write afterward.
+On a loaded Windows host, provide a larger explicit outer budget without changing command deadlines:
+
+```powershell
+$env:DSH_OPS_SUITE_TIMEOUT_MS = '1800000'
+node test/run.mjs niubash
+```
+
 How to read the gate and the expected numbers per host: [verify-locally.md](verify-locally.md).
 CI runs on every pull request and every push to `main`, `0.3.2` and `release/0.4.0`. The two blocking POSIX legs (`validate-posix`: Linux x64, macOS arm64) block a merge. The Windows x64 leg (`validate-windows`) and the macOS Intel leg (`validate-macos-intel`) still run on every event but are non-blocking — a red run there is a defect to fix, not a reason to hold the merge (#316; the Intel leg measured 318 s).
 

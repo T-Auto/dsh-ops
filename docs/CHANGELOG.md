@@ -7,6 +7,15 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Preserve PTC paging of session-owned legacy snapshots and batch audits through the shared result adapter, while Native still accepts only ref:// references. Refuse result storage when the active PTC parent's presentation changes or its inspection fails before cache IO. Await shared publication readiness and roll back permanent delayed initialization failures.
+- 共享 result 适配器保留 PTC 对会话自有旧快照与 batch 审计的分页，Native 仍仅接受 ref:// 引用；活动 PTC 父调用的展示变化或检查失败时，在缓存 IO 前拒绝存储。等待共享发布就绪，并回滚延迟初始化的永久失败。
+
+- Share a bounded registry-refusal cooldown across publication rows, retaining refused withdrawals and recovering owed registrations without another session event. Include accepted PTC dispatch settlements in TUI attention badges.
+- 各发布行共享有界注册拒绝冷却，保留被拒绝的撤销操作，并在没有新会话事件时恢复待发布项；TUI 提醒徽章计入已接受的 PTC 分派结算。
+
+- Roll back rejected discovery attachments without leaving registrations or selection observers, observe background failures, and verify settings persistence with Cordis 4.1.0. Render PTC guidance only after the public presentation waterfall confirms PTC; Native prompt text and wire declarations remain unchanged when PTC is enabled.
+- discovery 挂载失败时回滚注册与选择观察器，接住后台失败，并验证 Cordis 4.1.0 设置持久化；仅在公开展示 waterfall 确认 PTC 后生成专属引导，启用 PTC 不改变 Native 提示词与 wire 声明。
+
 - Restore the previous scoped PTC SDK after overlapping rows unload; stop superseded asynchronous attachments before publishing through disposed contexts. Conditional official replacements may remain model-visible: dispatch is guarded only by same-step OPS admission and current consumer authority, so an unavailable counterpart cannot disable both tools.
 - 重叠行卸载后恢复原作用域 PTC SDK；异步挂载被取代后停止发布，避免使用已释放上下文。条件性原版替换可能仍对模型可见；仅同一步骤准入 OPS 对应项且消费者当前有权限时守卫分派，避免对应项不可用时两边同时禁用。
 

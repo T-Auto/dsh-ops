@@ -15,6 +15,7 @@ import { visibleNames } from '../publication/surface.js'
 import { mountWorkspacePreparation } from '../workspace-preparation.js'
 import { safeDispose, safeDisposeAll } from '../teardown.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
+import { publicationRegistration } from '../publication/reentry.js'
 
 type ResolvedConfig = ReturnType<typeof resolveConfig>
 type Component = 'shell' | 'file'
@@ -47,7 +48,7 @@ function installHostShellDenial(ctx: Context, config: ResolvedConfig): void {
     if (lifts.has(agent) || !agent?.ctx) return
     try {
       const names = visibleNames(ctx.tools, agent).filter(name => denied.has(name))
-      if (names.length) lifts.set(agent, agent.ctx.tools.restrict({ deny: names }))
+      if (names.length) lifts.set(agent, publicationRegistration(agent.ctx, () => agent.ctx.tools.restrict({ deny: names })))
     } catch (error) {
       if (!warned) {
         warned = true

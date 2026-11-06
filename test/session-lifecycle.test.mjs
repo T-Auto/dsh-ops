@@ -110,6 +110,10 @@ await test('PTC presentation waterfall accepts sections without pre-attached too
     const result = await ctx.waterfall('system-prompt/assemble', presentation, { scope: agent }, async () => presentation)
     assert.equal(result, presentation)
     assert.equal(Object.hasOwn(result, 'tools'), false)
+    const captured = await ctx.waterfall('system-prompt/assemble', presentation, { scope: agent, toolSet: step.toolSet }, async () => presentation)
+    assert.equal(captured, presentation, 'an unchanged admitted guidance section preserves exact provider identity')
+    const unrelated = { sections: [{ name: 'unrelated-provider', text: 'unchanged' }] }
+    assert.equal(await ctx.waterfall('system-prompt/assemble', unrelated, { scope: agent }, async () => unrelated), unrelated, 'absence of own guidance preserves exact presentation identity')
     assert.equal(tools.get('ops_load_sdk', agent), before, 'a valid PTC projection is retained')
     try {
       const selected = await before.execute({ tools: ['stat'] }, { agent, toolSet: step.toolSet, signal: new AbortController().signal })

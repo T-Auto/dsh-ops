@@ -3,7 +3,7 @@ import type { Context, Fiber } from '../adapter/dsh/types.js'
 import type { Agent } from '../adapter/dsh/types.js'
 import type {} from '../adapter/dsh/types.js'
 import { NativeFileTools } from '../projections/native/runtime.js'
-import { registerNativeProviderAtScope } from './providers.js'
+import { registerNativeProviderAtScope, nativeProviderReady } from './providers.js'
 import { resolveWorker } from '../execution/files.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
 import { publicToolName, modeSectionName, MODE_SECTION_ORDERS, renderToolingPolicy } from '../policy.js'
@@ -14,6 +14,8 @@ import { ownScopes } from './ownership.js'
 import { failure } from '../execution/files.js'
 import { acquireSharedFile, isSharedFileApi } from './scope-owner.js'
 import type { PublicationGate } from './types.js'
+import { publicationError, publicationReady, publicationRegistration } from './reentry.js'
+import type { PublicationLease } from './registrar.js'
 
 type ResidentName = Parameters<NativeFileTools['definition']>[0]
 
@@ -64,6 +66,7 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
     const publish = async (agent: Agent, entry: Entry): Promise<void> => {
       if (!entry.ctx) return
       const scope = agent
+      const leases: PublicationLease[] = [], registrations: (() => void)[] = []
       for (const api of names.filter(isSharedFileApi)) {
         const lease = await acquireSharedFile(agent, api, { workerPath: worker, required: true, denyCredentialReads: config.denyCredentialReads })
         if (stopped || entries.get(agent) !== entry || !cover(agent)) { lease.dispose(); return }
@@ -71,6 +74,7 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
         lease.grant({ consumer: entry, agent, token: {}, entitled: true,
           dispatch: async () => undefined,
           present: async activation => activation.agent === agent && cover(agent) && !await activationIsPtc(prompt, activation) })
+        leases.push(lease)
         entry.owned.add(publicToolName(api))
       }
       const definitions = names.filter(name => !isSharedFileApi(name)).map(name => {
@@ -85,11 +89,17 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
         } }
       })
       const registration = (name: string) => definitions.find(definition => definition.name === name)
-      const dispose = registerNativeProviderAtScope(entry.ctx, scope, definitions,
-        tool => entry.ctx!.tools.register(tool, { when: async activation => activation.agent === agent && cover(agent)
-          && !await activationIsPtc(prompt, activation) }), { inheritable: false, priority: 10 })
-      entry.disposers.push(dispose)
+      if (definitions.length) {
+        const dispose = registerNativeProviderAtScope(entry.ctx, scope, definitions, tool => {
+          const remove = publicationRegistration(entry.ctx!, () => entry.ctx!.tools.register(tool, { when: async activation => activation.agent === agent && cover(agent)
+            && !await activationIsPtc(prompt, activation) }))
+          registrations.push(remove)
+          return remove
+        }, { inheritable: false, priority: 10 })
+        entry.disposers.push(dispose)
+      }
       for (const definition of definitions) entry.owned.add(definition.name)
+      await Promise.all([...leases.map(lease => lease.ready()), ...registrations.map(publicationReady), ...entry.disposers.map(nativeProviderReady)])
     }
     const cover = (agent: Agent): boolean => gate.allows(agent) && ownership.owns(agent)
     const attach = (agent: Agent): void => {
@@ -97,21 +107,31 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
       const entry: Entry = { agent, runtime: new NativeFileTools({ ctx, config: { workerPath: worker, required: config.required, denyCredentialReads: config.denyCredentialReads } }),
         owned: new Set(), disposers: [], ready: Promise.resolve() }
       entries.set(agent, entry)
-      entry.fiber = agent.ctx.plugin({ inject: ['tools'], apply(scoped) { entry.ctx = scoped } })
-      entry.ready = Promise.resolve(entry.fiber).then(() => {
+      entry.ready = Promise.resolve().then(async () => {
+        if (stopped || entries.get(agent) !== entry || !cover(agent)) return
+        entry.fiber = agent.ctx!.plugin({ inject: ['tools'], apply(scoped) { entry.ctx = scoped } })
+        await entry.fiber
         if (stopped || entries.get(agent) !== entry || !entry.ctx) return
-        return entry.runtime.start([]).then(async () => {
-          if (stopped || entries.get(agent) !== entry || !cover(agent)) return
-          await publish(agent, entry)
-        })
-      }).catch(error => ctx.logger.warn(`dsh-ops: ${mode} mode publication failed: ${String(error)}`))
+        await entry.runtime.start([])
+        if (stopped || entries.get(agent) !== entry || !cover(agent)) return
+        await publish(agent, entry)
+      }).catch(async error => {
+        try {
+          if (entries.get(agent) === entry) { detach(agent); await entry.fiber?.dispose() }
+        } catch { ctx.logger.warn(`dsh-ops: ${mode} native attachment cleanup failed`) }
+        ctx.logger.warn(`dsh-ops: ${mode} mode publication failed: ${publicationError(error)}`)
+        throw error
+      })
+      void entry.ready.catch(() => {})
     }
     const detach = (agent: Agent): void => {
       const entry = entries.get(agent)
       if (!entry) return
       entries.delete(agent)
       clear(entry)
-      void entry.fiber?.dispose()
+      void Promise.resolve().then(() => entry.fiber?.dispose()).catch(error => {
+        ctx.logger.warn(`dsh-ops: ${mode} native scope disposal failed: ${String(error)}`)
+      })
     }
     const reconcile = (): void => {
       if (stopped || mutating) return

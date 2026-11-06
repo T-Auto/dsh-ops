@@ -17,7 +17,7 @@ export function resultDefinition(execute: ToolDefinition['execute']): ToolDefini
 }
 type Execution = Parameters<ToolDefinition['execute']>[1]
 export async function invokeResult(ctx: Parameters<typeof invoke>[0], file: string, args: unknown,
-  exec: Execution, signal: AbortSignal, config: Parameters<typeof invoke>[6], allowPut: () => Promise<boolean> = async () => false): Promise<unknown> {
+  exec: Execution, signal: AbortSignal, config: Parameters<typeof invoke>[6], allowPtc: () => Promise<(() => boolean) | undefined> = async () => undefined): Promise<unknown> {
   if (!args || typeof args !== 'object' || Array.isArray(args)) return failure('INVALID_ARGUMENT', 'Expected page/release arguments.')
   const input: Record<string, unknown> = { ...args }
   for (const [key, value] of Object.entries(input)) {
@@ -25,12 +25,25 @@ export async function invokeResult(ctx: Parameters<typeof invoke>[0], file: stri
       || (typeof value === 'string' && value.trim() === '') || (Array.isArray(value) && value.length === 0))) delete input[key]
   }
   const putting = input.action === 'put'
-  if (putting && !await allowPut()) return failure('PUBLICATION_DENIED', 'Result put requires a live run_code parent and current PTC admission; no cache was written.')
+  let admission: (() => boolean) | undefined
+  if (putting) {
+    admission = await allowPtc()
+    if (!admission?.()) return failure('PUBLICATION_DENIED', 'Result put requires a live run_code parent and current PTC admission; no cache was written.')
+  }
   const allowed = new Set(['action', 'root', 'id', 'offset', 'limit', 'maxBytes', 'fields', 'equals', ...(putting ? ['items', 'ttlMs'] : [])])
   const unknown = Object.keys(input).find(key => !allowed.has(key))
   if (unknown) return failure('INVALID_ARGUMENT', 'Unknown result argument: ' + unknown)
-  if (!putting && (!['page', 'release'].includes(String(input.action)) || typeof input.id !== 'string' || !input.id.startsWith('ref://'))) {
-    return failure('INVALID_ARGUMENT', 'Result accepts owned ref:// page/release, or PTC put only.')
+  if (!putting) {
+    if (!['page', 'release'].includes(String(input.action)) || typeof input.id !== 'string') {
+      return failure('INVALID_ARGUMENT', 'Result requires page/release with an owned reference ID.')
+    }
+    // Preserve the PTC audit/snapshot protocol without widening Native authority.
+    // The worker rechecks session, canonical root and root identity on every record.
+    const legacy = /^[jr]-[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$/.test(input.id)
+    if (!input.id.startsWith('ref://')) {
+      if (legacy) admission = await allowPtc()
+      if (!admission?.()) return failure('INVALID_ARGUMENT', 'Result accepts owned ref:// page/release; legacy references require a live PTC parent.')
+    }
   }
   let root = input.root
   if (root === undefined) {
@@ -38,5 +51,6 @@ export async function invokeResult(ctx: Parameters<typeof invoke>[0], file: stri
     catch { return failure('EXECUTOR_UNAVAILABLE', 'The authoritative session cwd is unavailable; no reference action was executed.') }
   }
   if (typeof root !== 'string' || !path.isAbsolute(root)) return failure('INVALID_ARGUMENT', 'An absolute reference root or authoritative session cwd is required.')
-  return invoke(ctx, file, 'result', { ...input, root }, exec, signal, config)
+  if (admission && !admission()) return failure('PUBLICATION_DENIED', 'PTC result admission changed during preparation; no cache was written.')
+  return invoke(ctx, file, 'result', { ...input, root }, exec, signal, config, admission)
 }

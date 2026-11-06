@@ -13,11 +13,16 @@ import { selectExecutor, prepareStep, executeCall } from './lib/executor.mjs'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { requireWorker, WORKER } from './lib/boundary.mjs'
 requireWorker('shared-file-cancellation')
-const pending = [], waiters = []
+const pending = [], waiters = [], purges = []
 class ControlledSubprocess extends Subprocess {
   spawn(spec) {
     const handle = super.spawn(spec)
     if (path.resolve(spec.argv[0]) !== path.resolve(WORKER)) return handle
+    const request = JSON.parse(spec.stdio.stdin.data).request
+    // Teardown owns real cache cleanup. Holding its purge would strand dispose()
+    // after the actual subprocess exits, with only an unref deadline left alive.
+    if (request.tool === 'result' && request.args?.action === 'purge') { purges.push(handle.done); return handle }
+    assert.equal(request.tool, 'stat', 'only the business operation is completion-gated')
     let release
     const gate = new Promise(resolve => { release = resolve })
     const abort = () => release()
@@ -32,7 +37,20 @@ class ControlledSubprocess extends Subprocess {
     return { ...handle, done }
   }
 }
-const next = () => pending.length ? Promise.resolve(pending.shift()) : new Promise(resolve => waiters.push(resolve))
+async function next(work, label) {
+  let receive, timer
+  const started = pending.length ? Promise.resolve(pending.shift()) : new Promise(resolve => { receive = resolve; waiters.push(receive) })
+  try {
+    return await Promise.race([started,
+      work.then(result => { throw new Error(`${label} settled before real worker spawn: ${JSON.stringify(result)}`) },
+        error => { throw new Error(`${label} rejected before real worker spawn`, { cause: error }) }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} did not spawn the real worker within 10s`)), 10000) }),
+    ])
+  } finally {
+    clearTimeout(timer)
+    if (receive) { const index = waiters.indexOf(receive); if (index !== -1) waiters.splice(index, 1) }
+  }
+}
 await test('discovery lifetime, independent PTC, caller abort and source disposal reach real worker signals', () => withTempDir('file-cancellation', async root => {
   fs.writeFileSync(path.join(root, 'note'), 'fixture')
   const { ctx } = await bootHost(), steps = [], agents = []
@@ -61,8 +79,8 @@ await test('discovery lifetime, independent PTC, caller abort and source disposa
     const call = (owner, signal) => executeCall(ctx, { agent: owner.agent, toolSet: owner.step.toolSet,
       name: owner === a ? 'ops_stat' : 'run_code', callId: `cancel-${++id}`, signal,
       arguments: owner === a ? { path: 'note' } : { description: 'Stat', code: "return await tools.ops_stat({path:'note'});" } })
-    const nativeWork = call(a), native = await next()
-    const ptcWork = call(b), independent = await next()
+    const nativeWork = call(a), native = await next(nativeWork, 'Native lifetime call')
+    const ptcWork = call(b), independent = await next(ptcWork, 'independent PTC call')
     await discovery.dispose()
     assert.equal(native.signal.aborted, true, 'discovery-only work must lose its lifetime')
     assert.equal(independent.signal.aborted, false, 'different agent PTC must not be cancelled')
@@ -71,15 +89,17 @@ await test('discovery lifetime, independent PTC, caller abort and source disposa
     assert.equal(cancelled.value.error.effectState, 'unknown')
     independent.release()
     assert.equal((await ptcWork).value.result.status, 'completed')
-    const caller = new AbortController(), callerWork = call(b, caller.signal), parent = await next()
+    const caller = new AbortController(), callerWork = call(b, caller.signal), parent = await next(callerWork, 'caller cancellation PTC call')
     caller.abort(new Error('Parent cancelled'))
     assert.equal(parent.signal.aborted, true)
     await callerWork
-    const lastWork = call(b), last = await next()
+    const lastWork = call(b), last = await next(lastWork, 'source disposal PTC call')
     await b.scope.dispose()
     assert.equal(last.signal.aborted, true, 'source disposal cancels remaining work')
     await lastWork
     await ptc.dispose()
+    if (process.platform !== 'win32') assert.ok(purges.length > 0, 'POSIX session cache teardown reaches the real purge worker')
+    for (const outcome of await Promise.all(purges)) assert.equal(outcome.exitCode, 0, 'trusted cache purge completes without the business gate')
   } finally { for (const call of pending) call.release(); steps.forEach(step => step.dispose()); await shutdown(ctx) }
 }))
 report('shared-file-cancellation')

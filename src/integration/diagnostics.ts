@@ -13,6 +13,7 @@ import type { PublicationGate } from '../publication/types.js'
 import { presetOf } from '../consumer/identity.js'
 import { modeOf } from '../presets/detect.js'
 import { enabledModes } from '../presets/registry.js'
+import { publicationRegistration } from '../publication/reentry.js'
 export interface Diagnostic {
   preset?: string
   state: 'not-selected' | 'disabled' | 'ready' | 'degraded'
@@ -100,13 +101,13 @@ export function mountDiagnostics(root: Context, gate: PublicationGate): void {
     const attach = async (agent: Agent) => {
       if (stopped || entries.has(agent) || !gate.allows(agent) || !ownership.owns(agent)) return
       const fiber = agent.ctx.plugin({ inject: ['tools'], apply(scoped) {
-        const dispose = scoped.tools.register({ name: publicToolName('status'), description: 'Read current OPS scope publication diagnostics; performs no tool action or activation.',
+        const dispose = publicationRegistration(scoped, () => scoped.tools.register({ name: publicToolName('status'), description: 'Read current OPS scope publication diagnostics; performs no tool action or activation.',
           parameters: { type: 'object', properties: {}, additionalProperties: false },
           output: { schema: { type: 'object' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
           execute: async (_args, exec) => {
             if (stopped || exec.agent !== agent || !entries.has(agent) || !gate.allows(agent) || !ownership.owns(agent)) return { status: 'rejected', error: { code: 'POLICY_DENIED' } }
             return diagnose(ctx, agent)
-          } })
+          } }))
         const entry = entries.get(agent); if (entry) entry.dispose = dispose
       } })
       entries.set(agent, { fiber }); await fiber
