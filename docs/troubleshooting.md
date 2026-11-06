@@ -132,18 +132,24 @@ The execution receipt `execution-provenance.json` in that tree records `mode` (`
 `copy`), the source manifest digest and the seal level.
 
 - If a scanner is unhappy with the temporary directory, set `DSH_OPS_EXEC_ROOT` to an allow-listed
-  directory or to the payload's own volume. A root on another volume falls back to copying the tree,
-  which the receipt records as `"mode": "copy"`. The root must not be inside the payload.
+  directory or to the payload's own volume. The root must not be inside the payload; its physical
+  path is resolved, so a junction/symlink cannot hide it. Cross-volume roots, ReFS, a filesystem
+  that refuses hardlinks, or an ACL/permission refusal trigger the whole-tree copy fallback; the
+  receipt records `"mode": "copy"`, `cloneFallbackCode` (`EXDEV`, `EPERM`, …) and
+  `cloneDiagnostics` with the first failed `link`, so a slow path is diagnosable instead of silent.
 - An `EXECUTOR_UNAVAILABLE` naming a size, seal or link-count mismatch means the clone changed
   between creation and spawn. Nothing was executed; retry once, and restore the pinned payload if
   it repeats.
 - While a command runs, the payload files are read-only (the Windows READONLY attribute plus a
   deny-write/deny-delete ACL) and `winuxcmd.exe` with all argv0 faces share one inode. Disposal,
-  `provision-shells --force`, upgrade and `uninstall` unseal first. Because unsealing is per inode,
-  concurrent calls for the same payload defer their removal until the last one finishes, so a
-  finishing call cannot hand a writable window to a running sibling. A privileged process that can
-  rewrite ACLs or clear READONLY can still write through the hardlinks, so this is a robustness
-  boundary, not a security boundary against administrators.
+  `provision-shells --force`, upgrade and `uninstall` unseal first.
+- Concurrency is scoped to **one DSH host process**. Within that process, calls that share a payload
+  defer their unseal and removal until the last live tree is released, so a finishing call cannot
+  hand a writable window to a running sibling. **Separate host processes sharing the same payload
+  are not coordinated**: while one host disposes and unseals, another host's running execution tree
+  can lose the read-only seal until that host's next clone/verification. This is a robustness
+  boundary, not a security boundary against administrators: a privileged process that can rewrite
+  ACLs or clear READONLY can still write through the hardlinks.
 - `NIUBASH_VERIFY=deep` restores the full per-call re-hash of the source payload and the clone.
 
 ### A second restricted Bash fails while another Bash is still running

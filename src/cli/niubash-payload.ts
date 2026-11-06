@@ -203,6 +203,12 @@ export async function verifyNiubashTreeStat(directory: string, signal?: AbortSig
   return path.join(directory, manifest.executable)
 }
 
+/** Why the hardlink fast path was abandoned, as recorded in the execution receipt. */
+export interface NiubashCloneFallbackInput {
+  code: string
+  detail: string
+}
+
 /** What the execution receipt records beyond the source digests. */
 export interface NiubashExecutionReceiptInput {
   /** Whether the execution tree shares source inodes or copied them. */
@@ -211,13 +217,17 @@ export interface NiubashExecutionReceiptInput {
   seal: 'readonly+acl' | 'readonly'
   /** Why the seal is weaker than the requested level; empty when it is exact. */
   diagnostics?: readonly string[]
+  /** Why a copy tree was built instead of a hardlink clone; absent for the fast path. */
+  cloneFallback?: NiubashCloneFallbackInput
 }
 
 /** The per-call receipt: which clone mode, which manifest and which seal produced this tree. */
-export function niubashExecutionReceipt({ mode, seal, diagnostics = [] }: NiubashExecutionReceiptInput) {
+export function niubashExecutionReceipt({ mode, seal, diagnostics = [], cloneFallback }: NiubashExecutionReceiptInput) {
   return { version: 1, rule: NIUBASH_FACE_RULE, sourceArchiveSha256: manifest.archiveSha256,
     sourceExecutableSha256: files['winuxcmd/usr/bin/winuxcmd.exe'], sourceManifestSha256: NIUBASH_MANIFEST_SHA256,
-    faces: NIUBASH_FACES, mode, seal, sealDiagnostics: [...diagnostics] }
+    faces: NIUBASH_FACES, mode, seal, sealDiagnostics: [...diagnostics],
+    cloneFallbackCode: cloneFallback?.code ?? null,
+    cloneDiagnostics: cloneFallback === undefined ? [] : [cloneFallback.detail] }
 }
 
 export function verifyNiubashTree(directory: string) { return verifyTree(directory) }

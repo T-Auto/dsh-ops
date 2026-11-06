@@ -75,11 +75,35 @@ export function niubashDeepVerification(env: NodeJS.ProcessEnv = process.env): b
   return env.NIUBASH_VERIFY === 'deep'
 }
 
-/** Reject an execution root inside the payload: it would pollute the package tree it verifies. */
-function assertExecutionRoot(parent: string, source: string): void {
-  const relative = path.relative(source, parent)
-  if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) {
-    throw new Error(`DSH_OPS_EXEC_ROOT must not be inside the Niubash payload: ${parent}`)
+/** Resolve a path to its physical form, following links in the ancestors that already exist. */
+async function physicalPath(pathname: string): Promise<string> {
+  try {
+    return await fs.promises.realpath(pathname)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    const parent = path.dirname(pathname)
+    if (parent === pathname) return pathname
+    return path.join(await physicalPath(parent), path.basename(pathname))
+  }
+}
+
+function isInside(relative: string): boolean {
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+}
+
+/**
+ * Reject an execution root inside the payload: it would pollute the package tree
+ * it verifies. Both the written path and its physical resolution are compared, so
+ * a junction/symlink root cannot hide the payload directory inside it.
+ */
+async function assertExecutionRoot(parent: string, source: string): Promise<void> {
+  const physicalParent = await physicalPath(parent)
+  const physicalSource = await physicalPath(source)
+  for (const [candidate, base] of [[parent, source], [physicalParent, physicalSource],
+    [physicalParent, source], [parent, physicalSource]] as const) {
+    if (isInside(path.relative(base, candidate))) {
+      throw new Error(`DSH_OPS_EXEC_ROOT must not be inside the Niubash payload: ${parent}`)
+    }
   }
 }
 
@@ -135,7 +159,7 @@ export async function prepareNiubash(file: string, inheritedPath = process.env.P
   const deep = niubashDeepVerification()
   await verifySourceTree(source, deep, signal)
   const parent = niubashExecutionRootParent()
-  assertExecutionRoot(parent, source)
+  await assertExecutionRoot(parent, source)
   await fs.promises.mkdir(parent, { recursive: true })
   const root = await fs.promises.mkdtemp(path.join(parent, EXECUTION_ROOT_PREFIX))
   // Sealing is per inode, so concurrent calls for the same payload share one
@@ -157,7 +181,8 @@ export async function prepareNiubash(file: string, inheritedPath = process.env.P
     // The receipt names the seal that protects the payload; it is written after the
     // tree is sealed and then sealed itself with the same read-only rule.
     const sealed = await sealShared(source, { root, files: immutable, writableDirectories: writable })
-    const receipt = niubashExecutionReceipt({ mode: clone.mode, seal: sealed.level, diagnostics: sealed.diagnostics })
+    const receipt = niubashExecutionReceipt({ mode: clone.mode, seal: sealed.level, diagnostics: sealed.diagnostics,
+      ...(clone.fallback === undefined ? {} : { cloneFallback: clone.fallback }) })
     const receiptText = JSON.stringify(receipt)
     await fs.promises.writeFile(receiptFile, receiptText)
     await sealReadOnly([receiptFile])

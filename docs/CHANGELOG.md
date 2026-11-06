@@ -34,8 +34,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Keep zero-byte ERROR_MORE_DATA completions incomplete instead of treating them as end-of-data.
 - ERROR_MORE_DATA 零字节完成保留不完整状态，不再误报数据结束。
 
-- Clone each Windows Niubash execution tree by hardlink, seal the shared payload inodes read-only for the duration of the command, and verify the clone stat-only before spawn. The execution receipt records the clone mode, source manifest digest and seal level; `DSH_OPS_EXEC_ROOT` moves the execution root parent and `NIUBASH_VERIFY=deep` restores the full per-call re-hash.
-- 每调用的 Windows Niubash 执行树改为硬链接克隆，命令运行期间把共享载荷 inode 封印为只读，spawn 前只做 stat 校验。执行收据记录克隆模式、源清单摘要与封印级别；`DSH_OPS_EXEC_ROOT` 移动执行根父目录，`NIUBASH_VERIFY=deep` 恢复每调用全量重哈希。
+- Clone each Windows Niubash execution tree by hardlink, seal the shared payload inodes read-only for the duration of the command, and verify the clone stat-only before spawn. The execution receipt records the clone mode, the copy-fallback cause when hardlinks are refused, the source manifest digest and the seal level; `DSH_OPS_EXEC_ROOT` moves the execution root parent (physically resolved against the payload) and `NIUBASH_VERIFY=deep` restores the full per-call re-hash.
+- 每调用的 Windows Niubash 执行树改为硬链接克隆，命令运行期间把共享载荷 inode 封印为只读，spawn 前只做 stat 校验。执行收据记录克隆模式、硬链接被拒时的复制回退原因、源清单摘要与封印级别；`DSH_OPS_EXEC_ROOT` 移动执行根父目录（按载荷做物理路径解析），`NIUBASH_VERIFY=deep` 恢复每调用全量重哈希。
 
 
 - Preserve PTC paging of session-owned legacy snapshots and batch audits through the shared result adapter, while Native still accepts only ref:// references. Refuse result storage when the active PTC parent's presentation changes or its inspection fails before cache IO. Await shared publication readiness and roll back permanent delayed initialization failures.
@@ -261,7 +261,3 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 本版本为相对 v0.4.4 的不稳定开发预发布版，仅建议隔离测试，不建议稳定生产环境使用。单行配置属于破坏性迁移：旧行设置需迁入 `dsh-ops`；常驻工具与动态加载独立控制。
 
 - Keep explicit preset integration mounts independent of retired Loader rows; migrate release scope and benchmark switches to the merged row, and retain component behavior checks through a mount-local test fixture.
-- 显式预设集成挂载不再被旧 Loader 行退役防护误拦截；发布范围及 benchmark 开关迁移至单行配置，旧组件行为测试使用仅挂载期间有效的局部夹具。
-
-- Separate resident OPS file tools from dynamic loading for Standard, PTC and Cordis; Minimal has no resident-tools option. Preserve on-demand baseline access when residency is off and connect the PTC discovery switch.
-- 标准、PTC、创造模式新增独立的 OPS 常驻工具开关，与动态加载相邻；极简模式不提供常驻选项。关闭常驻时基础 API 仍可动态加载，并接通 PTC 动态开关。

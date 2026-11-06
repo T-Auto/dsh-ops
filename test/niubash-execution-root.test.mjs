@@ -26,7 +26,8 @@ import {
   sealTree,
   unsealTree,
 } from '../lib/niubash/seal.js'
-import { niubashDeepVerification, niubashExecutionRootParent } from '../lib/niubash/runtime.js'
+import { niubashDeepVerification, niubashExecutionRootParent, prepareNiubash } from '../lib/niubash/runtime.js'
+import { NIUBASH_PIN, niubashExecutionReceipt } from '../lib/cli/niubash-payload.js'
 
 const CONTENT = {
   'LICENSE.txt': 'license-bytes',
@@ -87,6 +88,24 @@ async function sealAndRecord(root, clone) {
   }
 }
 
+/** A sparse payload with the real manifest sizes and the receipt a provisioned tree carries. */
+function buildPinnedPayload(base) {
+  const source = path.join(base, 'payload')
+  fs.mkdirSync(source, { recursive: true })
+  for (const directory of NIUBASH_PIN.directories) fs.mkdirSync(path.join(source, directory), { recursive: true })
+  for (const [name, size] of Object.entries(NIUBASH_PIN.sizes)) {
+    fs.writeFileSync(path.join(source, name), '')
+    fs.truncateSync(path.join(source, name), size)
+  }
+  fs.writeFileSync(path.join(source, 'provenance.json'), `${JSON.stringify({
+    version: 1, backend: 'niubash', upstreamVersion: NIUBASH_PIN.upstreamVersion,
+    archive: NIUBASH_PIN.archive, url: NIUBASH_PIN.url, archiveSha256: NIUBASH_PIN.archiveSha256,
+    archiveBytes: NIUBASH_PIN.archiveBytes, executable: NIUBASH_PIN.executable,
+    executableSha256: NIUBASH_PIN.executableSha256, files: NIUBASH_PIN.files, sizes: NIUBASH_PIN.sizes,
+  }, null, 2)}\n`)
+  return source
+}
+
 /** Leave every synthetic file writable so the harness can always remove its temp tree. */
 async function tidy(base) {
   await unsealTree(base, NO_ACL).catch(() => undefined)
@@ -122,6 +141,8 @@ await test('a cross-device link rebuilds the whole tree as copies and records th
     const crossDevice = Object.assign(new Error('cross-device link'), { code: 'EXDEV' })
     const { source, root, clone } = await cloneTree(base, { ops: { link: async () => { throw crossDevice } } })
     assert.equal(clone.mode, 'copy')
+    assert.equal(clone.fallback?.code, 'EXDEV')
+    assert.match(clone.fallback?.detail ?? '', /cross-device/u)
     assert.equal(clone.dataBytes, Object.values(clone.sizes).reduce((total, size) => total + size, 0))
     for (const name of Object.keys(clone.sizes)) {
       assert.equal(fs.lstatSync(path.join(root, name)).nlink, 1, name)
@@ -301,5 +322,46 @@ await test('the execution root parent and the deep escape hatch come from the en
   assert.equal(niubashDeepVerification({ NIUBASH_VERIFY: 'DEEP' }), false)
   assert.equal(niubashDeepVerification({}), false)
 })
+
+await test('a hardlink refusal builds a complete copy tree and records the cause', async () => withTempDir('niu-fallback', async base => {
+  try {
+    const refusal = Object.assign(new Error('hardlink refused by the filesystem'), { code: 'EPERM' })
+    const { root, clone } = await cloneTree(base, { ops: { link: async () => { throw refusal } } })
+    assert.equal(clone.mode, 'copy')
+    assert.equal(clone.fallback?.code, 'EPERM')
+    assert.match(clone.fallback?.detail ?? '', /hardlink refused/u)
+    // The fallback is a whole-tree rebuild, so nothing is left half linked or missing.
+    for (const [name, content] of Object.entries(CONTENT)) assert.equal(fs.readFileSync(path.join(root, name), 'utf8'), content, name)
+    await verifyTreeStat({ root, sizes: clone.sizes, links: clone.links,
+      directories: [...DIRECTORIES, ...STATE_DIRECTORIES], sealed: false })
+    const slowPath = niubashExecutionReceipt({ mode: clone.mode, seal: 'readonly', cloneFallback: clone.fallback })
+    assert.equal(slowPath.cloneFallbackCode, 'EPERM')
+    assert.equal(slowPath.cloneDiagnostics.length, 1)
+    const fastPath = niubashExecutionReceipt({ mode: 'hardlink', seal: 'readonly+acl' })
+    assert.equal(fastPath.cloneFallbackCode, null)
+    assert.deepEqual(fastPath.cloneDiagnostics, [])
+  } finally { await tidy(base) }
+}))
+
+await test('an execution root that resolves inside the payload is refused', async () => withTempDir('niu-root', async base => {
+  try {
+    const source = buildPinnedPayload(base)
+    const link = path.join(base, 'root-link')
+    fs.symlinkSync(source, link, process.platform === 'win32' ? 'junction' : 'dir')
+    const previous = process.env.DSH_OPS_EXEC_ROOT
+    try {
+      // Both the link itself and a not-yet-existing child below it resolve inside
+      // the payload; the raw path.relative comparison would accept both.
+      for (const configured of [link, path.join(link, 'nested')]) {
+        process.env.DSH_OPS_EXEC_ROOT = configured
+        await assert.rejects(prepareNiubash(path.join(source, 'niu.exe'), '', new AbortController().signal),
+          /DSH_OPS_EXEC_ROOT must not be inside the Niubash payload/u)
+      }
+    } finally {
+      if (previous === undefined) delete process.env.DSH_OPS_EXEC_ROOT
+      else process.env.DSH_OPS_EXEC_ROOT = previous
+    }
+  } finally { await tidy(base) }
+}))
 
 report('niubash-execution-root')

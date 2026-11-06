@@ -74,6 +74,14 @@ export interface CloneRequest extends TreeInventory {
   ops?: Partial<TreeOps>
 }
 
+/** Why the hardlink fast path was abandoned. */
+export interface CloneFallback {
+  /** The errno code of the first failed `link` (`EXDEV`, `EPERM`, …), or `unknown`. */
+  code: string
+  /** The first failed operation's message, kept for the execution receipt. */
+  detail: string
+}
+
 /** The created tree, recorded for the stat-only check that runs before spawn. */
 export interface CloneResult {
   mode: CloneMode
@@ -83,6 +91,8 @@ export interface CloneResult {
   links: Record<string, number>
   /** File data actually written into the tree; zero for a hardlink clone. */
   dataBytes: number
+  /** Present when the tree was rebuilt with copies; says why the fast path failed. */
+  fallback?: CloneFallback
 }
 
 const CROSS_DEVICE_CODES = new Set(['EXDEV', 'ENOTSUP', 'EOPNOTSUPP', 'EMLINK', 'EPERM'])
@@ -137,10 +147,12 @@ export async function cloneExecutionTree(request: CloneRequest): Promise<CloneRe
 
   await createDirectories()
   let mode: CloneMode = 'hardlink'
+  let fallback: CloneFallback | undefined
   try {
     await materialize('hardlink')
   } catch (error) {
     if (!isCrossDeviceLinkFailure(error)) throw error
+    fallback = { code: String((error as NodeJS.ErrnoException).code ?? 'unknown'), detail: errorMessage(error) }
     signal?.throwIfAborted()
     // A partial hardlink clone cannot be converted in place; rebuild the tree as
     // copies, which is the documented cross-device fallback.
@@ -156,7 +168,12 @@ export async function cloneExecutionTree(request: CloneRequest): Promise<CloneRe
     links[name] = (await ops.lstat(path.join(root, name))).nlink
   }
   const dataBytes = mode === 'copy' ? Object.values(sizes).reduce((total, size) => total + size, 0) : 0
-  return { mode, sizes, links, dataBytes }
+  return { mode, sizes, links, dataBytes, ...(fallback === undefined ? {} : { fallback }) }
+}
+
+/** One error's message, without assuming it is an `Error`. */
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 /** One stat-only walk of a tree, rejecting links and special files. */
