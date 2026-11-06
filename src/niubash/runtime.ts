@@ -140,7 +140,12 @@ export async function prepareNiubash(file: string, inheritedPath = process.env.P
   const root = await fs.promises.mkdtemp(path.join(parent, EXECUTION_ROOT_PREFIX))
   // Sealing is per inode, so concurrent calls for the same payload share one
   // reference count; disposal of the first must not unseal a sibling's tree.
-  const dispose = () => releaseShared(source, root)
+  let released = false
+  const dispose = async () => {
+    if (released) return
+    released = true
+    await releaseShared(source, root)
+  }
   try {
     const clone = await cloneExecutionTree({ source, root, signal,
       files: NIUBASH_PIN.sizes, derived: EXECUTION_DERIVED,
