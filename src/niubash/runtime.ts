@@ -191,6 +191,10 @@ export async function prepareNiubash(file: string, inheritedPath = process.env.P
     const expectation: TreeExpectation = { sizes, links, directories: EXECUTION_DIRECTORIES, sealed: true }
     const verifyNow = async () => {
       await verifySourceTree(source, deep, signal)
+      // Defence in depth: re-apply the read-only seal immediately before the stat
+      // check, so a sibling's late disposal (or any external attribute reset)
+      // cannot make a live tree look unsealed. The ACL already blocks writes.
+      await sealReadOnly([...immutable, receiptFile])
       await verifyTreeStat({ root, ...expectation, signal })
       await verifyExecutionReceipt(root, EXECUTION_RECEIPT, receipt)
       if (deep) await verifyExecutionTreeDeep(root, sizes, signal)

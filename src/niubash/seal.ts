@@ -72,7 +72,10 @@ export interface SealTreeRequest extends SealOptions {
 }
 
 const ACL_PRINCIPAL = '*S-1-1-0'
-const ACL_DENY_RIGHTS = '(WD,AD,WEA,DE,DC)'
+// FILE_WRITE_ATTRIBUTES is deliberately NOT denied: it lets a later pass re-apply
+// READONLY (or unseal) without racing the ACL, and WD/AD/DE/DC already block data
+// writes, appends, renames and deletion.
+const ACL_DENY_RIGHTS = '(WD,AD,DE,DC)'
 
 /** Whether a mode carries no write bit (the READONLY attribute on Windows). */
 export function isSealedMode(mode: number): boolean {
@@ -133,14 +136,18 @@ function runIcaclsSync(args: readonly string[]): string | undefined {
  */
 export async function sealReadOnly(files: readonly string[], options: SealOptions = {}): Promise<void> {
   const ops = mergeOps(options)
-  const seen = new Set<string>()
   for (const file of files) {
-    const stat = await ops.lstat(file)
-    const key = `${stat.dev}:${stat.ino}`
-    if (stat.ino !== 0 && seen.has(key)) continue
-    if (stat.ino !== 0) seen.add(key)
-    if (isSealedMode(stat.mode)) continue
-    await ops.chmod(file, stat.mode & ~0o222)
+    let stat = await ops.lstat(file)
+    if (!isSealedMode(stat.mode)) {
+      await ops.chmod(file, stat.mode & ~0o222)
+      stat = await ops.lstat(file)
+    }
+    if (!isSealedMode(stat.mode)) {
+      // One explicit retry: Windows can drop a just-set READONLY attribute when a
+      // scanner or another handle is rewriting attributes at the same moment.
+      await ops.chmod(file, 0o444)
+      if (!isSealedMode((await ops.lstat(file)).mode)) throw Error(`Niubash tree member could not be sealed read-only: ${file}`)
+    }
   }
 }
 
@@ -301,6 +308,9 @@ export function releaseShared(key: string, root: string, options: SealOptions = 
   return serializeSeal(key, async () => {
     const state = sharedSeals.get(key)
     if (state === undefined) {
+      // Even an unregistered tree (a preparation that failed before sealing) is
+      // removed through the chain: its hardlinks may share the payload inodes, so
+      // an uncoordinated unseal could race a sibling's seal or verification.
       await removeSealedTree(root, options)
       return
     }

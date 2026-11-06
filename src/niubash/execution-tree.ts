@@ -241,7 +241,7 @@ export async function verifyTreeStat(request: TreeVerifyRequest): Promise<void> 
   for (const [name, stat] of listing.files) {
     if (!Object.hasOwn(request.sizes, name)) throw Error(`Unsafe Niubash execution tree member: ${name}`)
     if (stat.size !== request.sizes[name]) throw Error(`Niubash execution tree size mismatch: ${name}`)
-    if (request.sealed && (stat.mode & 0o222) !== 0) throw Error(`Niubash execution tree member is not sealed: ${name}`)
+    if (request.sealed && (stat.mode & 0o222) !== 0) throw Error(`Niubash execution tree member is not sealed: ${name} (mode ${stat.mode.toString(8)})`)
     const expectedLinks = request.links?.[name]
     if (expectedLinks !== undefined && stat.nlink !== expectedLinks) throw Error(`Niubash execution tree link count mismatch: ${name}`)
   }

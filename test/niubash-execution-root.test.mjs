@@ -208,7 +208,9 @@ await test('the Windows deny ACL is one recursive batch per tree, and degrades w
     assert.deepEqual(applied.diagnostics, [])
     const denials = calls.filter(args => args.includes('/deny'))
     assert.equal(denials.length, 1, 'one recursive deny, never one process per file')
-    assert.deepEqual(denials[0], [root, '/deny', '*S-1-1-0:(WD,AD,WEA,DE,DC)', '/T', '/C', '/Q'])
+    assert.deepEqual(denials[0], [root, '/deny', '*S-1-1-0:(WD,AD,DE,DC)', '/T', '/C', '/Q'])
+    // FILE_WRITE_ATTRIBUTES stays available so a later pass can re-apply READONLY.
+    assert.doesNotMatch(denials[0][2], /WEA/u)
     assert.ok(calls.length <= 1 + 1 + 2, 'the deny plus one re-allow per writable directory, plus the root')
     assert.ok(calls.length < files.length, 'never a per-file process')
     for (const file of files) assert.equal(isSealedMode(fs.lstatSync(file).mode), true, file)

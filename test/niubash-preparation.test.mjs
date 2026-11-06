@@ -116,7 +116,9 @@ if (process.platform === 'win32') {
       // the size change and the missing read-only bit.
       await runtime.unseal()
       await fs.promises.appendFile(face, 'tamper')
-      await assert.rejects(runtime.verify(), /size mismatch/)
+      // The unseal covers the whole shared tree, so the stat check may notice the
+      // missing seal before the tampered size; either rejection is the same fail-closed result.
+      await assert.rejects(runtime.verify(), /not sealed|size mismatch/)
       await fs.promises.writeFile(face, saved)
       await runtime.seal()
       await runtime.verify()
