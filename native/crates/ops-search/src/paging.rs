@@ -1,13 +1,24 @@
 //! Stateless cursors revalidate one bounded snapshot; they never grant authority.
 use super::*;
-use super::scan::Scan;
+use super::scan::{Scan, SourceKind};
 use cap_fs_ext::MetadataExt;
 use ops_protocol::search::{SearchCoverage, SearchExecutionReport, TruncatedBy};
 
 fn digest(bytes: &[u8]) -> String { format!("{:x}", Sha256::digest(bytes)) }
-pub struct Cursor { pub offset: usize, binding: String, snapshot: Option<String> }
+pub struct Cursor { pub offset: usize, binding: String, snapshot: Option<String>, source: SourceKind }
 impl Cursor {
+    /// A cursor bound to the live walk, the pre-index default.
     pub fn new(request: &Request, offset: usize, token: Option<&str>) -> Result<Self> {
+        Self::new_for(request, SourceKind::Walk, offset, token)
+    }
+    /// A cursor bound to one traversal kind.
+    ///
+    /// The kind is part of the binding domain: a continuation minted by the walk
+    /// cannot be replayed against an indexed page, and the reverse, because the
+    /// two paths stamp different snapshots and a mixed page would claim a
+    /// consistency it cannot have. Walk tokens keep the existing `s1` spelling
+    /// byte for byte; indexed tokens use `s2`.
+    pub fn new_for(request: &Request, source: SourceKind, offset: usize, token: Option<&str>) -> Result<Self> {
         let mut query = request.args.clone();
         if let Some(fields) = query.as_object_mut() { fields.remove("offset"); fields.remove("continuation"); }
         let root = file_path::checked(&request.root)?;
@@ -16,11 +27,14 @@ impl Cursor {
             identity.dev(), identity.ino(), request.read_only, request.write_roots, request.deny_roots, request.deny_credential_names]);
         // Preserve the existing s1 domain exactly unless delegated Windows checks are active.
         if request.windows_paths { authority.as_array_mut().unwrap().push(json!("wsl-windows-paths-v1")); }
+        // Only the indexed kind extends the domain, so every existing walk token
+        // and every recorded s1 binding stays identical.
+        if source == SourceKind::Index { authority.as_array_mut().unwrap().push(json!("index-source-v1")); }
         let binding = digest(&serde_json::to_vec(&authority)?);
-        let mut cursor = Self { offset, binding, snapshot: None };
+        let mut cursor = Self { offset, binding, snapshot: None, source };
         if let Some(token) = token {
             let parts: Vec<_> = token.split(':').collect();
-            let valid = token.len() <= 256 && parts.len() == 5 && parts[0] == "s1"
+            let valid = token.len() <= 256 && parts.len() == 5 && parts[0] == source.token_prefix()
                 && parts[1] == cursor.binding && parts[2].len() == 64
                 && parts[2].bytes().all(|byte| byte.is_ascii_hexdigit())
                 && digest(parts[..4].join(":").as_bytes()) == parts[4];
@@ -31,8 +45,17 @@ impl Cursor {
         }
         Ok(cursor)
     }
+    /// Rejects a cursor whose page was produced by another traversal kind.
+    ///
+    /// `finish` calls this with the scan kind: a continuation minted by the walk
+    /// and replayed against an indexed scan (or the reverse) would compare two
+    /// snapshot domains, so it is `SEARCH_STALE` instead.
+    pub fn ensure_kind(&self, source: SourceKind) -> Result<()> {
+        if self.source == source { return Ok(()); }
+        Err(stale())
+    }
     fn token(&self, snapshot: &str, next: usize) -> String {
-        let body = format!("s1:{}:{snapshot}:{next}", self.binding);
+        let body = format!("{}:{}:{snapshot}:{next}", self.source.token_prefix(), self.binding);
         format!("{body}:{}", digest(body.as_bytes()))
     }
 }
@@ -79,6 +102,7 @@ impl Page {
 }
 pub fn finish(mut scan: Scan, cursor: Cursor, page: Page, observed: usize, item_total: usize, extra: Value) -> Result<Value> {
     scan.running(); // Account for time spent in the final read/match/output step too.
+    cursor.ensure_kind(scan.source)?;
     let snapshot = format!("{:x}", scan.hash.clone().finalize());
     let complete = scan.complete();
     if cursor.snapshot.as_ref().is_some_and(|expected| !complete || *expected != snapshot) { return Err(stale()); }
