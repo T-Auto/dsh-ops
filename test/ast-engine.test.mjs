@@ -155,4 +155,18 @@ await test('the resolved-root cache stops growing and keeps answering correctly'
   } finally { cleanup(root); cleanup(outside) }
 })
 
+await test('an identifier outside ASCII is found once the candidate pool is over 32', async () => {
+  const root = dir()
+  try {
+    // The prefilter takes a whole-identifier shortcut only when more than 32 candidates matched.
+    // `\b` is defined on ASCII words, so `\b计算总计\b` never matched and the CJK hit vanished.
+    for (let i = 0; i < 40; i++) write(root, `src/noise${i}.ts`, `// 计算总计 只是被提到 ${i}\nexport const v${i} = "计算总计"\n`)
+    write(root, 'src/中文.ts', 'export function 计算总计(价格: number) { return 价格 * 2 }\n')
+    write(root, 'src/prefix.ts', 'export function 计算总计额外() { return 1 }\n')
+    const found = await locate({ symbol: '计算总计' }, root)
+    assert.equal(found.hits.length, 1, JSON.stringify(found.hits.map(h => h.file)))
+    assert.match(found.hits[0].file, /中文\.ts$/)
+  } finally { cleanup(root) }
+})
+
 report('ast-engine')

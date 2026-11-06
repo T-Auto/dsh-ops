@@ -74,8 +74,11 @@ await test('a target that is a link is refused instead of followed', async () =>
     try { fs.symlinkSync(path.join(ws, 'target.ts'), path.join(ws, 'link.ts')) } catch { return }
     const value = await call('ast_refactor', { file: 'link.ts', pattern: 'console.log($A)', rewrite: 'logger.log($A)', mode: 'apply' }, ws, ws)
     assert.notEqual(value.status, 'completed', JSON.stringify(value))
-    assert.equal(fs.readFileSync(path.join(ws, 'target.ts'), 'utf8').includes('console.log'), true,
-      'the link target must not be rewritten through the link')
+    // "not completed" alone would also pass for a refusal that names the wrong reason.
+    assert.equal(['E_NOT_REGULAR', 'E_NO_MATCH'].includes(value.error?.code), true, `refused as ${value.error?.code}`)
+    assert.equal(value.effectState ?? 'none', 'none', 'a refused link writes nothing')
+    assert.equal(fs.readFileSync(path.join(ws, 'target.ts'), 'utf8'), "console.log('x')\n",
+      'the link target must be byte-identical afterwards')
   } finally { fs.rmSync(ws, { recursive: true, force: true }) }
 })
 

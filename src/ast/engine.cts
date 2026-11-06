@@ -468,10 +468,17 @@ function literalOf(pattern: string): string | null {
 }
 
 const WORD_BOUNDARY_CACHE = new Map<string, RegExp>()
+/**
+ * Whole-identifier match, including identifiers JavaScript does not consider words.
+ *
+ * `\b` is defined on ASCII `\w`, so `\b计算总计\b` never matches and a CJK symbol was silently
+ * dropped by the prefilter once the candidate pool passed 32. Lookaround asks the same question for
+ * every alphabet.
+ */
 function wordBoundary(symbol: string): RegExp {
   let re = WORD_BOUNDARY_CACHE.get(symbol)
   if (!re) {
-    re = new RegExp('\\b' + escapeRe(symbol) + '\\b')
+    re = new RegExp(`(?<![\\w$])${escapeRe(symbol)}(?![\\w$])`)
     if (WORD_BOUNDARY_CACHE.size > 64) WORD_BOUNDARY_CACHE.clear()
     WORD_BOUNDARY_CACHE.set(symbol, re)
   }

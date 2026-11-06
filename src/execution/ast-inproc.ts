@@ -78,8 +78,10 @@ function publish(target: string, revision: string, after: string): { code: strin
     if (sha256(text) !== revision) return { code: 'E_STALE', message: 'changed while the rewrite was planned; nothing was overwritten' }
     const bom = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf
     const next = (bom ? BOM : '') + after
+    // One hash, not two: the read-back check compares against the payload we already have.
+    const payload = Buffer.from(next, 'utf8')
+    const payloadHash = sha256(next)
     try {
-      const payload = Buffer.from(next, 'utf8')
       let written = 0
       while (written < payload.length) {
         written += fs.writeSync(fd, payload, written, payload.length - written, written)
@@ -96,9 +98,9 @@ function publish(target: string, revision: string, after: string): { code: strin
       } catch { /* the restore is best effort; the failure below still reports the truth */ }
       return { code: 'E_WRITE', message: `writing ${target} failed: ${errorText(error).slice(0, 200)}` }
     }
-    const check = Buffer.alloc(Buffer.byteLength(next, 'utf8'))
+    const check = Buffer.alloc(payload.length)
     fs.readSync(fd, check, 0, check.length, 0)
-    if (sha256(check.toString('utf8')) !== sha256(next)) return { code: 'E_WRITE', message: `${target} did not read back as written` }
+    if (sha256(check.toString('utf8')) !== payloadHash) return { code: 'E_WRITE', message: `${target} did not read back as written` }
     return undefined
   } finally { try { fs.closeSync(fd) } catch { /* already closed */ } }
 }
