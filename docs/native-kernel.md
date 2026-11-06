@@ -115,8 +115,9 @@ structural leftovers at start-up and after the last owner unloads: it validates 
 the private mode, single-link files and the complete content whitelist, skips and reports a root
 with an unknown entry, excludes this process's live roots, honors `resultCache.maxAgeMs` and stops
 at the first failed removal. Aggregate root/byte budgets (`resultCache.maxRoots`,
-`resultCache.maxTotalBytes`) stay 0 = report-only until an operator opts in. Host lifecycle hooks
-are attached by the host integration slice.
+`resultCache.maxTotalBytes`) default to 0 and only classify roots as blocked; the sweep never
+removes a root that still holds snapshot data, which only the authorized purge path may reclaim.
+Host lifecycle hooks are attached by the host integration slice.
 
 ## Index cache directory (PS3, #601)
 

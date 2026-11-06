@@ -154,14 +154,14 @@ function resolveDownloadGuard(rawConfig: unknown): DownloadGuardConfig {
  * Retention policy for the result-cache roots under the system temp directory.
  *
  * The native quota (100 MiB per cache root) is a per-nonce limit and never a global budget, so
- * the aggregate limits below are the only thing that stops a long-lived machine from accumulating
- * one root per session. Both aggregate limits default to 0, which means "report, never evict a
- * root that still holds data"; the default sweep only reclaims roots whose cache data is gone.
+ * the aggregate limits below are the only thing that surfaces a machine accumulating one root per
+ * session. They are reporting thresholds: the sweep never deletes a root that still holds snapshot
+ * data, so both limits default to 0 and merely mark over-budget roots as blocked.
  */
 export interface ResultCacheConfig {
-  /** Aggregate root count; 0 reports without evicting roots that still hold data. */
+  /** Aggregate root count; exceeding it marks roots over budget, it never deletes data. */
   maxRoots: number
-  /** Aggregate byte count; 0 reports without evicting roots that still hold data. */
+  /** Aggregate byte count; exceeding it marks roots over budget, it never deletes data. */
   maxTotalBytes: number
   /** Minimum idle time before a root is touched; 0 disables the grace period. */
   maxAgeMs: number

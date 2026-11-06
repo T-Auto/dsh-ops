@@ -79,6 +79,8 @@ export interface ResultCacheGcReport {
   reclaimable: number
   reclaimableBytes: number
   planned: number
+  /** True when an explicitly configured aggregate budget is exceeded; data roots are reported, never removed. */
+  overBudget: boolean
   applied: boolean
   removed: number
   removedBytes: number
@@ -256,7 +258,7 @@ export function runResultCacheGc(options: ResultCacheGcOptions): ResultCacheGcRe
   const pendingRoots = new Set(pending.map(record => record.root))
   const report: ResultCacheGcReport = {
     dir, scanned: 0, roots: 0, totalBytes: 0, pending: pending.length, reclaimable: 0, reclaimableBytes: 0,
-    planned: 0, applied: apply && sweepEnabled, removed: 0, removedBytes: 0, retained: 0, durationMs: 0,
+    planned: 0, overBudget: false, applied: apply && sweepEnabled, removed: 0, removedBytes: 0, retained: 0, durationMs: 0,
     states: { empty: 0, 'lock-only': 0, data: 0, live: 0, unknown: 0 }, errors: [], details: [],
   }
   let names: string[]
@@ -288,23 +290,16 @@ export function runResultCacheGc(options: ResultCacheGcOptions): ResultCacheGcRe
     if (scope === 'owned' && owned.has(inspection.root)) return true
     return inspection.ageMs >= grace
   }
-  const structural = inspected.filter(inspection => eligible(inspection)
+  // Only structural leftovers are ever candidates: a root that still holds a snapshot is reclaimed
+  // by the authorized session purge (or its deferred retry), never by this host-side sweep. The
+  // aggregate budgets therefore classify such roots as blocked and report them; they never turn
+  // another session's data into a deletion candidate.
+  const selected = inspected.filter(inspection => eligible(inspection)
     && (inspection.state === 'empty' || inspection.state === 'lock-only')
   )
-  const selected = [...structural]
-  // Aggregate budget: only an explicitly configured budget may evict roots that still hold data.
-  const dataRoots = inspected.filter(inspection => eligible(inspection) && inspection.state === 'data')
-    .sort((left, right) => left.mtimeMs - right.mtimeMs)
-  let remainingRoots = report.roots - structural.length
-  let remainingBytes = report.totalBytes - structural.reduce((sum, inspection) => sum + inspection.bytes, 0)
-  if (budget.maxRoots > 0) while (remainingRoots > budget.maxRoots && dataRoots.length > 0) {
-    const next = dataRoots.shift() as Inspection
-    selected.push(next); remainingRoots -= 1; remainingBytes -= next.bytes
-  }
-  if (budget.maxTotalBytes > 0) while (remainingBytes > budget.maxTotalBytes && dataRoots.length > 0) {
-    const next = dataRoots.shift() as Inspection
-    selected.push(next); remainingRoots -= 1; remainingBytes -= next.bytes
-  }
+  const overBudget = (budget.maxRoots > 0 && report.roots > budget.maxRoots)
+    || (budget.maxTotalBytes > 0 && report.totalBytes > budget.maxTotalBytes)
+  report.overBudget = overBudget
   report.reclaimable = selected.length
   report.reclaimableBytes = selected.reduce((sum, inspection) => sum + inspection.bytes, 0)
   report.planned = selected.length
@@ -316,7 +311,8 @@ export function runResultCacheGc(options: ResultCacheGcOptions): ResultCacheGcRe
     }
     if (inspection.reason !== undefined) entry.reason = inspection.reason
     else if (inspection.state === 'live') entry.reason = 'live-in-this-process'
-    else if (!entry.reclaimable) entry.reason = inspection.ageMs < grace ? 'within-age-grace' : 'within-budget'
+    else if (inspection.state === 'data' && overBudget) entry.reason = 'blocked-over-budget'
+    else if (!entry.reclaimable) entry.reason = inspection.ageMs < grace ? 'within-age-grace' : 'blocked-awaiting-authorized-purge'
     if (report.details.length < MAX_REPORTED_ROOTS) report.details.push(entry)
   }
   const maxRoots = Math.max(1, options.maxRootsPerTick ?? DEFAULT_MAX_ROOTS_PER_TICK)

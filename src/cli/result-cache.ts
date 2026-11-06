@@ -86,8 +86,11 @@ export function commandResultCache(action = 'status', options: ResultCacheComman
     return 0
   }
   printReport(report, action, applied)
+  if (report.overBudget) {
+    console.log('Aggregate budget exceeded: data-bearing roots are reported as blocked. This command never deletes them; the authorized session purge reclaims them.')
+  }
   if (budget.maxRoots === 0 && budget.maxTotalBytes === 0) {
-    console.log('Aggregate budgets are 0 (report only): only roots whose cache data is already gone are reclaimed.')
+    console.log('Aggregate budgets are 0: only roots whose cache data is already gone are reclaimed; data-bearing roots need the authorized purge path.')
   }
   if (budget.sweepEnabled !== true) console.log('resultCache.sweepEnabled is false: nothing can be removed until it is enabled.')
   return report.errors.length === 0 ? 0 : 1

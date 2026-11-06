@@ -84,7 +84,7 @@ if (POSIX) await test('the sweep reclaims roots whose cache data is gone and nev
     assert.equal(swept.states.data, 1)
     assert.equal(swept.states.live, 1)
     assert.equal(swept.details.find(entry => entry.name === path.basename(live)).reason, 'live-in-this-process')
-    assert.equal(swept.details.find(entry => entry.name === path.basename(data)).reason, 'within-budget')
+    assert.equal(swept.details.find(entry => entry.name === path.basename(data)).reason, 'blocked-awaiting-authorized-purge')
     assert.equal(swept.removedBytes, 0)
     assert.deepEqual(swept.errors, [])
   } finally { releaseCleanupRootLive(live) }
@@ -134,22 +134,50 @@ if (POSIX) await test('structure validation skips symlinks, forged names, foreig
   assert.deepEqual(swept.errors, [])
 }))
 
-if (POSIX) await test('an aggregate budget evicts data roots oldest first, and only when configured', () => withTempDir('result-gc-budget', dir => {
+if (POSIX) await test('data-bearing roots are reported as blocked and never removed, even over budget', () => withTempDir('result-gc-budget', dir => {
   const older = makeRoot(dir, 'older', root => makeShard(root, 'four', { [SNAPSHOT]: 'x'.repeat(16) }))
   const newer = makeRoot(dir, 'newer', root => makeShard(root, 'five', { [SNAPSHOT]: 'y'.repeat(16) }))
   const past = new Date(Date.now() - 86_400_000)
   fs.utimesSync(older, past, past)
   const reported = runResultCacheGc({ budget: budget(), dir, apply: true, scope: 'all' })
   assert.equal(reported.removed, 0, 'both aggregate budgets are 0: report only')
+  assert.equal(reported.overBudget, false)
   assert.equal(reported.reclaimable, 0)
+  assert.equal(reported.details.find(entry => entry.name === path.basename(older)).reason, 'blocked-awaiting-authorized-purge')
   assert.equal(fs.existsSync(older), true)
   const bounded = runResultCacheGc({ budget: budget({ maxRoots: 1 }), dir, apply: true, scope: 'all' })
-  assert.equal(bounded.removed, 1)
-  assert.equal(fs.existsSync(older), false, 'the oldest data root is evicted first')
+  assert.equal(bounded.overBudget, true)
+  assert.equal(bounded.removed, 0, 'the sweep never deletes a root that still holds snapshot data')
+  assert.equal(bounded.reclaimable, 0)
+  for (const root of [older, newer]) {
+    assert.equal(fs.existsSync(root), true)
+    assert.equal(bounded.details.find(entry => entry.name === path.basename(root)).reason, 'blocked-over-budget')
+  }
+  const bytes = runResultCacheGc({ budget: budget({ maxTotalBytes: 8 }), dir, apply: true, scope: 'all' })
+  assert.equal(bytes.overBudget, true)
+  assert.equal(bytes.removed, 0)
+  assert.equal(fs.existsSync(older), true)
   assert.equal(fs.existsSync(newer), true)
-  const bytes = runResultCacheGc({ budget: budget({ maxTotalBytes: 8 }), dir, apply: false, scope: 'all' })
-  assert.equal(bytes.reclaimable, 1)
-  assert.equal(fs.existsSync(newer), true)
+}))
+
+if (POSIX) await test('a pre-created registry directory is refused unless it is private and ours', () => withTempDir('result-gc-registry-dir', dir => {
+  const send = (registry, seed) => {
+    setCleanupRegistryDir(registry)
+    try { return registerCleanupRoot(path.join(dir, 'dsh-ops-results-' + seed.repeat(64)), { sessionHeading: 'heading', workspaceRoot: dir }) }
+    finally { setCleanupRegistryDir(undefined) }
+  }
+  const publicDir = path.join(dir, 'public')
+  fs.mkdirSync(publicDir, { mode: 0o755 }); fs.chmodSync(publicDir, 0o755)
+  assert.equal(send(publicDir, 'b'), undefined, 'a world-traversable ledger directory is never written into')
+  assert.deepEqual(fs.readdirSync(publicDir), [])
+  const target = path.join(dir, 'target'); fs.mkdirSync(target, { mode: 0o700 }); fs.chmodSync(target, 0o700)
+  const link = path.join(dir, 'linked')
+  fs.symlinkSync(target, link)
+  assert.equal(send(link, 'c'), undefined, 'a symlinked ledger directory is refused')
+  assert.deepEqual(fs.readdirSync(target), [])
+  const good = path.join(dir, 'good'); fs.mkdirSync(good, { mode: 0o700 }); fs.chmodSync(good, 0o700)
+  assert.ok(send(good, 'd'), 'a private current-user directory accepts the record')
+  assert.equal(fs.readdirSync(good).length, 1)
 }))
 
 if (POSIX) await test('a pending record survives a restart, reclaims its root and is then cleared', () => withTempDir('result-gc-pending', async dir => {
