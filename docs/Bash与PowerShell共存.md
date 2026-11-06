@@ -2,13 +2,13 @@
 
 English: [Bash and PowerShell coexistence](shell-coexistence.md).
 
-`ops_bash` 是独立的 Bash 命令工具。Windows 上由本地 MSYS Bash 执行，不是 Linux、WSL 或 PowerShell；不会改写宿主 OS，也不默认隐藏宿主 `pwsh`。
+`ops_bash` 是独立的 Bash 命令工具。Windows 上由本地 MSYS Bash 执行，不是 Linux、WSL 或 PowerShell；不会改写宿主 OS。内置预设默认仅在 Bash 替代工具可调用时隐藏宿主 PowerShell。
 
 ## 默认值与显式选择
 
-- 内置 preset 默认开启 Bash，`hidePwsh` 默认关闭；自定义 preset 的 `hidePwsh` 也默认关闭，不随 `replaceOfficial` 文件工具设置推导。
-- `global.hidePwsh` 仍默认开启，但它只是“允许 preset 隐藏”的总闸，不是隐藏意图。只有 preset 显式设置 `hidePwsh: true`、总闸允许、Windows 当前 Agent 确实可调用 Bash 且未开启 pwsh7 联动时，才隐藏 `pwsh` 和 `pwsh_persistent`。
-- 旧配置中显式保存的 `hidePwsh: true` 仍被尊重，不静默迁移；总闸显式关闭可阻止隐藏。Bash 路径缺失或权限/宿主服务使 Bash 无法发布时，保留官方 PowerShell fallback。
+- 内置 preset 默认开启 Bash 和 `hidePwsh`；自定义 preset 的 `hidePwsh` 仍默认关闭，不随 `replaceOfficial` 文件工具设置推导。
+- `global.hidePwsh` 仍默认开启，但只是允许隐藏的总闸。只有 preset 的隐藏开关开启、总闸允许、Windows 当前 Agent 确实可调用 Bash 且未开启 pwsh7 联动时，才隐藏 `pwsh` 和 `pwsh_persistent`。
+- 旧配置中显式保存的 `hidePwsh: false` 或 `true` 均被尊重，不静默迁移；总闸显式关闭可阻止隐藏。Bash 路径缺失或权限/宿主服务使 Bash 无法发布时，保留官方 PowerShell fallback。
 - `other.pwsh7Link` 开启时保留官方 `pwsh`，让 `dsh-win-pwsh7` 继续管理其 PowerShell 版本。未保存此开关时仍按既有规则检测 companion；显式开/关优先，不要求安装 companion 才能共存。OPS 不修改第三方插件、安装顺序或 profile。
 
 ## 提示词与执行契约

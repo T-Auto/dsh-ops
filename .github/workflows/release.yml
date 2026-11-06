@@ -109,16 +109,25 @@ jobs:
         shell: bash
         run: file runtime/linux-x64/dsh-ops-worker | grep -Eq 'statically linked|static-pie linked'
 
-      - name: Acquire optional pinned Bash fixture
+      - name: Acquire explicit legacy Bash fixture and build IPC
         if: matrix.target == 'win32-x64'
-        run: node bin/dsh-ops.mjs bash-runtime install
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP 'ops-release-legacy-bash'
+          $env:DSH_HOME = $fixture
+          New-Item -ItemType Directory -Path $fixture -Force | Out-Null
+          node --input-type=module -e "import fs from 'node:fs'; import { SHELL_UPSTREAM_PINS } from './lib/shells/pins.js'; fs.writeFileSync(process.env.DSH_HOME + '/pins.json', JSON.stringify(SHELL_UPSTREAM_PINS.filter(pin => pin.name === 'bash')))"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node bin/dsh-ops.mjs provision-shells --bash --pin "$fixture/pins.json"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $env:DSH_OPS_TEST_BASH = node --input-type=module -e "import { pinnedBashExecutable } from './lib/shells/pinned.js'; console.log(pinnedBashExecutable())"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run build:bash-ipc
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-      - name: Build the Windows Bash IPC proxies
-        # Only the Windows target carries the IPC proxies; their receipt is verified
-        # against the committed native/bash-ipc sources by the gate below. Fails when
-        # the MSVC toolchain or the pinned shell payload is not where this expects it.
+      - name: Stage complete frozen Niubash payload
         if: matrix.target == 'win32-x64'
-        run: npm run build:bash-ipc
+        run: npm run stage:niubash
 
       - uses: actions/upload-artifact@v7
         with:
@@ -190,10 +199,24 @@ jobs:
           rustup default 1.97.1
           cargo build --release --locked --manifest-path native/Cargo.toml
 
-      - name: Build plugin and acquire optional pinned Bash fixture
+      - name: Build plugin and acquire explicit legacy Bash fixture
+        shell: pwsh
         run: |
           npm run build
-          node bin/dsh-ops.mjs bash-runtime install
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $fixture = Join-Path $env:RUNNER_TEMP 'ops-release-gate-legacy-bash'
+          $env:DSH_HOME = $fixture
+          New-Item -ItemType Directory -Path $fixture -Force | Out-Null
+          node --input-type=module -e "import fs from 'node:fs'; import { SHELL_UPSTREAM_PINS } from './lib/shells/pins.js'; fs.writeFileSync(process.env.DSH_HOME + '/pins.json', JSON.stringify(SHELL_UPSTREAM_PINS.filter(pin => pin.name === 'bash')))"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node bin/dsh-ops.mjs provision-shells --bash --pin "$fixture/pins.json"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $bash = node --input-type=module -e "import { pinnedBashExecutable } from './lib/shells/pinned.js'; console.log(pinnedBashExecutable())"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          "DSH_OPS_TEST_BASH=$bash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "DSH_OPS_TEST_NIUBASH=$env:GITHUB_WORKSPACE/runtime/win32-x64/niubash/niu.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "DSH_OPS_REQUIRE_RUNTIME=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "DSH_OPS_ALLOW_SKIPS=linux-attributes,linux-shell,tui-host,tui-native" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Release gate (manifest, suites, runtime closure)
         # Publishing must not start before this step is green — it is the only reason
