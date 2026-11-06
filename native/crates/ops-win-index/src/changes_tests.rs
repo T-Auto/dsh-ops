@@ -332,7 +332,16 @@ fn a_directory_moved_into_the_root_rows_its_descendants_as_added() {
     let report =
         changes_for_entries(&seed, &entries, SERIAL, JournalCursor::new(7, 500)).expect("map");
     assert_eq!(report.skipped, 0);
-    for expected in moved_in_paths() {
+    let dir = PathBuf::from("incoming");
+    assert!(
+        report
+            .changes
+            .iter()
+            .any(|change| change.rel == dir && change.action == ChangeAction::Renamed),
+        "the moved directory itself is a Renamed row: {:?}",
+        report.changes
+    );
+    for expected in moved_in_paths().into_iter().filter(|rel| *rel != dir) {
         assert!(
             report
                 .changes

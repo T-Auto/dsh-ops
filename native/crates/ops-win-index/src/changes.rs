@@ -429,9 +429,9 @@ pub(crate) fn changes_for_entries(
                         }
                         (None, Some(new)) => {
                             let action = if entry.reason.is_rename() {
-                                // From this root's point of view the directory
-                                // entered from outside: it did not exist here.
-                                ChangeAction::Added
+                                // The identity moved to a new visible path; its
+                                // descendants are Added rows below.
+                                ChangeAction::Renamed
                             } else if entry.reason.is_file_create() {
                                 ChangeAction::Added
                             } else {
