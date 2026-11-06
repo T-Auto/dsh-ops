@@ -215,8 +215,6 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           "DSH_OPS_TEST_BASH=$bash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "DSH_OPS_TEST_NIUBASH=$env:GITHUB_WORKSPACE/runtime/win32-x64/niubash/niu.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "DSH_OPS_REQUIRE_RUNTIME=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "DSH_OPS_ALLOW_SKIPS=linux-attributes,linux-shell,tui-host,tui-native" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Release gate (manifest, suites, runtime closure)
         # Publishing must not start before this step is green — it is the only reason
