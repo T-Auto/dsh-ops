@@ -7,7 +7,7 @@ A plugin that improves token efficiency by adding `ops_*` tools and hiding some 
 - Add useful ops tools to the built-in presets (Standard, PTC, Cordis). This can be turned off. Minimal only gains the dynamic tool loading described below.
 - Enable DSH's reserved `tools_addition` dynamic tool loading and offer progressively disclosed tools as the loading platform for advanced capabilities (PDF/Word reading, very large multi-file edits), greatly reducing token use in common specific scenarios without inflating the system prompt.
 
-Scroll down, click the group that contains dsh-ops, choose dsh-ops, then open its settings page.
+Scroll down, click the component that contains dsh-ops→dsh-ops>to open the settings page.
 
 ## Contributors
 
