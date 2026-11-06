@@ -518,6 +518,7 @@ dependencies = [
  "cap-std",
  "ops-index",
  "usn-journal-rs",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

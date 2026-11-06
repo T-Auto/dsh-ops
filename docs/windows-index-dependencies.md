@@ -6,51 +6,33 @@ is `#![cfg(windows)]` and every dependency lives under
 resolve no Windows package at build time. The lockfile still records the Windows-target packages
 because Cargo locks every target; the workspace's `--locked` checks therefore cover them too.
 
-## Opt-in feature: `win-index` (#718)
-
-`ops-win-index` is **not compiled by default**. `ops-search` declares it as an optional dependency
-behind the `win-index` feature (`default = []`), because `usn-journal-rs` issues COM calls that make
-the linked worker import `OLEAUT32.dll`; a default Windows install must start without that
-dependency. Without the feature `platform_source()` answers `NullSource` on Windows, so every search
-keeps the live walk and the counters are unchanged.
-
-Enable it only when evaluating W1's cold enumeration:
-
-```console
-cargo build --release --features win-index            # from native/
-cargo build --release --features ops-search/win-index # from the workspace
-npm run build:ptc                                     # keep the staged runtime in sync
-```
-
-Default Windows worker evidence (cross-compiled `x86_64-pc-windows-gnu`, 2026-11-06):
-**7,817,886 bytes**, sha256 `dadad4db93ed6559facbb00bfd541f2f0fadb573f772fc7df6911236a6435006`;
-PE import table: `advapi32.dll`, `api-ms-win-core-synch-l1-2-0.dll`, `bcryptprimitives.dll`,
-`kernel32.dll`, `msvcrt.dll`, `ntdll.dll`, `userenv.dll`, `ws2_32.dll` — **no `oleaut32.dll` /
-`ole32.dll`**. The same build with `--features ops-search/win-index` is **8,014,093 bytes** and
-imports `oleaut32.dll`, which shows the feature is exactly what gates the COM dependency.
-`dumpbin` is not available on the Linux build host; the equivalents are
-`x86_64-w64-mingw32-objdump -p <exe>` and its DLL-import table.
-
 This page is the dependency record for the crate. Every direct dependency names an exact version and
 its crates.io publication date (checked against the crates.io API on 2026-11-04 UTC+08); the
 lockfile pins the transitive graph. Full licence texts are in
 [`licenses/windows-index/THIRD-PARTY-NOTICES.txt`](../licenses/windows-index/THIRD-PARTY-NOTICES.txt).
 
-## Direct dependency (3)
+## Direct dependency (2)
 
 | Crate | Pin | Published (UTC) | License | Why |
 | --- | --- | --- | --- | --- |
-| `usn-journal-rs` | `=0.5.0` | 2026-10-13 | MIT | Safe wrappers over `FSCTL_ENUM_USN_DATA` for the cold MFT enumeration and over the USN change journal for the tail. It owns the slice's only Win32 code: this crate stays `#![forbid(unsafe_code)]` and names no raw Windows type. Runtime operation requires Administrator privileges, which is the documented fallback. MSRV 1.88, equal to this crate's floor. |
-| `cap-std` | `3.4.6` | 2026-08-20 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | Opens the volume root and reads its directory metadata, so `Candidate.key.volume` is exactly the serial cap-fs-ext reports as `dev()`. The same crate the integration already uses for its candidate re-verification, so the two cannot drift. Ambient authority is used once, on the volume root, for metadata only. |
-| `cap-fs-ext` | `3.4.6` | 2026-08-20 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | The `MetadataExt` implementation behind `dev()` and `ino()`: `Candidate.key.file` is the full 64-bit nFileIndex cap reports as `ino()`. Already resolved in `native/Cargo.lock` through the workspace root; this slice adds the direct edge only. |
+| `usn-journal-rs` | `=0.5.0` | 2026-10-13 | MIT | Safe wrappers over `FSCTL_ENUM_USN_DATA` for W1's cold MFT enumeration and, from W2, over the USN change journal. It keeps its own Win32 unsafe inside its crate. Runtime operation requires Administrator privileges, which is the documented fallback. MSRV 1.88, equal to this crate's floor. |
+| `windows-sys` | `=0.61.2` | 2025-10-06 | MIT OR Apache-2.0 | W4's hard-link enumeration: `FindFirstFileNameW`, `FindNextFileNameW`, `FindClose` and `GetLastError`, with features `Win32_Foundation` + `Win32_Storage_FileSystem`. The package was already resolved in `native/Cargo.lock` through the workspace's other Windows crate, so this slice adds no new package; the direct edge is new. MSRV 1.71. |
 
-All three are target-gated. `usn-journal-rs` itself contains
-`#[cfg(not(windows))] compile_error!`, so it must never appear in `ops-index` or in any other
-platform-agnostic crate. `cap-std`/`cap-fs-ext` are the same safe metadata layer the
-integration uses: reading the volume serial and file index through it is what makes
-`Candidate.key` compare equal to the integration's `(dev, ino)` instead of drifting into a
-fallback. Both were already direct dependencies of the workspace root and remain locked at 3.4.6;
-this slice adds no package, only the two edges and their licence texts.
+Both dependencies are target-gated. `usn-journal-rs` itself contains
+`#[cfg(not(windows))] compile_error!`, and `windows-sys` must stay at the workspace's single
+0.61 line. Neither may appear in `ops-index` or in any other platform-agnostic crate.
+
+### The crate's one unsafe boundary (W4)
+
+Before W4 this crate was `#![forbid(unsafe_code)]`. `FindFirstFileNameW`/`FindNextFileNameW`
+have no safe wrapper in any already-locked crate, so W4 opens exactly one boundary:
+
+- the crate root denies `unsafe_code` globally and `unsafe_op_in_unsafe_fn` too;
+- `#[allow(unsafe_code)]` is applied to the `winfs` module only;
+- every unsafe block in `src/winfs/links.rs` carries a `SAFETY:` note and every search handle
+  is closed exactly once by a drop guard.
+
+That keeps the Windows FFI surface reviewable in one file without relaxing the rest of the crate.
 
 ## Transitive packages resolved for the Windows target
 

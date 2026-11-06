@@ -5,46 +5,31 @@
 构建只编译空库、构建期不解析任何 Windows 包。lockfile 仍会记录 Windows 目标包（Cargo 锁定所有
 目标），所以 workspace 的 `--locked` 检查同样覆盖它们。
 
-## 可选 feature：`win-index`（#718）
-
-`ops-win-index` **默认不参与编译**。`ops-search` 把它声明为可选依赖，挂在 `win-index` feature 下
-（`default = []`），因为 `usn-journal-rs` 会发起 COM 调用，使链接后的 worker 导入
-`OLEAUT32.dll`；默认的 Windows 安装必须在没有该依赖的情况下启动。未启用 feature 时
-`platform_source()` 在 Windows 上返回 `NullSource`，所有搜索继续走 live walk，计数不变。
-
-仅在评估 W1 冷枚举时显式启用：
-
-```console
-cargo build --release --features win-index            # 在 native/ 下
-cargo build --release --features ops-search/win-index # 在工作区根目录
-npm run build:ptc                                     # 同步已 staged 的 runtime
-```
-
-默认 Windows worker 证据（交叉编译 `x86_64-pc-windows-gnu`，2026-11-06）：**7,817,886 字节**，sha256
-`dadad4db93ed6559facbb00bfd541f2f0fadb573f772fc7df6911236a6435006`；PE 导入表为
-`advapi32.dll`、`api-ms-win-core-synch-l1-2-0.dll`、`bcryptprimitives.dll`、`kernel32.dll`、
-`msvcrt.dll`、`ntdll.dll`、`userenv.dll`、`ws2_32.dll` —— **没有 `oleaut32.dll` / `ole32.dll`**。
-同一构建加上 `--features ops-search/win-index` 后为 **8,014,093 字节** 且导入 `oleaut32.dll`，
-说明正是该 feature 门控了 COM 依赖。Linux 构建机上没有 `dumpbin`；等价命令是
-`x86_64-w64-mingw32-objdump -p <exe>` 及其 DLL 导入表。
-
 本文是该 crate 的依赖台账：直接依赖给出精确版本与 crates.io 发布时间（2026-11-04 UTC+08 依据
 crates.io API 核对），传递依赖由 lockfile 固定。完整许可证正文见
 [`licenses/windows-index/THIRD-PARTY-NOTICES.txt`](../licenses/windows-index/THIRD-PARTY-NOTICES.txt)。
 
-## 直接依赖（3 个）
+## 直接依赖（2 个）
 
 | crate | 精确版本 | 发布时间（UTC） | 许可证 | 用途 |
 | --- | --- | --- | --- | --- |
-| `usn-journal-rs` | `=0.5.0` | 2026-10-13 | MIT | 为 MFT 冷枚举提供 `FSCTL_ENUM_USN_DATA` 安全封装、为增量尾巴提供 USN 变更日志封装。本切片唯一的 Win32 代码都在它内部：本 crate 保持 `#![forbid(unsafe_code)]`，源码不出现任何裸 Windows 类型。运行期需要 Administrator 权限，未提权即按文档回退。MSRV 1.88，与本 crate 地板相同。 |
-| `cap-std` | `3.4.6` | 2026-08-20 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | 打开卷根并读取其目录元数据，使 `Candidate.key.volume` 就是 cap-fs-ext `dev()` 报告的卷序列号。集成侧的候选复验本就用同一 crate，因此两边不会漂移。ambient authority 只在卷根上、只用于元数据。 |
-| `cap-fs-ext` | `3.4.6` | 2026-08-20 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | `dev()`/`ino()` 背后的 `MetadataExt` 实现：`Candidate.key.file` 是 cap 报告为 `ino()` 的完整 64 位 nFileIndex。该 crate 已通过 workspace 根存在于 `native/Cargo.lock`；本切片只新增直接依赖边。 |
+| `usn-journal-rs` | `=0.5.0` | 2026-10-13 | MIT | 为 W1 的 MFT 冷枚举提供 `FSCTL_ENUM_USN_DATA` 安全封装，W2 起提供 USN 变更日志封装；它自己的 Win32 unsafe 收敛在其 crate 内。运行期需要 Administrator 权限，未提权即按文档回退。MSRV 1.88，与本 crate 地板相同。 |
+| `windows-sys` | `=0.61.2` | 2025-10-06 | MIT OR Apache-2.0 | W4 的硬链接枚举：`FindFirstFileNameW`、`FindNextFileNameW`、`FindClose` 与 `GetLastError`，features 为 `Win32_Foundation` + `Win32_Storage_FileSystem`。该包此前已通过 workspace 其它 Windows crate 进入 `native/Cargo.lock`，本片不新增包，只新增直接依赖边。MSRV 1.71。 |
 
-三者都必须 target-gate。`usn-journal-rs` 自身包含
-`#[cfg(not(windows))] compile_error!`，绝不能出现在 `ops-index` 或其它平台无关 crate。
-`cap-std`/`cap-fs-ext` 与集成侧使用同一套安全元数据层：通过它读出的卷序列号与 file index
-使 `Candidate.key` 与集成的 `(dev, ino)` 完全一致，而不是漂移成 Fallback。两者本来就是
-workspace 根的直接依赖并锁定在 3.4.6；本切片不新增包，只新增两条直接依赖边及其许可证正文。
+两个依赖都必须 target-gate：`usn-journal-rs` 自身包含 `#[cfg(not(windows))] compile_error!`，
+而 `windows-sys` 必须保持在 workspace 唯一的 0.61 线上；二者都不得出现在 `ops-index` 或其它
+平台无关 crate。
+
+### 本 crate 唯一的 unsafe 边界（W4）
+
+W4 之前本 crate 是 `#![forbid(unsafe_code)]`。`FindFirstFileNameW`/`FindNextFileNameW` 在已锁定的
+crate 中没有安全封装，因此 W4 只开一个边界：
+
+- crate 根全局 deny `unsafe_code`，同时 deny `unsafe_op_in_unsafe_fn`；
+- `#[allow(unsafe_code)]` 只加在 `winfs` 模块上；
+- `src/winfs/links.rs` 的每个 unsafe 块都有 `SAFETY:` 说明，搜索句柄由 drop guard 恰好关闭一次。
+
+这样 Windows FFI 面可以在一处审查，同时不放松 crate 的其余部分。
 
 ## Windows 目标实际解析的传递依赖
 

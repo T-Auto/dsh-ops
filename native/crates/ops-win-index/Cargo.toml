@@ -19,3 +19,7 @@ ops-index = { path = "../ops-index" }
 usn-journal-rs = "=0.5.0"
 cap-std = "=3.4.6"
 cap-fs-ext = "=3.4.6"
+# W4's hard-link enumeration is the crate's only raw Win32 boundary:
+# FindFirstFileNameW/FindNextFileNameW/FindClose plus GetLastError. The exact
+# 0.61.2 package is already locked by the workspace's other Windows crate.
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
