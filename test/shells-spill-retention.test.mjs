@@ -181,6 +181,29 @@ if (process.platform !== 'win32') {
   console.log('  fixture unavailable: POSIX ownership and mode checks do not apply on this host')
 }
 
+await test('a directory outside the dsh-subprocess-<6> shape is skipped and survives the pass', async () => {
+  // Both live directly under the real temp root: one has a longer prefix
+  // (`dsh-subprocess-launch-*`, the runner's staging directory family) and one
+  // has five or eight random characters instead of the provider's six.
+  const launch = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-subprocess-launch-'))
+  const longName = path.join(os.tmpdir(), 'dsh-subprocess-' + randomBytes(4).toString('hex'))
+  fs.mkdirSync(longName, { mode: 0o700 })
+  const ledger = makeLedger()
+  try {
+    const files = [makeSpillFile(launch, { ageMs: 2 * DAY }), makeSpillFile(longName, { ageMs: 2 * DAY })]
+    for (const file of files) ledger.record({ path: file, bytes: 1 })
+    const result = sweepSpills({ config: expiredConfig, ledger, now: Date.now() })
+    assert.deepEqual(result.deleted, [])
+    assert.deepEqual(result.unknown.map(item => item.reason), ['unexpected-directory', 'unexpected-directory'])
+    for (const file of files) assert.equal(fs.existsSync(file), true, 'a foreign directory\'s file is never deleted')
+    assert.equal(fs.existsSync(launch), true)
+    assert.equal(fs.existsSync(longName), true)
+  } finally {
+    fs.rmSync(launch, { recursive: true, force: true })
+    fs.rmSync(longName, { recursive: true, force: true })
+  }
+})
+
 await test('a directory outside the real temp root is skipped even with a provider-shaped name', async () => {
   const directory = fs.mkdtempSync(path.join(TEST_HOME, 'dsh-subprocess-'))
   const file = makeSpillFile(directory, { ageMs: 2 * DAY })
@@ -239,6 +262,8 @@ await test('one pass is capped and the next pass finishes the window', async () 
     const second = sweepSpills({ config: expiredConfig, ledger, now })
     assert.equal(second.deleted.length, 1)
     assert.equal(files.filter(file => fs.existsSync(file)).length, 0)
+    // Every recorded file is gone; the host's private directory must survive.
+    assert.equal(fs.existsSync(directory), true, 'a pass deletes files, never the spill directory')
   })
 })
 
