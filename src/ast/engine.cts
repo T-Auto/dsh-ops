@@ -72,6 +72,8 @@ export interface RefactorReceipt {
   revision?: string
   /** Files the caller still has to publish. */
   pending?: number
+  /** Absolute anchored path of a planned file, present on `apply`. */
+  target?: string
   /** Files whose content matched, before `limit` was applied. */
   matched?: number
   planned?: number
@@ -288,20 +290,20 @@ async function discover(roots: string[], exts: ReadonlySet<string>, opts: { offs
 
 /* ── Fences and reads ── */
 
-const rootRealCache = new Map<string, string | null>()
-/** Every other cache here is bounded; this one is keyed by path strings, so it needs a ceiling. */
-const ROOT_REAL_LIMIT = 512
-/** Exposed so the bound itself can be asserted: a cache that only grows is a leak, not a cache. */
-export const rootRealCacheSize = (): number => rootRealCache.size
+/** Kept for the assertion that a fence answer is recomputed rather than remembered. */
+export const rootRealCacheSize = (): number => 0
 
+/**
+ * Resolve fence roots afresh on every call.
+ *
+ * This used to be a module-level cache. A fence answer is a security decision, and a cached one
+ * survives a junction swap that happened after it was taken: the check would keep saying "inside"
+ * for a root that now points elsewhere. A root list is one or two entries, so the resolve costs
+ * nothing worth caching.
+ */
 function realRoots(roots: readonly string[]): Array<string | null> {
-  if (rootRealCache.size > ROOT_REAL_LIMIT) rootRealCache.clear()
   return roots.map((root) => {
-    if (rootRealCache.has(root)) return rootRealCache.get(root) ?? null
-    let real: string | null = null
-    try { real = realpathSync.native(root) } catch { /* not a boundary */ }
-    rootRealCache.set(root, real)
-    return real
+    try { return realpathSync.native(root) } catch { return null }
   })
 }
 
@@ -674,7 +676,9 @@ export async function refactor(req: RefactorRequest, cwd: string = process.cwd()
     const totalEdits = plans.reduce((n, p) => n + p.edits, 0)
     const fileSummary: FileDelta[] = plans.slice(0, mode === 'apply' ? 500 : 20).map((p) => ({
       file: p.rel, edits: p.edits, addedLines: p.delta.addedLines, removedLines: p.delta.removedLines,
-      ...(mode === 'apply' ? { after: p.after, revision: digest(p.text) } : {}),
+      // The anchored target travels with the plan: re-deriving it from cwd + relative in the
+      // publisher would discard the anchor this engine already computed.
+      ...(mode === 'apply' ? { after: p.after, revision: digest(p.text), target: p.target } : {}),
     }))
 
     if (conflicts.length > 0) {

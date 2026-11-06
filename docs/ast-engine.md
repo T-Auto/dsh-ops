@@ -71,9 +71,12 @@ the replacement `after` text and the `revision` the plan was built against, and 
 written **through its own descriptor**: opened once with `O_NOFOLLOW`, read for the revision check,
 written and truncated and fsynced on that same descriptor.
 
-Writing through the descriptor is what makes a hostile path change meaningless — replacing the
-parent directory with a junction between the plan and the write redirects nothing, because the
-descriptor already names an inode, not a path. The trade is atomicity: a rename leaves a file
+Writing through the descriptor binds the write to one inode, so a leaf swapped between the open and
+the write cannot redirect it. A **parent** directory swapped for a junction is different: the open
+resolves the whole path afresh, so the write lands where the junction points. Node exposes no
+`openat`, so this cannot be prevented here — it is detected instead: the directory is resolved and
+checked against the workspace before the descriptor is opened, which narrows the window to the
+instant between that check and the open rather than closing it. The trade is atomicity: a rename leaves a file
 all-old or all-new at every instant, while an in-place write can be interrupted halfway. The original
 text is kept in memory, restored if the write fails, and the result is read back and compared before
 the call reports success. **Ownership, ACLs, xattrs and hard links are preserved**, because the inode

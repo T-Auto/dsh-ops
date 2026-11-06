@@ -148,4 +148,25 @@ await test('a session whose cwd is a link still reaches its own files', async ()
   } finally { fs.rmSync(base, { recursive: true, force: true }) }
 })
 
+await test('a parent directory swapped for a junction is refused, not written through', async () => {
+  const base = root()
+  try {
+    const ws = path.join(base, 'ws'), out = path.join(base, 'out')
+    fs.mkdirSync(path.join(ws, 'sub'), { recursive: true })
+    fs.mkdirSync(out, { recursive: true })
+    write(ws, 'sub/target.ts', "console.log('a')\n")
+    write(out, 'target.ts', "console.log('OUTSIDE')\n")
+    // Point at the file directly so the walk cannot refuse first: this is the publisher's own guard.
+    const planned = await call('ast_refactor', { file: 'sub/target.ts', pattern: 'console.log($A)', rewrite: 'logger.log($A)', mode: 'preview' }, ws, ws)
+    assert.equal(planned.status, 'completed', JSON.stringify(planned.error))
+    fs.rmSync(path.join(ws, 'sub'), { recursive: true })
+    try { fs.symlinkSync(out, path.join(ws, 'sub'), 'junction') } catch { return }
+    const applied = await call('ast_refactor', { file: 'sub/target.ts', pattern: 'console.log($A)', rewrite: 'PWNED($A)', mode: 'apply' }, ws, ws)
+    assert.notEqual(applied.status, 'completed', JSON.stringify(applied))
+    assert.equal(applied.error.code, 'PATH_RESTRICTED')
+    assert.equal(fs.readFileSync(path.join(out, 'target.ts'), 'utf8'), "console.log('OUTSIDE')\n",
+      'a descriptor only binds one inode: the parent has to be checked too')
+  } finally { fs.rmSync(base, { recursive: true, force: true }) }
+})
+
 report('ast-security')

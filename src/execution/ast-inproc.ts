@@ -55,10 +55,22 @@ const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8
  * @param after - the complete replacement text
  * @returns undefined on success, or the code and message of the refusal
  */
-function publish(target: string, revision: string, after: string): { code: string; message: string } | undefined {
-  // O_NOFOLLOW is a POSIX flag: on Windows it is accepted and ignored, so a link would be followed
-  // and its target rewritten. Ask the question the descriptor cannot.
+function publish(target: string, revision: string, after: string, writeRoot: string): { code: string; message: string } | undefined {
+  // O_NOFOLLOW is a POSIX flag: on Windows it is accepted and ignored, so a leaf link would be
+  // followed and its target rewritten. Ask the question the descriptor cannot.
   try { if (fs.lstatSync(target).isSymbolicLink()) return { code: 'E_NOT_REGULAR', message: `${target} is a link; refusing to write through it` } } catch { /* absent: open reports it */ }
+  // A descriptor binds one inode, so a leaf swapped after the open cannot redirect the write. A
+  // *parent* swapped for a junction is different: the open resolves the whole path afresh and lands
+  // wherever the junction points. That cannot be prevented with the primitives Node offers, so it is
+  // detected here and the claim in the docs says so.
+  const parent = path.dirname(target)
+  let realParent: string
+  try { realParent = fs.realpathSync.native(parent) } catch {
+    return { code: 'E_NOT_REGULAR', message: `${parent} is not a usable directory` }
+  }
+  if (!inside(writeRoot, realParent)) {
+    return { code: 'PATH_RESTRICTED', message: `${parent} resolves outside the workspace: ${realParent}` }
+  }
   let fd: number
   try { fd = fs.openSync(target, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW) } catch {
     return { code: 'E_NOT_REGULAR', message: `${target} is not a regular file` }
@@ -216,11 +228,18 @@ export async function invokeAst(tool: string, ctx: Context, args: unknown, exec:
     if (record(value) && value.status === 'ok' && tool === 'ast_refactor' && input.mode === 'apply' && Array.isArray(value.files)) {
       const applied: string[] = []
       for (const item of value.files) {
-        if (!record(item) || typeof item.file !== 'string' || typeof item.after !== 'string' || typeof item.revision !== 'string') continue
+        if (!record(item) || typeof item.file !== 'string' || typeof item.after !== 'string' || typeof item.revision !== 'string') {
+          // A plan entry this code cannot read is a bug in the contract, not a file to skip: say so
+          // instead of publishing the rest and reporting success.
+          return { ...value, status: 'error', applied: applied.length > 0, effectState: applied.length > 0 ? 'partial' : 'unknown', filesApplied: applied,
+            error: { code: 'E_INTERNAL', phase: 'execute', effectState: applied.length > 0 ? 'partial' : 'unknown', retryable: false,
+              message: 'the plan carried an entry this publisher could not read', nextAction: 'Inspect the result before retrying.' } }
+        }
         if (signal?.aborted) return { ...value, status: 'error', applied: applied.length > 0, effectState: applied.length > 0 ? 'partial' : 'none', filesApplied: applied,
           error: { code: 'ABORTED', phase: 'execute', effectState: applied.length > 0 ? 'partial' : 'none', retryable: false,
             message: 'cancelled before every planned file was published', nextAction: 'Inspect filesApplied before retrying.' } }
-        const refused = publish(path.resolve(cwd, item.file), item.revision, item.after)
+        const target = typeof item.target === 'string' ? item.target : path.resolve(cwd, item.file)
+        const refused = publish(target, item.revision, item.after, writeRoots[0])
         if (refused) return { ...value, status: 'error', applied: applied.length > 0, effectState: applied.length > 0 ? 'partial' : 'none', filesApplied: applied,
           error: { code: refused.code, phase: 'execute', effectState: applied.length > 0 ? 'partial' : 'none', retryable: false, message: refused.message,
             nextAction: applied.length > 0 ? 'Inspect filesApplied before retrying.' : ADVICE } }
