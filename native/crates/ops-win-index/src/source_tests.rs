@@ -66,6 +66,19 @@ fn a_source_without_a_cursor_store_never_claims_ready() {
 }
 
 #[test]
+fn a_source_without_a_cursor_store_skips_the_volume_probe() {
+    let root = unique_root("no-store-probe");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create root");
+    let source = WinFsSource::new();
+    // With no store the answer is Unavailable before elevation/journal probing:
+    // an unprivileged or journal-less runner must see Unavailable here, not the
+    // Unsupported fallback that open_for_root/info would produce.
+    assert_eq!(source.state(&root), SourceState::Unavailable);
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
 fn cold_enumeration_matches_a_walk_and_the_cap_identity() {
     let root = unique_root("identity");
     let _ = fs::remove_dir_all(&root);
