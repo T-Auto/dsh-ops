@@ -145,6 +145,12 @@ A job that genuinely cannot gate a merge (a measurement) does not belong in `ci.
 non-gating workflow. There is currently exactly one such job, the bench smoke in
 `benchmark-gates.yml`.
 
+## When it is red
+
+Every gate has a log line with a meaning and a local command that reproduces it. The dictionary is
+[ci-troubleshooting.md](ci-troubleshooting.md) (中文：[ci-troubleshooting.zh.md](ci-troubleshooting.zh.md)):
+start there before changing a timeout, widening a skip list, or re-running a deterministic failure.
+
 ## Known limits, stated rather than hidden
 
 - **`actionlint` is not used.** It cannot be installed on these runners without network installs, so

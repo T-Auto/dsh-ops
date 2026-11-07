@@ -136,6 +136,7 @@ Enable `tui.enabled` on the `dsh-ops` row in dsh-TUI and restart to add the OPS 
 - [Windows runtime evidence](docs/windows-runtime-evidence.md): payload compatibility, Low integrity, MSYS startup and antivirus/approval diagnostics.
 - [Native PTC](docs/native-ptc.md) · [Manual validation](docs/manual-validation.md)
 - [Contributing](docs/CONTRIBUTING.md) · [Roadmap](docs/roadmap.md) · [Changelog](docs/CHANGELOG.md) · [Provenance](docs/PROVENANCE.md)
+- [CI troubleshooting](docs/ci-troubleshooting.md) · [CI 排错说明](docs/ci-troubleshooting.zh.md)
 
 ## Windows Bash diagnostics
 
