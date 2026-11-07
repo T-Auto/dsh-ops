@@ -1,12 +1,12 @@
 #![forbid(unsafe_code)]
-use ops_protocol as contract;
-use ops_files::paths;
-use ops_results::{self as results, store};
 use crate::{
     contract::*,
     store::{Store, now},
 };
 use cap_std::fs::Dir;
+use ops_files::paths;
+use ops_protocol as contract;
+use ops_results::{self as results, store};
 use serde_json::{Value, json};
 const MAX_OPERATIONS: usize = 512;
 
@@ -152,7 +152,9 @@ pub fn run(root: &Dir, store: &Store, request: &Request) -> Result<Value> {
             }
             validate_saved(&job)?;
             for item in &job.items {
-                if item.state == State::Pending { paths::authorize_tree(root, &item.operation.path, request)?; }
+                if item.state == State::Pending {
+                    paths::authorize_tree(root, &item.operation.path, request)?;
+                }
             }
             execute(root, store, &mut job, request)?;
             Ok(summary(&job))

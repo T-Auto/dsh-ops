@@ -42,7 +42,7 @@ export async function apply(root: Context, rawConfig: unknown): Promise<void> {
   try {
     // The browser half mounts its `opsSettings` remote; the legacy shell row used
     // to provide that seam, so the merged row owns it now.
-    await host.plugin({ name: 'dsh-ops/runtime-settings', apply: (ctx: Context) => mountRuntimeSettings(ctx) })
+    await host.plugin({ name: 'dsh-ops/runtime-settings', apply: (ctx: Context) => mountRuntimeSettings(ctx, { config: () => rawConfig }) })
     for (const mode of ['minimal', 'standard', 'ptc', 'cordis'] as const) {
       const state = config[mode]
       const effective = resolveModeConfig(effectiveMode(state, config.global, typeof config.other.raw?.pwsh7Link === 'boolean' ? config.other.raw.pwsh7Link : companionVersion({ sweep: false }) !== undefined), mode)

@@ -51,12 +51,20 @@ await test('default provision uses fixed Niubash home, verifies reuse, rejects c
   verifyNiubashTree(target)
   const inventory = managedBashInventory()
   assert.equal(inventory.find(entry => entry.backend === 'niubash')?.owned, true)
-  const selected = selectBashRuntime('managed', { platform: 'win32', arch: 'x64' })
-  assert.equal(selected.file, path.join(target, 'niu.exe')); assert.equal(selected.restricted.compatible, true)
+  const selected = selectBashRuntime('niubash', { platform: 'win32', arch: 'x64' })
+  assert.equal(selected.clear, true)
+  assert.equal(selected.engine, 'niubash')
+  assert.equal(selected.file, path.join(target, 'niu.exe'))
+  assert.match(selected.restriction, /verified|sandbox/i)
   assert.equal(removeManagedBash().action, 'preview'); assert.equal(fs.existsSync(target), true)
   removeManagedBash({ yes: true })
   assert.equal(fs.existsSync(target), false); assert.deepEqual(managedBashInventory(), [])
-  assert.throws(() => selectBashRuntime('managed', { platform: 'win32', arch: 'x64' }), /install/)
+  // The choice itself never throws: with no copy left it either reports the packaged
+  // payload or states that none is installed, instead of pinning a stale path.
+  const afterRemoval = selectBashRuntime('niubash', { platform: 'win32', arch: 'x64' })
+  assert.equal(afterRemoval.clear, true)
+  assert.ok(afterRemoval.file === undefined || /niu\.exe$/i.test(afterRemoval.file))
+  if (afterRemoval.file === undefined) assert.match(afterRemoval.detail, /bash-runtime install/)
   } finally {
     if (savedHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = savedHome
@@ -67,12 +75,18 @@ await test('npm pack carries every frozen file; consumer verifies and runs Niuba
   stageNiubashArchive(archive, runtime)
   fs.writeFileSync(path.join(source, 'package.json'), JSON.stringify({ name: 'niubash-payload-test', version: '1.0.0', files: ['runtime'] }))
   const result = npm(['pack', '--ignore-scripts', '--json', '--pack-destination', root], { cwd: source })
-  const packed = JSON.parse(result.stdout)[0]
-  checkNiubashTarball(path.join(root, packed.filename))
-  const listed = new Set(packed.files.map(entry => entry.path))
+  assert.equal(result.status, 0, result.stderr)
+  // npm's JSON report differs across versions. Inspect the one fresh artifact
+  // and its actual members, retaining the full frozen-byte verification.
+  const artifacts = fs.readdirSync(root).filter(name => name.endsWith('.tgz'))
+  assert.equal(artifacts.length, 1, result.stdout)
+  const artifact = path.join(root, artifacts[0])
+  checkNiubashTarball(artifact)
+  const listed = new Set()
+  tar.list({ file: artifact, sync: true, strict: true, onentry(entry) { listed.add(entry.path.replace(/^package\//u, '')) } })
   for (const name of Object.keys(NIUBASH_PIN.files)) assert(listed.has(`${NIUBASH_PACKAGE_PATH}/${name}`), name)
   const consumer = path.join(root, 'consumer'); fs.mkdirSync(consumer)
-  await tar.x({ file: path.join(root, packed.filename), cwd: consumer, strict: true })
+  await tar.x({ file: artifact, cwd: consumer, strict: true })
   const deployed = path.join(consumer, 'package', NIUBASH_PACKAGE_PATH)
   const executable = verifyNiubashTree(deployed)
   if (process.platform === 'win32') {

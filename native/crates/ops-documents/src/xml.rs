@@ -15,14 +15,19 @@ fn valid(text: &str) -> bool {
 pub fn decode(bytes: &[u8]) -> Result<String> {
     let (text, encoding) = if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
         if !bytes.len().is_multiple_of(2) {
-            return Err(Failure::new("ERR_INVALID_ENCODING", "Odd DOCX UTF-16 byte count"));
+            return Err(Failure::new(
+                "ERR_INVALID_ENCODING",
+                "Odd DOCX UTF-16 byte count",
+            ));
         }
         let le = bytes[0] == 0xff;
-        let units = bytes[2..]
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|b| if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) });
+        let units = bytes[2..].as_chunks::<2>().0.iter().map(|b| {
+            if le {
+                u16::from_le_bytes([b[0], b[1]])
+            } else {
+                u16::from_be_bytes([b[0], b[1]])
+            }
+        });
         let text = char::decode_utf16(units)
             .collect::<std::result::Result<String, _>>()
             .map_err(|_| Failure::new("ERR_INVALID_ENCODING", "Invalid DOCX UTF-16 surrogate"))?;
@@ -31,7 +36,10 @@ pub fn decode(bytes: &[u8]) -> Result<String> {
         (
             std::str::from_utf8(bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes))
                 .map_err(|_| {
-                    Failure::new("ERR_INVALID_ENCODING", "DOCX XML must be strict UTF-8 or BOM-marked UTF-16")
+                    Failure::new(
+                        "ERR_INVALID_ENCODING",
+                        "DOCX XML must be strict UTF-8 or BOM-marked UTF-16",
+                    )
                 })?
                 .to_owned(),
             "utf-8",
@@ -46,7 +54,9 @@ pub fn decode(bytes: &[u8]) -> Result<String> {
             return Err(bad("Only XML 1.0 is supported"));
         }
         if let Some(declared) = decl.encoding() {
-            let declared = declared.map_err(|e| bad(e.to_string()))?.to_ascii_lowercase();
+            let declared = declared
+                .map_err(|e| bad(e.to_string()))?
+                .to_ascii_lowercase();
             if declared != encoding && !(declared == "utf-16" && encoding.starts_with("utf-16")) {
                 return Err(Failure::new(
                     "ERR_INVALID_ENCODING",
@@ -67,16 +77,25 @@ pub enum Token {
     End(String),
     Text(String),
 }
-pub fn walk(text: &str, started: Instant, mut visit: impl FnMut(Token) -> Result<()>) -> Result<()> {
+pub fn walk(
+    text: &str,
+    started: Instant,
+    mut visit: impl FnMut(Token) -> Result<()>,
+) -> Result<()> {
     let mut reader = NsReader::from_str(text);
     reader.config_mut().check_comments = true;
     reader.resolver_mut().set_max_namespace_bindings(512);
     let (mut depth, mut roots, mut declaration, mut events) = (0usize, 0usize, false, 0usize);
     loop {
         if started.elapsed() > Duration::from_secs(30) {
-            return Err(Failure::new("DEADLINE_EXCEEDED", "Document parse reached its 30-second deadline"));
+            return Err(Failure::new(
+                "DEADLINE_EXCEEDED",
+                "Document parse reached its 30-second deadline",
+            ));
         }
-        let event = reader.read_event().map_err(|e| bad(format!("Invalid DOCX XML: {e}")))?;
+        let event = reader
+            .read_event()
+            .map_err(|e| bad(format!("Invalid DOCX XML: {e}")))?;
         match event {
             Event::Start(ref tag) | Event::Empty(ref tag) => {
                 if depth == 0 {
@@ -86,7 +105,10 @@ pub fn walk(text: &str, started: Instant, mut visit: impl FnMut(Token) -> Result
                     }
                 }
                 if depth >= 128 {
-                    return Err(Failure::new("OUTPUT_LIMIT", "DOCX XML exceeds 128 nesting levels"));
+                    return Err(Failure::new(
+                        "OUTPUT_LIMIT",
+                        "DOCX XML exceeds 128 nesting levels",
+                    ));
                 }
                 let (ns, name) = reader.resolver().resolve_element(tag.name());
                 let ns = match ns {
@@ -97,7 +119,10 @@ pub fn walk(text: &str, started: Instant, mut visit: impl FnMut(Token) -> Result
                 let mut attrs = BTreeMap::new();
                 for (index, attr) in tag.attributes().enumerate() {
                     if index >= 64 {
-                        return Err(Failure::new("OUTPUT_LIMIT", "DOCX element exceeds 64 attributes"));
+                        return Err(Failure::new(
+                            "OUTPUT_LIMIT",
+                            "DOCX element exceeds 64 attributes",
+                        ));
                     }
                     let attr = attr.map_err(|e| bad(e.to_string()))?;
                     let value = attr
@@ -109,13 +134,20 @@ pub fn walk(text: &str, started: Instant, mut visit: impl FnMut(Token) -> Result
                     }
                     if attr.key.as_ref() != "xmlns"
                         && !attr.key.as_ref().starts_with("xmlns:")
-                        && matches!(reader.resolver().resolve_attribute(attr.key).0, ResolveResult::Unknown(_))
+                        && matches!(
+                            reader.resolver().resolve_attribute(attr.key).0,
+                            ResolveResult::Unknown(_)
+                        )
                     {
                         return Err(bad("Unbound XML attribute namespace"));
                     }
                     attrs.insert(attr.key.as_ref().to_owned(), value);
                 }
-                visit(Token::Start(Tag { ns: ns.clone(), name: name.clone(), attrs }))?;
+                visit(Token::Start(Tag {
+                    ns: ns.clone(),
+                    name: name.clone(),
+                    attrs,
+                }))?;
                 if matches!(event, Event::Empty(_)) {
                     visit(Token::End(name))?;
                 } else {
@@ -127,7 +159,9 @@ pub fn walk(text: &str, started: Instant, mut visit: impl FnMut(Token) -> Result
                 if !matches!(ns, ResolveResult::Bound(_)) {
                     return Err(bad("Unbound DOCX XML closing element"));
                 }
-                depth = depth.checked_sub(1).ok_or_else(|| bad("Unexpected XML closing element"))?;
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| bad("Unexpected XML closing element"))?;
                 visit(Token::End(name.as_ref().to_owned()))?;
             }
             Event::Text(value) => {
@@ -147,7 +181,8 @@ pub fn walk(text: &str, started: Instant, mut visit: impl FnMut(Token) -> Result
                     return Err(bad("Entity outside XML root"));
                 }
                 let escaped = format!("&{};", value.as_ref());
-                let expanded = quick_xml::escape::unescape(&escaped).map_err(|e| bad(e.to_string()))?;
+                let expanded =
+                    quick_xml::escape::unescape(&escaped).map_err(|e| bad(e.to_string()))?;
                 if !valid(&expanded) {
                     return Err(bad("Invalid XML character reference"));
                 }

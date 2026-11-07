@@ -284,22 +284,29 @@ export function fromPath({ names, pathValue, reject }: { names: readonly string[
 }
 
 /**
- * Windows ships `%SystemRoot%\\System32\\bash.exe` as the WSL distribution
- * launcher, not as a POSIX shell. Treating it as a normal PATH bash silently
- * moves commands into a Linux distribution, so it must never be selected by
- * the system fallback. `path.win32` is intentional: tests can exercise the
- * Windows resolver while running on another host platform.
+ * Windows ships the WSL distribution launcher as a `bash.exe`, not as a POSIX
+ * shell: `%SystemRoot%\\System32\\bash.exe`, plus the Store app-execution alias
+ * `%LOCALAPPDATA%\\Microsoft\\WindowsApps\\bash.exe`, which `where bash` finds on a
+ * machine that never installed Git Bash. Treating either as a normal PATH bash
+ * silently moves commands into a Linux distribution, so neither may be selected
+ * by the fallback scan or offered as a candidate. `path.win32` is intentional:
+ * tests can exercise the Windows resolver while running on another host platform.
  * @param {string} file - candidate executable.
- * @param {NodeJS.ProcessEnv} env - environment containing SystemRoot.
+ * @param {NodeJS.ProcessEnv} env - environment containing SystemRoot and LOCALAPPDATA.
  * @param {string} platform - target platform.
- * @returns {boolean} whether the candidate is the WSL launcher.
+ * @returns {boolean} whether the candidate is a WSL launcher.
  */
 export function isWslBashLauncher(file: string, env: NodeJS.ProcessEnv, platform: string) {
   if (platform !== 'win32') return false
-  const systemRoot = env.SystemRoot ?? env.SYSTEMROOT
-  if (typeof systemRoot !== 'string' || systemRoot.trim() === '') return false
   const normalize = (value: string) => path.win32.normalize(value).replace(/[\\/]+$/, '').toLowerCase()
-  return normalize(file) === normalize(path.win32.join(systemRoot, 'System32', 'bash.exe'))
+  const candidate = normalize(file)
+  const systemRoot = env.SystemRoot ?? env.SYSTEMROOT
+  if (typeof systemRoot === 'string' && systemRoot.trim() !== ''
+    && candidate === normalize(path.win32.join(systemRoot, 'System32', 'bash.exe'))) return true
+  // The Store alias lives under %LOCALAPPDATA%; a Git for Windows install never does.
+  const aliasRoot = env.LOCALAPPDATA ?? env.LocalAppData
+  return typeof aliasRoot === 'string' && aliasRoot.trim() !== ''
+    && candidate === normalize(path.win32.join(aliasRoot, 'Microsoft', 'WindowsApps', 'bash.exe'))
 }
 
 /**

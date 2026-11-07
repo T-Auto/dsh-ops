@@ -13,6 +13,7 @@ await test('authority snapshots stop before spawn without inventing selector den
   await withTempDir('safety-authority', async root => {
     let resolves = 0, spawns = 0, current = 'workspace-write'
     const ctx = { get(name) {
+      if (name === 'workingDirectory') return { ensure: async agent => agent.session.header.cwd }
       if (name === 'sandboxPolicy') return { resolve: () => ({ mode: ++resolves === 1 ? 'danger-full-access' : current, workspaceRoot: root }) }
       if (name === 'subprocess') return { spawn() { spawns++; throw new Error('must not spawn') } }
     } }

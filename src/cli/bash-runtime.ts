@@ -3,16 +3,26 @@ import { commandProvisionShells } from './provision-shells.js'
 import { readRowConfig } from './report.js'
 import { resolveConfig } from '../config.js'
 import { resolveShells } from '../shells.js'
-import { gitBashCandidates, managedBashInventory, removeManagedBash, selectBashRuntime } from '../shells/manager.js'
+import { bashEngine, gitBashCandidates, managedBashInventory, removeManagedBash, selectBashRuntime } from '../shells/manager.js'
 import { bashIpcReport, reclaimBashGenerations, recoverBashLifecycleLock } from '../bash-ipc.js'
 
-interface BashRuntimeCommandOptions { force?: boolean; dryRun?: boolean; yes?: boolean; configFile?: string; allHostsStopped?: boolean }
+interface BashRuntimeCommandOptions {
+  force?: boolean
+  dryRun?: boolean
+  yes?: boolean
+  configFile?: string
+  allHostsStopped?: boolean
+  /** Explicit Git Bash/MSYS executable for `git`; scanning is used when omitted. */
+  path?: string
+}
 
 export function commandBashRuntime(action = 'status', options: BashRuntimeCommandOptions = {}): number {
   let result
   if (action === 'install') return commandProvisionShells({ kinds: ['bash'], force: options.force ?? false, dryRun: options.dryRun ?? false, pinFile: undefined })
   if (action === 'remove') result = removeManagedBash(options)
-  else if (action === 'git' || action === 'managed') result = selectBashRuntime(action)
+  // `managed` is the pre-Niubash spelling: the default rung is the packaged payload now.
+  else if (action === 'niubash' || action === 'managed') result = selectBashRuntime('niubash')
+  else if (action === 'git') result = selectBashRuntime('git', options.path === undefined ? {} : { path: options.path })
   else if (action === 'clean-cache') {
     const shells = resolveShells(resolveConfig(readRowConfig(options.configFile)))
     const inventory = bashIpcReport(shells.bash.available ? shells.bash.file : undefined)
@@ -26,14 +36,16 @@ export function commandBashRuntime(action = 'status', options: BashRuntimeComman
   }
   else if (action === 'status') {
     const shells = resolveShells(resolveConfig(readRowConfig(options.configFile)))
-    result = { selected: shells.bash, managed: managedBashInventory(), git: gitBashCandidates(),
+    result = { selected: shells.bash, engine: bashEngine(shells.bash.file),
+      managed: managedBashInventory(), git: gitBashCandidates(),
       // The private Windows runtime is the one piece of state that used to grow silently on every
       // upgrade; report it beside the shell it belongs to (#466).
       bashIpc: bashIpcReport(shells.bash.available ? shells.bash.file : undefined) }
   }
-  else throw new Error('Expected bash-runtime status, install, remove, git, managed or clean-cache.')
+  else throw new Error('Expected bash-runtime status, install, remove, niubash, git or clean-cache.')
   console.log(JSON.stringify(result, null, 2))
-  if (action === 'git' || action === 'managed') console.log('Apply the config object to the matching preset section of the single dsh-ops row with the host config editor, then reload the component. No profile was changed.')
+  if (action === 'niubash' || action === 'managed') console.log('Remove bashPath from every preset section of the single dsh-ops row (and any custom preset options) that should use the default Niubash payload. No profile was changed.')
+  if (action === 'git') console.log('Set bashPath to the reported absolute executable on the preset section(s) that should use it. No profile was changed.')
   if (action === 'remove' && 'action' in result && result.action === 'preview') console.log('Pass --yes to remove only these managed Bash versions. Stop running Bash jobs before removal.')
   return 0
 }

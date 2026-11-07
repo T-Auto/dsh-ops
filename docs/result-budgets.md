@@ -36,16 +36,21 @@ cannot be requested through model tool arguments.
 
 ## Native and PTC reference pages
 
-The file row provides Native ops_result with page/release only, independently of the PTC row.
-The single result catalogue entry also supplies PTC put/page/release; PTC-only scopes retain the
-richer schema, and Native descendants receive the file row's page-only projection. Disabling
-file withdraws that projection while the PTC row remains independent. Advanced discovery owns
-its later on-demand publication; enabling the pager does not change any official tool.
+Native, discovery and PTC lease one canonical result definition, including inherited sources.
+The public input schema is put/page/release in every presentation; it is not write authority.
+Native permits owned ref:// page/release only, never audit IDs or purge. Put is rejected before IO
+unless a live root run_code execution token is its parent, with the same agent, root call and exact
+admitted toolSet, and the current presentation admits PTC. The public events prove this live nested
+call and current PTC admission, not cryptographic executor attestation. Native nested calls and
+invented/stale parent tokens do not authorize put. Put writes only the session-private cache and
+retains the normal size, format, credential and sandbox authority checks.
 
-Native accepts only ref:// handles, never legacy audit IDs or put/purge. Omit root to use the
-current session cwd; after changing cwd, pass the original referenceRoot. PTC defaults to the
-workspace root. The locator grants no authority: a different session/root, changed permissions,
-or a hidden producer denies access. Release removes cached observations, never business files.
+Omit root to use the current session cwd in both projections; after changing cwd, pass the original
+referenceRoot. This replaces PTC's former workspace-root default for the shared result capability;
+pass root explicitly when paging a workspace-bound batch audit. The locator grants no authority:
+a different session/root, changed permissions or hidden producer denies access. Release removes
+cached observations, never business files. Unloading one consumer leaves other grants intact;
+a new resolve is required after real source/grant changes.
 
 Pages default to offset=0, limit=64 and maxBytes=16384 (bounds: 1-512 rows, 512-65536 bytes).
 equals filters top-level exact values before fields projection; offsets count filtered stored rows.

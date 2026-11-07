@@ -282,7 +282,15 @@ fn diff_file(request: &Request) -> Result<Value> {
         .skip(args.offset)
         .take(args.limit)
         .collect();
-    let mut output = result(request, items, total, args.offset, args.offset, total, false);
+    let mut output = result(
+        request,
+        items,
+        total,
+        args.offset,
+        args.offset,
+        total,
+        false,
+    );
     output["before"] = content_facts(&bytes);
     output["after"] = content_facts(args.content.as_bytes());
     output["hunk"] = json!({"startLine":prefix+1,"removed":removed.len(),"added":added.len()});
@@ -340,7 +348,11 @@ fn write_single(
     // `prepare` is pure, so the snapshot's result is still exact when the locked read returned the
     // same bytes, and the locked comparison is what makes that claim authoritative. Re-planning the
     // same input would only duplicate the copy of the proposed content on every write.
-    let next = if original.as_deref() == snapshot.as_deref() { preview } else { validate(original.as_deref())? };
+    let next = if original.as_deref() == snapshot.as_deref() {
+        preview
+    } else {
+        validate(original.as_deref())?
+    };
     let changed = original.as_deref() != Some(next.as_slice());
     let mut output = receipt(&path, original.as_deref(), &next, false, changed);
     if !changed {
@@ -375,7 +387,9 @@ fn publish_new(
         true,
     )?;
     #[cfg(windows)]
-    let preserved = source.map(|source| publication::Preserved::capture(source, false)).transpose()?;
+    let preserved = source
+        .map(|source| publication::Preserved::capture(source, false))
+        .transpose()?;
     #[cfg(unix)]
     let preserved = source.map(PreservedMetadata::of).transpose()?;
     let temporary = format!(".{}.dsh-ops-{}", checked.name, uuid::Uuid::new_v4());
@@ -402,8 +416,10 @@ fn publish_new(
         #[cfg(windows)]
         if source.is_none() {
             dsh_ops_windows_metadata::inherit_new_file_dacl(
-                &checked.parent.try_clone()?.into_std_file(), &file.try_clone()?.into_std(),
-            ).map_err(|error| Failure::new("METADATA_UNSUPPORTED", error))?;
+                &checked.parent.try_clone()?.into_std_file(),
+                &file.try_clone()?.into_std(),
+            )
+            .map_err(|error| Failure::new("METADATA_UNSUPPORTED", error))?;
         }
         file.sync_all()?;
         Ok(())
@@ -412,20 +428,22 @@ fn publish_new(
         publication::discard_sibling(&checked.parent, &temporary, file)?;
         return Err(error);
     }
-    if let (Some(source), Some(expected)) = (source, expected_source) {
-        if let Err(error) =
+    if let (Some(source), Some(expected)) = (source, expected_source)
+        && let Err(error) =
             read_bytes(&source.display).and_then(|bytes| check_revision(Some(&bytes), expected))
-        {
-            publication::discard_sibling(&checked.parent, &temporary, file)?;
-            return Err(error);
-        }
+    {
+        publication::discard_sibling(&checked.parent, &temporary, file)?;
+        return Err(error);
     }
     #[cfg(target_os = "macos")]
     {
         // RENAME_EXCL publishes an absent destination without a staging unlink.
         // A preserved Darwin deny-delete ACE must not strand a second hardlink.
         let published = rustix::fs::renameat_with(
-            &checked.parent, temporary.as_str(), &checked.parent, checked.name.as_str(),
+            &checked.parent,
+            temporary.as_str(),
+            &checked.parent,
+            checked.name.as_str(),
             rustix::fs::RenameFlags::NOREPLACE,
         );
         if let Err(error) = published {
@@ -452,7 +470,9 @@ fn publish_new(
     #[cfg(not(target_os = "macos"))]
     published?;
     #[cfg(windows)]
-    if let Some(preserved) = &preserved { preserved.verify(&checked.parent, &checked.name)?; }
+    if let Some(preserved) = &preserved {
+        preserved.verify(&checked.parent, &checked.name)?;
+    }
     #[cfg(not(target_os = "macos"))]
     sync_applied(&checked.parent)
 }
@@ -499,12 +519,15 @@ fn transfer_file(request: &Request) -> Result<Value> {
     let snapshot_source = read_bytes(&source.display)?;
     check_revision(Some(&snapshot_source), &args.expected_revision)?;
     let snapshot_target = crate::file_path::checked_leaf(&args.to, true)?;
-    match snapshot_target.parent.symlink_metadata(&snapshot_target.name) {
+    match snapshot_target
+        .parent
+        .symlink_metadata(&snapshot_target.name)
+    {
         Ok(_) => {
             return Err(Failure::new(
                 "REVISION_CONFLICT",
                 "Destination exists; no clobber is permitted",
-            ))
+            ));
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
         Err(error) => return Err(error.into()),
@@ -527,7 +550,9 @@ fn transfer_file(request: &Request) -> Result<Value> {
     } else {
         read_bytes(&source.display)?
     };
-    if request.tool != "copy" { check_revision(Some(&bytes), &args.expected_revision)?; }
+    if request.tool != "copy" {
+        check_revision(Some(&bytes), &args.expected_revision)?;
+    }
     let target = crate::file_path::checked_leaf(&args.to, true)?;
     match target.parent.symlink_metadata(&target.name) {
         Ok(_) => {
@@ -610,7 +635,9 @@ fn remove_file(request: &Request) -> Result<Value> {
     let bytes = read_bytes(&path)?;
     // The locked read is authoritative; when it stayed identical the validated snapshot still
     // decides, so no second hash of the same bytes is needed.
-    if bytes != snapshot { check_revision(Some(&bytes), &args.expected_revision)?; }
+    if bytes != snapshot {
+        check_revision(Some(&bytes), &args.expected_revision)?;
+    }
     let checked = crate::file_path::checked(&args.path)?;
     checked.parent.remove_file(&checked.name)?;
     sync_applied(&checked.parent)?;

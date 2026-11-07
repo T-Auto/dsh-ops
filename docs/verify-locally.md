@@ -69,8 +69,8 @@ table (`tools-trial-report.md`). Tools the build does not publish, and published
 scenario yet, are reported as `skipped` with the reason, never silently.
 
 It is not a suite on purpose: `test/*.test.mjs` is the inventory the gate asserts was collected, and
-this trial is not a gate. CI runs it in its own `tools-trial` job with `continue-on-error`, so a tool
-that breaks is visible without blocking a merge.
+this trial is not a suite. It is a gate: CI runs it in its own `tools-trial` job, and a published tool
+that breaks blocks the merge until it is fixed or reverted.
 
 ## Expected numbers
 
@@ -80,8 +80,7 @@ that breaks is visible without blocking a merge.
 | `win32-x64` | same inventory | the two above, plus `file-metadata` and `linux-attributes` (mode bits, POSIX ACLs, user xattrs, inode identity, sparse allocation) and `linux-shell` (the POSIX bash rung, which is its own subject) |
 
 `DSH_OPS_REQUIRE_RUNTIME=1` — which turns any skip into a failure — is set on the POSIX hosts
-only. CI runs this same gate on `macos-15-intel` as a non-blocking signal because that leg takes
-318 s (>300 s, see [ci.md](ci.md)); locally it is still the full gate.
+only. CI runs this same gate on `macos-15-intel` as a blocking leg; locally it is still the full gate.
 
 On Windows the three suites above skip by platform, and `test/run.mjs` cannot tell that
 apart from a missing runtime, so the script keeps its protection there through the skip set

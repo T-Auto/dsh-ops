@@ -22,6 +22,9 @@
 
 以提高token效率为目的，提供新增的ops系列工具并隐藏部分官方工具为方案的插件，低改动面，低侵入性，与其他插件广泛兼容。
 
+> [!IMPORTANT]
+> 刚刚发布的ops 0.5.0版本有个不删除缓存导致消耗的硬盘空间无限膨胀的bug，请尽快停用，等待修复
+
 - Bash 与宿主 Shell 隐藏独立配置；Windows 可用 ops_bash 替代 pwsh，也可保留官方 Shell。
 - Native/PTC 消费者预设发布共享的有界工具面；Bash 由单行开关控制，关闭替换时原版工具保持可用。
 - 启用 DSH 预留的 `tools_addition` 动态工具加载，并提供渐进式纰漏的工具，作为高级功能（如pdf、word读取、超多文件批量修改）的加载平台，大大减少常见特定场景的token消耗量，且不会导致系统提示词膨胀
@@ -83,7 +86,7 @@ dsh plugin --profile dsh-tui add dsh-ops
 
 #### 更新方法
 
-宿主兼容范围明确声明为 DSH **0.2.0-rc.2 与 0.2.1-rc.2**。
+宿主支持从 DSH **0.2.2-rc.1** 起；0.5 系列不再支持 0.2.0/0.2.1 或更早的 0.2.2 预览版。保留 DSH adapter 结构，按 0.2.2 原生工具准入和执行器接口接入。
 组件图标导出、profile 刷新及配置/schema 检查见
 [宿主兼容范围与展示元数据](docs/使用指南.md#宿主兼容范围与展示元数据)。
 
@@ -116,6 +119,7 @@ npx --yes dsh-ops@latest uninstall --profile desktop
 - [Windows 运行时证据](docs/windows-runtime-evidence.zh.md)：载荷兼容、Low 完整性、MSYS 启动及杀软/审批排查。
 - [PTC 设计与使用](docs/native-ptc.md) · [手动验证](docs/手动验收.md)
 - [贡献指南](docs/贡献指南.md) · [路线图](docs/路线图.md) · [变更日志](docs/CHANGELOG.md) · [溯源记录](docs/PROVENANCE.md)
+- [CI 排错说明](docs/ci-troubleshooting.zh.md) · [CI troubleshooting](docs/ci-troubleshooting.md)
 
 ## Windows Bash 自检
 

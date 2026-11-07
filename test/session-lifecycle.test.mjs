@@ -1,20 +1,25 @@
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { SessionStore } from '@deepseek-ai/dsh-session'
 import { mountSessionBash } from '../lib/session-shells.js'
 import * as ptcModule from '../lib/ptc/index.js'
 import * as discoveryModule from '../lib/discovery/index.js'
-import * as hidingModule from '../lib/official-tool-hiding.js'
+import { mountReplacements } from '../lib/publication/replacements.js'
 import { NativeFileTools } from '../lib/file/runtime.js'
 import { bootHost, shutdown } from './lib/host.mjs'
-import { assert, test, report, TEST_HOME } from './lib/harness.mjs'
+import { assert, test, report, waitFor, TEST_HOME } from './lib/harness.mjs'
+import { WORKER, requireWorker } from './lib/boundary.mjs'
 import { legacyComponent } from './lib/legacy-component.mjs'
 const ptc = legacyComponent(ptcModule)
 const discovery = legacyComponent(discoveryModule)
-const hiding = legacyComponent(hidingModule)
+requireWorker('session-lifecycle')
 
 const flush = async () => { for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve)) }
 async function setup() {
   const host = await bootHost()
+  const agents = []
+  host.ctx.provide('agents', { list: () => agents })
+  host.agents = agents
   await host.ctx.plugin(inner => {
     inner.provide('subprocess', { spawn() { throw new Error('publication tests must not execute') } })
     inner.provide('sandboxPolicy', { resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: TEST_HOME }) })
@@ -34,7 +39,7 @@ await test('Bash publication and disposal leave the real SessionStore append bou
   const warnings = []
   ctx.logger.warn = message => { warnings.push(String(message)) }
   try {
-    const component = await ctx.plugin({ inject: ['tools'], apply(inner) {
+    const component = await ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) {
       mountSessionBash(inner, { publishBashTool: true }, { bash: { available: true, file: process.execPath, source: 'explicit' } })
     } })
     const session = ctx.get('sessions').create('append-window', { meta: { cwd: TEST_HOME } })
@@ -69,8 +74,9 @@ await test('Bash publication and disposal leave the real SessionStore append bou
     assert.equal(tools.get('ops_bash', agent), undefined)
     session.mode = 'danger-full-access'
     session.append('sandbox/mode', { mode: session.mode })
-    const first = await prompt.assemble({ scope: agent })
-    assert.ok(first.tools.some(tool => tool.name === 'ops_bash'), 'the first assembly waits and rebuilds its pre-hook snapshot')
+    await flush()
+    const first = await prepareStep(ctx, agent)
+    try { assert.ok(first.assembly.tools.some(tool => tool.name === 'ops_bash'), 'the next resolved step includes deferred publication') } finally { first.dispose() }
     retire = true
     session.append('sandbox/mode', { mode: session.mode })
     await disposal; await observer; await flush()
@@ -84,16 +90,19 @@ await test('Bash publication and disposal leave the real SessionStore append bou
 })
 
 await test('PTC presentation waterfall accepts sections without pre-attached tools (#387)', async () => {
-  const { ctx, tools, prompt } = await setup()
+  const { ctx, tools, prompt, agents } = await setup()
   try {
-    await ctx.plugin(ptc, { binaryPath: process.execPath, required: true })
+    await ctx.plugin(ptc, { binaryPath: WORKER, required: true })
     const agent = mint(ctx, 'presentation-only')
-    await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.presentAs('ptc') } })
+    await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, 'ptc') } })
+    agents.push(agent)
     await ctx.serial('agent/created', { agent }); await flush()
+    await waitFor(async () => { const step = await prepareStep(ctx, agent); try { return Boolean(tools.executable('ops_load_sdk', agent, step.toolSet)) } finally { step.dispose() } })
     await prompt.assemble({ scope: agent }); await flush()
-    const before = tools.get('ops_load_sdk', agent)
+    const step = await prepareStep(ctx, agent)
+    const before = tools.executable('ops_load_sdk', agent, step.toolSet)
     assert.ok(before)
-    const assembly = await prompt.assemble({ scope: agent })
+    const assembly = step.assembly
     const { tools: wire, ...presentation } = assembly
     assert.deepEqual(wire.map(tool => tool.name), ['run_code'])
     // rc.3 runs this public waterfall with PromptPresentation, then attaches
@@ -101,42 +110,61 @@ await test('PTC presentation waterfall accepts sections without pre-attached too
     const result = await ctx.waterfall('system-prompt/assemble', presentation, { scope: agent }, async () => presentation)
     assert.equal(result, presentation)
     assert.equal(Object.hasOwn(result, 'tools'), false)
+    const captured = await ctx.waterfall('system-prompt/assemble', presentation, { scope: agent, toolSet: step.toolSet }, async () => presentation)
+    assert.equal(captured, presentation, 'an unchanged admitted guidance section preserves exact provider identity')
+    const unrelated = { sections: [{ name: 'unrelated-provider', text: 'unchanged' }] }
+    assert.equal(await ctx.waterfall('system-prompt/assemble', unrelated, { scope: agent }, async () => unrelated), unrelated, 'absence of own guidance preserves exact presentation identity')
     assert.equal(tools.get('ops_load_sdk', agent), before, 'a valid PTC projection is retained')
-    const selected = await before.execute({ tools: ['stat'] }, { agent, signal: new AbortController().signal })
-    assert.equal(selected.status, 'completed')
+    try {
+      const selected = await before.execute({ tools: ['stat'] }, { agent, toolSet: step.toolSet, signal: new AbortController().signal })
+      assert.equal(selected.status, 'completed')
+    } finally { step.dispose() }
   } finally { await shutdown(ctx) }
 })
-await test('first prompt waits for delayed discovery before selected replacement validation (#375)', async () => {
-  const { ctx, prompt } = await setup()
+await test('delayed discovery keeps the official available until the replacement is admitted (#375)', async () => {
+  const { ctx, agents } = await setup()
   const entered = Promise.withResolvers(), release = Promise.withResolvers()
   const original = NativeFileTools.prototype.start
   NativeFileTools.prototype.start = async function (...args) {
     entered.resolve(); await release.promise
     return original.apply(this, args)
   }
-  let created, assembling
+  let created
   try {
     ctx.tools.register({ name: 'read', description: 'official read', parameters: { type: 'object' },
-      output: { schema: { type: 'string' }, render: () => [] }, execute: async () => 'unused' })
-    await ctx.plugin(hiding, { replaceTools: ['read'] })
-    await ctx.plugin(discovery, { binaryPath: process.execPath, required: true, enabled: false,
+      output: { schema: { type: 'string' }, render: () => [] }, execute: async () => 'official' })
+    await ctx.plugin({ apply(inner) { mountReplacements(inner, { id: 'delayed',
+      targets: new Map([['read', 'ops_inspect_local_file']]), gate: { allows: () => true }, keepOfficial: () => false }) } })
+    await ctx.plugin(discovery, { binaryPath: WORKER, required: true, enabled: false,
       allowedTools: ['inspect_local_file'], alwaysLoaded: ['inspect_local_file'] })
     const agent = mint(ctx, 'cold-start')
-    await ctx.plugin({ inject: ['tools'], apply(inner) { agent.ctx = createScope(inner, agent).ctx } })
+    agents.push(agent)
     created = ctx.serial('agent/created', { agent })
     await entered.promise
-    let settled = false
-    assembling = prompt.assemble({ scope: agent }).finally(() => { settled = true })
-    void assembling.catch(() => {}) // Awaited below; keep an early rejection owned while checking the pending state.
-    await new Promise(resolve => setImmediate(resolve))
-    assert.equal(settled, false, 'the first prompt cannot treat pending publication as bad configuration')
-    release.resolve()
-    await created
-    const first = await assembling
-    assert.deepEqual(first.tools.map(tool => tool.name), ['ops_inspect_local_file'])
+    const pending = await prepareStep(ctx, agent)
+    try {
+      assert.deepEqual(pending.assembly.tools.map(tool => tool.name), ['read'])
+      const official = await executeCall(ctx, { agent, name: 'read', arguments: {}, toolSet: pending.toolSet })
+      assert.equal(official.value, 'official', 'pending OPS startup cannot disable both tools')
+      release.resolve(); await created
+      await waitFor(async () => {
+        const step = await prepareStep(ctx, agent)
+        try { return Boolean(ctx.get('tools').executable('ops_inspect_local_file', agent, step.toolSet)) }
+        finally { step.dispose() }
+      })
+      const first = await prepareStep(ctx, agent)
+      try {
+        assert.ok(first.assembly.tools.some(tool => tool.name === 'ops_inspect_local_file'))
+        assert.ok(first.assembly.tools.some(tool => tool.name === 'read'), 'conditional replacement retains the official schema')
+        const denied = await executeCall(ctx, { agent, name: 'read', arguments: {}, toolSet: first.toolSet })
+        assert.equal(denied.isError, true, 'same-step OPS admission guards official dispatch')
+        assert.equal((await executeCall(ctx, { agent, name: 'read', arguments: {}, toolSet: pending.toolSet })).value,
+          'official', 'a held official-only step never gains a retroactive replacement guard')
+      } finally { first.dispose() }
+    } finally { pending.dispose() }
   } finally {
     release.resolve(); NativeFileTools.prototype.start = original
-    await Promise.allSettled([created, assembling]); await shutdown(ctx)
+    await Promise.allSettled([created]); await shutdown(ctx)
   }
 })
 report('session-lifecycle')

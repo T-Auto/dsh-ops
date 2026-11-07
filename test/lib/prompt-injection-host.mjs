@@ -5,6 +5,7 @@ import Sessions from '@deepseek-ai/dsh-session'
 import Projections from '@deepseek-ai/dsh-session-projection'
 import Prompt from '@deepseek-ai/dsh-system-prompt'
 import Tools from '@deepseek-ai/dsh-tools'
+import * as NativeExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import Loop from '@deepseek-ai/dsh-agent-loop'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { assert } from './harness.mjs'
@@ -12,6 +13,7 @@ let serial = 0
 export async function promptHost() {
   const ctx = new Context(); ctx.logger.level = 0
   for (const plugin of [Agents, Sessions, Projections, Prompt, Tools]) await ctx.plugin(plugin, {})
+  await ctx.plugin(NativeExecutor)
   const requests = [], errors = [], events = [], scripts = new Map()
   await ctx.plugin(inner => {
     inner.provide('llm', { async prepareCall(config) { return { config, adapterDefaults: {}, stream: async function* (request) {

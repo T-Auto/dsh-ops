@@ -1,6 +1,7 @@
 {
   "meta": {
     "title": "dsh-ops",
-    "description": "Provides optional Bash and native Rust tools for DSH to improve token efficiency; PowerShell remains host-managed"
+    "description": "Provides optional Bash and native Rust tools for DSH to improve token efficiency; PowerShell remains host-managed",
+    "detail": "docs/plugin-detail.en.md"
   }
 }

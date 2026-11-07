@@ -1,97 +1,52 @@
-/**
- * A registry mode that is not `ptc` cannot present PTC-only, and `modeFor` is the
- * very source the collapsed section reads. Answering from the scope chain is what
- * keeps an unattributed `tools/change` off the O(agents) assembly path.
- */
+/** Mode probes use public executor presentation once per resolve, never private modeFor. */
 import { createScope } from '@deepseek-ai/dsh-scope'
-import * as ptcModule from '../lib/ptc/index.js'
-import { isPresentationProbe } from '../lib/presentation.js'
+import { mountPtc } from '../lib/publication/ptc.js'
+import { isPresentationProbe } from '../lib/publication/presentation.js'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { selectExecutor, prepareStep } from './lib/executor.mjs'
 import { assert, test, report, TEST_HOME } from './lib/harness.mjs'
-import { legacyComponent } from './lib/legacy-component.mjs'
-const ptc = legacyComponent(ptcModule)
-
-const flush = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)) }
-
-async function setup(toolsMode) {
-  const { ctx, tools, prompt } = await bootHost({ toolsMode })
-  await ctx.plugin(inner => {
-    inner.provide('subprocess', { spawn() { throw new Error('a presentation probe must not execute a worker') } })
-    inner.provide('sandboxPolicy', { resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: TEST_HOME, sessionId: session.id }) })
-    inner.provide('ptcRuntime', { language: 'typescript' })
-  })
-  await ctx.plugin(ptc, { binaryPath: process.execPath, required: true })
-  const agents = []
-  for (let i = 0; i < 12; i++) {
-    const id = `${toolsMode}-precheck-${i}`
-    const agent = { id, session: { id, mode: 'danger-full-access', header: { cwd: TEST_HOME } } }
-    agent.ctx = createScope(ctx, agent).ctx
-    agents.push(agent)
-    await ctx.serial('agent/created', { agent })
-  }
-  await flush()
+async function setup() {
+  const { ctx, tools, prompt } = await bootHost()
+  ctx.provide('subprocess', { spawn() { throw new Error('mode admission never executes workers') } })
+  ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: TEST_HOME }) })
+  ctx.provide('ptcRuntime', { language: 'typescript' })
+  await ctx.plugin({ apply(inner) { mountPtc(inner, { binaryPath: process.execPath, required: true }, { allows: () => true }) } })
+  for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve))
+  const agent = { id: 'probe', session: { id: 'probe', header: { cwd: TEST_HOME } } }
+  agent.ctx = createScope(ctx, agent).ctx
+  await ctx.serial('agent/created', { agent })
   const assemble = prompt.assemble.bind(prompt)
   let probes = 0
-  prompt.assemble = context => { if (isPresentationProbe(context)) ++probes; return assemble(context) }
-  return { ctx, tools, agents, counted: () => probes, reset: () => { probes = 0 }, restore: () => { prompt.assemble = assemble } }
+  prompt.assemble = context => { if (isPresentationProbe(context)) probes++; return assemble(context) }
+  return { ctx, tools, prompt, agent, probes: () => probes }
 }
-
-await test('a Native deployment answers an unattributed tools/change without assembling any agent', async () => {
-  const host = await setup('native')
+await test('unattributed registry notifications do not assemble or replace stable definitions', async () => {
+  const h = await setup()
   try {
-    // A bare registry notification is what the official host emits with no payload.
-    // Every session here resolves to `native`, so the collapsed section renders empty
-    // for all of them and no assembly can change a verdict.
-    host.reset()
-    await host.ctx.serial('tools/change', {})
-    await flush()
-    assert.equal(host.counted(), 0, 'a native scope owes no presentation assembly')
-
-    // The same notification must still reach every scope: the optimisation may not
-    // turn into a skipped reconcile.
-    host.reset()
-    const added = { id: 'native-precheck-added', session: { id: 'native-precheck-added', mode: 'danger-full-access', header: { cwd: TEST_HOME } } }
-    added.ctx = createScope(host.ctx, added).ctx
-    await host.ctx.serial('agent/created', { agent: added })
-    await flush()
-    assert.equal(host.counted(), 0, 'a newly created native scope resolves from the scope chain too')
-    assert.ok(host.tools.get('run_code', added) === undefined, 'and it publishes no PTC surface')
-  } finally { host.restore(); await shutdown(host.ctx) }
+    const before = h.tools.get('ops_result', h.agent)
+    for (let i = 0; i < 4; i++) h.ctx.emit('tools/change')
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(h.probes(), 0)
+    assert.equal(h.tools.get('ops_result', h.agent), before)
+  } finally { await shutdown(h.ctx) }
 })
-
-await test('a scope that flips to PTC is still probed, so the precheck never swallows a real transition', async () => {
-  const host = await setup('native')
+await test('one shared public probe per resolve selects PTC and withdrawal does not fall through', async () => {
+  const h = await setup()
   try {
-    const [flipped] = host.agents
-    host.reset()
-    // `presentAs` emits `tools/change` before `system-prompt/change`, so the registry
-    // notification carries no re-derivation yet; the prompt epoch it raises is what the
-    // next notification spends. That second pass verifies, and the precheck must let the
-    // flipped scope through while the eleven native scopes still answer from the chain.
-    await flipped.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.presentAs('ptc') } })
-    await flush()
-    await host.ctx.serial('tools/change', {})
-    await flush()
-    assert.equal(host.counted(), 1, 'the flipped scope pays its probe and the eleven native scopes do not')
-    assert.ok(host.tools.get('run_code', flipped), 'and its PTC surface is published')
-  } finally { host.restore(); await shutdown(host.ctx) }
+    const native = await prepareStep(h.ctx, h.agent)
+    assert.equal(h.tools.executable('ops_result', h.agent, native.toolSet), undefined)
+    assert.equal(h.probes(), 1)
+    native.dispose()
+    const fiber = await h.agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, 'ptc') } })
+    const next = await prepareStep(h.ctx, h.agent)
+    assert.ok(h.tools.executable('ops_result', h.agent, next.toolSet))
+    assert.equal(h.probes(), 2)
+    next.dispose()
+    await fiber.dispose()
+    await assert.rejects(prepareStep(h.ctx, h.agent), error => {
+      assert.match(String(error.cause ?? error), /executor.*unavailable/i)
+      return true
+    })
+  } finally { await shutdown(h.ctx) }
 })
-
-await test('only a mode the precheck can answer from the chain is skipped, so an unfamiliar one still probes', async () => {
-  const host = await setup('native')
-  const modeFor = host.tools.modeFor
-  try {
-    // rc.5 deleted the `both` mode, so a live registry can no longer resolve to a
-    // representation whose collapsed section this plugin cannot render. The check
-    // that matters is the one the deleted mode exposed: a mode the precheck cannot
-    // answer from the scope chain must still pay the probe.
-    assert.equal(typeof modeFor, 'function', 'the seam this case pins is the registry mode resolver')
-    host.tools.modeFor = () => 'both'
-    host.reset()
-    await host.ctx.serial('tools/change', {})
-    await flush()
-    assert.equal(host.counted(), 12, 'an unresolvable mode owes a probe per scope')
-  } finally { host.tools.modeFor = modeFor; host.restore(); await shutdown(host.ctx) }
-})
-
 report('ptc-native-precheck')

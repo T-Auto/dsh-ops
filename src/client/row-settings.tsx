@@ -9,10 +9,15 @@ import { useEffect, useState } from 'react'
 import { Switch } from '../adapter/dsh/browser.js'
 import type { SettingsProps } from './forms.js'
 import type { PluginInstaller } from './detail.js'
+import type { RuntimeRemote } from '../settings/runtime-contract.js'
+import { useRuntime } from './runtime.js'
 import { RowForm } from './row-form.js'
 
-export function RowSettings(props: SettingsProps & { pwsh7Installed?: boolean; plugins?: PluginInstaller }) {
-  const { plugins, pwsh7Installed, ...rest } = props
+export function RowSettings(props: SettingsProps & { pwsh7Installed?: boolean; plugins?: PluginInstaller; api: RuntimeRemote }) {
+  const { plugins, pwsh7Installed, api, ...rest } = props
+  // The executor card offers the Host's detected installations, so this page reads
+  // the same snapshot the status card does instead of guessing from the config.
+  const runtime = useRuntime(api)
   // Installed state changes while the host runs (the status card can install it), so the
   // page resolves it on open instead of trusting the value captured at boot.
   const [installed, setInstalled] = useState<boolean | undefined>(pwsh7Installed)
@@ -34,5 +39,6 @@ export function RowSettings(props: SettingsProps & { pwsh7Installed?: boolean; p
   // detection-driven default is not baked in as "absent".
   // A visible, honest state instead of an empty slot while the host answers.
   if (!checked) return <p className="ops-note" role="status">{rest.t('loading')}</p>
-  return <RowForm {...rest} pwsh7Installed={installed} Switch={Switch} />
+  return <RowForm {...rest} pwsh7Installed={installed} Switch={Switch}
+    executor={{ api, snapshot: runtime.snapshot, busy: runtime.busy, refresh: () => void runtime.refresh() }} />
 }

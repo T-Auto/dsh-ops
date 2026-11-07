@@ -1,7 +1,8 @@
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 /** Three end-to-end scenarios: real Rust worker + real Cordis/tools/prompt;
  * simulated workspace and confinement provider, no business code in tests.
  */
-import { ownWindowsFixture, skipSuite } from './lib/harness.mjs'
+import { ownWindowsFixture, skipSuite, waitFor } from './lib/harness.mjs'
 import { workingDirectoryOver } from './lib/host.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -23,6 +24,7 @@ import FileSystem from '@deepseek-ai/dsh-fs-local'
 import { invoke } from '../lib/ptc/worker.js'
 import { invoke as invokeFile } from '../lib/file/worker.js'
 import { legacyComponent } from './lib/legacy-component.mjs'
+import { isPresentationProbe } from '../lib/presentation.js'
 const ptc = legacyComponent(ptcModule)
 /**
  * `npm run build:ptc` builds a host binary into `native/target/release`, but a
@@ -182,6 +184,7 @@ try {
   // refused. It has to go through the host bridge: at the worker level the alias
   // reaches the no-follow walk and is refused either way.
   const bridge = new Context(); bridge.logger.level = 0
+  bridge.provide('workingDirectory', workingDirectoryOver(dir))
   await bridge.plugin(Subprocess)
   await bridge.plugin(inner => { inner.provide('sandboxPolicy', { resolve: () => ({ mode: 'read-only', workspaceRoot: dir, sessionId: 'alias' }) }) })
   try {
@@ -217,7 +220,8 @@ try {
       }) }) }
   } }
   try {
-    await ctx.plugin(SystemPrompt, {}); await ctx.plugin(ToolRuntime, { mode: 'native' })
+    await ctx.plugin(SystemPrompt, {}); await ctx.plugin(ToolRuntime, {})
+  await ctx.plugin(await import('@deepseek-ai/dsh-tool-executor-native'), {})
     let sandboxAvailable = true
     await ctx.plugin(inner => {
       inner.provide('ptcRuntime', { language: 'typescript' })
@@ -229,37 +233,52 @@ try {
         return { argv, enforcement: 'full', denialSignatures: [], runnerFailureRules: [] }
       } })
     })
+    const live = []; ctx.provide('agents', { list: () => live })
     const component = await ctx.plugin(ptc, { binaryPath: file, required: true, alwaysLoaded: ['batch'] })
     const makeAgent = async (id, presentation, parent) => {
       const agent = { id, session: { id, mode: 'workspace-write', header: { cwd: dir } } }
       const scope = createScope(parent?.ctx ?? ctx, agent); agent.ctx = scope.ctx
-      if (presentation) await agent.ctx.plugin({ inject: ['tools','systemPrompt'], apply(inner) { agent.liftPresentation = inner.tools.presentAs(presentation) } })
-      await ctx.serial('agent/created', {agent}); return agent
+      if (presentation) await agent.ctx.plugin({ inject: ['tools','systemPrompt'], apply(inner) { agent.executorContext = inner; agent.liftPresentation = selectExecutor(inner, presentation) } })
+      live.push(agent)
+      await ctx.serial('agent/created', {agent})
+      await waitFor(() => ctx.get('tools').get('ops_load_sdk', agent) !== undefined, { what: 'the PTC row attaches each scoped definition' })
+      return agent
     }
-    const pure = await makeAgent('pure','ptc'), native = await makeAgent('native','native',pure), both = await makeAgent('both','both')
+    const pure = await makeAgent('pure', 'ptc'), native = await makeAgent('native', 'native', pure)
+    const switched = await makeAgent('switched', 'native')
+    assert.throws(() => selectExecutor(switched.executorContext, 'ptc'), /Only one tool executor/)
     const nativeParent = await makeAgent('native-parent', 'native')
     const ptcChild = await makeAgent('ptc-child', 'ptc', nativeParent)
-    const visible = agent => ctx.get('tools').schemas(agent).map(s => s.name)
+    const visible = async agent => { const captured = await prepareStep(ctx, agent); try { return ctx.tools.schemas(agent, captured.toolSet).map(tool => tool.name) } finally { captured.dispose() } }
+    const assemble = async agent => { const captured = await prepareStep(ctx, agent); try { return captured.assembly } finally { captured.dispose() } }
+    const direct = async (agent, name, args) => { const captured = await prepareStep(ctx, agent); try { return await ctx.tools.executable(name, agent, captured.toolSet).execute(args, { agent, toolSet: captured.toolSet, signal: new AbortController().signal }) } finally { captured.dispose() } }
     const until = async predicate => {
       const deadline = Date.now()+5000
-      while (!predicate()) { if (Date.now()>deadline) throw new Error('host reconciliation timeout'); await new Promise(r => setTimeout(r, 10)) }
+      while (!await predicate()) { if (Date.now()>deadline) throw new Error('host reconciliation timeout'); await new Promise(r => setTimeout(r, 10)) }
     }
-    await until(() => visible(pure).includes('ops_batch'))
-    await until(() => !visible(native).includes('ops_batch'))
-    assert.equal(visible(both).includes('ops_result'), false)
-    await until(() => visible(ptcChild).includes('ops_result'))
-    assert.equal(visible(nativeParent).includes('ops_result'), false)
+    await until(async () => (await visible(pure)).includes('ops_batch'))
+    await until(async () => !(await visible(native)).includes('ops_batch'))
+    assert.equal((await visible(switched)).includes('ops_result'), false, 'a Native executor is an exact presentation, not a mixed mode')
+    const nativeStep = await prepareStep(ctx, switched)
+    try { assert.equal(nativeStep.assembly.tools.some(tool => tool.name === 'run_code'), false) } finally { nativeStep.dispose() }
+    switched.liftPresentation()
+    await switched.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { switched.liftPresentation = selectExecutor(inner, 'ptc') } })
+    await until(async () => (await visible(switched)).includes('ops_result'))
+    const restoredStep = await prepareStep(ctx, switched)
+    try { assert.deepEqual(restoredStep.assembly.tools.map(tool => tool.name), ['run_code']) } finally { restoredStep.dispose() }
+    await until(async () => (await visible(ptcChild)).includes('ops_result'))
+    assert.equal((await visible(nativeParent)).includes('ops_result'), false)
     assert.equal(ctx.get('tools').schemas().length, 0)
-    const assembled = await ctx.get('systemPrompt').assemble({scope:pure})
+    const assembled = await assemble(pure)
     assert.deepEqual(assembled.tools.map(t => t.name), ['run_code'])
     assert.ok(assembled.sections.some(s => s.text.includes('ops_batch')))
     assert.ok(assembled.sections.some(s => s.name === 'dsh-ops:repository-tooling:mode-ptc' && s.text.includes('typed Outcome')))
-    assert.equal((await ctx.get('systemPrompt').assemble({scope:native})).sections.some(s => s.text.includes('ops_batch')), false)
+    assert.equal((await assemble(native)).sections.some(s => s.text.includes('ops_batch')), false)
     const def = ctx.get('tools').get('ops_batch', pure)
     const wrongOwner = await def.execute({ action: 'plan', operations: [] }, { agent: ptcChild, signal: new AbortController().signal })
     assert.equal(wrongOwner.error.code, 'POLICY_DENIED')
     write('host-copy', 'host data')
-    const result = await ctx.get('tools').get('ops_batch', pure).execute({ action:'run',operations:[{op:'copy',path:'host-copy',to:'host-dest'}] }, {agent:pure,signal:new AbortController().signal})
+    const result = await direct(pure, 'ops_batch', { action:'run',operations:[{op:'copy',path:'host-copy',to:'host-dest'}] })
     assert.equal(result.status,'completed',JSON.stringify(result)); assert.equal(result.data.sandbox.enforcement,'full')
     const hostJobs = new Map(); let jobNumber = 0
     await ctx.plugin(inner => inner.provide('jobs', {
@@ -271,12 +290,14 @@ try {
       remove(id) { hostJobs.delete(id) },
     }))
     const before = calls.length
+    const heldBatch = await prepareStep(ctx, pure)
     pure.session.mode = 'read-only'
-    const readonly = await def.execute({action:'run',operations:[{op:'remove',path:'host-dest'}]}, {agent:pure,signal:new AbortController().signal})
+    const readonly = await def.execute({action:'run',operations:[{op:'remove',path:'host-dest'}]}, {agent:pure,toolSet:heldBatch.toolSet,signal:new AbortController().signal})
+    heldBatch.dispose()
     assert.equal(readonly.error.code,'POLICY_DENIED')
-    assert.equal(readonly.data.error.permission.current, 'read-only'); assert.match(readonly.error.nextAction, /Do not retry/)
+    assert.equal(readonly.error.effectState, 'none', 'authority withdrawal refuses before any worker dispatch')
     pure.session.mode = 'workspace-write'; sandboxAvailable = false
-    assert.equal((await def.execute({action:'run',operations:[{op:'remove',path:'host-dest'}]}, {agent:pure,signal:new AbortController().signal})).error.code,'EXECUTOR_UNAVAILABLE')
+    assert.equal((await direct(pure, 'ops_batch', {action:'run',operations:[{op:'remove',path:'host-dest'}]})).error.code,'EXECUTOR_UNAVAILABLE')
     assert.equal(calls.length,before); assert.equal(hostJobs.size,0)
     const fakeOutcome = (outcome, stderr = '', lossy = false) => ({ get(name) {
       if (name === 'subprocess') return { spawn() { return { done: Promise.resolve(outcome),
@@ -320,7 +341,7 @@ try {
     } }
     const partial = await invoke(partialSandboxCtx,file,'batch',{action:'plan',operations:[{op:'remove',path:'host-dest'}]}, {agent:pure},new AbortController().signal)
     assert.equal(partial.status,'planned'); assert.equal(partial.sandbox.enforcement,'partial')
-    const monitored = await def.execute({action:'plan',operations:[{op:'remove',path:'host-dest'}]}, {agent:pure,signal:new AbortController().signal})
+    const monitored = await direct(pure, 'ops_batch', {action:'plan',operations:[{op:'remove',path:'host-dest'}]})
     assert.equal(monitored.status,'completed'); assert.equal(monitored.data.status,'planned'); assert.equal(hostJobs.size,0); assert.ok(jobNumber >= 1)
     const aborted = new AbortController(); aborted.abort()
     const cancelled = await invoke(ctx,file,'batch',{action:'run',operations:[{op:'remove',path:'host-dest'}]}, {agent:pure},aborted.signal)
@@ -343,43 +364,46 @@ try {
     const unsettled = await interruption
     assert.equal(unsettled.error.code,'RESULT_UNKNOWN'); assert.match(unsettled.detailsRef,/^j-/)
     assert.ok(exists('host-dest')); assert.equal(hostJobs.size,0)
-    const removedDefinition = ctx.get('tools').get('ops_result', ptcChild)
+    const removedDefinition = ctx.get('tools').get('ops_batch', ptcChild)
     let releaseAssembly, enteredAssembly
     const blocked = new Promise(resolve => { enteredAssembly = resolve })
     let blockOnce = true
-    const removeSection = ctx.get('systemPrompt').section({ name: 'ptc-race-fixture', order: 100, interpolate: false,
-      async text() {
-        if (!blockOnce) return ''
+    const raceStep = await prepareStep(ctx, ptcChild)
+    const removeSection = ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
+      const assembled = await next()
+      if (blockOnce && context.scope === ptcChild && isPresentationProbe(context)) {
         blockOnce = false; enteredAssembly()
         await new Promise(resolve => { releaseAssembly = resolve })
-        return ''
-      } })
-    const race = removedDefinition.execute({ action: 'page', id: result.data.detailsRef }, { agent: ptcChild, signal: new AbortController().signal })
+      }
+      return assembled
+    })
+    const race = removedDefinition.execute({ action: 'plan', operations: [] }, { agent: ptcChild, toolSet: raceStep.toolSet, signal: new AbortController().signal })
     await blocked
     const callsBeforeRace = calls.length
     ptcChild.liftPresentation()
+    selectExecutor(ptcChild.executorContext, 'native')
     releaseAssembly()
-    assert.equal((await race).error.code, 'POLICY_DENIED')
+    try { assert.equal((await race).error.code, 'POLICY_DENIED') } finally { raceStep.dispose() }
     assert.equal(calls.length, callsBeforeRace, 'presentation changes during assembly must not spawn a worker')
     removeSection()
     await ctx.get('systemPrompt').assemble({ scope: ptcChild });
-    assert.equal(visible(ptcChild).includes('ops_result'), false, 'presentation withdrawal precedes returned Native assembly')
-    assert.equal((await removedDefinition.execute({ action: 'page', id: result.data.detailsRef }, { agent: ptcChild, signal: new AbortController().signal })).error.code, 'POLICY_DENIED')
+    assert.equal((await visible(ptcChild)).includes('ops_result'), false, 'presentation withdrawal precedes returned Native assembly')
+    assert.equal((await removedDefinition.execute({ action: 'plan', operations: [] }, { agent: ptcChild, signal: new AbortController().signal })).error.code, 'POLICY_DENIED')
     await ctx.serial('agent/disposed', { agent: ptcChild })
-    assert.equal(visible(ptcChild).includes('ops_result'), false)
-    assert.equal((await removedDefinition.execute({ action: 'page', id: result.data.detailsRef }, { agent: ptcChild, signal: new AbortController().signal })).error.code, 'POLICY_DENIED')
+    assert.equal((await visible(ptcChild)).includes('ops_result'), false)
+    assert.equal((await removedDefinition.execute({ action: 'plan', operations: [] }, { agent: ptcChild, signal: new AbortController().signal })).error.code, 'POLICY_DENIED')
     // Unload rejects retained callbacks and cleans owned registrations, not foreign tools.
-    await until(() => visible(pure).includes('ops_batch'))
+    await until(async () => (await visible(pure)).includes('ops_batch'))
     const schemaBefore = JSON.stringify(ctx.get('tools').schemas(pure))
     ctx.get('tools').register({name:'foreign',description:'fixture',parameters:{type:'object'},output:{schema:{type:'object'},render:()=>[]},execute:()=>({})})
-    await until(() => visible(pure).includes('ops_batch'))
+    await until(async () => (await visible(pure)).includes('ops_batch'))
     assert.equal(JSON.stringify(ctx.get('tools').schemas(pure).filter(s=>s.name.startsWith('ops_'))),
       JSON.stringify(JSON.parse(schemaBefore).filter(s=>s.name.startsWith('ops_'))))
     await component.dispose()
-    assert.equal(visible(pure).includes('ops_batch'),false); assert.equal(visible(native).includes('ops_result'),false)
+    assert.equal((await visible(pure)).includes('ops_batch'),false); assert.equal((await visible(native)).includes('ops_result'),false)
     assert.equal((await def.execute({}, {agent:pure,signal:new AbortController().signal})).error.code,'POLICY_DENIED')
     assert.ok(ctx.get('tools').get('foreign')); assert.equal(Object.hasOwn(ctx.get('tools'),'register'),false)
-    console.log('ok: real DSH scopes/SDK, native+hybrid isolation, fail-closed authority and unload')
+    console.log('ok: real DSH scopes/SDK, Native/PTC isolation, fail-closed authority and unload')
   } finally { for (const child of handles) child.kill(); await ctx.fiber.dispose() }
 
   // Native sandbox acceptance: original DSH providers, not mocks. No changes to
@@ -410,7 +434,8 @@ try {
   const nonTemp = fs.mkdtempSync(path.join(os.homedir(),'ops-outside-'))
   const externalNonTemp = path.join(nonTemp,'protected.txt'); fs.writeFileSync(externalNonTemp,'keep')
   try {
-    await real.plugin(SystemPrompt, {}); await real.plugin(ToolRuntime, { mode: 'native' })
+    await real.plugin(SystemPrompt, {}); await real.plugin(ToolRuntime, {})
+    await real.plugin(await import('@deepseek-ai/dsh-tool-executor-native'), {})
     await real.plugin(Subprocess)
     await real.plugin(Sandbox, {})
     await real.plugin(FileSystem, {})
@@ -419,19 +444,26 @@ try {
     await real.plugin(inner => { inner.provide('sandboxPolicy',{resolve:({session} = {})=>({mode:session?.mode ?? agent.session.mode,workspaceRoot:dir,sessionId:session?.id ?? agent.session.id})}) })
     write('real-source','native')
     await real.plugin(NodePtc, {})
-    await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.presentAs('ptc') } })
+    await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, 'ptc') } })
+    real.provide('agents', { list: () => [agent] })
     const sdkComponent = await real.plugin(ptc, { binaryPath: file, required: true, alwaysLoaded: ['batch'] })
     await real.serial('agent/created', { agent })
-    for (let n = 0; n < 100 && !real.get('tools').get('ops_result', agent); n++) await new Promise(resolve => setTimeout(resolve, 10))
+    await waitFor(() => real.get('tools').get('ops_result', agent) !== undefined, { what: 'the real PTC SDK result source' })
     assert.ok(real.get('tools').get('ops_result', agent), JSON.stringify(await real.get('systemPrompt').assemble({ scope: agent })))
     const sdk = async code => {
-      const completion = await real.get('tools').execute({ name: 'run_code', callId: 'ptc-result-sdk', agent,
+      const completion = await executeCall(real, { name: 'run_code', callId: 'ptc-result-sdk', agent,
         signal: new AbortController().signal, arguments: { description: 'Verify bounded PTC-native dataflow', code } })
       assert.notEqual(completion.isError, true, JSON.stringify(completion))
       assert.equal(completion.value.sandbox.mode, agent.session.mode, JSON.stringify(completion))
       return completion.value.result
     }
+    const legacy = request('result', { action: 'put', items: [{ legacy: true }] }, agent.session.id)
+    const foreignLegacy = request('result', { action: 'put', items: [{ foreign: true }] }, 'foreign-sdk-owner')
+    assert.match(legacy.id, /^r-/)
     const sdkResult = await sdk(`
+      const legacyPage = await tools.ops_result({action:'page',id:${JSON.stringify(legacy.id)}});
+      const foreignLegacy = await tools.ops_result({action:'page',id:${JSON.stringify(foreignLegacy.id)}});
+      const legacyRelease = await tools.ops_result({action:'release',id:${JSON.stringify(legacy.id)}});
       const storedOutcome = await tools.ops_result({action:'put',items:Array.from({length:120},(_,n)=>({n,kind:n%2?'odd':'even',payload:'x'.repeat(80)}))});
       if (storedOutcome.status !== 'completed') return storedOutcome; const stored = storedOutcome.data;
       const selected = []; let offset = 0; let stable = true; let bounded = true; let contentHash;
@@ -451,13 +483,19 @@ try {
       const planOutcome = await tools.ops_batch({action:'plan',operations:[{op:'copy',path:'real-source',to:'sdk-copy'}]});
       if (planOutcome.status !== 'completed') return planOutcome; const plan = planOutcome.data;
       const audit = await tools.ops_result({action:'page',id:plan.detailsRef,fields:['state','revision','entries']});
+      if (!Array.isArray(audit.data?.items)) throw new Error('Audit paging failed: ' + JSON.stringify(audit));
+      const auditRelease = await tools.ops_result({action:'release',id:plan.detailsRef});
       const resumed = await tools.ops_batch({action:'resume',id:plan.id});
       const replay = await tools.ops_batch({action:'resume',id:plan.id});
       await tools.ops_result({action:'release',id:stored.id});
-      return {stable,bounded,count:selected.length,last:selected[selected.length-1],invalid:invalid.error.code,denied:denied.data.error,
+      return {legacyPage,foreignLegacy,legacyRelease,auditRelease,stable,bounded,count:selected.length,last:selected[selected.length-1],invalid:invalid.error.code,denied:denied.data.error,
         audit:audit.data.items[0],resumed:resumed.status,replay:replay.data.done,detailsRef:plan.detailsRef};
     `)
     assert.equal(sdkResult.stable, true, JSON.stringify(sdkResult)); assert.equal(sdkResult.bounded, true)
+    assert.deepEqual(sdkResult.legacyPage.data.items, [{ legacy: true }])
+    assert.equal(sdkResult.legacyRelease.data.status, 'released')
+    assert.equal(sdkResult.foreignLegacy.error.code, 'POLICY_DENIED')
+    assert.equal(sdkResult.auditRelease.error.code, 'INVALID_ARGUMENT', 'audit records cannot be released through the shared SDK')
     assert.equal(sdkResult.count, 60); assert.equal(sdkResult.last, 118)
     assert.equal(sdkResult.invalid, 'INVALID_ARGUMENT'); assert.equal(sdkResult.audit.state, 'pending')
     assert.equal(sdkResult.denied.code, 'POLICY_DENIED'); assert.equal(sdkResult.denied.permission.current, 'workspace-write')

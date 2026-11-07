@@ -7,9 +7,12 @@ import { definition } from './contract.js'
 import { NATIVE_TOOLS } from '../../capabilities/registry.js'
 import { resultDefinition, invokeResult } from './result.js'
 import { registerNativeProvider } from '../../publication/providers.js'
+import { publicationRegistration } from '../../publication/reentry.js'
 import { safeDisposeAll } from '../../teardown.js'
 import { invoke, failure } from '../../execution/files.js'
 import { InvocationLifetime, InvocationNotStarted } from '../../lifecycle/invocations.js'
+import { canonicalOutput } from '../canonical-output.js'
+import { acquireResultAdmission } from '../../publication/result-admission.js'
 import { createNativeReadDedup } from './read-dedup.js'
 
 type Execution = Parameters<ToolDefinition['execute']>[1]
@@ -26,6 +29,7 @@ export class NativeFileTools {
   readonly disposers: (() => void)[]
   private stopped: boolean
   private readonly readDedup: ReturnType<typeof createNativeReadDedup>
+  private readonly resultAdmission: ReturnType<typeof acquireResultAdmission>
   private unregisterProvider: (() => void) | undefined
   constructor({ ctx, config, report }: { ctx: Context; config: NativeRuntimeConfig; report?: Reporter }) {
     this.ctx = ctx
@@ -34,7 +38,10 @@ export class NativeFileTools {
     this.file = undefined
     this.disposers = []
     this.stopped = false
-    this.readDedup = createNativeReadDedup(ctx)
+    // Provider and execution events originate at root, not the agent source scope.
+    // The runtime still owns (and disposes) its independent evidence observer.
+    this.readDedup = createNativeReadDedup(ctx.root ?? ctx)
+    this.resultAdmission = acquireResultAdmission(ctx)
   }
 
   async start(names: readonly NativeToolName[] = NATIVE_TOOLS as readonly NativeToolName[]): Promise<string[]> {
@@ -46,13 +53,13 @@ export class NativeFileTools {
     const definitions = names.map(rawName => this.definition(rawName))
     // Discovery starts a worker without a resident surface. Do not emit a
     // registry change for an empty provider on every newly attached agent.
-    if (definitions.length) this.unregisterProvider = await registerNativeProvider(this.ctx, definitions, tool => this.ctx.tools.register(tool))
+    if (definitions.length) this.unregisterProvider = await registerNativeProvider(this.ctx, definitions, tool => publicationRegistration(this.ctx, () => this.ctx.tools.register(tool)))
     return names.map(publicToolName)
   }
 
   definition(rawName: NativeToolName): ToolDefinition {
     const execute: ToolDefinition['execute'] = (args, exec) => this.call(rawName, args, exec)
-    return this.readDedup.wrap(rawName === 'result' ? resultDefinition(execute) : definition(rawName, execute))
+    return canonicalOutput(rawName, this.readDedup.wrap(rawName === 'result' ? resultDefinition(execute) : definition(rawName, execute)))
   }
 
   async call(tool: NativeToolName, args: unknown, exec: Execution): Promise<unknown> {
@@ -60,7 +67,7 @@ export class NativeFileTools {
     if (!this.file) return failure('EXECUTOR_UNAVAILABLE', 'Native file worker path is unavailable.')
     try {
       return await this.calls.run(exec?.signal, signal => tool === 'result'
-        ? invokeResult(this.ctx, this.file!, args, exec, signal, this.config)
+        ? invokeResult(this.ctx, this.file!, args, exec, signal, this.config, () => this.resultAdmission.authorize({ ...exec, signal }).catch(() => undefined))
         : invoke(this.ctx, this.file!, tool, args, exec, signal, this.config), undefined,
       Math.min(this.config.toolCallTimeoutMs ?? WORKER_TIMEOUT_MS, WORKER_TIMEOUT_MS))
     } catch (error) {
@@ -76,6 +83,7 @@ export class NativeFileTools {
   async stop(): Promise<void> {
     this.stopped = true
     this.readDedup.dispose()
+    this.resultAdmission.dispose()
     safeDisposeAll([this.unregisterProvider].filter((dispose): dispose is () => void => typeof dispose === 'function'), error => this.report('dsh-ops: Native pager teardown failed: ' + error, 'warn'), 'result provider')
     await this.calls.stop('Native file component unloaded')
     // Isolate each teardown: one throwing worker registration must not strand the rest.

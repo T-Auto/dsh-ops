@@ -3,11 +3,14 @@ import type { ToolDefinition } from '../adapter/dsh/types.js'
 import type { Context } from '../adapter/dsh/types.js'
 import { withToolChange } from './changes.js'
 import { loadScopes } from '../adapter/dsh/host.js'
-interface Host { root?: object; emit?(name: 'tools/change'): unknown; get(name: 'tools'): { get(name: string, scope?: unknown): ToolDefinition | undefined } | undefined }
+import { publicationRegistration, publicationReady, publicationError } from './reentry.js'
+interface Host { root?: object; emit?(name: 'tools/change'): unknown; get(name: 'tools'): { definitions(scope?: object): readonly ToolDefinition[] } | undefined }
 export interface NativeProvider { definition: ToolDefinition; scope: unknown; active: boolean; inheritable: boolean; priority: number }
-interface Provider extends NativeProvider { publish(visible: boolean): void }
+interface Provider extends NativeProvider { publish(visible: boolean): void; ready(): Promise<void> }
 interface State { providers: Set<Provider>; shadows: Set<NativeProvider>; ptc: Set<unknown>; revisions: WeakMap<object, number>; globalRevision: number; selections: Set<{ scope: unknown; names: ReadonlySet<string> }> }
 const owners = new WeakMap<object, State>()
+const readiness = new WeakMap<() => void, () => Promise<void>>()
+export function nativeProviderReady(dispose: () => void): Promise<void> { return readiness.get(dispose)?.() ?? Promise.resolve() }
 function state(ctx: Host): State {
   const key = ctx.root ?? ctx
   let entry = owners.get(key)
@@ -36,23 +39,39 @@ function refresh(owner: State, scope: unknown): void {
     for (const provider of chosen.values()) provider.publish(true)
   })
 }
-export async function registerNativeProvider(ctx: Host, definitions: ToolDefinition[], register: (tool: ToolDefinition) => (() => void), options: { inheritable?: boolean; priority?: number } = {}): Promise<() => void> {
+export async function registerNativeProvider(ctx: Context, definitions: ToolDefinition[], register: (tool: ToolDefinition) => (() => void), options: { inheritable?: boolean; priority?: number } = {}): Promise<() => void> {
   const { scopeOf } = await loadScopes()
-  return registerNativeProviderAtScope(ctx, scopeOf(ctx as Context), definitions, register, options)
+  const stop = registerNativeProviderAtScope(ctx, scopeOf(ctx), definitions, register, options)
+  try { await nativeProviderReady(stop) } catch (error) {
+    try { stop() } catch (cleanup) { ctx.logger.warn(`dsh-ops: native provider cleanup failed: ${publicationError(cleanup)}`) }
+    throw error
+  }
+  return stop
 }
 /** Callers that already resolved the public scope API can commit synchronously. */
-export function registerNativeProviderAtScope(ctx: Host, scope: unknown, definitions: ToolDefinition[], register: (tool: ToolDefinition) => (() => void), options: { inheritable?: boolean; priority?: number } = {}): () => void {
+export function registerNativeProviderAtScope(ctx: Context, scope: unknown, definitions: ToolDefinition[], register: (tool: ToolDefinition) => (() => void), options: { inheritable?: boolean; priority?: number } = {}): () => void {
+  if (!definitions.length) return () => {}
   const owner = state(ctx)
   const providers = definitions.map(definition => {
     let dispose: (() => void) | undefined
     const provider: Provider = { definition, scope, active: true, inheritable: options.inheritable ?? true, priority: options.priority ?? 0, publish(visible) {
       if (visible && provider.active && !dispose) dispose = register(definition)
       else if (!visible && dispose) { const remove = dispose; dispose = undefined; remove() }
+    }, async ready() {
+      for (;;) {
+        if (!provider.active) throw new Error('Native provider is disposed')
+        const current = dispose
+        if (!current) return
+        try { await publicationReady(current) } catch (error) { if (current === dispose) throw error }
+        if (current === dispose) return
+      }
     } }
     owner.providers.add(provider)
     return provider
   })
   changed(owner, scope)
+  let notification: (() => void) | undefined
+  const notify = () => withToolChange(scope && typeof scope === 'object' ? [scope] : [], () => ctx.emit('tools/change'))
   const stop = () => {
     changed(owner, scope)
     const errors: unknown[] = []
@@ -61,11 +80,20 @@ export function registerNativeProviderAtScope(ctx: Host, scope: unknown, definit
       try { withToolChange(scope && typeof scope === 'object' ? [scope] : [], () => provider.publish(false)) } catch (error) { errors.push(error) }
     }
     try { refresh(owner, scope) } catch (error) { errors.push(error) }
-    withToolChange(scope && typeof scope === 'object' ? [scope] : [], () => ctx.emit?.('tools/change'))
+    try { notification?.() } catch (error) { errors.push(error) }
     if (errors.length) throw new AggregateError(errors, 'Native provider teardown failed')
   }
-  try { refresh(owner, scope) } catch (error) { stop(); throw error }
-  withToolChange(scope && typeof scope === 'object' ? [scope] : [], () => ctx.emit?.('tools/change'))
+  try {
+    refresh(owner, scope)
+    // Metadata-only changes still need notification when every provider is
+    // hidden. This is not another registry mutation; share its refusal window
+    // and keep teardown observable after the row context begins unloading.
+    notification = publicationRegistration(ctx.root ?? ctx, () => { notify(); return notify })
+  } catch (error) {
+    try { stop() } catch (cleanup) { ctx.logger.warn(`dsh-ops: native provider cleanup failed: ${publicationError(cleanup)}`) }
+    throw error
+  }
+  readiness.set(stop, async () => { await Promise.all([publicationReady(notification!), ...providers.map(provider => provider.ready())]) })
   return stop
 }
 function selectionAllows(owner: State, scope: unknown, provider: NativeProvider): boolean {
@@ -92,31 +120,10 @@ export function trackNativeShadow(ctx: Host, scope: unknown, definition: ToolDef
   owner.shadows.add(shadow)
   return () => { owner.shadows.delete(shadow) }
 }
-/**
- * A name lookup over one scope's visible definitions, read from a single view.
- *
- * `tools.get(name, scope)` IS `this.view(scope).visible.get(name)`, so asking it
- * per provider rebuilds the whole scope view per provider and makes a scan of P
- * candidates cost P view copies. A PTC publish scans every provider of every live
- * scope, which made one unattributed change rebuild the view 82,365 times over
- * 198 sessions. The view already holds every answer this scan needs, so read it
- * once and look the names up in the map it returned. A host that serves no view
- * still resolves through `get()`, as `surfaceOf` already does.
- * @param tools - the tool registry, or undefined before it is provided.
- * @param scope - the scope to read, or undefined for the global layer.
- * @returns a lookup returning the definition that scope resolves, if any.
- */
+/** Read the public definition list once, rather than rebuilding a view per provider. */
 function visibleOf(tools: ReturnType<Host['get']>, scope: unknown): (name: string) => ToolDefinition | undefined {
-  if (tools === undefined) return () => undefined
-  // Duck-typed rather than `instanceof Map`, for the reason `surfaceOf` records: a host may
-  // serve the view through a subclass or a proxy, and a failed instanceof would silently
-  // take the per-provider `get()` path forever — the exact cost this function removes.
-  const visible = (tools as unknown as { view?(scope?: object): { visible?: { get?(name: string): unknown } } | undefined }).view?.(scope as object)?.visible
-  if (visible !== undefined && typeof visible.get === 'function') {
-    const get = visible.get.bind(visible)
-    return name => get(name) as ToolDefinition | undefined
-  }
-  return name => tools.get(name, scope)
+  const visible = new Map(tools?.definitions(scope as object).map(definition => [definition.name, definition]))
+  return name => visible.get(name)
 }
 
 /** Capture before publishing PTC: external restrictions and sibling scopes remain authoritative. */

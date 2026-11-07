@@ -23,6 +23,7 @@ import {
   shellExecutable,
   shellUpstreamPin,
 } from '../lib/shells.js'
+import { gitBashCandidates } from '../lib/shells/manager.js'
 import { assert, TEST_HOME, report, test, withTempDir } from './lib/harness.mjs'
 import {
   config,
@@ -131,6 +132,30 @@ await test('a Windows deployment does not implicitly select a well-known Git ins
     assert.equal(resolved.bash.file, undefined)
     assert.equal(resolved.pwsh.available, false)
     assert.equal(resolved.pwsh.source, 'host')
+  })
+})
+
+await test('the Store WindowsApps bash alias is never resolved as Git Bash', async () => {
+  await withTempDir('shells-wsl-alias', async (dir) => {
+    const localAppData = path.join(dir, 'AppData')
+    const alias = makeExecutable(path.join(localAppData, 'Microsoft', 'WindowsApps', 'bash.exe'))
+    const gitBash = makeExecutable(path.join(dir, 'Git', 'bin', 'bash.exe'))
+    const env = {
+      DSH_HOME: TEST_HOME,
+      PATH: path.dirname(alias),
+      LOCALAPPDATA: localAppData,
+      ProgramFiles: path.join(dir, 'Program Files'),
+    }
+    const resolved = resolveShells(config({ allowSystemShellFallback: true }), {
+      bundleRoot: path.join(dir, 'plugin'), env, platform: 'win32', arch: 'x64',
+    })
+    // The alias is a WSL distribution, not the Git Bash the operator asked for.
+    assert.notEqual(resolved.bash.file, alias)
+    // It is not offered as a candidate either.
+    const candidates = gitBashCandidates({ env, platform: 'win32' })
+    assert.equal(candidates.includes(alias), false)
+    assert.equal(candidates.includes(gitBash), false, 'a non-Git directory on PATH is not a Git install claim')
+    assert.ok(gitBash.length > 0)
   })
 })
 

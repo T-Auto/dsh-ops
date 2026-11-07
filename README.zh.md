@@ -32,7 +32,7 @@ OPS 为 DSH 增加有界文件与文档工具。Native 模式返回紧凑、带�
 - PTC SDK 目录包含 18 个 API：15 个文件/文档工具，加批处理、结果引用和加载器。仅暴露配置为常驻或已选择的 API；Native 与 PTC 分别提供自己的输出形式。
 - 可按需发现有界 CSV/TSV、DOCX 主体段落与受限 PDF 文本层读取。尚不支持二进制 DOC、OCR、通用 PDF 渲染、网页搜索或 HTML 抓取；使用前请查看[文档格式限制](docs/原生内核.md)。
 - 一个原生 Switch 配置页管理内置与显式列出的自定义消费者。总开关门控预设选项但保留保存意图；常驻、动态加载、Bash、文件替换和 Windows 宿主 PowerShell 隐藏独立控制，panel 与 TUI 默认关闭。内外消费者共用装配器，未列出的预设保持原样。旧行覆盖须迁入单行，兼容行已删除；见[设置](docs/配置参考.md)和[内部架构](docs/内部架构.md)。
-- 内置消费者默认开启：Windows 随主包携带固定的 **Niubash 1.5.0 完整载荷**，不再默认下载 Git Bash 可选包；也可用 `bashPath` 显式指定 Git Bash。Linux/macOS 使用系统 Bash。`dsh-ops bash-runtime install` 用于显式安装/修复托管副本。所有 npm、插件市场及 CLI 更新方式的二进制位置与清理边界见[升级与卸载](docs/升级与卸载.md#二进制位置与更新清理)。PowerShell 仍由宿主管理。
+- 内置消费者默认开启：Windows 随主包携带固定的 **Niubash 1.5.0 完整载荷**，不再默认下载 Git Bash 可选包；设置页的「Bash 执行器」卡片可在该载荷与扫描/手动输入的 Git Bash 之间切换（保存为 `bashPath`）。Linux/macOS 使用系统 Bash。`dsh-ops bash-runtime install` 用于显式安装/修复托管副本。所有 npm、插件市场及 CLI 更新方式的二进制位置与清理边界见[升级与卸载](docs/升级与卸载.md#二进制位置与更新清理)。PowerShell 仍由宿主管理。
 
 OPS 只发布自身作用域内的工具与可选路由提示，不改写共享工具注册表。每次调用均检查权限与取消状态。Windows 受限 Bash 仍存在文档注明的部分约束与运行时兼容性限制。
 
@@ -81,7 +81,7 @@ dsh plugin --profile dsh-tui add dsh-ops
 
 #### 更新方法
 
-宿主兼容范围明确声明为 DSH **0.2.0-rc.2 与 0.2.1-rc.2**。
+宿主支持从 DSH **0.2.2-rc.1** 起；0.5 系列不再支持 0.2.0/0.2.1 或更早的 0.2.2 预览版。保留 DSH adapter 结构，按 0.2.2 原生工具准入和执行器接口接入。
 组件图标导出、profile 刷新及配置/schema 检查见
 [宿主兼容范围与展示元数据](docs/使用指南.md#宿主兼容范围与展示元数据)。
 

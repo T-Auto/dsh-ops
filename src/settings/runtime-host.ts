@@ -24,9 +24,9 @@ export function runtimeProcessRunner(subprocess: Pick<SubprocessRuntime, 'spawn'
       error: error instanceof Error ? error.message : String(error) } }
   }
 }
-export function mountRuntimeSettings(root: Context): void {
+export function mountRuntimeSettings(root: Context, options: { config?: () => unknown } = {}): void {
   root.inject(['typert', 'subprocess'], ctx => {
-    const service = new RuntimeActions({ run: runtimeProcessRunner(ctx.subprocess) })
+    const service = new RuntimeActions({ run: runtimeProcessRunner(ctx.subprocess), ...options })
     ctx.provide('opsSettings', service)
     ctx.typert.register({ package: 'dsh-ops', face: 'host', schemas: [], model: { services: [], events: [], objects: [] }, invocations: RUNTIME_DESCRIPTORS })
     ctx.effect(() => () => service.dispose(), 'dsh-ops: runtime settings actions')

@@ -14,7 +14,7 @@ import { invokeResult } from '../lib/file/result.js'
 
 requireWorker('result-storage-host')
 await test('Native result defaults to live cwd and explicit original roots retain reference authority after cd', () => withTempDir('reference-live-cwd', async root => {
-  const { ctx } = await bootHost(), session = { id: 'reference-live-cwd', header: { cwd: root } }, agent = { session }
+  const { ctx } = await bootHost({ withWorkingDirectory: false }), session = { id: 'reference-live-cwd', header: { cwd: root } }, agent = { session }
   const live = path.join(root, 'tools'); fs.mkdirSync(live)
   let cwd = live, ensures = 0
   const signal = new AbortController().signal, exec = { agent, signal }

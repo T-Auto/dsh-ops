@@ -19,19 +19,34 @@ const TestSwitch = ({ checked, label, disabled, onChange }) => h('button', {
   onClick: () => onChange(!checked),
 })
 const ready = (value, revision = 'v1') => ({ status: 'ready', writable: true, value, base: {}, user: {}, revision })
-const snapshot = { platform: 'win32', managed: [], git: ['C:/Git/bin/bash.exe'], powerShell: { supported: true, guidance: 'Restart DSH.' } }
+const niubashMode = { id: 'ptc', enabled: true, publishesBash: true, available: true, source: 'bundled',
+  engine: 'niubash', file: 'C:/dsh-ops/runtime/win32-x64/niubash/niu.exe', detail: 'verified complete Niubash payload' }
+const { id: _modeId, enabled: _modeEnabled, publishesBash: _modePublishes, ...niubashBash } = niubashMode
+const snapshot = { platform: 'win32', bash: niubashBash, modes: [niubashMode], managed: [],
+  git: ['C:/Git/bin/bash.exe'], powerShell: { supported: true, guidance: 'Restart DSH.' } }
+/** The same deployment with no verified payload: the only state that offers installation. */
+const missingSnapshot = { ...snapshot, bash: { available: false, source: 'missing', engine: 'none', detail: 'no payload' },
+  modes: [{ ...niubashMode, available: false, source: 'missing', engine: 'none', file: undefined }] }
 const ok = value => ({ ok: true, value })
 const defaultApi = () => ({
   snapshot: async () => ok(snapshot),
-  select: async () => ok({ bashPath: snapshot.git[0], restriction: 'Partial enforcement.' }),
+  select: async request => ok(request.source === 'niubash'
+    ? { source: 'niubash', clear: true, engine: 'niubash', detail: 'Niubash 1.5.0 resolved.', restriction: '' }
+    : { source: 'git', file: String(request.path), clear: false, engine: 'msys',
+      detail: 'Explicit Git Bash selected.', restriction: 'Partial enforcement.' }),
   plan: async action => ok({ id: 'plan-id', action, available: true, details: ['Review installation first.'] }),
   execute: async () => ok({ status: 'completed', effectState: 'applied', message: 'Completed.' }),
 })
+/** The executor card's own fixture; the row page always receives one from `row-settings.tsx`. */
+const executor = (api = defaultApi()) => ({ api, snapshot, busy: false, refresh() {} })
 async function mount(component, props) {
+  // The row page is mounted directly by these tests; its executor surface is supplied
+  // by `row-settings.tsx` in the shipped bundle.
+  const withDefaults = component === RowForm && props.executor === undefined ? { ...props, executor: executor() } : props
   const container = document.createElement('div'); document.body.append(container)
   const root = createRoot(container)
-  const update = next => root.render(h(component, { view: 'page', t, ...next }))
-  await act(async () => update(props))
+  const update = next => root.render(h(component, { view: 'page', t, ...withDefaults, ...next }))
+  await act(async () => update())
   return { container, render: next => act(async () => update(next)), update, close: async () => { await act(async () => root.unmount()); container.remove() } }
 }
 const button = (container, text) => [...container.querySelectorAll('button')].find(node => node.textContent === text)
@@ -87,14 +102,53 @@ await test('the page saves only changed switches with the host revision, then re
   } finally { await view.close(); await shutdown(fixture.ctx) }
 })
 
-await test('rendered preset hints describe Bash coexistence and explicit PowerShell hiding', async () => {
+await test('the executor card switches between the packaged payload and a typed Git Bash path', async () => {
+  const writes = []
+  const form = { state: ready({ ptc: { bashPath: 'C:/Git/bin/bash.exe' } }), mutate: async ops => { writes.push(ops); return true } }
+  const view = await mount(RowForm, { form, Switch: TestSwitch })
+  try {
+    const card = group(view.container, en.executorTitle)
+    assert.ok(card, 'the executor card renders')
+    // A saved path is shown as the Git Bash choice, with its value in the input.
+    assert.equal(card.querySelector('input[type=text]').value, 'C:/Git/bin/bash.exe')
+    // A detected installation is one click away, and the host validates the path.
+    await click(button(card, 'C:/Git/bin/bash.exe'))
+    assert.match(card.textContent, /Partial enforcement/)
+    // Choosing the packaged payload clears the saved key instead of pinning a copy.
+    await click(card.querySelectorAll('input[type=radio]')[0])
+    await click(button(view.container, en.save))
+    assert.deepEqual(writes[0], [{ op: 'unset', path: ['ptc', 'bashPath'] }])
+  } finally { await view.close() }
+})
+
+await test('an invalid typed path blocks the save and names the host reason', async () => {
+  const writes = [], api = defaultApi()
+  api.select = async () => ({ ok: false, error: { message: 'The Bash executable does not exist: C:/typo/bash.exe' } })
+  const form = { state: ready({}), mutate: async ops => { writes.push(ops); return true } }
+  const view = await mount(RowForm, { form, Switch: TestSwitch, executor: executor(api) })
+  try {
+    const card = group(view.container, en.executorTitle)
+    await click(card.querySelectorAll('input[type=radio]')[1])
+    const input = card.querySelector('input[type=text]')
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set
+      setter.call(input, 'C:/typo/bash.exe')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await click(button(view.container, en.save))
+    assert.match(view.container.textContent, /does not exist/)
+    assert.deepEqual(writes, [], 'nothing is written for a path the host rejected')
+  } finally { await view.close() }
+})
+
+await test('rendered preset hints describe default conditional PowerShell hiding', async () => {
   const form = { state: ready({}), mutate: async () => true }
   const view = await mount(RowForm, { form, Switch: TestSwitch })
   try {
     for (const label of [en.featureMinimal, en.featureStandard, en.featurePtc, en.featureCordis]) {
       await expand(view.container, label)
       const text = group(view.container, label).textContent
-      assert.match(text, /Publishes Bash independently; PowerShell remains available by default on Windows\.|独立发布 Bash；Windows 默认保留 PowerShell。/)
+      assert.match(text, /Windows hides PowerShell by default only while Bash is available and pwsh7 linkage is off\.|Windows 默认仅在 Bash 可用且未开启 pwsh7 联动时隐藏 PowerShell。/)
       assert.doesNotMatch(text, /Replaces pwsh with bash|将 pwsh 替换为 bash/)
       await expand(view.container, label)
     }
@@ -252,6 +306,7 @@ await test('dirty drafts retain their revision and refused saves never claim suc
 
 await test('runtime actions require preview plus explicit execution and retain transport failures after refresh', async () => {
   const calls = [], api = defaultApi()
+  api.snapshot = async () => ok(missingSnapshot)
   api.plan = async action => { calls.push(['plan', action]); return ok({ id: 'reviewed-id', action, available: true, details: ['Standard host installation.'] }) }
   api.execute = async id => { calls.push(['execute', id]); return { ok: false, error: { message: 'Shell row became unavailable' } } }
   const view = await mount(DiagnosticsSection, { subject: bundleSubject, t, api })
@@ -269,6 +324,7 @@ await test('runtime actions require preview plus explicit execution and retain t
 
 await test('cancelled runtime execution preserves unknown effects and unavailable plans cannot execute', async () => {
   const api = defaultApi(); let signal, finish, executions = 0
+  api.snapshot = async () => ok(missingSnapshot)
   api.execute = async (_id, inputSignal) => { executions++; signal = inputSignal; return new Promise(resolve => { finish = () => resolve({ ok: false, error: { message: 'Remote call cancelled after launch.' } }); inputSignal.addEventListener('abort', finish, { once: true }) }) }
   const view = await mount(DiagnosticsSection, { subject: bundleSubject, t, api })
   try {
@@ -283,13 +339,35 @@ await test('cancelled runtime execution preserves unknown effects and unavailabl
   } finally { finish?.(); await view.close() }
 })
 
+await test('the managed-copy row stays hidden while the packaged payload runs', async () => {
+  const view = await mount(DiagnosticsSection, { subject: bundleSubject, t, api: defaultApi() })
+  try {
+    // Nothing is installed under DSH_HOME, and nothing needs to be: no missing row.
+    assert.equal(view.container.textContent.includes(en.statusManaged), false)
+    assert.equal(button(view.container, en.installAction), undefined)
+    assert.match(view.container.textContent, new RegExp(en.summaryNiubashBundled.slice(0, 24)))
+  } finally { await view.close() }
+})
+
+await test('an existing managed copy gets its own optional row and can be removed', async () => {
+  const api = defaultApi()
+  api.snapshot = async () => ok({ ...snapshot,
+    managed: [{ version: '1.5.0', directory: 'C:/home/dsh-ops/shells/niubash', owned: true, backend: 'niubash' }] })
+  const view = await mount(DiagnosticsSection, { subject: bundleSubject, t, api })
+  try {
+    assert.equal(view.container.textContent.includes(en.statusManaged), true)
+    assert.equal(button(view.container, en.removeAction).disabled, false)
+    assert.equal(button(view.container, en.installAction), undefined)
+  } finally { await view.close() }
+})
+
 await test('an older failed runtime refresh cannot replace a newer successful status', async () => {
   const pending = [], api = defaultApi()
   api.snapshot = () => new Promise((resolve, reject) => pending.push({ resolve, reject }))
   const view = await mount(DiagnosticsSection, { subject: bundleSubject, t, api })
   try {
     await click(button(view.container, en.redetect))
-    await act(async () => pending[1].resolve(ok(snapshot)))
+    await act(async () => pending[1].resolve(ok(missingSnapshot)))
     await act(async () => pending[0].reject(new Error('obsolete network failure')))
     assert.equal(view.container.textContent.includes('obsolete network failure'), false)
     assert.equal(button(view.container, en.installAction).disabled, false)

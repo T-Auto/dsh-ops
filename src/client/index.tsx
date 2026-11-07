@@ -66,7 +66,7 @@ export async function apply(ctx: Context): Promise<void> {
     yield ctx.slots.register({ name: 'plugins.row.config', key: `${ROW_ID}#${ROW_ID}`, locale: 'dshOps' },
       (props: SettingsProps) => props.view === 'summary'
         ? <>{props.t('rowSummary')}</>
-        : <RowSettings {...props} pwsh7Installed={pwsh7Installed} plugins={plugins} />)
+        : <RowSettings {...props} pwsh7Installed={pwsh7Installed} plugins={plugins} api={api} />)
   })
   // The status card reports the Host runtime; a row without runtime facts renders
   // nothing, and a disabled bundle or row renders nothing either. Configuration

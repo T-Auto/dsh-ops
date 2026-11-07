@@ -18,7 +18,8 @@ await test('multi-file repeats require every fresh file and the exact prior batc
   const { request, policyReads } = context, { batch } = setup(context)
   const first = await batch()
   full(first)
-  assert.equal(first.value.status, 'partial', 'bounded file ranges retain incomplete-file coverage')
+  assert.equal(first.value.status, 'partial', 'Outcome reports incomplete coverage')
+  assert.equal(first.value.data.status, 'partial', 'bounded file ranges retain incomplete-file coverage')
   full(await batch())
   await request([first.assistant, first.message])
   const before = policyReads.count
@@ -30,7 +31,7 @@ await test('multi-file repeats require every fresh file and the exact prior batc
   assert.match(text(repeat), /nextOffset=11/)
   assert.match(text(repeat), /nextOffset=15/)
   assert.match(text(repeat), /2\/2 requested ranges revalidated/)
-  assert.match(text(repeat), /more lines/); assert.equal(repeat.value.complete, false)
+  assert.match(text(repeat), /more lines/); assert.equal(repeat.value.data.complete, false)
 }))
 
 await test('a changed sibling, its metadata or its identity restores the entire batch body', () => fixture(async context => {
@@ -70,7 +71,7 @@ await test('failed and clipped file ranges never acquire dedup evidence from a s
   const { request } = context, { second, batch } = setup(context)
   fs.unlinkSync(second)
   const missing = await batch()
-  assert.equal(missing.value.failed, 1)
+  assert.equal(missing.value.data.failed, 1)
   await request()
   full(await batch())
   fs.writeFileSync(second, 'payload' + 'x'.repeat(100000))
@@ -79,21 +80,23 @@ await test('failed and clipped file ranges never acquire dedup evidence from a s
   const again = await batch({ args: { files: [{ path: context.file }, { path: second }] } })
   full(again)
   assert.doesNotMatch(text(again), /Unchanged file range/)
-  assert.ok(clipped.value.items.some(file => file.items?.some(item => item.truncatedInLine)) || text(clipped).includes('TruncatedBy: output-budget'))
+  assert.ok(clipped.value.data.items.some(file => file.items?.some(item => item.truncatedInLine)) || text(clipped).includes('TruncatedBy: output-budget'))
 }))
 
 await test('pending files and malformed receipt coverage cannot be promoted to evidence', () => fixture(async context => {
   const { ctx, agent } = context, { args, batch } = setup(context)
   const first = await batch(), tool = ctx.get('tools').get(MANY, agent)
   const exec = { agent, name: MANY, arguments: args, signal: new AbortController().signal }
-  assert.ok(observeRead(tool, exec, first))
+  // observeRead is a raw Native hook; canonicalOutput unwraps only at this boundary.
+  const rawTool = { ...tool, output: { ...tool.output, render: (args, data) => tool.output.render(args, { ...first.value, data }) } }
+  assert.ok(observeRead(rawTool, exec, { ...first, value: first.value.data }))
   for (const change of [{ pending: 1 }, { failed: 1 }, { nextIndex: 1 }, { reference: { refId: 'ref://test' } }, { storageError: { code: 'IO_ERROR' } }]) {
-    const value = { ...first.value, ...change }
-    assert.equal(observeRead(tool, exec, { ...first, value, content: tool.output.render(args, value) }), undefined)
+    const value = { ...first.value.data, ...change }
+    assert.equal(observeRead(rawTool, exec, { ...first, value, content: tool.output.render(args, { ...first.value, data: value }) }), undefined)
   }
-  const value = structuredClone(first.value)
+  const value = structuredClone(first.value.data)
   value.items[1].revision = undefined
-  assert.equal(observeRead(tool, exec, { ...first, value, content: tool.output.render(args, value) }), undefined)
+  assert.equal(observeRead(rawTool, exec, { ...first, value, content: tool.output.render(args, { ...first.value, data: value }) }), undefined)
 }))
 
 report('context-read-many')

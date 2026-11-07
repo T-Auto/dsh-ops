@@ -4,27 +4,32 @@ name: Release
 # Nothing here runs on a branch push or on a pull request, so an ordinary merge can
 # never publish.
 #
-# This workflow is currently `disabled_manually` at the repository level (Actions are
-# off for it), left over from the releases that were published from a maintainer
-# machine. While it is disabled, pushing a `v*` tag starts nothing, and this file must
-# not be read as evidence that a tag produces a release. Enabling it is an admin step,
-# and the first run must be a dispatch on `main` — see docs/release-process.md.
+# PUBLISHING IS IMMUTABLE. A version is published from exactly one commit: the `gate`
+# job refuses a run whose tag was force-moved away from the commit it is building, and
+# `publish` only ever appends assets that are missing — it never replaces published
+# bytes. Finishing an interrupted release is still possible: re-dispatch the same tag,
+# same commit, and only the assets that never landed are uploaded. Releasing a fix
+# means a new version, never a moved tag. (v0.5.0 was force-moved four times and its
+# assets were replaced after publication; this workflow is the fix for that class of
+# accident.)
 #
-# WHAT IT PUBLISHES: the GitHub Release for the tag — title, generated notes, the installable
-# tarballs and `SHA256SUMS`. npm is a separate channel and is deliberately
+# A RELEASE MUST COME FROM VALIDATED CODE. On a tag run the gate also demands a
+# successful `CI required` check on the tagged commit, so a red `main` cannot publish.
+# Dispatch the workflow on a branch to rehearse the whole path: it builds, gates and
+# packs, then stops at `publish` because the ref is not a tag.
+#
+# WHAT IT PUBLISHES: the GitHub Release for the tag — title, generated notes, the
+# installable tarballs and `SHA256SUMS`. npm is a separate channel and is deliberately
 # NOT published here: `npm publish` needs an `NPM_TOKEN` secret that this repository
 # does not grant to Actions, and docs/PROVENANCE.md records that GitHub publication
-# does not automatically publish npm. Adding npm publication later needs an admin to
-# store the secret plus a new job that names `secrets.NPM_TOKEN` explicitly; it is left
-# out rather than half-wired behind a secret that may not exist.
+# does not automatically publish npm.
 #
 # PROVENANCE: every runtime target is staged with its own `provenance.json` receipt
 # (version, target, executable name, sha256), and the assembled publish directory
 # carries the release-wide `provenance.json` and `SHA256SUMS` that
 # `scripts/build-platform-packages.mjs` writes from those bytes. No sigstore/SLSA
 # attestation is produced: the recorded repository convention is the receipts plus the
-# checksum manifest (docs/PROVENANCE.md), not a second, unmaintained mechanism, and an
-# attestation would need `id-token: write` / `attestations: write` on the repository.
+# checksum manifest (docs/PROVENANCE.md), not a second, unmaintained mechanism.
 #
 # SCOPE: exactly the four declared targets in lib/ptc/runtime.js — win32-x64,
 # linux-x64, darwin-arm64 and darwin-x64. Windows arm64 and Linux arm64 are outside the
@@ -37,7 +42,8 @@ on:
   workflow_dispatch:
 
 # Read-only by default. The single job that writes is `publish`, which raises this to
-# `contents: write` for the Release it creates.
+# `contents: write` for the Release it creates. `gate` additionally asks for
+# `checks: read` so it can demand a green `CI required` on the tagged commit.
 permissions:
   contents: read
 
@@ -59,7 +65,7 @@ jobs:
           - { runner: macos-latest, target: darwin-arm64, triple: aarch64-apple-darwin }
           - { runner: macos-15-intel, target: darwin-x64, triple: x86_64-apple-darwin }
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 20
     env:
       CARGO_BUILD_JOBS: '3'
     steps:
@@ -109,16 +115,25 @@ jobs:
         shell: bash
         run: file runtime/linux-x64/dsh-ops-worker | grep -Eq 'statically linked|static-pie linked'
 
-      - name: Acquire optional pinned Bash fixture
+      - name: Acquire explicit legacy Bash fixture and build IPC
         if: matrix.target == 'win32-x64'
-        run: node bin/dsh-ops.mjs bash-runtime install
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP 'ops-release-legacy-bash'
+          $env:DSH_HOME = $fixture
+          New-Item -ItemType Directory -Path $fixture -Force | Out-Null
+          node --input-type=module -e "import fs from 'node:fs'; import { SHELL_UPSTREAM_PINS } from './lib/shells/pins.js'; fs.writeFileSync(process.env.DSH_HOME + '/pins.json', JSON.stringify(SHELL_UPSTREAM_PINS.filter(pin => pin.name === 'bash')))"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node bin/dsh-ops.mjs provision-shells --bash --pin "$fixture/pins.json"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $env:DSH_OPS_TEST_BASH = node --input-type=module -e "import { pinnedBashExecutable } from './lib/shells/pinned.js'; console.log(pinnedBashExecutable())"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run build:bash-ipc
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
-      - name: Build the Windows Bash IPC proxies
-        # Only the Windows target carries the IPC proxies; their receipt is verified
-        # against the committed native/bash-ipc sources by the gate below. Fails when
-        # the MSVC toolchain or the pinned shell payload is not where this expects it.
+      - name: Stage complete frozen Niubash payload
         if: matrix.target == 'win32-x64'
-        run: npm run build:bash-ipc
+        run: npm run stage:niubash
 
       - uses: actions/upload-artifact@v7
         with:
@@ -134,17 +149,61 @@ jobs:
     # Windows validates the IPC payload while checking every target artifact.
     runs-on: windows-latest
     timeout-minutes: 45
+    permissions:
+      # Read the tag's history and the `CI required` check on the tagged commit; nothing here writes.
+      contents: read
+      checks: read
     env:
       DIST: dist-release
     steps:
       - uses: actions/checkout@v7
         with:
-          # Included benchmark tests verify the pinned historical baseline.
+          # Included benchmark tests verify the pinned historical baseline, and the tag guard
+          # compares the tag's resolved commit with the commit this run builds.
           fetch-depth: 0
 
       - uses: actions/setup-node@v7
         with:
           node-version: '24'
+
+      - name: Refuse a moved tag
+        # Publishing is immutable: the tag must still point at the commit this run builds.
+        # A force-moved tag would rename the bytes under a consumer who already downloaded the
+        # version, so an existing release is only ever finished, never rewritten. A tag that
+        # already points here may be re-dispatched to upload the assets that never landed.
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          peeled=$(git ls-remote origin "refs/tags/$GITHUB_REF_NAME^{}" | cut -f1)
+          if [ -z "$peeled" ]; then
+            peeled=$(git ls-remote origin "refs/tags/$GITHUB_REF_NAME" | cut -f1)
+          fi
+          echo "tag $GITHUB_REF_NAME -> ${peeled:-<missing>}"
+          echo "this run builds      -> $GITHUB_SHA"
+          if [ "$peeled" != "$GITHUB_SHA" ]; then
+            echo "::error::tag $GITHUB_REF_NAME points at ${peeled:-<missing>}, but this run builds $GITHUB_SHA; publish a new version instead of moving a released tag" >&2
+            exit 1
+          fi
+
+      - name: Require a green CI required check on the tagged commit
+        # A release must come from validated code. The tagged commit must already have a
+        # successful `CI required` from ci.yml; a red `main` cannot publish under a green tag.
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          conclusion=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs" \
+            --jq '[.check_runs[] | select(.name == "CI required" and .conclusion != null)] | sort_by(.completed_at) | last | .conclusion')
+          echo "CI required on $GITHUB_SHA: ${conclusion:-<none>}"
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::the tagged commit $GITHUB_SHA has no successful 'CI required' check; a release cannot be published from unvalidated code" >&2
+            exit 1
+          fi
 
       - name: Install locked dependencies
         run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
@@ -190,25 +249,41 @@ jobs:
           rustup default 1.97.1
           cargo build --release --locked --manifest-path native/Cargo.toml
 
-      - name: Build plugin and acquire optional pinned Bash fixture
+      - name: Build plugin and acquire explicit legacy Bash fixture
+        shell: pwsh
         run: |
           npm run build
-          node bin/dsh-ops.mjs bash-runtime install
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $fixture = Join-Path $env:RUNNER_TEMP 'ops-release-gate-legacy-bash'
+          $env:DSH_HOME = $fixture
+          New-Item -ItemType Directory -Path $fixture -Force | Out-Null
+          node --input-type=module -e "import fs from 'node:fs'; import { SHELL_UPSTREAM_PINS } from './lib/shells/pins.js'; fs.writeFileSync(process.env.DSH_HOME + '/pins.json', JSON.stringify(SHELL_UPSTREAM_PINS.filter(pin => pin.name === 'bash')))"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          node bin/dsh-ops.mjs provision-shells --bash --pin "$fixture/pins.json"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $bash = node --input-type=module -e "import { pinnedBashExecutable } from './lib/shells/pinned.js'; console.log(pinnedBashExecutable())"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          "DSH_OPS_TEST_BASH=$bash" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "DSH_OPS_TEST_NIUBASH=$env:GITHUB_WORKSPACE/runtime/win32-x64/niubash/niu.exe" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Release gate (manifest, suites, runtime closure)
-        # Publishing must not start before this step is green — it is the only reason
-        # the `publish` job sits behind `needs`. `verify:release` is
-        # `validate-manifest` + the full repository suite + `bin/check-release.mjs`,
-        # which demands all four declared targets, matches every receipt hash against
-        # the staged bytes, and re-checks the Windows IPC binary and source digests.
-        # A partial download, a foreign-architecture binary, a stale receipt or a
-        # manifest/target disagreement fails here instead of shipping.
-        run: npm run verify:release
+      - name: Release gate (same gate as CI, plus the release closure)
+        # Publishing must not start before this step is green — it is the only reason the
+        # `publish` job sits behind `needs`. `verify-gate.mjs` is the exact gate every CI leg
+        # runs: it stages the frozen Niubash archive (so the payload suites really run instead of
+        # skipping), sets DSH_OPS_REQUIRE_RUNTIME=1 and refuses a skip outside this platform's
+        # allowed set, re-checks the suite inventory and validates the packed artifact.
+        # `check-release.mjs` then demands all four declared targets, matches every receipt hash
+        # against the staged bytes and re-checks the Windows IPC binary and source digests. A
+        # partial download, a foreign-architecture binary, a stale receipt or a manifest/target
+        # disagreement fails here instead of shipping.
+        run: |
+          node scripts/verify-gate.mjs --skip-install
+          node bin/check-release.mjs
 
       - name: Assemble and pack the publish directory
         # Packs the main plugin and the pinned Windows bash payload package, and writes
-        # provenance.json + SHA256SUMS under
-        # $env:DIST. A non-zero exit fails the run; nothing is published from here.
+        # provenance.json + SHA256SUMS under $env:DIST. A non-zero exit fails the run;
+        # nothing is published from here.
         run: node scripts/build-platform-packages.mjs --dist "$env:DIST"
 
       - name: Check the assembled artifacts
@@ -247,10 +322,10 @@ jobs:
           path: dist-release
 
       - name: Create or refresh the GitHub Release and attach the assets
-        # Idempotent, so an interrupted release is finished rather than restarted: an
-        # existing Release gets its assets replaced (`--clobber`), a missing one is
-        # created against the tag that already exists (`--verify-tag`). Every `gh`
-        # failure is a failed step, never a green run with a missing asset.
+        # Idempotent and append-only: an existing Release only receives the assets that are
+        # missing, so a re-dispatched release can finish itself but can never replace bytes a
+        # consumer already downloaded (the gate refuses a moved tag, and this step never passes
+        # `--clobber`). Every `gh` failure is a failed step, never a green run with a missing asset.
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -267,7 +342,22 @@ jobs:
             [ -f "$asset" ] || { echo "missing release asset: $asset" >&2; exit 1; }
           done
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+            published=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" --jq '.assets[].name')
+            missing=()
+            for asset in "${assets[@]}"; do
+              name=$(basename "$asset")
+              if printf '%s\n' "$published" | grep -Fxq "$name"; then
+                echo "already published, kept as-is: $name"
+              else
+                missing+=("$asset")
+              fi
+            done
+            if [ ${#missing[@]} -gt 0 ]; then
+              echo "uploading missing assets: ${missing[*]}"
+              gh release upload "$GITHUB_REF_NAME" "${missing[@]}"
+            else
+              echo "release already carries every asset; nothing to upload"
+            fi
           else
             gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
               --title "$GITHUB_REF_NAME" --generate-notes --verify-tag

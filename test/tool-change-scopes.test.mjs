@@ -1,4 +1,5 @@
 /** A host that names the changed scope must not cost every live session a probe. */
+import { prepareStep } from './lib/executor.mjs'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
@@ -23,6 +24,7 @@ await test('a host-attributed tools/change probes only the named scope, while a 
       resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: session.header.cwd, sessionId: session.id }),
     }))
     await ctx.plugin(discovery, { binaryPath: WORKER, required: true })
+    await new Promise(resolve => setImmediate(resolve))
 
     const prompt = ctx.get('systemPrompt'), assemble = prompt.assemble.bind(prompt)
     const probes = new Map()
@@ -58,7 +60,7 @@ await test('a host-attributed tools/change probes only the named scope, while a 
     probes.clear()
     await ctx.serial('tools/change', {})
     await wait(250)
-    assert.equal(liveProbes(), 1, 'an unattributed change must probe exactly one representative session')
+    assert.equal(liveProbes(), 0, 'unknown notifications do not eagerly traverse sessions')
 
     // A named scope that sits on no tracked session's chain still means the registry
     // moved. Dropping it would leave every cached verdict standing on a registry that
@@ -67,7 +69,10 @@ await test('a host-attributed tools/change probes only the named scope, while a 
     const stranger = makeAgent('stranger')
     await ctx.serial('tools/change', { scope: stranger })
     await wait(250)
-    assert.equal(liveProbes(), 1, 'a scope on no tracked chain must fall back to the conservative path')
+    assert.equal(liveProbes(), 0, 'unknown scope notification remains lazy')
+    const step = await prepareStep(ctx, live[0])
+    try { assert.ok(step.assembly.tools.some(t => t.name === 'ops_discover_tools')) } finally { step.dispose() }
+    assert.equal(liveProbes(), 1, 'only an actual resolve pays its admission probe')
 
   } finally { await shutdown(ctx) }
 }))
