@@ -32,6 +32,23 @@ console.error('DEBUG host whoami: ' + JSON.stringify((hostGroups.stdout ?? '').s
 const root = scenarioDir('niu-host-中文'), outside = scenarioDir('niu-outside')
 console.error('DEBUG outside label ' + JSON.stringify(bashIntegrityReport(outside)))
 console.error('DEBUG home label ' + JSON.stringify(bashIntegrityReport(TEST_HOME)))
+const debugSystem32 = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32')
+const debugWhoami = path.join(debugSystem32, 'whoami.exe')
+const probeToken = (label, executable, args, options = {}) => {
+  const result = spawnSync(executable, args, { encoding: 'utf8', windowsHide: true, ...options })
+  const token = String(result.stdout ?? '').split(/\r?\n/u).filter(line => /Mandatory Label/u.test(line))
+  console.error(`DEBUG ${label}: status=${result.status} error=${result.error?.message ?? 'none'} token=${JSON.stringify(token)} stderr=${JSON.stringify((result.stderr ?? '').slice(0, 160))}`)
+}
+const debugPayloadRoot = path.dirname(file)
+const debugNiuEnv = { ...process.env, NIU_ROOT: path.join(debugPayloadRoot, 'winuxcmd'), WINUXCMD_PATH: path.join(debugPayloadRoot, 'winuxcmd', 'usr', 'bin', 'winuxcmd.exe'), NIU_SKIP_WINUXCMD_ACTIVATION: '1' }
+const debugGlobalTemp = path.join(process.env.USERPROFILE ?? 'C:\\Users\\runneradmin', 'AppData', 'Local', 'Temp')
+probeToken('plain cmd child', process.env.ComSpec ?? path.join(debugSystem32, 'cmd.exe'), ['/d', '/c', 'whoami /groups'])
+probeToken('plain niu', file, ['-c', `"${debugWhoami}" /groups`], { env: debugNiuEnv })
+probeToken('plain niu norc', file, ['--noprofile', '--norc', '-c', `"${debugWhoami}" /groups`], { env: debugNiuEnv })
+probeToken('plain niu cwd-C', file, ['-c', `"${debugWhoami}" /groups`], { env: debugNiuEnv, cwd: 'C:\\' })
+probeToken('plain niu global-temp', file, ['-c', `"${debugWhoami}" /groups`], { env: { ...debugNiuEnv, TEMP: debugGlobalTemp, TMP: debugGlobalTemp } })
+const debugLayers = spawnSync(path.join(debugSystem32, 'reg.exe'), ['query', 'HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers'], { encoding: 'utf8' })
+console.error('DEBUG appcompat layers: ' + JSON.stringify((debugLayers.stdout ?? '').slice(0, 800)))
 const bash = consumerRoot ? resolveShells({}, { bundleRoot: consumerRoot }).bash : resolveShells({ bashPath: file }).bash
 assert.equal(bash.available, true, bash.detail)
 const { ctx } = await bootHost({ withWorkingDirectory: true })
