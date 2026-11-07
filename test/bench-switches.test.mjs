@@ -53,12 +53,14 @@ await test('candidate preparation preserves baseline and refuses blocked or unpr
     const base = path.join(dir, 'profiles/base/cordis.patch.yml'), cand = path.join(dir, 'profiles/cand/cordis.patch.yml')
     fs.writeFileSync(base, '# baseline sentinel\n[]\n'); fs.writeFileSync(cand, '[]\n')
     const calls = [], options = { candProfile: 'cand', force: false, dryRun: false }
-    const context = { home: dir, prefix: [], overlay: path.join(dir, 'missing'), log: () => {}, invoke: args => {
-      calls.push(args)
-      assert.equal(args[args.indexOf('--profile') + 1], 'cand')
-      return args.includes('--dump-config') ? { status: 0, stdout: fs.readFileSync(cand, 'utf8') }
-        : { status: 0, stdout: '{"type":"status","phase":"turn_end","reason":{"kind":"completed"}}\n' }
-    } }
+    const context = {
+      home: dir, prefix: [], overlay: path.join(dir, 'missing'), log: () => { }, invoke: args => {
+        calls.push(args)
+        assert.equal(args[args.indexOf('--profile') + 1], 'cand')
+        return args.includes('--dump-config') ? { status: 0, stdout: fs.readFileSync(cand, 'utf8') }
+          : { status: 0, stdout: '{"type":"status","phase":"turn_end","reason":{"kind":"completed"}}\n' }
+      }
+    }
     configureSwitches(options, context, { 'ptc': { enabled: true } })
     assert.equal(fs.readFileSync(base, 'utf8'), '# baseline sentinel\n[]\n')
     assert.equal(calls.filter(args => args.includes('--json')).length, 1)
@@ -75,8 +77,10 @@ await test('candidate switch conditions differ across sweeps, never across the t
   const base = { results: [], switches: {}, candidateSwitches: switches }
   const cand = { results: [], switches, candidateSwitches: switches }
   assert.doesNotThrow(() => compareSummaries(base, cand))
-  assert.throws(() => compareSummaries(base, { ...cand, candidateSwitches: { 'ptc': { enabled: false } } }), /Candidate switches differ/)
-  assert.match(renderReport(compareSummaries(base, cand)), /Candidate switches/)
+  assert.throws(() => compareSummaries(base, { ...cand, candidateSwitches: { 'mode-ptc': { enabled: false } } }), /Candidate switches differ/)
+  const comparison = compareSummaries(base, cand)
+  assert.deepEqual(comparison.switches, switches, 'the comparison document still records the candidate switches')
+  assert.doesNotMatch(renderReport(comparison), /Candidate switches/, 'the report itself carries no switch line')
 })
 
 await test('dynamic and non-mapping configuration is refused before candidate planning', () => {
@@ -139,14 +143,18 @@ await test('CLI refuses differing candidate switches and the panel renders the a
     const run = { schemaVersion: 1, meta: { arms }, arms, results: [] }
     const file = path.join(dir, 'run.json'); fs.writeFileSync(file, JSON.stringify(run))
     const panel = renderPanel({ runJsonPath: file, outDir: dir })
-    const dom = new JSDOM(fs.readFileSync(panel.htmlPath, 'utf8'), { runScripts: 'dangerously', beforeParse(window) {
-      window.fetch = async () => ({ ok: true, json: async () => run })
-    } })
-    try { await waitFor(() => {
-      const failure = dom.window.document.getElementById('fallback-error').textContent
-      assert.equal(failure, '')
-      return dom.window.document.body.textContent.includes('Candidate switches: {"ptc":{"enabled":true}}')
-    }) }
+    const dom = new JSDOM(fs.readFileSync(panel.htmlPath, 'utf8'), {
+      runScripts: 'dangerously', beforeParse(window) {
+        window.fetch = async () => ({ ok: true, json: async () => run })
+      }
+    })
+    try {
+      await waitFor(() => {
+        const failure = dom.window.document.getElementById('fallback-error').textContent
+        assert.equal(failure, '')
+        return dom.window.document.body.textContent.includes('Candidate switches: {"ptc":{"enabled":true}}')
+      })
+    }
     finally { dom.window.close() }
   })
 })
