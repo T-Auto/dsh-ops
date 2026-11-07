@@ -40,11 +40,34 @@ impl Store {
         };
         locked
             .map_err(|_| Failure::new("JOB_BUSY", "Another operation owns this workspace store"))?;
+        // A save that failed between write and rename leaves a writer temporary behind. It is not a
+        // committed generation, it would count against the quota forever, and the exclusive lock
+        // proves no writer owns it: reclaim the exact temporary namespace before any quota decision.
+        if !read_only {
+            Self::sweep_temporary(&dir);
+        }
         Ok(Self {
             dir,
             _lock: lock,
             read_only,
         })
+    }
+    /// Remove writer temporaries named `<id>.<uuid>.tmp`; nothing else in the directory is touched.
+    fn sweep_temporary(dir: &Dir) {
+        let Ok(entries) = dir.entries() else { return };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if Self::is_temporary(name) {
+                let _ = dir.remove_file(name);
+            }
+        }
+    }
+    /// Whether a file name is one of this store's writer temporaries.
+    fn is_temporary(name: &str) -> bool {
+        let Some(stem) = name.strip_suffix(".tmp") else { return false };
+        let Some((id, nonce)) = stem.split_once('.') else { return false };
+        Self::validate_id(id).is_ok() && nonce.len() == 36 && uuid::Uuid::parse_str(nonce).is_ok()
     }
     pub fn validate_id(id: &str) -> Result<()> {
         if id.len() != 38
@@ -175,4 +198,59 @@ pub fn now() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cap_std::ambient_authority;
+
+    fn fixture(body: impl FnOnce(&std::path::Path)) {
+        let root = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!("ops-store-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        body(&root);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn open(root: &std::path::Path, read_only: bool) -> Store {
+        let dir = Dir::open_ambient_dir(root, ambient_authority()).unwrap();
+        Store::open(&dir, read_only).unwrap()
+    }
+
+    #[test]
+    fn writer_temporaries_are_reclaimed_without_touching_generations() {
+        fixture(|root| {
+            let id = format!("j-{}", uuid::Uuid::new_v4());
+            let orphan = format!("{}.{}.tmp", id, uuid::Uuid::new_v4());
+            {
+                let store = open(root, false);
+                store.save(&id, &serde_json::json!({"items": []})).unwrap();
+            }
+            let directory = root.join(STORE);
+            std::fs::write(directory.join(&orphan), vec![b'x'; 4096]).unwrap();
+            std::fs::write(directory.join("notes.txt"), b"not ours").unwrap();
+            // A read-only open cannot legitimately delete anything, so it must leave the file.
+            {
+                let _store = open(root, true);
+                assert!(directory.join(&orphan).exists(), "a read-only open must not reclaim bytes");
+            }
+            {
+                let store = open(root, false);
+                assert!(!directory.join(&orphan).exists(), "the writer temporary is gone");
+                assert!(directory.join("notes.txt").exists(), "a foreign name is never removed");
+                assert!(store.latest(&id).is_ok(), "the committed generation survives");
+                // The reclaimed temporary no longer counts against the quota.
+                store.save(&format!("j-{}", uuid::Uuid::new_v4()), &serde_json::json!({"items": []})).unwrap();
+            }
+            // Malformed names near the namespace are not this store's to delete.
+            let store = open(root, false);
+            drop(store);
+            std::fs::write(directory.join("j-notauuid.00000000-0000-0000-0000-000000000000.tmp"), b"x").unwrap();
+            let _store = open(root, false);
+            assert!(directory.join("j-notauuid.00000000-0000-0000-0000-000000000000.tmp").exists());
+            std::fs::remove_file(directory.join("j-notauuid.00000000-0000-0000-0000-000000000000.tmp")).unwrap();
+        });
+    }
 }

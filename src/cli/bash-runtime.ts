@@ -96,7 +96,9 @@ export function commandBashRuntime(action = 'status', options: BashRuntimeComman
   else if (action === 'spill-report') return commandSpillReport(options)
   else if (action === 'clean-cache') {
     const shells = resolveShells(resolveConfig(readRowConfig(options.configFile)))
-    const inventory = bashIpcReport(shells.bash.available ? shells.bash.file : undefined)
+    // Offline cleanup is the only place quarantined copies are reclaimable, so the preview
+    // reports them with the same assertion the apply path requires.
+    const inventory = bashIpcReport(shells.bash.available ? shells.bash.file : undefined, { confirmedStopped: true })
     const apply = options.yes === true && options.dryRun !== true
     if (apply && options.allHostsStopped !== true) throw new Error('Stop every OPS host and Bash job, then confirm with --yes --all-hosts-stopped. No cache was changed.')
     if (apply) recoverBashLifecycleLock(inventory.root, { confirmedStopped: true })

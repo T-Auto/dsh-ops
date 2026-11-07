@@ -13,6 +13,9 @@ export const NIUBASH_PIN = Object.freeze(manifest)
 export const NIUBASH_RECEIPT = 'provenance.json'
 export const NIUBASH_PACKAGE_PATH = 'runtime/win32-x64/niubash'
 export const NIUBASH_HOME_PATH = 'dsh-ops/shells/niubash'
+/** One message from an unknown throwable; this module stays inside the release module closure, so it
+ * borrows no host-side helper. */
+const errorText = (error: unknown): string => (error instanceof Error && typeof error.message === 'string' ? error.message : String(error))
 const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
 export const niubashFileHash = (file: string) => digest(fs.readFileSync(file))
 const files: Readonly<Record<string, string>> = manifest.files
@@ -231,6 +234,155 @@ export function stageNiubashArchive(archive: string, target: string) {
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true })
   }
-  if (moved) fs.rmSync(previous, { recursive: true, force: true })
+  // Cleanup is diagnostic only: a refused removal must never turn a completed
+  // install into a reported failure, and the sibling it leaves behind is
+  // reclaimed by the next provision after the tree verifies.
+  if (moved) {
+    try {
+      fs.rmSync(previous, { recursive: true, force: true })
+    } catch (error) {
+      console.error('dsh-ops: could not remove the previous Niubash tree ' + previous + ': ' + errorText(error))
+    }
+  }
   return path.join(target, manifest.executable)
+}
+
+/** What one staged sibling of the fixed Niubash target is, and what a reclaim did with it. */
+export interface NiubashSiblingDecision {
+  /** The decision, in the order a reclaim applies it. */
+  action: 'reused' | 'restored' | 'removed' | 'kept'
+  /** The sibling this decision is about. */
+  path: string
+  /** Bytes the sibling occupies. */
+  bytes: number
+  /** Why it was kept; absent for a decision that changed the filesystem. */
+  detail?: string
+}
+
+/** Bytes and files below one tree, without following links out of it. */
+function treeSize(directory: string): { bytes: number, files: number } {
+  let bytes = 0, files = 0
+  const walk = (current: string): void => {
+    let entries
+    try { entries = fs.readdirSync(current, { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      const file = path.join(current, entry.name)
+      let stat
+      try { stat = fs.lstatSync(file) } catch { continue }
+      if (stat.isSymbolicLink()) continue
+      if (entry.isDirectory()) walk(file)
+      else { bytes += stat.size; files += 1 }
+    }
+  }
+  walk(directory)
+  return { bytes, files }
+}
+
+/**
+ * Reclaim the siblings an interrupted or failed Niubash install left beside the
+ * fixed target: "niubash.stage-*" and "niubash.previous-*".
+ *
+ * The target is the only authority on what may be reused, restored or removed:
+ *  - a complete staged tree is renamed into place when the target is missing
+ *    (reuse, which also saves another 108 MiB copy) and removed when it is not;
+ *  - a complete previous tree is renamed back when the target is missing
+ *    (restore after a failed replacement) and removed when it is not;
+ *  - anything that does not verify stays where it is and is reported as kept.
+ *
+ * Only direct children of the target's own directory are considered, links are
+ * never followed, and every deletion is a rename to an aside name first so a
+ * refused remove can be retried. A dry run reports the same decisions without
+ * changing the filesystem.
+ * @param target - the fixed Niubash tree path the sibling names extend.
+ * @param options - verification, filesystem and clock injection for tests.
+ * @returns one decision per sibling, newest first.
+ */
+export function reclaimNiubashSiblings(target: string, {
+  dryRun = false,
+  verify = verifyNiubashTree,
+  rename = (from: string, to: string): void => { fs.renameSync(from, to) },
+  remove = (aside: string): void => { fs.rmSync(aside, { recursive: true, force: true }) },
+  now = Date.now(),
+  log = (message: string): void => { console.error(message) },
+}: {
+  dryRun?: boolean
+  verify?: (directory: string) => string
+  rename?: (from: string, to: string) => void
+  remove?: (aside: string) => void
+  now?: number
+  log?: (message: string) => void
+} = {}): NiubashSiblingDecision[] {
+  const parent = path.dirname(target)
+  const base = path.basename(target)
+  let entries
+  try { entries = fs.readdirSync(parent, { withFileTypes: true }) } catch { return [] }
+  const stages: { path: string, bytes: number }[] = []
+  const previous: { path: string, bytes: number }[] = []
+  const decisions: NiubashSiblingDecision[] = []
+  for (const entry of entries) {
+    if (entry.name === base) continue
+    const full = path.join(parent, entry.name)
+    if (entry.name.startsWith(base + '.stage-') || entry.name.startsWith(base + '.previous-')) {
+      let stat
+      try { stat = fs.lstatSync(full) } catch { continue }
+      if (!stat.isDirectory() || stat.isSymbolicLink()) {
+        decisions.push({ action: 'kept', path: full, bytes: 0, detail: 'the sibling is not a plain directory' })
+        continue
+      }
+      const size = treeSize(full)
+      if (entry.name.startsWith(base + '.stage-')) stages.push({ path: full, bytes: size.bytes })
+      else previous.push({ path: full, bytes: size.bytes })
+    }
+  }
+  const verifyQuietly = (directory: string): boolean => {
+    try { verify(directory); return true } catch { return false }
+  }
+  const moveAsideAndRemove = (full: string, bytes: number): NiubashSiblingDecision => {
+    if (dryRun) return { action: 'removed', path: full, bytes }
+    const aside = full + '.reclaim-' + now.toString(36)
+    try { rename(full, aside) } catch (error) {
+      return { action: 'kept', path: full, bytes, detail: 'could not move it aside: ' + errorText(error) }
+    }
+    try { remove(aside) } catch (error) {
+      return { action: 'kept', path: aside, bytes, detail: 'could not remove it: ' + errorText(error) }
+    }
+    return { action: 'removed', path: full, bytes }
+  }
+  for (const staged of stages) {
+    if (!verifyQuietly(staged.path)) {
+      decisions.push({ action: 'kept', path: staged.path, bytes: staged.bytes, detail: 'the staged tree does not verify' })
+      continue
+    }
+    if (!fs.existsSync(target)) {
+      if (!dryRun) {
+        try { rename(staged.path, target) } catch (error) {
+          decisions.push({ action: 'kept', path: staged.path, bytes: staged.bytes, detail: 'could not reuse it: ' + errorText(error) })
+          continue
+        }
+      }
+      decisions.push({ action: 'reused', path: staged.path, bytes: staged.bytes })
+      log('dsh-ops: reused a complete staged Niubash tree as ' + target)
+      continue
+    }
+    decisions.push(moveAsideAndRemove(staged.path, staged.bytes))
+  }
+  for (const kept of previous) {
+    if (!verifyQuietly(kept.path)) {
+      decisions.push({ action: 'kept', path: kept.path, bytes: kept.bytes, detail: 'the previous tree does not verify' })
+      continue
+    }
+    if (!fs.existsSync(target)) {
+      if (!dryRun) {
+        try { rename(kept.path, target) } catch (error) {
+          decisions.push({ action: 'kept', path: kept.path, bytes: kept.bytes, detail: 'could not restore it: ' + errorText(error) })
+          continue
+        }
+      }
+      decisions.push({ action: 'restored', path: kept.path, bytes: kept.bytes })
+      log('dsh-ops: restored the previous Niubash tree to ' + target)
+      continue
+    }
+    decisions.push(moveAsideAndRemove(kept.path, kept.bytes))
+  }
+  return decisions
 }

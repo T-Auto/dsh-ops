@@ -48,6 +48,11 @@ await test('the report names every cache entry exactly once and separates reclai
     // (older than the one-hour TTL by the pinned clock), is scheduled for reclamation.
     assert.equal(report.reclaimableBytes, 17 + 14 + 23 + 14)
     assert.equal(report.entries.some((entry) => entry.name === 'ignore-me.txt'), false)
+    // A quarantined copy is a diagnosis artifact: the online report keeps it, while the offline
+    // report (the one clean-cache asks for) counts it once it is beyond the retained newest two.
+    const offline = bashIpcInventory({ home, current, confirmedStopped: true, now: () => Date.UTC(2026, 0, 10) })
+    assert.equal(offline.reclaimableBytes, 17 + 14 + 23 + 14, 'the quarantined copy is offline-reclaimable')
+    assert.equal(report.reclaimableBytes, 17 + 14 + 23 + 14, 'an online report never offers it')
   })
 })
 
@@ -61,7 +66,7 @@ await test('a sweep keeps the current and one previous generation, and removes t
       const when = new Date(Date.UTC(2026, 0, index + 1))
       fs.utimesSync(path.join(root, name), when, when)
     })
-    const quarantine = `${names[0]}.bad-m1`, staging = 'stage-live'
+    const quarantine = names[0] + '.bad-m1', staging = 'stage-live'
     seed(path.join(root, quarantine), 3)
     seed(path.join(root, staging), 5)
 
@@ -73,6 +78,31 @@ await test('a sweep keeps the current and one previous generation, and removes t
     assert.equal(logged.length, 2)
     for (const name of names.slice(0, 2)) assert.equal(fs.existsSync(path.join(root, name)), false, name)
     for (const name of [names[2], names[3], quarantine, staging]) assert.equal(fs.existsSync(path.join(root, name)), true, name)
+  })
+})
+
+await test('an online sweep keeps quarantined copies, and offline cleanup reclaims all but the newest two', async () => {
+  await withTempDir('bash-ipc-quarantine-sweep', (home) => {
+    const root = bashIpcRoot(home)
+    const current = generation('e')
+    seed(path.join(root, current), 1)
+    // Three copies the staging path could not verify, oldest first.
+    const quarantines = ['m1', 'm2', 'm3'].map((suffix, index) => {
+      const name = current + '.bad-' + suffix
+      seed(path.join(root, name), 30 + index)
+      const when = new Date(Date.UTC(2026, 0, 1 + index))
+      fs.utimesSync(path.join(root, name), when, when)
+      return name
+    })
+    const online = reclaimBashGenerations(root, current, { now: () => Date.UTC(2026, 0, 10) })
+    assert.deepEqual(online.removed, [], 'an online sweep never removes a quarantined copy')
+    for (const name of quarantines) assert.equal(fs.existsSync(path.join(root, name)), true, name)
+
+    const offline = reclaimBashGenerations(root, current, { confirmedStopped: true, now: () => Date.UTC(2026, 0, 10) })
+    assert.deepEqual(offline.removed, [quarantines[0]], 'offline cleanup reclaims only beyond the newest two')
+    assert.equal(offline.bytes, 30 + 14, 'the report names the bytes it freed')
+    assert.equal(fs.existsSync(path.join(root, quarantines[0])), false)
+    for (const name of quarantines.slice(1)) assert.equal(fs.existsSync(path.join(root, name)), true, name)
   })
 })
 
