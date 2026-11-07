@@ -5,6 +5,13 @@ All notable changes to this package are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+- Every merge gate is now a real gate. `validate-windows`, `validate-macos-intel` and `tools-trial` lost `continue-on-error` and joined `CI required`'s `needs` and failure loop; the bench smoke moved to `benchmark-gates.yml` (dispatch + monthly schedule) so `ci.yml` has no non-blocking job; `node-floor` runs on Linux and Windows; a new `rust-lint` job gates `cargo fmt --check` and `clippy -D warnings` on the pinned 1.97.1 toolchain (`native/rust-toolchain.toml`). `scripts/check-workflows.mjs` now states the blocking topology in one place (`EXPECTED_BLOCKING`) and fails when a job is unclassified, when `needs` disagrees, or when a failure-loop entry is missing; timeouts are tightened from measured p99.
+- Publishing is immutable. The release `gate` refuses a tag that was force-moved away from the built commit, requires a successful `CI required` check on the tagged commit, runs the same `verify-gate.mjs` as CI (restoring the skip-is-not-a-pass assertions and running the Niubash payload suites instead of skipping them), and `publish` only appends missing assets — no `--clobber`. `v0.5.0`'s four tag moves and post-publication asset replacement are the accident this prevents. The ruleset template also carries a merge queue, applied by the idempotent `scripts/apply-ruleset.mjs`.
+- 每个合并门禁都成为真正的门禁：`validate-windows`、`validate-macos-intel`、`tools-trial` 去掉 `continue-on-error` 并加入 `CI required` 的 `needs` 与失败判定循环；bench smoke 移到 `benchmark-gates.yml`（手动 + 每月调度），`ci.yml` 不再有非阻塞 job；`node-floor` 覆盖 Linux 与 Windows；新增 `rust-lint`，用 `native/rust-toolchain.toml` 钉住的 1.97.1 门禁 `cargo fmt --check` 与 `clippy -D warnings`。`scripts/check-workflows.mjs` 用 `EXPECTED_BLOCKING` 单一事实源校验“job 已分类 / needs 与循环一致”，并按实测 p99 收紧超时。
+- 发布不可变：release `gate` 拒绝被 force-move 的 tag，要求 tag commit 的 `CI required` 为 success，并改用与 CI 相同的 `verify-gate.mjs`（恢复“skip 不是通过”的断言，Niubash 载荷套件真跑）；`publish` 只补缺失资产，不再 `--clobber`。规则集模板带上 merge queue，由幂等的 `scripts/apply-ruleset.mjs` 下发。
+
 ## [0.5.0] — 2026-11-06 — Stable release
 
 - This stable release summarizes the user- and developer-facing changes since v0.4.0, including the 0.4.1-0.4.4 patch releases and the 0.5.0 previews. **Breaking:** the 0.5 series targets DSH 0.2.2-rc.1 and later 0.2.2 releases only; older hosts are no longer supported.

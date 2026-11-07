@@ -94,18 +94,36 @@ pub fn create_private(parent: &File, name: &str) -> io::Result<File> {
     create_private_object(parent, name, false, None, 5)
 }
 /// A private cache directory, created relative to an already-held directory.
-pub fn create_cache_object(parent: &File, name: &str, directory: bool, write_sid: Option<&str>) -> io::Result<File> {
+pub fn create_cache_object(
+    parent: &File,
+    name: &str,
+    directory: bool,
+    write_sid: Option<&str>,
+) -> io::Result<File> {
     if let Some(capability) = write_sid {
         let _ = private_descriptor(Some(capability))?;
         // The envelope names the host's exact private-temp capability, and the held
         // parent must already grant it. Never synthesize workspace/public grants.
-        let inherited = sddl(&*descriptor(parent)?)?.to_string_lossy().split('(').any(|ace| {
-            let parts: Vec<_> = ace.trim_end_matches(')').split(';').collect();
-            if parts.len() != 6 || parts[0] != "A" || parts[5] != capability { return false; }
-            let mask = if parts[2] == "FA" { 0x1f01ff } else { u32::from_str_radix(parts[2].trim_start_matches("0x"), 16).unwrap_or(0) };
-            mask & 0x116 == 0x116
-        });
-        if !inherited { return Err(unsupported("Cache parent lacks the trusted private-temp write capability")); }
+        let inherited = sddl(&*descriptor(parent)?)?
+            .to_string_lossy()
+            .split('(')
+            .any(|ace| {
+                let parts: Vec<_> = ace.trim_end_matches(')').split(';').collect();
+                if parts.len() != 6 || parts[0] != "A" || parts[5] != capability {
+                    return false;
+                }
+                let mask = if parts[2] == "FA" {
+                    0x1f01ff
+                } else {
+                    u32::from_str_radix(parts[2].trim_start_matches("0x"), 16).unwrap_or(0)
+                };
+                mask & 0x116 == 0x116
+            });
+        if !inherited {
+            return Err(unsupported(
+                "Cache parent lacks the trusted private-temp write capability",
+            ));
+        }
     }
     create_private_object(parent, name, directory, write_sid, 7)
 }
@@ -115,16 +133,31 @@ fn private_descriptor(write_sid: Option<&str>) -> io::Result<LocalBox<SecurityDe
         None => String::new(),
         Some(capability) => {
             let parts: Vec<_> = capability.split('-').collect();
-            if parts.len() != 6 || parts[..3] != ["S", "1", "4"] || parts[5] != "1"
-                || !parts[3..5].iter().all(|part| part.parse::<u32>().is_ok_and(|value| value > 0 && value < 1 << 30 && value.to_string() == *part)) {
-                return Err(unsupported("Expected the host's private-temp capability SID"));
+            if parts.len() != 6
+                || parts[..3] != ["S", "1", "4"]
+                || parts[5] != "1"
+                || !parts[3..5].iter().all(|part| {
+                    part.parse::<u32>().is_ok_and(|value| {
+                        value > 0 && value < 1 << 30 && value.to_string() == *part
+                    })
+                })
+            {
+                return Err(unsupported(
+                    "Expected the host's private-temp capability SID",
+                ));
             }
             format!("(A;;FA;;;{capability})")
         }
     };
     format!("D:P(A;;FA;;;{sid}){extra}").parse()
 }
-fn create_private_object(parent: &File, name: &str, directory: bool, write_sid: Option<&str>, share: u32) -> io::Result<File> {
+fn create_private_object(
+    parent: &File,
+    name: &str,
+    directory: bool,
+    write_sid: Option<&str>,
+    share: u32,
+) -> io::Result<File> {
     if name.is_empty() || name.contains(['/', '\\', ':', '\0']) || name == "." || name == ".." {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -164,8 +197,8 @@ fn create_private_object(parent: &File, name: &str, directory: bool, write_sid: 
             &mut status,
             std::ptr::null(),
             if directory { 0x10 } else { 0x80 }, // DIRECTORY or NORMAL
-            share,                    // publication excludes WRITE; cache retains READ|WRITE|DELETE
-            2,                        // FILE_CREATE (never overwrite)
+            share, // publication excludes WRITE; cache retains READ|WRITE|DELETE
+            2,     // FILE_CREATE (never overwrite)
             0x00200000 | (if directory { 0x1 } else { 0x40 }) | 0x20, // no-follow, object kind, synchronous
             std::ptr::null(),
             0,
@@ -188,9 +221,16 @@ fn create_private_object(parent: &File, name: &str, directory: bool, write_sid: 
 pub fn verify_cache(file: &File, write_sid: Option<&str>) -> io::Result<()> {
     let private = private_descriptor(write_sid)?;
     let actual = descriptor(file)?;
-    let actual_dacl = sddl(&actual)?.to_string_lossy().split("D:").nth(1).unwrap_or("").replace("AI", "");
+    let actual_dacl = sddl(&actual)?
+        .to_string_lossy()
+        .split("D:")
+        .nth(1)
+        .unwrap_or("")
+        .replace("AI", "");
     let expected = sddl(&private)?.to_string_lossy().into_owned();
-    if actual_dacl != expected.trim_start_matches("D:") { return Err(unsupported("Private creation DACL verification failed")); }
+    if actual_dacl != expected.trim_start_matches("D:") {
+        return Err(unsupported("Private creation DACL verification failed"));
+    }
     Ok(())
 }
 
@@ -401,7 +441,9 @@ mod tests {
         // Auto-inherited describes how an ACL was computed; P still prevents
         // inheritance and every ACE must match. create_private verifies the same.
         wrappers::ConvertSecurityDescriptorToStringSecurityDescriptor(sd, Info::Dacl)
-            .unwrap().to_string_lossy().replace("D:PAI", "D:P")
+            .unwrap()
+            .to_string_lossy()
+            .replace("D:PAI", "D:P")
     }
 
     #[test]
@@ -410,9 +452,15 @@ mod tests {
             let sd: LocalBox<SecurityDescriptor> = text.parse().unwrap();
             canonical_dacl(&sd)
         };
-        assert_eq!(canonical("D:P(A;;FA;;;S-1-5-18)"), canonical("D:P(A;;FA;;;SY)"));
+        assert_eq!(
+            canonical("D:P(A;;FA;;;S-1-5-18)"),
+            canonical("D:P(A;;FA;;;SY)")
+        );
         assert_eq!(canonical("D:PAI(A;;FA;;;SY)"), canonical("D:P(A;;FA;;;SY)"));
-        assert_ne!(canonical("D:P(A;;FA;;;SY)"), canonical("D:P(A;;FA;;;SY)(A;;FR;;;WD)"));
+        assert_ne!(
+            canonical("D:P(A;;FA;;;SY)"),
+            canonical("D:P(A;;FA;;;SY)(A;;FR;;;WD)")
+        );
         assert_ne!(canonical("D:P(A;;FA;;;SY)"), canonical("D:(A;;FA;;;SY)"));
     }
 

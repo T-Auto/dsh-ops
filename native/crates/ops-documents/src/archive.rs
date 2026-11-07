@@ -28,7 +28,9 @@ fn extra(data: &[u8]) -> Result<()> {
         let size = u16le(data, at + 2);
         at += 4;
         if kind == 1 {
-            return Err(unsupported("ZIP64 documents are outside the bounded DOCX subset"));
+            return Err(unsupported(
+                "ZIP64 documents are outside the bounded DOCX subset",
+            ));
         }
         if size > data.len() - at {
             return Err(error("ZIP extra field exceeds its declared header"));
@@ -39,23 +41,27 @@ fn extra(data: &[u8]) -> Result<()> {
 }
 fn preflight(data: &[u8]) -> Result<usize> {
     if data.starts_with(&[0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]) {
-        return Err(unsupported("Legacy binary DOC is unsupported; supply DOCX or plain text"));
+        return Err(unsupported(
+            "Legacy binary DOC is unsupported; supply DOCX or plain text",
+        ));
     }
     if data.len() < 22 || data.len() > MAX_ARCHIVE {
         return Err(error("DOCX must be a ZIP archive of at most 32 MiB"));
     }
     let end = (data.len().saturating_sub(65557)..=data.len() - 22)
         .rev()
-        .find(|&at| &data[at..at + 4] == b"PK\x05\x06" && at + 22 + u16le(data, at + 20) == data.len())
+        .find(|&at| {
+            &data[at..at + 4] == b"PK\x05\x06" && at + 22 + u16le(data, at + 20) == data.len()
+        })
         .ok_or_else(|| error("ZIP end record is missing or has trailing data"))?;
     // zip retries earlier EOCDs after metadata errors. Forbid alternate footer interpretations
     // before its constructor can follow an unvalidated count or a ZIP64 allocation path.
-    if data
-        .windows(4)
-        .enumerate()
-        .any(|(at, magic)| (magic == b"PK\x05\x06" && at != end) || magic == b"PK\x06\x06" || magic == b"PK\x06\x07")
-    {
-        return Err(unsupported("Ambiguous ZIP footer signatures and ZIP64 structures are unsupported"));
+    if data.windows(4).enumerate().any(|(at, magic)| {
+        (magic == b"PK\x05\x06" && at != end) || magic == b"PK\x06\x06" || magic == b"PK\x06\x07"
+    }) {
+        return Err(unsupported(
+            "Ambiguous ZIP footer signatures and ZIP64 structures are unsupported",
+        ));
     }
     let count = u16le(data, end + 10);
     let size = u32le(data, end + 12);
@@ -67,10 +73,15 @@ fn preflight(data: &[u8]) -> Result<usize> {
         || size == u32::MAX as usize
         || start == u32::MAX as usize
     {
-        return Err(unsupported("Multi-disk and ZIP64 documents are unsupported"));
+        return Err(unsupported(
+            "Multi-disk and ZIP64 documents are unsupported",
+        ));
     }
     if count > 4096 || size > 1024 * 1024 {
-        return Err(Failure::new("OUTPUT_LIMIT", "DOCX ZIP exceeds 4096 entries or 1 MiB central metadata"));
+        return Err(Failure::new(
+            "OUTPUT_LIMIT",
+            "DOCX ZIP exceeds 4096 entries or 1 MiB central metadata",
+        ));
     }
     if start.checked_add(size) != Some(end) {
         return Err(error("ZIP central-directory bounds are inconsistent"));
@@ -82,7 +93,11 @@ fn preflight(data: &[u8]) -> Result<usize> {
         if end - at < 46 || &data[at..at + 4] != b"PK\x01\x02" {
             return Err(error("Truncated ZIP central-directory entry"));
         }
-        let (name, extras, comment) = (u16le(data, at + 28), u16le(data, at + 30), u16le(data, at + 32));
+        let (name, extras, comment) = (
+            u16le(data, at + 28),
+            u16le(data, at + 30),
+            u16le(data, at + 32),
+        );
         let next = at + 46 + name + extras + comment;
         if next > end || u16le(data, at + 34) != 0 {
             return Err(error("Invalid ZIP central-directory entry bounds"));
@@ -120,7 +135,9 @@ fn preflight(data: &[u8]) -> Result<usize> {
         at = next;
     }
     if at != end {
-        return Err(error("ZIP entry count does not match central-directory bytes"));
+        return Err(error(
+            "ZIP entry count does not match central-directory bytes",
+        ));
     }
     ranges.sort_unstable();
     if ranges.windows(2).any(|r| r[0].1 > r[1].0) {
@@ -133,7 +150,9 @@ impl<'a> Archive<'a> {
     pub fn new(data: &'a [u8]) -> Result<Self> {
         let count = preflight(data)?;
         let archive = ZipArchive::with_config(
-            zip::read::Config { archive_offset: zip::read::ArchiveOffset::Known(0) },
+            zip::read::Config {
+                archive_offset: zip::read::ArchiveOffset::Known(0),
+            },
             Cursor::new(data),
         )
         .map_err(|e| error(format!("Invalid DOCX ZIP: {e}")))?;
@@ -143,20 +162,39 @@ impl<'a> Archive<'a> {
         Ok(Self(archive))
     }
     pub fn xml(&mut self, name: &str, limit: usize) -> Result<String> {
-        let mut file = self.0.by_name(name).map_err(|_| error(format!("Required DOCX part is missing: {name}")))?;
-        if !file.is_file() || file.unix_mode().is_some_and(|mode| mode & 0o170000 != 0 && mode & 0o170000 != 0o100000) {
+        let mut file = self
+            .0
+            .by_name(name)
+            .map_err(|_| error(format!("Required DOCX part is missing: {name}")))?;
+        if !file.is_file()
+            || file
+                .unix_mode()
+                .is_some_and(|mode| mode & 0o170000 != 0 && mode & 0o170000 != 0o100000)
+        {
             return Err(unsupported("DOCX XML parts must be regular ZIP entries"));
         }
-        if !matches!(file.compression(), zip::CompressionMethod::Stored | zip::CompressionMethod::Deflated) {
-            return Err(unsupported("Only stored or deflated DOCX XML parts are supported"));
+        if !matches!(
+            file.compression(),
+            zip::CompressionMethod::Stored | zip::CompressionMethod::Deflated
+        ) {
+            return Err(unsupported(
+                "Only stored or deflated DOCX XML parts are supported",
+            ));
         }
         let mut bytes = Vec::new();
         file.by_ref()
             .take(limit as u64 + 1)
             .read_to_end(&mut bytes)
-            .map_err(|e| error(format!("DOCX part failed decompression or CRC validation: {e}")))?;
+            .map_err(|e| {
+                error(format!(
+                    "DOCX part failed decompression or CRC validation: {e}"
+                ))
+            })?;
         if bytes.len() > limit {
-            return Err(Failure::new("OUTPUT_LIMIT", format!("DOCX part {name} exceeds its decoded byte limit")));
+            return Err(Failure::new(
+                "OUTPUT_LIMIT",
+                format!("DOCX part {name} exceeds its decoded byte limit"),
+            ));
         }
         super::xml::decode(&bytes)
     }

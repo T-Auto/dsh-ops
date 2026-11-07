@@ -6,9 +6,9 @@ Linux / macOS：使用当前平台构建的 worker；`setup --dry-run` 会说明
 
 Linux / macOS: build the worker for the current host. `setup --dry-run` explains skipped Windows-only checks. `ab`, `compare`/`report`, `panel` and `tools` use the same entry point on every platform. A model sweep needs your own OpenAI-compatible endpoint; the tools self-check needs no model. Every sweep now fingerprints the composed profiles even without `--seal`, recording platform and component configuration in the arm summaries. `enabled` is a configuration fact, not proof of tool readiness; unresolved expressions remain `unknown`.
 
-`compare` 默认拒绝不同平台（或已知/未知平台）混配，退出码为 2；诊断时可加 `--allow-cross-platform`，报告会明确标记差异不是插件效应。旧数据两侧都缺平台时仍可读取，显示 `unknown`，不能据此声称同平台。CI 的可选 tools-only smoke 覆盖 Linux / Windows / macOS，各自上传 artifact；不运行模型 sweep，不产出跨平台结论。
+`compare` 默认拒绝不同平台（或已知/未知平台）混配，退出码为 2；诊断时可加 `--allow-cross-platform`，报告会明确标记差异不是插件效应。旧数据两侧都缺平台时仍可读取，显示 `unknown`，不能据此声称同平台。CI 的 tools-only smoke 位于 `benchmark-gates.yml`，按手动派发与每月调度覆盖 Linux / Windows / macOS，各自上传 artifact；它是测量、不是合并门禁，不运行模型 sweep，不产出跨平台结论。
 
-`compare` rejects mismatched platforms with exit 2. `--allow-cross-platform` is an explicit diagnostic override and adds a “not a plugin effect” warning. Both-unknown legacy archives remain readable. The optional, non-blocking tools smoke runs on Linux, Windows and macOS with separate artifacts.
+`compare` rejects mismatched platforms with exit 2. `--allow-cross-platform` is an explicit diagnostic override and adds a “not a plugin effect” warning. Both-unknown legacy archives remain readable. The tools smoke runs from `benchmark-gates.yml` on dispatch and on a monthly schedule across Linux, Windows and macOS with separate artifacts; it is a measurement, never a merge gate.
 
 ```console
 npm ci --ignore-scripts

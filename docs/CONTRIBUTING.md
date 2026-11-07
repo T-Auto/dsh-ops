@@ -145,7 +145,7 @@ node test/run.mjs niubash
 ```
 
 How to read the gate and the expected numbers per host: [verify-locally.md](verify-locally.md).
-CI runs on every pull request and every push to `main`, `0.3.2` and `release/0.4.0`. The two blocking POSIX legs (`validate-posix`: Linux x64, macOS arm64) block a merge. The Windows x64 leg (`validate-windows`) and the macOS Intel leg (`validate-macos-intel`) still run on every event but are non-blocking — a red run there is a defect to fix, not a reason to hold the merge (#316; the Intel leg measured 318 s).
+CI runs on every pull request and every push to `main`, `0.3.2` and `release/0.4.0`. **Every job in `ci.yml` is a merge gate**: Linux x64 and macOS arm64 (`validate-posix`), macOS Intel (`validate-macos-intel`), Windows x64 (`validate-windows`), the Node floor, the tools trial, Rust formatting and lints, workflow lint and the source-size check. A red leg anywhere blocks the merge; there is no `continue-on-error` leg left.
 
 ## One CI run per pull request
 
@@ -153,9 +153,9 @@ All target branches are covered, including stacked feature branches. Repository 
 
 Every pull request must show one run of the [Cross-platform validation](https://github.com/T-Auto/dsh-ops/blob/main/.github/workflows/ci.yml)
 workflow that its **own `pull_request` event** triggered. The aggregate job **`CI required`**
-summarises the two blocking POSIX legs (Linux x64, macOS arm64); the non-blocking Windows x64 and
-macOS Intel legs run alongside it and are deliberately not waited on. That job's run URL is what the
-pull request template asks for.
+summarises every gate in the workflow — Linux x64 and macOS arm64, macOS Intel, Windows x64, the
+Node floor, the tools trial, Rust lint, workflow lint and the source-size check. That job's run URL
+is what the pull request template asks for.
 
 - **What triggers it.** `ci.yml` runs on `pull_request` targeting `main`, `0.3.2` and
   `release/0.4.0` (and on `push` to the same branches, plus `merge_group`). GitHub reads the
