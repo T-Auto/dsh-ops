@@ -157,7 +157,10 @@ Their important fields are (paths resolve relative to the DSH session cwd):
   epoch-millisecond `modified`); at least one positive glob is required.
 - `ops_grep`: required regex `pattern`, optional `path` and array `glob` filter.
   Use `summary` for aggregate file/match totals, `count` for per-file counts,
-  `content` for matching text (default). Item pages default to 100, with 0-based
+  `content` for matching text (default), or `definitions` for only the lines
+  where the matched identifier is declared (lexical classification, no
+  `multiline`/context flags; on a complete scan `matched` counts every matching
+  line and `total` the returned declaration lines). Item pages default to 100, with 0-based
   `offset` and `nextOffset`. Every page scans candidates to count totals, but only
   materializes the requested window. `complete:false` means more results or an
   incomplete scan; `truncated`/`failed` scans are not exhaustive. Totals exclude
