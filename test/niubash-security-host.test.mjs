@@ -234,6 +234,15 @@ try {
         console.error('DEBUG child acl outside: exit=' + childAcl.exitCode + ' stdout=' + JSON.stringify(childAcl.stdout?.text) + ' stderr=' + JSON.stringify(childAcl.stderr?.text))
       } catch (childAclError) { console.error('DEBUG child acl threw: ' + String(childAclError)) }
       console.error('DEBUG outside entries=' + JSON.stringify(fs.readdirSync(outside)))
+      const mandatory = text => JSON.stringify(String(text ?? '').split(/\r?\n/u).filter(line => /Mandatory Label/u.test(line)))
+      const inner = spawnSync(whoamiExe, ['/groups'], { encoding: 'utf8', windowsHide: true })
+      console.error('DEBUG inner process token now: ' + mandatory(inner.stdout))
+      const plainNode = spawnSync(process.execPath, ['-e', "const{spawnSync}=require('node:child_process');const r=spawnSync(process.env.ComSpec||'cmd.exe',['/d','/c','whoami /groups'],{encoding:'utf8'});process.stdout.write(r.stdout||r.stderr||'')"], { encoding: 'utf8', windowsHide: true })
+      console.error('DEBUG plain node grandchild token: ' + mandatory(plainNode.stdout))
+      const payloadRoot = path.dirname(file)
+      const plainNiu = spawnSync(file, ['-c', `"${whoamiExe}" /groups`], { encoding: 'utf8', windowsHide: true,
+        env: { ...process.env, NIU_ROOT: path.join(payloadRoot, 'winuxcmd'), WINUXCMD_PATH: path.join(payloadRoot, 'winuxcmd', 'usr', 'bin', 'winuxcmd.exe'), NIU_SKIP_WINUXCMD_ACTIVATION: '1' } })
+      console.error('DEBUG plain payload niu: status=' + plainNiu.status + ' error=' + (plainNiu.error?.message ?? 'none') + ' token=' + mandatory(plainNiu.stdout) + ' stderr=' + JSON.stringify((plainNiu.stderr ?? '').slice(0, 300)))
       throw error
     }
     assert.equal(fs.readFileSync(path.join(outside, 'full.txt'), 'utf8'), 'full')
