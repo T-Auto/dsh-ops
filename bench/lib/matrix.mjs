@@ -54,6 +54,6 @@ export function matrixComparisons(root, options, { resolveSide, compare }) {
 export function renderMatrix(comparisons, render) {
   return ['# Benchmark condition matrix', '', 'Cross-condition results are not comparable. Each section is independent; deltas are never combined.', '',
     ...comparisons.flatMap((comparison, index) => [`## Condition ${index + 1}: ${describeCondition(comparison.condition)}`, '',
-      render(comparison).replace(/^# [^\n]*\n\n/, '').replace(/^Condition: [^\n]*\n\n/, '').replace(/^## /gm, '### '), '']),
+      render(comparison).replace(/^# [^\n]*\n\n/, '').replace(/^## /gm, '### '), '']),
   ].join('\n')
 }

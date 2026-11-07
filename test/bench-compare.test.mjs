@@ -167,23 +167,30 @@ await test('the same comparison renders byte-identical text twice: tables first,
   const text = renderReport(beyond)
   assert.equal(renderReport(beyond), text, 'rendering is a pure function of its inputs')
   assertEnglish(text)
-  assert.match(text, /^# DSH-OPS Benchmark Report \(beta\)\n\nCondition: unknown\nCandidate switches: null \(null means unknown\)\n\nPlatform: base=unknown; cand=unknown\./, 'the header states condition, switches and environment evidence before the data')
-  assert.match(text, /^## Per-task pairs$/m)
-  assert.match(text, /^\| task \| base \| ops \(Δ%\) \| steps: base→ops \(Δ%\) \| tool calls: base→ops \(Δ%\) \| time: base→ops \(Δ%\) \| tool errors \| pass \|$/m, 'the first table carries cost, behaviour, wall-clock evidence and pass: no pairs, exclusion or direction column')
-  assert.ok(text.includes(`| csv-sum | 1,000 | 926 (${green('\u22127.4%')}) | 4 → 4 (${green('0.0%')}) | 6 → 6 (${green('0.0%')}) | 60.0s → 55.0s (${green('\u22128.3%')}) | 0 → 0 | 2/2→2/2 |`), 'each cell keeps its own Δ% in parentheses, painted like every other percent — time included')
+  assert.match(text, /^# DSH-OPS Benchmark Report \(beta\)\n\n## Overall statistics$/m, 'the report opens on its title and goes straight into the first table')
+  assert.doesNotMatch(text, /^(Candidate switches|Component rows|Condition|Platform):/m, 'the header carries no configuration or environment line')
+  assert.match(text, /^## Overall statistics$/m)
+  assert.match(text, /^\| task \| tokens: base→ops \(Δ%\) \| steps: base→ops \(Δ%\) \| tool calls: base→ops \(Δ%\) \| time: base→ops \(Δ%\) \| credits: base→ops \(Δ%\) \| tool errors \| pass \|$/m, 'the first table carries cost, behaviour, wall-clock evidence, credits and pass: no pairs, exclusion or direction column')
+  assert.ok(text.includes(`| csv-sum | 1,000 → 926 (${green('\u22127.4%')}) | 4 → 4 (${green('0.0%')}) | 6 → 6 (${green('0.0%')}) | 60.0s → 55.0s (${green('\u22128.3%')}) | 0.0019 → 0.0018 (${green('\u22127.4%')}) | 0 → 0 | 2/2→2/2 |`), 'each cell keeps its own Δ% in parentheses, painted like every other percent — time and credits included')
+  assert.ok(text.includes(`| **TOTAL** | 1,000 → 926 (${green('\u22127.4%')}) | 4 → 4 (${green('0.0%')}) | 6 → 6 (${green('0.0%')}) | 60.0s → 55.0s (${green('\u22128.3%')}) | 0.0038 → 0.0035 (${green('\u22127.4%')}) | 0 → 0 | 2/2→2/2 |`), 'TOTAL carries the same credits format as the task rows, pricing every repeat rather than the median')
   assert.doesNotMatch(text, /geomean/, 'the table ends at TOTAL: the geomean row is gone')
   assert.doesNotMatch(text, /## Excluded pairs|## A\/A noise band|## Token attribution/, 'the report keeps to cost, calls and the verdict: the three diagnostic sections are gone')
-  assert.doesNotMatch(text, /^## (Per-task pairs|Tool calls|Per-task bucket detail|Per-request overhead)\n\n(?!\|)/m, 'a table heading leads straight into its table: no explanatory line')
+  assert.doesNotMatch(text, /^## (Overall statistics|Tool calls|Per-task bucket detail|Per-request overhead)\n\n(?!\|)/m, 'a table heading leads straight into its table: no explanatory line')
   const headings = text.split('\n').filter((line) => line.startsWith('## '))
   assert.equal(headings[headings.length - 1], '## Per-request overhead (what every request costs before any work)', 'the overhead table closes the report')
   assert.doesNotMatch(text, /## Conclusion|## Warnings|## Evidence|## Usage split|## steps and tool calls|Direction:|noise floor \(A\/A\)|- gate:/, 'no verdict, warning or evidence prose: the verdict lives in the exit code and the comparison document')
   assert.doesNotMatch(text, /Time is reported/, 'the report is tables and nothing else')
+  assert.doesNotMatch(text, /^Pricing:|^Credits:/m, 'the credits columns are the whole money statement: the report names no rate card and carries no cost section')
 
   // The gate still judges even though the report no longer prints a conclusion: a
   // costlier delta fails the comparison document, and the CLI maps it to exit 1.
   const worse = compareSummaries(base, summary('bench-ops', [metrics('csv-sum', 1050, true), metrics('csv-sum', 1050, true)]), { noiseFloorPct: 3.1, failOn: 'both' })
   const worseText = renderReport(worse)
-  assert.ok(worseText.includes(`| csv-sum | 1,000 | 1,050 (${red('+5.0%')}) | 4 → 4 (${green('0.0%')}) | 6 → 6 (${green('0.0%')}) | 60.0s → 60.0s (${green('0.0%')}) | 0 → 0 | 2/2→2/2 |`))
+  // The credits Δ% is the delta of the exact costs, not of the two-decimal numbers the
+  // cells display: this fixture prices every bucket at one ratio, so the money moves by
+  // the same +5.0% as the tokens, and a percent read off the rounded cells (+5.3%) would
+  // name a number the report never prints.
+  assert.ok(worseText.includes(`| csv-sum | 1,000 → 1,050 (${red('+5.0%')}) | 4 → 4 (${green('0.0%')}) | 6 → 6 (${green('0.0%')}) | 60.0s → 60.0s (${green('0.0%')}) | 0.0019 → 0.0020 (${red('+5.0%')}) | 0 → 0 | 2/2→2/2 |`), 'a costlier candidate paints its credits cell red, on the exact-cost delta')
   assert.equal(worse.gate.fail, true, 'the gate verdict stays in the comparison document')
   assert.equal(worse.gate.primary, 'regression')
   assertEnglish(worseText)
@@ -194,7 +201,7 @@ await test('the first table reads the aggregate its flag names: medians, min, ha
   const cand = summary('bench-ops', [metrics('csv-sum', 900, true, { steps: 3 }), metrics('csv-sum', 900, true, { steps: 3 })])
   const text = renderReport(compareSummaries(base, cand, { noiseFloorPct: 3.1, failOn: 'both' }))
   assertEnglish(text)
-  assert.ok(text.includes(`| csv-sum | 1,000 | 900 (${green('\u221210.0%')}) | 4 → 3 (${green('\u221225.0%')}) | 6 → 6 (${green('0.0%')}) | 60.0s → 60.0s (${green('0.0%')}) | 0 → 0 | 2/2→2/2 |`), 'the steps and tool-call cells carry the medians with their Δ%')
+  assert.ok(text.includes(`| csv-sum | 1,000 → 900 (${green('\u221210.0%')}) | 4 → 3 (${green('\u221225.0%')}) | 6 → 6 (${green('0.0%')}) | 60.0s → 60.0s (${green('0.0%')}) | 0.0019 → 0.0017 (${green('\u221210.0%')}) | 0 → 0 | 2/2→2/2 |`), 'the steps, tool-call and credits cells carry the medians with their Δ%')
 
   const minText = renderReport(compareSummaries(base, cand, { noiseFloorPct: 3.1, failOn: 'both', aggregate: 'min' }))
   assert.ok(minText.includes(`| 3 → 3 (${green('0.0%')}) | 6 → 6 (${green('0.0%')}) |`), '`min` moves the cells, not only the title')
@@ -210,7 +217,20 @@ await test('the first table reads the aggregate its flag names: medians, min, ha
   const errBase = summary('bench-base', [metrics('csv-sum', 1000, true, { toolErrors: 2 })])
   const errCand = summary('bench-ops', [metrics('csv-sum', 900, true, { toolErrors: 0 })])
   const errText = renderReport(compareSummaries(errBase, errCand, { noiseFloorPct: 3.1, failOn: 'both' }))
-  assert.ok(errText.includes(`| 60.0s → 60.0s (${green('0.0%')}) | 2 → 0 | 1/1→1/1 |`), 'tool errors are counted, not percentaged')
+  assert.ok(errText.includes(`| 60.0s → 60.0s (${green('0.0%')}) | 0.0019 → 0.0017 (${green('\u221210.0%')}) | 2 → 0 | 1/1→1/1 |`), 'tool errors are counted, not percentaged')
+})
+
+await test('the bucket table prices its tokens in a credits column', () => {
+  const base = summary('bench-base', [metrics('csv-sum', 1000, true)])
+  const cand = summary('bench-ops', [metrics('csv-sum', 926, true)])
+  const comparison = compareSummaries(base, cand, { noiseFloorPct: 3.1, failOn: 'both' })
+  const text = renderReport(comparison)
+  assert.match(text, /^\| task \| input: base→ops \(Δ%\) \| output: base→ops \(Δ%\) \| cache read: base→ops \(Δ%\) \| credits: base→ops \(Δ%\) \|$/m)
+  assert.ok(text.includes(`| csv-sum | 700 → 648 (${green('\u22127.4%')}) | 300 → 278 (${green('\u22127.3%')}) | 0 → 0 (${green('0.0%')}) | 0.0019 → 0.0018 (${green('\u22127.4%')}) |`), text)
+  assert.ok(text.includes('| **TOTAL** | 700 → 648 ('), 'TOTAL keeps the same credits format as the task rows')
+  assert.doesNotMatch(text, /Credits: deepseek-flash|Estimated cost|^Pricing:/m, 'the columns are the whole cost statement: no pricing prose, no rate-card line, no second section')
+  assertEnglish(text)
+  assert.ok(renderReport(comparison, 'deepseek-v4-pro').includes('0.0072 →'), 'the flag swaps the rate card')
 })
 
 await test('the per-request overhead table prices the first request and degrades without prompt data', () => {
@@ -279,7 +299,7 @@ await test('excluded pairs leave the report body but stay in the warnings, and t
   const text = renderReport(comparison)
   assertEnglish(text)
   assert.doesNotMatch(text, /## Excluded pairs/, 'the section is gone; the counts must not vanish with it')
-  assert.ok(text.includes(`| csv-sum | 1,000 | 500 (${green('\u221250.0%')}) |`), 'the pair table still prices the one usable pair')
+  assert.ok(text.includes(`| csv-sum | 1,000 → 500 (${green('\u221250.0%')}) |`), 'the pair table still prices the one usable pair')
   assert.ok(text.includes('| 3/3→1/3 |'), 'the pass column counts every repeat, not only the usable pairs')
   assert.doesNotMatch(text, /pairs usable\/counted/, 'the usable/considered split no longer has a column')
   assert.ok(comparison.warnings.includes('cost-pairs-excluded: 2 (base 0, cand 2, both 0)'), 'the comparison document still carries how many pairs the cost statistics lost')
@@ -406,7 +426,7 @@ await test('label, directory and file forms resolve to the same comparison', asy
     // byte-identically: nothing anywhere echoes how each side was named.
     assert.equal(byLabel.text(), byDir.text())
     assert.equal(byFile.text(), byDir.text(), 'all three forms reach the same comparison')
-    assert.ok(byDir.text().includes(`api-rename | 500 | 620 (${red('+24.0%')}) | 2 → 2 (${green('0.0%')}) | 1 → 1 (${green('0.0%')}) | 0.0s → 0.0s (${green('0.0%')}) | 0 → 0 | 1/1→1/1 |`))
+    assert.ok(byDir.text().includes(`api-rename | 500 → 620 (${red('+24.0%')}) | 2 → 2 (${green('0.0%')}) | 1 → 1 (${green('0.0%')}) | 0.0s → 0.0s (${green('0.0%')}) | 0.0005 → 0.0006 (${red('+24.0%')}) | 0 → 0 | 1/1→1/1 |`), 'the run.json row carries the credits cell its input tokens cost, like every other task row')
 
     // A group is searched with --folder; the flat root is searched without it.
     assert.equal((await invoke(['bench-base', 'bench-ops', '--runs', runs, ...common]).run()), EXIT.ok)

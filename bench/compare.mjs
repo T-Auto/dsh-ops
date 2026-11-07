@@ -22,7 +22,9 @@
  * verdict travels through the exit code and the comparison document, not the markdown.
  *
  * Durations are displayed like any other metric (the per-task table's time column);
- * the verdict's cost basis remains paired tokens.
+ * the verdict's cost basis remains paired tokens. Both token tables render that basis
+ * in money as a `credits` column priced by `lib/pricing.mjs`: one number per row and
+ * per TOTAL, so the two tables cannot disagree about what the run cost.
  *
  * @module dsh-ops/bench/compare
  */
@@ -30,7 +32,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describeCondition } from './lib/condition.mjs'
 import { matrixComparisons, renderMatrix } from './lib/matrix.mjs'
 
 import {
@@ -43,6 +44,7 @@ import {
 } from './lib/compare-core.mjs'
 import { RUNS_DIR } from './lib/next-folder.mjs'
 import { environmentLines } from './lib/environment.mjs'
+import { PRICING_SOURCE, estimateCost, formatCny, pricingFor } from './lib/pricing.mjs'
 
 /** The sealed contract document inside a run directory. */
 const SEALED_RUN = 'run.json'
@@ -82,6 +84,9 @@ const USAGE = `usage: node bench/compare.mjs <base> <cand> [options]
   --noise-floor-pct N   pin the A/A noise floor; without a floor every cost
                      direction is withheld (noise-floor-unknown)
   --noise <a> <b>    measure the A/A noise floor from two baseline runs
+  --pricing-model M  price the credits columns at DeepSeek off-peak rates for M:
+                     deepseek-flash (default) or deepseek-v4-pro
+                     (${PRICING_SOURCE})
   --allow-cross-platform  diagnostics only: allow different platforms, with a warning
   --json             print the comparison document as JSON instead of the report
   --out <file>       where the rendered artifact goes (default: the sweep's group
@@ -105,6 +110,7 @@ Exit codes: 0 ok (or a gate that abstained) · 1 a gate failed · 2 usage/input 
  * @property {'task'|'total'|'both'} regressionScope - what the regression gate judges.
  * @property {number|null} noiseFloorPct - an externally pinned A/A floor.
  * @property {string[]|null} noise - two A/A side specs to measure the floor from.
+ * @property {string} pricingModel - the DeepSeek model whose off-peak rates price the credits columns.
  * @property {boolean} json - print the comparison document instead of the report.
  * @property {string|null} out - report path, `-` for stdout only, null for the default.
  * @property {boolean} help - whether `--help` was asked for.
@@ -129,6 +135,7 @@ export function parseArgs(argv) {
     regressionScope: 'task',
     noiseFloorPct: null,
     noise: null,
+    pricingModel: 'deepseek-flash',
     json: false,
     out: null,
     help: false,
@@ -166,6 +173,7 @@ export function parseArgs(argv) {
         if (index >= argv.length) throw new Error('--noise needs two sides: --noise <base> <cand>')
         options.noise = [first, argv[index]]
       } else if (name === '--out') options.out = take()
+      else if (name === '--pricing-model') options.pricingModel = take()
       else if (name === '--folder') options.folder = assertFolderName(take(), '--folder')
       else if (name === '--runs') options.runsDir = path.resolve(take())
       else if (name === '--matrix') options.matrix = path.resolve(take())
@@ -183,6 +191,7 @@ export function parseArgs(argv) {
     throw new Error('--noise-floor-pct must be a non-negative number')
   }
   if (options.help) return options
+  try { pricingFor(options.pricingModel) } catch (error) { throw new Error(`--pricing-model: ${error.message}`) }
   if (options.matrix !== null) {
     if (positional.length || options.folder !== null || options.noise !== null) throw new Error('--matrix takes its groups from matrix.json; do not pass side labels, --folder or --noise')
     return options
@@ -372,18 +381,43 @@ function percent(value) {
 }
 
 /**
+ * The off-peak money view shared by the pair table and the bucket table: one number
+ * rendered once, so the two tables cannot disagree.
+ * @param {object} comparison - the comparison structure.
+ * @param {object} pricing - the resolved rates from `pricingFor`.
+ * @returns {{forTask: Function, total: string}} the per-task cell and the TOTAL cell.
+ */
+function creditsView(comparison, pricing) {
+  const useMin = comparison.aggregate === 'min'
+  const keys = { input: useMin ? 'inputMin' : 'inputMedian', output: useMin ? 'outputMin' : 'outputMedian', cacheRead: useMin ? 'cacheReadMin' : 'cacheReadMedian' }
+  const costOf = (metrics) => metrics
+    ? estimateCost({ input: metrics[keys.input], cacheRead: metrics[keys.cacheRead], output: metrics[keys.output] }, pricing)
+    : null
+  const cell = (baseCost, candCost) => Number.isFinite(baseCost) && Number.isFinite(candCost)
+    ? `${formatCny(baseCost)} → ${formatCny(candCost)} (${percent(percentChange(baseCost, candCost))})`
+    : `${formatCny(baseCost)} → ${formatCny(candCost)}`
+  const buckets = comparison.totals.buckets
+  const total = buckets.comparable
+    ? cell(estimateCost({ input: buckets.input.base, cacheRead: buckets.cacheRead.base, output: buckets.output.base }, pricing),
+      estimateCost({ input: buckets.input.cand, cacheRead: buckets.cacheRead.cand, output: buckets.output.cand }, pricing))
+    : cell(null, null)
+  return { forTask: (task) => cell(costOf(task.base), costOf(task.cand)), total }
+}
+
+/**
  * The per-task paired table: cost, the behaviour behind it (steps, tool calls, tool
  * errors) and the pass migration, all on the row a reviewer reads first.
  * @param {object} comparison - the comparison structure.
+ * @param {{forTask: Function, total: string}} credits - the money cells from {@link creditsView}.
  * @returns {string[]} the section lines.
  */
-function taskSection(comparison) {
+function taskSection(comparison, credits) {
   const { totals } = comparison
   const useMin = comparison.aggregate === 'min'
   const keys = { steps: useMin ? 'stepsMin' : 'stepsMedian', toolCalls: useMin ? 'toolCallsMin' : 'toolCallsMedian', toolErrors: useMin ? 'toolErrorsMin' : 'toolErrorsMedian', duration: useMin ? 'durationMsMin' : 'durationMsMedian' }
-  // The change rides inside the cell it belongs to (`1,050 (+5.0%)`, `4 → 3 (−25%)`):
+  // The change rides inside the cell it belongs to (`1,000 → 1,050 (+5.0%)`, `4 → 3 (−25%)`):
   // one number per row, with its Δ% in parentheses rather than a column of its own.
-  const candCell = (value, pct) => `${number(value)}${Number.isFinite(pct) ? ` (${percent(pct)})` : ''}`
+  const tokensCell = (baseValue, candValue, pct) => `${number(baseValue)} → ${number(candValue)}${Number.isFinite(pct) ? ` (${percent(pct)})` : ''}`
   const deltaCell = (baseValue, candValue, pct) => `${count(baseValue)} → ${count(candValue)}${Number.isFinite(pct) ? ` (${percent(pct)})` : ''}`
   const countCell = (baseValue, candValue) => `${count(baseValue)} → ${count(candValue)}`
   // Time renders like every other metric: same aggregate, same direction colouring.
@@ -391,41 +425,46 @@ function taskSection(comparison) {
   const timeCell = (baseMs, candMs, pct) => `${seconds(baseMs)} → ${seconds(candMs)}${Number.isFinite(pct) ? ` (${percent(pct)})` : ''}`
   const passCell = (side) => `${side.base.passed}/${side.base.repeats}→${side.cand.passed}/${side.cand.repeats}`
   const lines = [
-    '## Per-task pairs',
+    '## Overall statistics',
     '',
-    '| task | base | ops (Δ%) | steps: base→ops (Δ%) | tool calls: base→ops (Δ%) | time: base→ops (Δ%) | tool errors | pass |',
+    '| task | tokens: base→ops (Δ%) | steps: base→ops (Δ%) | tool calls: base→ops (Δ%) | time: base→ops (Δ%) | credits: base→ops (Δ%) | tool errors | pass |',
     '| --- | --- | --- | --- | --- | --- | --- | --- |',
   ]
   for (const task of comparison.tasks) {
     const pair = task.paired
     const name = task.inBase && task.inCand ? task.id : `${task.id}${task.inBase ? '(base only)' : '(ops only)'}`
-    lines.push(`| ${name} | ${number(pair.baseValue)} | ${candCell(pair.candValue, pair.pct)} | ${deltaCell(task.base[keys.steps], task.cand[keys.steps], task.delta.stepsPct)} | ${deltaCell(task.base[keys.toolCalls], task.cand[keys.toolCalls], task.delta.toolCallsPct)} | ${timeCell(task.base[keys.duration], task.cand[keys.duration], task.delta.durationPct)} | ${countCell(task.base[keys.toolErrors], task.cand[keys.toolErrors])} | ${passCell(task)} |`)
+    lines.push(`| ${name} | ${tokensCell(pair.baseValue, pair.candValue, pair.pct)} | ${deltaCell(task.base[keys.steps], task.cand[keys.steps], task.delta.stepsPct)} | ${deltaCell(task.base[keys.toolCalls], task.cand[keys.toolCalls], task.delta.toolCallsPct)} | ${timeCell(task.base[keys.duration], task.cand[keys.duration], task.delta.durationPct)} | ${credits.forTask(task)} | ${countCell(task.base[keys.toolErrors], task.cand[keys.toolErrors])} | ${passCell(task)} |`)
   }
-  lines.push(`| **TOTAL** | ${number(totals.baseGrandTotal)} | ${candCell(totals.candGrandTotal, totals.grandTotalPct)} | ${deltaCell(totals.baseSteps, totals.candSteps, percentChange(totals.baseSteps, totals.candSteps))} | ${deltaCell(totals.baseToolCalls, totals.candToolCalls, percentChange(totals.baseToolCalls, totals.candToolCalls))} | ${timeCell(totals.baseDurationMs, totals.candDurationMs, percentChange(totals.baseDurationMs, totals.candDurationMs))} | ${countCell(totals.baseToolErrors, totals.candToolErrors)} | ${totals.basePasses}/${totals.baseRuns}→${totals.candPasses}/${totals.candRuns} |`)
+  lines.push(`| **TOTAL** | ${tokensCell(totals.baseGrandTotal, totals.candGrandTotal, totals.grandTotalPct)} | ${deltaCell(totals.baseSteps, totals.candSteps, percentChange(totals.baseSteps, totals.candSteps))} | ${deltaCell(totals.baseToolCalls, totals.candToolCalls, percentChange(totals.baseToolCalls, totals.candToolCalls))} | ${timeCell(totals.baseDurationMs, totals.candDurationMs, percentChange(totals.baseDurationMs, totals.candDurationMs))} | ${credits.total} | ${countCell(totals.baseToolErrors, totals.candToolErrors)} | ${totals.basePasses}/${totals.baseRuns}→${totals.candPasses}/${totals.candRuns} |`)
   return lines
 }
 
 /**
- * #183's per-task bucket detail: the three usage buckets behind each task's total.
+ * #183's per-task bucket detail: the three usage buckets behind each task's total,
+ * plus the off-peak money those buckets cost. Task rows price the displayed aggregate;
+ * TOTAL prices every repeat, matching the token cells beside it.
  * @param {object} comparison - the comparison structure.
+ * @param {{forTask: Function, total: string}} credits - the money cells from {@link creditsView}.
  * @returns {string[]} the section lines.
  */
-function bucketSection(comparison) {
+function bucketSection(comparison, credits) {
   const useMin = comparison.aggregate === 'min'
   const keys = { input: useMin ? 'inputMin' : 'inputMedian', output: useMin ? 'outputMin' : 'outputMedian', cacheRead: useMin ? 'cacheReadMin' : 'cacheReadMedian' }
   const cell = (baseValue, candValue) => `${number(baseValue)} → ${number(candValue)} (${percent(percentChange(baseValue, candValue))})`
   const lines = [
     '## Per-task bucket detail',
     '',
-    '| task | input: base→ops (Δ%) | output: base→ops (Δ%) | cache read: base→ops (Δ%) |',
-    '| --- | --- | --- | --- |',
+    '| task | input: base→ops (Δ%) | output: base→ops (Δ%) | cache read: base→ops (Δ%) | credits: base→ops (Δ%) |',
+    '| --- | --- | --- | --- | --- |',
   ]
   for (const task of comparison.tasks) {
-    lines.push(`| ${task.id} | ${cell(task.base[keys.input], task.cand[keys.input])} | ${cell(task.base[keys.output], task.cand[keys.output])} | ${cell(task.base[keys.cacheRead], task.cand[keys.cacheRead])} |`)
+    lines.push(`| ${task.id} | ${cell(task.base[keys.input], task.cand[keys.input])} | ${cell(task.base[keys.output], task.cand[keys.output])} | ${cell(task.base[keys.cacheRead], task.cand[keys.cacheRead])} | ${credits.forTask(task)} |`)
   }
   const buckets = comparison.totals.buckets
   if (buckets.comparable) {
-    lines.push(`| **TOTAL** | ${cell(buckets.input.base, buckets.input.cand)} | ${cell(buckets.output.base, buckets.output.cand)} | ${cell(buckets.cacheRead.base, buckets.cacheRead.cand)} |`)
+    lines.push(`| **TOTAL** | ${cell(buckets.input.base, buckets.input.cand)} | ${cell(buckets.output.base, buckets.output.cand)} | ${cell(buckets.cacheRead.base, buckets.cacheRead.cand)} | ${credits.total} |`)
+  } else {
+    lines.push(`| **TOTAL** | n/a | n/a | n/a | n/a |`)
   }
   return lines
 }
@@ -524,21 +563,21 @@ function toolSection(comparison) {
  * Pure: same comparison in, byte-identical text out. No timestamps are written, so the
  * report is reproducible and diffable.
  * @param {object} comparison - the structure from `compareSummaries`.
+ * @param {string} [pricingModel] - the DeepSeek model whose off-peak rates price the credits columns.
  * @returns {string} the report text (no trailing newline).
  */
-export function renderReport(comparison) {
+export function renderReport(comparison, pricingModel = 'deepseek-flash') {
+  const pricing = pricingFor(pricingModel)
+  const credits = creditsView(comparison, pricing)
   const lines = [
     REPORT_TITLE,
     '',
-    `Condition: ${describeCondition(comparison.condition)}`,
-    `Candidate switches: ${JSON.stringify(comparison.switches ?? null)} (null means unknown)`,
-    '',
     ...environmentLines(comparison.environment),
-    ...taskSection(comparison),
+    ...taskSection(comparison, credits),
     '',
     ...toolSection(comparison),
     '',
-    ...bucketSection(comparison),
+    ...bucketSection(comparison, credits),
     '',
     ...overheadSection(comparison),
   ]
@@ -631,7 +670,7 @@ export async function main(argv, io = {}) {
   if (options.matrix !== null) {
     try {
       const comparisons = matrixComparisons(options.matrix, options, { resolveSide, compare: compareSummaries })
-      const payload = options.json ? JSON.stringify({ format: 'dsh-ops-bench-matrix-report-v1', comparableAcrossConditions: false, comparisons }, null, 2) : renderMatrix(comparisons, renderReport)
+      const payload = options.json ? JSON.stringify({ format: 'dsh-ops-bench-matrix-report-v1', comparableAcrossConditions: false, comparisons }, null, 2) : renderMatrix(comparisons, (comparison) => renderReport(comparison, options.pricingModel))
       out(payload)
       const target = options.out ? path.resolve(options.out) : path.join(options.matrix, reportFileName(now()))
       fs.writeFileSync(target, payload + '\n')
@@ -669,7 +708,7 @@ export async function main(argv, io = {}) {
   }
   const payload = options.json
     ? `${JSON.stringify(comparison, null, 2)}\n`
-    : `${renderReport(comparison)}\n`
+    : `${renderReport(comparison, options.pricingModel)}\n`
   out(payload)
 
   const target = reportPath(options, cand, now())

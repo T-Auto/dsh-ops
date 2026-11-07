@@ -4,11 +4,7 @@
 
 Linux / macOS：使用当前平台构建的 worker；`setup --dry-run` 会说明跳过 Windows PowerShell pin、PSModulePath、Windows Bash IPC 和随包 Windows shell 检查的原因。组件行在三个平台都受支持，不要再从早期 Windows-only 默认值推断配置。模型 sweep 仍需自己的 OpenAI 兼容服务与凭据；`tools` 自检不调用模型。
 
-Linux / macOS: build the worker for the current host. `setup --dry-run` explains skipped Windows-only checks. `ab`, `compare`/`report`, `panel` and `tools` use the same entry point on every platform. A model sweep needs your own OpenAI-compatible endpoint; the tools self-check needs no model. Every sweep now fingerprints the composed profiles even without `--seal`, recording platform and component configuration in the arm summaries. `enabled` is a configuration fact, not proof of tool readiness; unresolved expressions remain `unknown`.
-
 `compare` 默认拒绝不同平台（或已知/未知平台）混配，退出码为 2；诊断时可加 `--allow-cross-platform`，报告会明确标记差异不是插件效应。旧数据两侧都缺平台时仍可读取，显示 `unknown`，不能据此声称同平台。CI 的可选 tools-only smoke 覆盖 Linux / Windows / macOS，各自上传 artifact；不运行模型 sweep，不产出跨平台结论。
-
-`compare` rejects mismatched platforms with exit 2. `--allow-cross-platform` is an explicit diagnostic override and adds a “not a plugin effect” warning. Both-unknown legacy archives remain readable. The optional, non-blocking tools smoke runs on Linux, Windows and macOS with separate artifacts.
 
 ```console
 npm ci --ignore-scripts
@@ -19,7 +15,41 @@ npm run build && npm run build:ptc     # lib/ + 原生 worker
 
 ```console
 npm i -g @deepseek-ai/dsh
-node bench/cli.mjs setup              # 会自动添加 2 个 headless profile（base、dsh），然后在 dsh 上面安装本地代码 build 出来的插件
+node bench/cli.mjs setup              # 自动添加 bench-base / bench-ops 两个 headless profile；默认 --plugin local 以 link 测量工作区（测编译产物见下一节 / default links the working tree; see the next section for the built package）
+```
+
+### 测编译后的插件 / Benchmark the built artifact
+
+`setup` 默认的 `--plugin local` 会把 checkout 以 `link:` 装进 candidate，用来测工作区里的代码，改完源码不必重新安装。这个形态下，插件对宿主包的运行时 `import` 可能解析到 checkout 自己的 `devDependencies`；`@deepseek-ai/dsh-scope` 的 scope key 是模块内私有 `Symbol`，一旦插件和宿主各自加载一份，`scopeOf(agent.ctx)` 就读不到宿主的标记，启动时报 `Publication scope must match its registration context`。
+
+要测“编译后的插件”，把当前 checkout 打成 tarball 再安装。tarball 属于 profile 层，宿主会把 `@deepseek-ai/dsh-scope` 统一解析到自己的副本，不再出现双实例。
+
+Windows PowerShell：
+
+```console
+npm run build
+npm pack --pack-destination $env:TEMP
+node bench/cli.mjs setup --plugin "$env:TEMP\dsh-ops-0.5.0.tgz" --reinstall
+```
+
+bash：
+
+```console
+npm run build
+npm pack --pack-destination /tmp
+node bench/cli.mjs setup --plugin /tmp/dsh-ops-0.5.0.tgz --reinstall
+```
+
+改完源码后重复 `build → pack → setup --reinstall`；profile 记录的是 tarball 的 `file:` 路径，临时文件被清理后需要重新安装。要回到测工作区的 link 形态：
+
+```console
+node bench/cli.mjs setup --plugin local --reinstall
+```
+
+Windows 上跑 sweep 前先让 `PSModulePath` 使用机器级值（或从新的 cmd.exe 启动），避免 PowerShell 7 的 Core 模块根排在 5.1 前面：
+
+```powershell
+$env:PSModulePath = [Environment]::GetEnvironmentVariable('PSModulePath','Machine')
 ```
 
 ### 配 LLM 链接
@@ -69,8 +99,6 @@ node bench/cli.mjs report --matrix bench/runs/benchmark-YYYY-MM-DD-NN
 
 重复的模型与档位形成笛卡尔积，每个条件位于独立的 `condition-NNN` 目录；根目录的 `matrix.json` 指向各组证据。多组报告逐条件展示，**跨条件不可比，不合并 Δ**。不同条件（含已知与未知）交给 compare 会退 `2` 并列出两侧条件。不传这些旗标时仍使用原有 overlay，条件标为 `unknown`；旧 run 缺少该字段仍可读，旧 `meta.model` 标签不作为路由证据。
 
-Model flags set the actual shared route, with the condition patch applied after the provider overlay. Both arms archive their composed configuration. Repeated models and reasoning levels form independent Cartesian groups; `report --matrix` renders one section per condition and never combines deltas. Cross-condition comparisons exit 2, naming both conditions. Without new flags, routing is unchanged and the condition is `unknown`; historical labels do not prove routing. An omitted reasoning level remains `null` unless the overlay pins it. All examples are optional model-driven runs, outside CI.
-
 ### 组件开关 / Component switches
 
 ```console
@@ -86,23 +114,15 @@ node bench/cli.mjs setup --switch mode-minimal=false --switch mode-cordis --swit
 
 实际配置写入摘要及封存 `run.json` 的 `arms.cand.switches`，报告头和 panel 显示 candidate 开关。baseline 的空集合与 candidate 的非空集合属于正常 A/B；两份运行的 candidate 集合不同则 compare 退出 `2`，列出差异，不合并 Δ。未求值配置记录 `null`，旧数据缺失开关元数据仍可读取为未知；这些字段是配置事实，不证明组件已经发布到会话。
 
-Repeat `--switch` to set candidate components. Values default to `true`. Supported names are `mode-minimal`, `mode-standard`, `mode-ptc`, `mode-cordis`, `discovery`, `compat`, `panel` and `tui`; the four mode rows and discovery are on by default. `compat` is the inverse switch: `true` turns Compatibility mode on and keeps the official tools visible, so the default `false` lets enabled modes hide the tools they replace. Setup edits only the candidate patch, preserves inherited literal configuration, and changes only named switches. Conflicting local values require `--force`; dynamic or unsafe shapes require manual edits even with force. Dry-run prints the requested values without launching the host or writing profiles.
-
-Real setup verifies composed configuration and runs one bounded headless readiness turn, which may call the configured model. Missing successful completion, host errors and `READINESS_BLOCKED` fail setup with the #207 diagnostic before a sweep starts. This does not substitute for Desktop validation. Summaries and sealed `arms.cand.switches` retain effective configuration; report headers and the panel show it. Comparisons reject different candidate switch sets with exit 2, while the baseline's empty set is expected. Unevaluated configuration and historical missing metadata remain unknown, without implying publication readiness. Switch combinations are selected explicitly and are outside the CI gate.
-
 ## 无模型工具调用与版本对比 / Model-free call and version comparison
 
 `node bench/cli.mjs calls` 比较官方 `grep/glob` 与 OPS；传入 `--baseline-plugin-root <当前构建>` 和 `--plugin-root <候选构建>` 后，两套 OPS 在同一进程、同一语料上逐轮交替。各臂加载自己的 JS、工具命名策略和 worker，报告保留版本与构建哈希。上游与 fork 共用这一套实现，不维护独立的性能测试分支。
 
 语料由操作者按配方准备（见下节链接），`calls --baseline <旧报告>` 仅校验语料身份，不将历史耗时配成本轮对照。耗时必须和错误、覆盖率、截断一起读，不作 CI 性能门禁。
 
-The `calls` command compares official tools with OPS, or alternates two OPS builds in one process using `--baseline-plugin-root` / `--plugin-root`. Each arm keeps its own code and worker; the corpus and host version are shared. The operator prepares the corpus from the documented recipe, and `--baseline <report>` checks its identity only. Timings are human evidence, never a CI performance verdict.
-
 参数、语料固定规则与隔离输出示例见 [工具调用基准](../docs/工具调用基准.md) / [English](../docs/benchmark-calls.md)。这些命令不调用模型，不需要配置 sweep 的两个 profile。
 
 `node bench/cli.mjs index-ab` 在**同一语料、同一 worker 二进制**上比较遍历 `glob` 与带 `cache_dir` 的可选索引路径：两臂请求形状相同、逐轮交替，冷态/热态/重复查询与 worker 峰值 RSS 一起报告；只有字节不一致才算失败，耗时只作证据。生成语料由固定配方决定（含被排除的 `.hidden`/`node_modules`/`target`），报告记录 revision、worker 哈希、语料哈希与每轮样本。命令不改变默认行为，也不作 CI 性能门禁。
-
-The `index-ab` command compares the walk with the opt-in `cache_dir` path on one corpus and one worker binary: same request shape, alternating rounds, cold/warm/repeated calls plus peak worker RSS; byte identity is the only failure and timings are evidence only. The recipe-generated corpus includes excluded directories, and the report records revision, worker hash, corpus hash and every sample. It changes no default and is never a CI performance gate.
 
 参数与语料复现见 [索引 AB 证据](../docs/索引AB基准.md) / [English](../docs/benchmark-index-ab.md)。
 
