@@ -7,6 +7,7 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+
 - Add `dsh-ops cache status|reclaim`: report every temporary resource OPS can reproduce — kept provision downloads, Niubash staging/previous siblings, quarantined Bash IPC generations, audit-store writer temporaries and per-call execution trees — with per-row ownership evidence, `deleted`/`kept`/`unverified` decisions and byte totals. It previews by default, refuses `--yes` without `--all-hosts-stopped`, and never deletes on a name pattern, mtime or dead PID.
 - Failed provision downloads are registered under `<DSH_HOME>/dsh-ops/pending/` and reclaimed under a count/byte/age budget; a shell version is unpacked and verified in a staging sibling and only then renamed into place, so a failed or interrupted install leaves the previous version usable and no half-unpacked tree.
 - Niubash staging and previous siblings are verified before use: a complete staged tree is reused, a complete previous tree is restored when the target is missing, and trees that do not verify are kept. A refused previous-tree removal no longer reports a completed install as failed.
@@ -21,6 +22,12 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 修正 `niubash-consumer` 中过时的断言：`niubash-security-host` 增至 11 项检查后，consumer 仍断言 `all 10 checks passed`，导致完整门禁必挂。
 - An execution root below the workspace now clones by copy instead of hard links. The host sandbox labels the workspace tree with an inheritable Low mandatory label; a hard-linked payload would export that label onto the shared file object, and every later `niu.exe` image would run at Low integrity — full access included, where an unconfined shell must be able to write a Medium directory.
 - 位于工作区之下的执行根改为复制克隆而不是硬链接：宿主沙箱会给工作区树打上可继承的 Low 强制标签，硬链接会把该标签带到共享文件对象上，之后每次 `niu.exe` 镜像都会以 Low 完整性运行——包括 full access，而不受限的 shell 本应能写 Medium 目录。
+
+- Every merge gate is now a real gate. `validate-windows`, `validate-macos-intel` and `tools-trial` lost `continue-on-error` and joined `CI required`'s `needs` and failure loop; the bench smoke moved to `benchmark-gates.yml` (dispatch + monthly schedule) so `ci.yml` has no non-blocking job; `node-floor` runs on Linux and Windows; a new `rust-lint` job gates `cargo fmt --check` and `clippy -D warnings` on the pinned 1.97.1 toolchain (`native/rust-toolchain.toml`). `scripts/check-workflows.mjs` now states the blocking topology in one place (`EXPECTED_BLOCKING`) and fails when a job is unclassified, when `needs` disagrees, or when a failure-loop entry is missing; timeouts are tightened from measured p99.
+- Publishing is immutable. The release `gate` refuses a tag that was force-moved away from the built commit, requires a successful `CI required` check on the tagged commit, runs the same `verify-gate.mjs` as CI (restoring the skip-is-not-a-pass assertions and running the Niubash payload suites instead of skipping them), and `publish` only appends missing assets — no `--clobber`. `v0.5.0`'s four tag moves and post-publication asset replacement are the accident this prevents. The ruleset template also carries a merge queue, applied by the idempotent `scripts/apply-ruleset.mjs`.
+- 每个合并门禁都成为真正的门禁：`validate-windows`、`validate-macos-intel`、`tools-trial` 去掉 `continue-on-error` 并加入 `CI required` 的 `needs` 与失败判定循环；bench smoke 移到 `benchmark-gates.yml`（手动 + 每月调度），`ci.yml` 不再有非阻塞 job；`node-floor` 覆盖 Linux 与 Windows；新增 `rust-lint`，用 `native/rust-toolchain.toml` 钉住的 1.97.1 门禁 `cargo fmt --check` 与 `clippy -D warnings`。`scripts/check-workflows.mjs` 用 `EXPECTED_BLOCKING` 单一事实源校验“job 已分类 / needs 与循环一致”，并按实测 p99 收紧超时。
+- 发布不可变：release `gate` 拒绝被 force-move 的 tag，要求 tag commit 的 `CI required` 为 success，并改用与 CI 相同的 `verify-gate.mjs`（恢复“skip 不是通过”的断言，Niubash 载荷套件真跑）；`publish` 只补缺失资产，不再 `--clobber`。规则集模板带上 merge queue，由幂等的 `scripts/apply-ruleset.mjs` 下发。
+
 
 ## [0.5.0] — 2026-11-06 — Stable release
 

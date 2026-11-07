@@ -2,18 +2,29 @@
 use serde::{Serialize, Serializer, ser::SerializeMap};
 use std::collections::BTreeMap;
 
-pub enum SearchCoverage { Complete { matched_total: usize }, Incomplete }
+pub enum SearchCoverage {
+    Complete { matched_total: usize },
+    Incomplete,
+}
 impl Serialize for SearchCoverage {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(None)?;
         map.serialize_entry("scanComplete", &matches!(self, Self::Complete { .. }))?;
-        if let Self::Complete { matched_total } = self { map.serialize_entry("matchedTotal", matched_total)?; }
+        if let Self::Complete { matched_total } = self {
+            map.serialize_entry("matchedTotal", matched_total)?;
+        }
         map.end()
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum TruncatedBy { ScanBudget, OutputBudget, Time, RowLimit, None }
+pub enum TruncatedBy {
+    ScanBudget,
+    OutputBudget,
+    Time,
+    RowLimit,
+    None,
+}
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchExecutionReport {
@@ -34,8 +45,10 @@ mod tests {
     #[test]
     fn incomplete_coverage_cannot_serialize_a_full_total() {
         let incomplete = serde_json::to_value(SearchCoverage::Incomplete).unwrap();
-        assert_eq!(incomplete["scanComplete"], false); assert!(incomplete.get("matchedTotal").is_none());
+        assert_eq!(incomplete["scanComplete"], false);
+        assert!(incomplete.get("matchedTotal").is_none());
         let complete = serde_json::to_value(SearchCoverage::Complete { matched_total: 7 }).unwrap();
-        assert_eq!(complete["scanComplete"], true); assert_eq!(complete["matchedTotal"], 7);
+        assert_eq!(complete["scanComplete"], true);
+        assert_eq!(complete["matchedTotal"], 7);
     }
 }
