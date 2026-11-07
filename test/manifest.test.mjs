@@ -17,7 +17,7 @@ import {
   publicToolName,
   renderToolingPolicy,
 } from '../lib/policy.js'
-import { CAPABILITIES, NATIVE_TOOLS } from '../lib/capabilities/registry.js'
+import { CAPABILITIES, NATIVE_FILE_TOOLS } from '../lib/capabilities/registry.js'
 import { COMPONENTS, componentEnabled, componentEntry } from '../lib/components/defaults.js'
 import { assert, PACKAGE_ROOT, report, test } from './lib/harness.mjs'
 
@@ -65,7 +65,7 @@ await test('declared file tools have routing and other namespaces name owned cap
   const hosted = namespaces[0]
   assert.deepEqual(
     [...hosted.tools].sort(),
-    [...NATIVE_TOOLS].sort(),
+    [...NATIVE_FILE_TOOLS].sort(),
     'the native namespace declares the owned file tools and Native result projection',
   )
   assert.equal(hosted.transport, 'in-process')

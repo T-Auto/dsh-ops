@@ -124,33 +124,8 @@ async function runSuite(suite) {
     child.once('close', code => resolve(code))
   })
   clearTimeout(timer)
-  removeHome(home)
+  rmSync(home, { recursive: true, force: true })
   return { label, status, timedOut }
-}
-
-/**
- * Delete a suite's throwaway home, even if the suite left a deny ACE behind.
- *
- * A permission suite deliberately makes a directory unreadable or readonly, and on Windows that ACE
- * survives the process: `rmSync` then fails with EPERM and takes the whole run down with it. Reset the
- * tree's ACLs first, and never let cleanup failure fail a suite — the suite's own verdict already
- * happened.
- * @param home - the throwaway DSH_HOME directory.
- * @returns nothing.
- */
-function removeHome(home) {
-  try {
-    rmSync(home, { recursive: true, force: true })
-    return
-  } catch { /* a deny ACE, a readonly file, or a handle that is still open */ }
-  if (process.platform === 'win32') {
-    const system32 = path.join(process.env.SystemRoot ?? 'C:/Windows', 'System32')
-    spawnSync(path.join(system32, 'icacls.exe'), [home, '/reset', '/t', '/c', '/q'], { encoding: 'utf8' })
-    spawnSync(path.join(system32, 'icacls.exe'), [home, '/grant', `${process.env.USERNAME}:(OI)(CI)F`, '/t', '/c', '/q'], { encoding: 'utf8' })
-  }
-  try { rmSync(home, { recursive: true, force: true }) } catch (error) {
-    process.emitWarning(`left ${home} behind: ${error?.code ?? error}`)
-  }
 }
 
 for (const suite of selected) {

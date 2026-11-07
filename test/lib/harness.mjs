@@ -91,7 +91,6 @@ export { assert }
  * @param {(dir: string) => unknown | Promise<unknown>} body - the work.
  * @returns {Promise<unknown>} whatever the body returned.
  */
-let ownerWarningShown = false
 let fixtureOwner
 export function ownWindowsFixture(directory) {
   if (process.platform !== 'win32') return
@@ -104,18 +103,7 @@ export function ownWindowsFixture(directory) {
   // Elevated hosted runners default to Administrators as owner. Change only the
   // directory this test created; never repair a user's workspace to make a test pass.
   const result = spawnSync(path.join(system32, 'icacls.exe'), [directory, '/setowner', `*${fixtureOwner}`], { encoding: 'utf8' })
-  if (result.status !== 0) {
-    const message = `Cannot set fixture owner: ${result.stdout}${result.stderr}`.trim()
-    // An unelevated account cannot take ownership of anything, not even a directory it just created
-    // (icacls exits 5). CI runs elevated and stays strict, so a real regression there still fails;
-    // locally the fixture keeps the owner it was born with and the suite runs.
-    if (process.env.CI) throw new Error(message)
-    if (!ownerWarningShown) {
-      ownerWarningShown = true
-      process.emitWarning(`${message} — continuing; owner-sensitive cases may not reflect CI`)
-    }
-    return
-  }
+  if (result.status !== 0) throw new Error(`Cannot set fixture owner: ${result.stdout}${result.stderr}`)
 }
 export async function withTempDir(prefix, body) {
   const dir = canonical(mkdtempSync(path.join(TEST_HOME, `${prefix}-`)))

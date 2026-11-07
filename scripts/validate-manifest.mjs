@@ -29,7 +29,7 @@ import {
   publicToolName,
   renderToolingPolicy,
 } from '../lib/policy.js'
-import { CAPABILITIES, NATIVE_TOOLS } from '../lib/capabilities/registry.js'
+import { CAPABILITIES, NATIVE_FILE_TOOLS } from '../lib/capabilities/registry.js'
 import { resolvePtcConfig } from '../lib/ptc/index.js'
 import { resolveTuiConfig } from '../lib/components/tui/index.js'
 import { resolvePanelConfig } from '../lib/components/panel/index.js'
@@ -266,7 +266,7 @@ if (hostedNamespace === undefined) {
   check(false, 'contributes.x-tool-namespaces declares the hosted tool namespace')
 } else {
   const declared = [...hostedNamespace.tools]
-  const expected = [...NATIVE_TOOLS]
+  const expected = [...NATIVE_FILE_TOOLS]
   check(
     declared.length === expected.length && expected.every((toolName) => declared.includes(toolName)),
     'the native file namespace matches catalogue Native file projections',

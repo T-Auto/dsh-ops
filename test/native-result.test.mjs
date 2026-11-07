@@ -39,7 +39,7 @@ function inventory(ctx) {
 import { mountNativeCatalogue } from './lib/native-catalogue.mjs'
 import { resultStorage } from '../lib/kernel/result-storage.js'
 import { resultDefinition } from '../lib/file/result.js'
-import { CAPABILITIES, NATIVE_TOOLS } from '../lib/capabilities/registry.js'
+import { CAPABILITIES, NATIVE_FILE_TOOLS } from '../lib/capabilities/registry.js'
 import { NATIVE_RESULT_PARAMETERS, STORAGE_REFERENCE } from '../lib/capabilities/result.js'
 import { isPresentationProbe } from '../lib/publication/presentation.js'
 import { publicToolName } from '../lib/policy.js'

@@ -25,14 +25,6 @@ await test('clean full-plugin pack consumer uses production prepare for repeated
     assert.equal(artifacts.length, 1, packed.stdout)
     const artifact = path.join(root, artifacts[0])
     checkNiubashTarball(artifact)
-    // The offline install can only use what the npm cache holds, and this package's own
-    // dependencies were installed by `npm ci` in another step — which does not guarantee a cache
-    // entry for a tarball the runner never fetched directly. Warm them, or a new dependency makes
-    // the artifact look broken.
-    const manifest = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'package.json'), 'utf8'))
-    for (const [name, range] of Object.entries(manifest.dependencies ?? {})) {
-      npm(['cache', 'add', `${name}@${String(range)}`], { cwd: PACKAGE_ROOT })
-    }
     const consumer = path.join(root, 'consumer')
     fs.mkdirSync(consumer)
     fs.writeFileSync(path.join(consumer, 'package.json'), JSON.stringify({ name: 'ops-clean-consumer', private: true, version: '1.0.0' }))
