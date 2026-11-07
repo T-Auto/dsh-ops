@@ -6,7 +6,7 @@ import { editable, settingsConfig, configObject } from '../../settings/schema.js
 import { retired as retiredLegacyRow } from '../../settings/legacy.js'
 export const name = 'dsh-ops-bash & host PowerShell'
 // Shared core validator compatibility keys do not configure the shell row's settings form.
-export const NON_EDITABLE_CONFIG_KEYS = ['configUpdateVersion', 'binaryPath', 'required', 'denyCredentialReads', 'serverName', 'enableShellTools', 'toolCallTimeoutMs', 'downloadGuard', 'indexCache', 'spillRetentionDays', 'spillTotalBudgetMiB', 'spillSweepEnabled'] as const
+export const NON_EDITABLE_CONFIG_KEYS = ['configUpdateVersion', 'binaryPath', 'required', 'denyCredentialReads', 'serverName', 'enableShellTools', 'toolCallTimeoutMs', 'downloadGuard', 'indexCache', 'spillRetentionDays', 'spillTotalBudgetMiB', 'spillSweepEnabled', 'resultCache'] as const
 export const Config = settingsConfig(value => {
   const raw = configObject(value ?? {}), validated = resolveConfig(raw)
   // Keep raw ordinary keys: applyComponent owns normalization and migration.

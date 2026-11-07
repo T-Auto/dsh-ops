@@ -1,7 +1,12 @@
 import { setImmediate } from 'node:timers/promises'
-import { assert, test, report } from './lib/harness.mjs'
+import path from 'node:path'
+import { assert, test, report, waitFor } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
-import { resultSessionNonce, registerResultCleanup, withResultSession, expireResultSession, mountResultLifecycle } from '../lib/kernel/result-lifecycle.js'
+import {
+  deferredCleanupCount, resultSessionNonce, registerResultCleanup, retryDeferredResultCleanup,
+  withResultSession, expireResultSession, mountResultLifecycle,
+} from '../lib/kernel/result-lifecycle.js'
+import { listPendingCleanup, registerCleanupRoot, resetCleanupHostBoot, setCleanupRegistryDir } from '../lib/kernel/result-cleanup-registry.js'
 import { invoke as fileCall } from '../lib/file/worker.js'
 import { withTempDir } from './lib/harness.mjs'
 
@@ -50,20 +55,51 @@ await test('two component owners share the live session; last unload expires it'
   } finally { await shutdown(ctx) }
 })
 
-await test('real host session-disposed event expires references and contains cleanup failure', async () => {
-  const { ctx } = await bootHost(), session = { id: 'event' }, done = deferred()
-  let warnings = 0
-  try {
-    const fiber = await ctx.plugin(inner => mountResultLifecycle(inner))
-    registerResultCleanup(ctx, session, 'cache', async () => { done.resolve(); throw new Error('read-only') })
-    ctx.emit('session/disposed', session)
-    await done.promise; await setImmediate()
-    assert.throws(() => resultSessionNonce(ctx, session), /expired/)
-    const direct = { logger: { warn() { warnings++ } } }, other = { id: 'deferred' }
+await test('a failed cleanup is recorded and retried instead of forgotten', async () => {
+  await withTempDir('lifecycle-deferred', async dir => {
+    setCleanupRegistryDir(path.join(dir, 'registry'))
+    const { ctx } = await bootHost(), session = { id: 'event' }, done = deferred(), root = path.join(dir, 'dsh-ops-results-' + 'a'.repeat(64))
+    let mode = 'read-only', warnings = 0
+    try {
+      const fiber = await ctx.plugin(inner => mountResultLifecycle(inner))
+      // The storage layer registers the root before the first caller receives it; this is the
+      // same order, so the failure below must find an existing record.
+      registerCleanupRoot(root, { sessionHeading: 'session-heading', workspaceRoot: dir })
+      registerResultCleanup(ctx, session, 'cache', async () => {
+        done.resolve()
+        if (mode !== 'workspace-write') throw new Error('Cleanup authority unavailable')
+      }, root)
+      ctx.emit('session/disposed', session)
+      await done.promise
+      await waitFor(() => deferredCleanupCount() === 1, { what: 'the deferred cleanup registration' })
+      assert.throws(() => resultSessionNonce(ctx, session), /expired/)
+      // The only path to the root was the in-memory cleanup; the ledger now owns it.
+      const pending = listPendingCleanup()
+      assert.equal(pending.length, 1)
+      assert.equal(pending[0].root, root)
+      assert.equal(pending[0].attempts, 1)
+      assert.equal(pending[0].lastReason, 'read-only')
+      // A retry while the host is still read-only must not delete anything or drop the record.
+      const blocked = await retryDeferredResultCleanup(ctx, Date.now() + 60_000)
+      assert.equal(blocked.completed, 0)
+      assert.equal(blocked.pending, 1)
+      assert.equal(listPendingCleanup()[0].attempts, 2)
+      // Regaining workspace-write authority is what lets the recorded cleanup complete.
+      mode = 'workspace-write'
+      const retried = await retryDeferredResultCleanup(ctx, Date.now() + 120_000)
+      assert.equal(retried.completed, 1)
+      assert.equal(deferredCleanupCount(), 0)
+      assert.deepEqual(listPendingCleanup(), [])
+      await fiber.dispose()
+    } finally {
+      setCleanupRegistryDir(undefined); resetCleanupHostBoot(); await shutdown(ctx)
+    }
+    // A cleanup without a known root can only be reported; it is still contained.
+    const direct = { logger: { warn() { warnings++ } } }, other = { id: 'no-root' }
     registerResultCleanup(direct, other, 'cache', async () => { throw new Error('read-only') })
-    await expireResultSession(direct, other); assert.equal(warnings, 1)
-    await fiber.dispose()
-  } finally { await shutdown(ctx) }
+    await expireResultSession(direct, other)
+    assert.equal(warnings, 1)
+  })
 })
 await test('synchronous abort listeners cannot start a reopened session before the old purge', async () => {
   const ctx = {}, old = { id: 'reentrant' }, next = { id: 'reentrant' }, settled = deferred(), events = []
