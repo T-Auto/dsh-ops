@@ -148,7 +148,8 @@ function listing(tool: string, args: Row, value: Row): string[] {
       const numbered = count(item.line) && item.line > 0
       const start = numbered ? Math.max(1, Number(item.line) - (count(args.beforeContext) ? args.beforeContext : 0)) : 0
       if (numbered && start !== item.line) output.push(`[Notice: Match starts at ${path}:${item.line}; context follows.]`)
-      for (const [index, line] of item.text.split('\n').entries()) output.push(`${path}${numbered ? `:${start + index}` : ''} | ${contentLine(line)}`)
+      const kind = typeof item.kind === 'string' ? `${item.kind} ` : ''
+      for (const [index, line] of item.text.split('\n').entries()) output.push(`${path}${numbered ? `:${start + index}` : ''} | ${kind}${contentLine(line)}`)
     } else {
       const rest = { ...item }
       delete rest.path
