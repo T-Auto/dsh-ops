@@ -61,18 +61,63 @@ export function isNiubashExecutable(file: string): boolean {
 /** The directory created below a volume root when the temp directory is on another volume. */
 const SAME_VOLUME_EXEC_DIRECTORY = 'dsh-ops-exec'
 
+/** A real drive root (`c:\`), the only shape a drive-letter comparison may trust. */
+const DRIVE_ROOT = /^[a-z]:[\\/]$/u
+
 /**
  * The root component of a path, lowercased so `C:\` and `c:\` compare equal.
- * On POSIX this is always `/`, so the same-volume test is trivially true there
- * and the OS temporary directory stays the default as before.
+ * On POSIX this is always `/`.
  */
 function volumeRoot(pathname: string): string {
   return path.parse(path.resolve(pathname)).root.toLowerCase()
 }
 
-/** Whether two paths live on the same volume — the precondition `fs.link` needs. */
+/**
+ * Compare two already-reduced volume roots.
+ *
+ * A path can only prove a shared volume when both roots are the same real drive
+ * root (or POSIX `/`). A UNC share or an extended-length prefix never matches the
+ * drive pattern, so it is treated as same-volume only when the roots are literally
+ * identical: that keeps the caller from inventing a root on a network share.
+ * Exported so a test can prove the rule with synthetic roots on any platform.
+ */
+export function sameVolumeRoots(left: string, right: string): boolean {
+  if (left !== right) return false
+  return path.sep === '/' || DRIVE_ROOT.test(left) || left.startsWith('\\\\')
+}
+
+/**
+ * Whether two paths share a volume — the precondition `fs.link` needs.
+ *
+ * A directory mounted from a second volume below the same drive letter still
+ * reads as same-volume here; the clone then falls back to `copy`, which costs time
+ * but never correctness.
+ */
 export function sameVolume(left: string, right: string): boolean {
-  return volumeRoot(left) === volumeRoot(right)
+  return sameVolumeRoots(volumeRoot(left), volumeRoot(right))
+}
+
+/**
+ * The volume-root directory name this account may own.
+ *
+ * A fixed name in `D:\` is shared by every local account: another user could
+ * create it first, turn it into a junction, and then read — or redirect — the
+ * clone `mkdtemp` builds below it. The account hash keeps two accounts from
+ * colliding without writing the user name into a world-readable path.
+ */
+function sameVolumeDirectory(account: string = os.userInfo().username): string {
+  return `${SAME_VOLUME_EXEC_DIRECTORY}-${createHash('sha256').update(account).digest('hex').slice(0, 12)}`
+}
+
+/**
+ * Where a per-call execution tree goes when the temp directory is on another
+ * volume. `rootOf` is injectable so a test can prove the decision with synthetic
+ * drive roots instead of depending on the machine's real layout.
+ */
+export function executionRootFor(source: string, temporary: string, account?: string,
+  rootOf: (pathname: string) => string = volumeRoot): string {
+  const sourceRoot = rootOf(source)
+  return sameVolumeRoots(sourceRoot, rootOf(temporary)) ? temporary : path.join(sourceRoot, sameVolumeDirectory(account))
 }
 
 /**
@@ -85,15 +130,15 @@ export function sameVolume(left: string, right: string): boolean {
  * In that case a private directory on the payload's volume is returned, so the
  * default configuration still takes the hardlink path.
  *
- * The returned directory may not be creatable (an unprivileged account cannot
- * write to a volume root); callers fall back to `os.tmpdir()` in that case.
+ * Whether the returned directory can actually be created is decided by
+ * {@link ensureExecutionRoot}, which falls back to `os.tmpdir()` only when this
+ * function derived the root itself.
  */
 export function niubashExecutionRootParent(env: NodeJS.ProcessEnv = process.env, source?: string): string {
   const configured = env.DSH_OPS_EXEC_ROOT?.trim()
   if (configured !== undefined && configured !== '') return path.resolve(configured)
   const temporary = os.tmpdir()
-  if (source === undefined || sameVolume(temporary, source)) return temporary
-  return path.join(volumeRoot(source), SAME_VOLUME_EXEC_DIRECTORY)
+  return source === undefined ? temporary : executionRootFor(source, temporary)
 }
 
 /** Whether `NIUBASH_VERIFY=deep` asks for the per-call full re-hash escape hatch. */
@@ -134,22 +179,44 @@ async function assertExecutionRoot(parent: string, source: string): Promise<void
 }
 
 /**
+ * Reject a directory that is not a real directory owned by this account.
+ *
+ * A clone below a volume root is only as private as that root: a pre-created
+ * junction, or a directory another account owns, would expose or redirect it.
+ * Windows exposes no cheap owner check here, so the account-hashed directory name
+ * plus these type and link checks carry that boundary; POSIX compares the owner
+ * directly.
+ */
+async function assertPrivateExecutionRoot(directory: string): Promise<void> {
+  const info = await fs.promises.lstat(directory)
+  if (info.isSymbolicLink() || !info.isDirectory()) throw Error(`The execution root must be a real directory, not a link or a file: ${directory}`)
+  if (process.platform !== 'win32' && process.getuid !== undefined && info.uid !== process.getuid()) {
+    throw Error(`The execution root must be owned by the current account: ${directory}`)
+  }
+}
+
+/**
  * Create the execution-root parent and return the directory actually used.
  *
- * A same-volume root below a volume root (`D:\dsh-ops-exec`) is not always
- * writable for an unprivileged account, and the payload's volume may be
- * read-only. Falling back to the OS temporary directory keeps the call working;
- * the clone then records `copy` mode, which is the documented `EXDEV` path. The
- * fallback is reported because it silently costs ~786 MiB per call.
+ * A same-volume root below a volume root is not always writable, and the payload
+ * volume may be read-only. An **automatically derived** root falls back to the OS
+ * temporary directory, where the clone copies instead of linking; that fallback is
+ * reported because it costs ~786 MiB per call. An **operator-configured** root
+ * never falls back: silently ignoring `DSH_OPS_EXEC_ROOT` would move the clone
+ * into the temporary directory the configuration exists to avoid (#715). The
+ * containment check sits inside the same try so a derived root that overlaps the
+ * payload also recovers instead of failing the whole call.
  */
-async function ensureExecutionRoot(parent: string, source: string): Promise<string> {
+async function ensureExecutionRoot(parent: string, source: string, configured: boolean): Promise<string> {
   try {
+    await assertExecutionRoot(parent, source)
     await fs.promises.mkdir(parent, { recursive: true })
+    await assertPrivateExecutionRoot(parent)
     return parent
   } catch (error) {
     const temporary = os.tmpdir()
-    if (parent === temporary) throw error
-    console.error(`dsh-ops: could not create the same-volume execution root ${parent}: ${error instanceof Error ? error.message : String(error)}; falling back to ${temporary}, where the clone copies the payload instead of linking it`)
+    if (configured || parent === temporary) throw error
+    console.error(`dsh-ops: could not use the same-volume execution root ${parent}: ${error instanceof Error ? error.message : String(error)}; falling back to ${temporary}, where the clone copies the payload instead of linking it`)
     await assertExecutionRoot(temporary, source)
     await fs.promises.mkdir(temporary, { recursive: true })
     return temporary
@@ -207,9 +274,10 @@ export async function prepareNiubash(file: string, inheritedPath = process.env.P
   const source = path.dirname(file)
   const deep = niubashDeepVerification()
   await verifySourceTree(source, deep, signal)
+  const configuredRoot = process.env.DSH_OPS_EXEC_ROOT?.trim()
   const parent = niubashExecutionRootParent(process.env, source)
-  await assertExecutionRoot(parent, source)
-  const root = await fs.promises.mkdtemp(path.join(await ensureExecutionRoot(parent, source), EXECUTION_ROOT_PREFIX))
+  const root = await fs.promises.mkdtemp(path.join(
+    await ensureExecutionRoot(parent, source, configuredRoot !== undefined && configuredRoot !== ''), EXECUTION_ROOT_PREFIX))
   // Sealing is per inode, so concurrent calls for the same payload share one
   // reference count; disposal of the first must not unseal a sibling's tree.
   let released = false

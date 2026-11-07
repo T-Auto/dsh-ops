@@ -26,7 +26,7 @@ import {
   sealTree,
   unsealTree,
 } from '../lib/niubash/seal.js'
-import { niubashDeepVerification, niubashExecutionRootParent, prepareNiubash, sameVolume } from '../lib/niubash/runtime.js'
+import { executionRootFor, niubashDeepVerification, niubashExecutionRootParent, prepareNiubash, sameVolume, sameVolumeRoots } from '../lib/niubash/runtime.js'
 import { NIUBASH_PIN, niubashExecutionReceipt } from '../lib/cli/niubash-payload.js'
 
 const CONTENT = {
@@ -334,22 +334,28 @@ await test('a same-volume payload keeps the OS temporary directory', () => {
 })
 
 await test('a payload on another volume moves the execution root onto that volume', () => {
-  const temporary = path.parse(os.tmpdir()).root.toLowerCase()
-  // POSIX collapses every absolute path to `/`, so only Windows has volumes to
-  // separate; the fallback there is the documented EXDEV path and stays covered
-  // by the copy-mode tests.
-  if (temporary !== 'c:' && temporary !== 'c:\\') return
-  const other = 'z:'
-  const payload = `${other}\\some\\payload\\niubash`
-  const parent = niubashExecutionRootParent({}, payload)
-  // `path.parse().root` keeps the separator (`z:\`); compare through sameVolume so
-  // the assertion does not depend on that spelling.
-  assert.equal(path.parse(parent).root.toLowerCase(), `${other}\\`)
-  assert.match(parent, /dsh-ops-exec$/u)
-  assert.equal(sameVolume(parent, payload), true)
-  assert.equal(sameVolume(os.tmpdir(), payload), false)
+  // Synthetic drive roots keep this deterministic on every platform: reverting the
+  // same-volume rule now fails here instead of skipping on POSIX or a non-C: TEMP.
+  const rootOf = name => name.startsWith('Z:') ? 'z:\\' : 'c:\\'
+  assert.equal(sameVolumeRoots('c:\\', 'c:\\'), true)
+  assert.equal(sameVolumeRoots('c:\\', 'z:\\'), false)
+  // A UNC share or an extended-length prefix is never proven equal to a drive root.
+  assert.equal(sameVolumeRoots('\\\\server\\share\\', '\\\\server\\share\\sub'), false)
+  assert.equal(sameVolumeRoots('\\\\?\\C:\\', 'c:\\'), false)
+  // Equal UNC roots do read as the same share.
+  assert.equal(sameVolumeRoots('\\\\server\\share\\', '\\\\server\\share\\'), true)
+
+  const cross = executionRootFor('Z:\\payload\\niubash', 'C:\\temp', 'tester', rootOf)
+  assert.match(path.basename(cross), /^dsh-ops-exec-[a-f0-9]{12}$/u)
+  assert.equal(executionRootFor('C:\\payload\\niubash', 'C:\\temp', 'tester', rootOf), 'C:\\temp')
+  // The account hash separates two accounts without exposing the account name.
+  assert.equal(executionRootFor('Z:\\payload', 'C:\\temp', 'tester', rootOf),
+    executionRootFor('Z:\\payload', 'C:\\temp', 'tester', rootOf))
+  assert.notEqual(executionRootFor('Z:\\payload', 'C:\\temp', 'tester', rootOf),
+    executionRootFor('Z:\\payload', 'C:\\temp', 'other', rootOf))
+
   // An explicit operator choice always wins over the same-volume heuristic.
-  assert.equal(niubashExecutionRootParent({ DSH_OPS_EXEC_ROOT: 'D:\\custom-root' }, payload),
+  assert.equal(niubashExecutionRootParent({ DSH_OPS_EXEC_ROOT: 'D:\\custom-root' }, 'Z:\\payload'),
     path.resolve('D:\\custom-root'))
 })
 

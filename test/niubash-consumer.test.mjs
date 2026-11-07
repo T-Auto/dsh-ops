@@ -52,7 +52,7 @@ await test('clean full-plugin pack consumer uses production prepare for repeated
     })
     console.log(run.stdout)
     assert.equal(run.status, 0, `${run.error ?? ''}\n${run.stderr}\n${run.stdout}`)
-    assert.match(run.stdout, /all 10 checks passed/)
+    assert.match(run.stdout, /all 11 checks passed/)
     assert.doesNotMatch(run.stdout, /SKIP|FAIL/)
   })
 })
