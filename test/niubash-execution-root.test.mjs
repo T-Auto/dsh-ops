@@ -345,14 +345,11 @@ await test('a payload on another volume moves the execution root onto that volum
   // Equal UNC roots do read as the same share.
   assert.equal(sameVolumeRoots('\\\\server\\share\\', '\\\\server\\share\\'), true)
 
-  const cross = executionRootFor('Z:\\payload\\niubash', 'C:\\temp', 'tester', rootOf)
-  assert.match(path.basename(cross), /^dsh-ops-exec-[a-f0-9]{12}$/u)
-  assert.equal(executionRootFor('C:\\payload\\niubash', 'C:\\temp', 'tester', rootOf), 'C:\\temp')
-  // The directory name is a fixed-shape account digest, and two accounts differ.
-  assert.match(path.basename(executionRootFor('Z:\\payload', 'C:\\temp', 'tester', rootOf)),
-    /^dsh-ops-exec-[a-f0-9]{12}$/u)
-  assert.notEqual(executionRootFor('Z:\\payload', 'C:\\temp', 'tester', rootOf),
-    executionRootFor('Z:\\payload', 'C:\\temp', 'other', rootOf))
+  const cross = executionRootFor('Z:\\payload\\niubash', 'C:\\temp', rootOf)
+  // One fixed, readable name: the ownership check decides who may use it, not
+  // whether the name hides the account.
+  assert.equal(path.basename(cross), 'dsh-ops-exec')
+  assert.equal(executionRootFor('C:\\payload\\niubash', 'C:\\temp', rootOf), 'C:\\temp')
 
   // An explicit operator choice always wins over the same-volume heuristic.
   assert.equal(niubashExecutionRootParent({ DSH_OPS_EXEC_ROOT: 'D:\\custom-root' }, 'Z:\\payload'),

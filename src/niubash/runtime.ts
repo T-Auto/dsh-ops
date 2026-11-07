@@ -97,38 +97,21 @@ export function sameVolume(left: string, right: string): boolean {
   return sameVolumeRoots(volumeRoot(left), volumeRoot(right))
 }
 
-/** The current account identity, or a stable placeholder when none is reported. */
-function accountName(): string {
-  try {
-    // The host name keeps two same-named local accounts on different domains from
-    // landing on one directory; it is not a secret, only a collision breaker.
-    return `${os.userInfo().username}@${os.hostname()}`
-  } catch {
-    return 'unknown-account'
-  }
-}
-
-/**
- * The volume-root directory name this account may own.
- *
- * A fixed name in `D:\` is shared by every local account: another user could
- * create it first, turn it into a junction, and then read — or redirect — the
- * clone `mkdtemp` builds below it. The account hash keeps two accounts from
- * colliding without writing the user name into a world-readable path.
- */
-function sameVolumeDirectory(account: string = accountName()): string {
-  return `${SAME_VOLUME_EXEC_DIRECTORY}-${createHash('sha256').update(account).digest('hex').slice(0, 12)}`
-}
-
 /**
  * Where a per-call execution tree goes when the temp directory is on another
  * volume. `rootOf` is injectable so a test can prove the decision with synthetic
  * drive roots instead of depending on the machine's real layout.
+ *
+ * The directory name is fixed and readable. Separating accounts by name bought
+ * nothing: the ownership check already rejects a directory this account does not
+ * own, and a hashed account name would only hide a user name the profile path
+ * (`C:\Users\<name>`) already shows in plain text — while making the directory
+ * unreadable to whoever has to debug a leftover tree.
  */
-export function executionRootFor(source: string, temporary: string, account?: string,
+export function executionRootFor(source: string, temporary: string,
   rootOf: (pathname: string) => string = volumeRoot): string {
   const sourceRoot = rootOf(source)
-  return sameVolumeRoots(sourceRoot, rootOf(temporary)) ? temporary : path.join(sourceRoot, sameVolumeDirectory(account))
+  return sameVolumeRoots(sourceRoot, rootOf(temporary)) ? temporary : path.join(sourceRoot, SAME_VOLUME_EXEC_DIRECTORY)
 }
 
 /**
@@ -190,24 +173,35 @@ async function assertExecutionRoot(parent: string, source: string): Promise<void
 }
 
 /**
- * Reject a directory that is not a real directory owned by this account.
+ * Reject a directory that is not a real directory, and — unless the platform or
+ * the caller says otherwise — one this account does not own.
  *
  * A clone below a volume root is only as private as that root: a pre-created
  * junction, or a directory another account owns, would expose or redirect it.
- * Windows exposes no cheap owner check here, so the account-hashed directory name
- * plus these type and link checks carry that boundary; POSIX compares the owner
- * directly.
+ * Windows exposes no cheap owner check (`lstat().uid` is always 0 there), so the
+ * type and link checks are the whole boundary on that platform; POSIX compares
+ * the owner directly. `requireOwner` is false only for the OS temp directory,
+ * which belongs to root on POSIX and is handed out by the platform on purpose.
  */
-async function assertPrivateExecutionRoot(directory: string): Promise<void> {
+async function assertPrivateExecutionRoot(directory: string, requireOwner = true): Promise<void> {
   const info = await fs.promises.lstat(directory)
   if (info.isSymbolicLink() || !info.isDirectory()) throw Error(`The execution root must be a real directory, not a link or a file: ${directory}`)
-  if (process.platform !== 'win32' && process.getuid !== undefined && info.uid !== process.getuid()) {
+  if (requireOwner && process.platform !== 'win32' && process.getuid !== undefined && info.uid !== process.getuid()) {
     throw Error(`The execution root must be owned by the current account: ${directory}`)
   }
 }
 
 /** Fallback roots already reported, so a permanently unusable volume root warns once. */
 const reportedRootFallbacks = new Set<string>()
+
+/** Whether two paths name the same directory, folding case on Windows. */
+function isSameDirectory(left: string, right: string): boolean {
+  const canonical = (value: string): string => {
+    const resolved = path.resolve(value)
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+  }
+  return canonical(left) === canonical(right)
+}
 
 /**
  * Create the execution-root parent and return the directory actually used.
@@ -223,19 +217,23 @@ const reportedRootFallbacks = new Set<string>()
  */
 async function ensureExecutionRoot(parent: string, source: string, configured: boolean): Promise<string> {
   const temporary = os.tmpdir()
+  const parentIsOsTemp = isSameDirectory(parent, temporary)
   try {
     await assertExecutionRoot(parent, source)
     await fs.promises.mkdir(parent, { recursive: true })
-    // Only a root this function derived below a volume root is a new trust
-    // boundary. The OS temp directory keeps the platform's own owner — POSIX
-    // `/tmp` belongs to root — so validating it here would fail every call.
-    if (!configured && parent !== temporary) await assertPrivateExecutionRoot(parent)
+    // The OS temp directory keeps the platform's own owner — POSIX `/tmp` belongs
+    // to root — so only its shape can be checked there. Every other root, an
+    // operator-configured one included, must also be owned by this account: a
+    // mistyped path or a pre-created junction is exactly what the check catches.
+    await assertPrivateExecutionRoot(parent, !parentIsOsTemp)
     return parent
   } catch (error) {
-    if (configured || parent === temporary) throw error
-    // One warning per root: a permanently unusable volume root must not turn into
-    // one stderr line per shell command.
+    if (configured || parentIsOsTemp) throw error
+    // One warning per root, capped: a permanently unusable volume root must not
+    // turn into one stderr line per shell command, and the set must not grow
+    // without bound across a long-lived host.
     if (!reportedRootFallbacks.has(parent)) {
+      if (reportedRootFallbacks.size >= 8) reportedRootFallbacks.clear()
       reportedRootFallbacks.add(parent)
       console.error(`dsh-ops: could not use the same-volume execution root ${parent}: ${error instanceof Error ? error.message : String(error)}; falling back to ${temporary}, where the clone copies the payload instead of linking it`)
     }
