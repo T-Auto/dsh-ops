@@ -38,7 +38,8 @@ function fixture(root, targets = PLATFORMS) {
   }
   // Share the immutable real frozen fixture across synthetic worker headers; never fake its hash.
   if (targets.includes('win32-x64')) fs.cpSync(path.join(PACKAGE_ROOT, NIUBASH_PACKAGE_PATH), path.join(root, NIUBASH_PACKAGE_PATH), { recursive: true })
-  for (const relative of ['cli/niubash-payload.js', 'cli/niubash-payload-manifest.json', 'niubash/faces.js']) {
+  for (const relative of ['cli/niubash-payload.js', 'cli/niubash-payload-manifest.json', 'niubash/faces.js',
+    'niubash/execution-tree.js', 'niubash/seal.js']) {
     const target = path.join(root, 'lib', relative)
     fs.mkdirSync(path.dirname(target), { recursive: true })
     fs.copyFileSync(path.join(PACKAGE_ROOT, 'lib', relative), target)
