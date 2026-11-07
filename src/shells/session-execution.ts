@@ -61,6 +61,7 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
         mode: policy.mode, standing: standing.mode, confined: confinement !== undefined,
         exec: (confinement?.argv ?? argv)[0],
         argv: argv.map(argument => argument.length > 120 ? argument.slice(0, 120) + '…' : argument),
+        runner: confinement?.argv?.map(argument => argument.length > 200 ? argument.slice(0, 200) + '…' : argument),
       }))
       return confinement?.argv ?? argv
     },

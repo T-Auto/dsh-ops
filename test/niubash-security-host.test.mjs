@@ -206,6 +206,12 @@ try {
         console.error('DEBUG exec image ' + JSON.stringify({ ino: live.ino, sourceIno: source.ino, hardlinked: live.ino === source.ino, nlink: live.nlink, entry: bashIntegrityReport(image).entries?.[0] }))
       }
     }
+    const labelOf = target => {
+      const report = bashIntegrityReport(target)
+      const entry = report.entries?.[0]
+      return entry ? entry.label + ':' + target : JSON.stringify(report)
+    }
+    console.error('DEBUG live labels ' + JSON.stringify({ payload: labelOf(file), workspace: labelOf(root), outside: labelOf(outside), home: labelOf(TEST_HOME), tmp: labelOf(os.tmpdir()), temp: labelOf(process.env.TEMP ?? '') }))
     const slept = await pendingSleep
     console.error('DEBUG sleep result=' + JSON.stringify({ exit: slept.exitCode, stderr: slept.stderr?.text }))
     const value = await ptc('printf blocked > ptc-outside.txt', outside)
