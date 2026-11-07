@@ -21,7 +21,8 @@ import { hasLiveLease, plainTree } from '../bash-ipc-lifecycle.js'
 import { dshHome } from '../paths.js'
 import { provisionedShellStore } from '../shells.js'
 import { errorMessage } from '../shells/types.js'
-import { reclaimNiubashSiblings, verifyNiubashExecutionTree, verifyNiubashTree, NIUBASH_HOME_PATH } from './niubash-payload.js'
+import { reclaimNiubashSiblings, verifyNiubashTree, NIUBASH_EXECUTION_DIRECTORIES, NIUBASH_HOME_PATH, NIUBASH_MANIFEST_SHA256, NIUBASH_PIN, NIUBASH_RECEIPT } from './niubash-payload.js'
+import { NIUBASH_FACE_RULE, NIUBASH_FACES } from '../niubash/faces.js'
 import { pendingRoot, planPendingSweep, sweepPendingScratch } from './pending-scratch.js'
 
 /** The resource classes this command knows, and the only ones it may print or touch. */
@@ -186,6 +187,42 @@ function auditItems(root: string): CacheItem[] {
   return items
 }
 
+/** Offline stat-only verification of one per-call execution tree: path set, sizes and receipt, no payload byte. */
+function verifyExecutionTreeForReclaim(target: string): void {
+  const executable = 'winuxcmd/usr/bin/winuxcmd.exe'
+  const sizes: Readonly<Record<string, number>> = NIUBASH_PIN.sizes
+  const allowedDirectories = new Set([...NIUBASH_PIN.directories, ...NIUBASH_EXECUTION_DIRECTORIES])
+  const derived = new Set(NIUBASH_FACES.map(face => `winuxcmd/usr/bin/${face}.exe`))
+  const walk = (relative: string): void => {
+    for (const entry of fs.readdirSync(path.join(target, relative), { withFileTypes: true })) {
+      const name = relative === '' ? entry.name : `${relative}/${entry.name}`
+      const file = path.join(target, name)
+      const stat = fs.lstatSync(file)
+      if (stat.isSymbolicLink()) throw new Error(`Unsafe execution tree member: ${name}`)
+      if (stat.isDirectory()) {
+        if (!allowedDirectories.has(name)) throw new Error(`Unknown execution tree directory: ${name}`)
+        walk(name)
+        continue
+      }
+      if (!stat.isFile()) throw new Error(`Unsafe execution tree member: ${name}`)
+      if (name === 'execution-provenance.json' || name === NIUBASH_RECEIPT) continue
+      if (Object.hasOwn(NIUBASH_PIN.files, name)) {
+        if (stat.size !== sizes[name]) throw new Error(`Execution tree size mismatch: ${name}`)
+      } else if (derived.has(name)) {
+        if (stat.size !== sizes[executable]) throw new Error(`Execution tree size mismatch: ${name}`)
+      } else throw new Error(`Unknown execution tree member: ${name}`)
+    }
+  }
+  walk('')
+  const receipt: unknown = JSON.parse(fs.readFileSync(path.join(target, 'execution-provenance.json'), 'utf8'))
+  if (typeof receipt !== 'object' || receipt === null) throw new Error('Invalid execution provenance receipt')
+  const value = receipt as Record<string, unknown>
+  if (value.version !== 1 || value.rule !== NIUBASH_FACE_RULE
+    || value.sourceManifestSha256 !== NIUBASH_MANIFEST_SHA256
+    || (value.mode !== 'hardlink' && value.mode !== 'copy')
+    || (value.seal !== 'readonly+acl' && value.seal !== 'readonly')) throw new Error('Invalid execution provenance receipt')
+}
+
 /** Per-call Niubash execution trees: verified against their own execution provenance. */
 function execItems(tmpRoot: string): CacheItem[] {
   let entries
@@ -201,7 +238,7 @@ function execItems(tmpRoot: string): CacheItem[] {
     const usage = treeUsage(target)
     const item: CacheItem = { kind: 'exec-tree', path: target, bytes: usage.bytes, files: usage.files, evidence: 'execution-provenance', decision: 'unverified' }
     try {
-      verifyNiubashExecutionTree(target)
+      verifyExecutionTreeForReclaim(target)
       item.decision = 'reclaimable'
       item.detail = 'offline confirmation required; the tree carries a complete execution provenance'
     } catch (error) {
