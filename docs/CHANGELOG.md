@@ -19,6 +19,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 每次调用的 Niubash 执行根在 Windows 上改为跟随载荷所在卷：未设置 `DSH_OPS_EXEC_ROOT` 且 `os.tmpdir()` 与之不同卷时，克隆改在 `<载荷所在卷>\dsh-ops-exec` 下创建，默认配置因此保持零拷贝硬链接路径，而不是静默回退为每次调用复制 785 MiB。该目录必须是当前账户拥有的真实目录——重解析点、被其他账户拥有的目录、或与载荷路径重叠时会被拒绝，调用回退到临时目录并报告原因；显式设置的 `DSH_OPS_EXEC_ROOT` 走同样校验，但会直接报错，不会被静默替换。POSIX 路径一律归约为同一个卷根，因此 tmpfs 上的 `/tmp` 仍需显式设置 `DSH_OPS_EXEC_ROOT`。
 - Fixed the stale `niubash-consumer` assertion that still expected `all 10 checks passed` after `niubash-security-host` grew to 11 checks, which failed every full-gate run.
 - 修正 `niubash-consumer` 中过时的断言：`niubash-security-host` 增至 11 项检查后，consumer 仍断言 `all 10 checks passed`，导致完整门禁必挂。
+- An execution root below the workspace now clones by copy instead of hard links. The host sandbox labels the workspace tree with an inheritable Low mandatory label; a hard-linked payload would export that label onto the shared file object, and every later `niu.exe` image would run at Low integrity — full access included, where an unconfined shell must be able to write a Medium directory.
+- 位于工作区之下的执行根改为复制克隆而不是硬链接：宿主沙箱会给工作区树打上可继承的 Low 强制标签，硬链接会把该标签带到共享文件对象上，之后每次 `niu.exe` 镜像都会以 Low 完整性运行——包括 full access，而不受限的 shell 本应能写 Medium 目录。
 
 ## [0.5.0] — 2026-11-06 — Stable release
 
