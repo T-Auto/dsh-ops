@@ -24,6 +24,8 @@ const { DEFAULT_BASH_TIMEOUT_MS } = await moduleAt('lib/shells/constants.js')
 const file = consumerRoot ? path.join(consumerRoot, 'runtime/win32-x64/niubash/niu.exe') : process.env.DSH_OPS_TEST_NIUBASH
 if (process.platform !== 'win32' || !file) skipSuite('niubash-security-host', 'requires Windows x64 and DSH_OPS_TEST_NIUBASH pointing at the complete frozen v1.5.0 payload')
 verifiedNiubash(file)
+const { bashIntegrityReport } = await moduleAt('lib/cli/integrity.js')
+console.error('DEBUG integrity ' + JSON.stringify(bashIntegrityReport(file)))
 const root = scenarioDir('niu-host-中文'), outside = scenarioDir('niu-outside')
 const bash = consumerRoot ? resolveShells({}, { bundleRoot: consumerRoot }).bash : resolveShells({ bashPath: file }).bash
 assert.equal(bash.available, true, bash.detail)
@@ -194,6 +196,11 @@ try {
     const denied = await ptc('printf blocked > ptc-readonly.txt')
     assert.equal(denied.timedOut, false, JSON.stringify(denied)); assert.notEqual(denied.exitCode, 0, JSON.stringify(denied)); assert.equal(fs.existsSync(path.join(root, 'ptc-readonly.txt')), false)
     agent.session.mode = 'danger-full-access'
+    const idProbe = await call('id -a')
+    console.error('DEBUG full id: ' + JSON.stringify({ exit: idProbe.exitCode, out: idProbe.stdout?.text, sandbox: idProbe.sandbox }))
+    const whoamiExe = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'whoami.exe')
+    const whoProbe = await call(quote(whoamiExe) + ' /groups')
+    console.error('DEBUG full whoami: ' + JSON.stringify({ exit: whoProbe.exitCode, mandatory: (whoProbe.stdout?.text ?? '').split(/\r?\n/u).filter(line => /Mandatory Label/u.test(line)) }))
     try {
       ok(await call('printf full > full.txt', { workdir: outside }))
     } catch (error) {
