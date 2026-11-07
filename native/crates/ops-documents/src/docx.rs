@@ -28,7 +28,9 @@ fn page_complete(failure: Option<&Failure>, observed: usize, offset: usize, limi
 fn unsupported(name: &str) -> Failure {
     Failure::new(
         "UNSUPPORTED_DOCUMENT",
-        format!("Unsupported DOCX main-body content: {name}; preceding complete paragraphs remain observations"),
+        format!(
+            "Unsupported DOCX main-body content: {name}; preceding complete paragraphs remain observations"
+        ),
     )
 }
 fn metadata(
@@ -51,7 +53,9 @@ fn metadata(
                 depth += 1;
             }
             Token::End(_) => {
-                depth = depth.checked_sub(1).ok_or_else(|| xml::bad("Invalid package XML nesting"))?;
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| xml::bad("Invalid package XML nesting"))?;
             }
             Token::Text(text) => {
                 if !text.trim().is_empty() {
@@ -65,44 +69,65 @@ fn metadata(
 fn package(archive: &mut Archive<'_>, started: Instant) -> Result<()> {
     let types = archive.xml("[Content_Types].xml", 1024 * 1024)?;
     let mut main = 0;
-    metadata(&types, started, "http://schemas.openxmlformats.org/package/2006/content-types", "Types", |tag| {
-        {
-            if !matches!(tag.name.as_str(), "Override" | "Default") {
-                return Err(xml::bad("Unexpected content-type element"));
-            }
-            if tag.ns != "http://schemas.openxmlformats.org/package/2006/content-types" {
-                return Err(xml::bad("Invalid DOCX content-type namespace"));
-            }
-            if tag.attrs.get("ContentType").is_some_and(|t| {
-                t.to_ascii_lowercase().contains("macroenabled") || t.to_ascii_lowercase().contains("vbaproject")
-            }) {
-                return Err(unsupported("macro-enabled package"));
-            }
-            if tag.name == "Override" && tag.attrs.get("PartName").is_some_and(|p| p == "/word/document.xml") {
-                if tag.attrs.get("ContentType").map(String::as_str)
-                    != Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml")
-                {
-                    return Err(unsupported("non-DOCX main content type"));
+    metadata(
+        &types,
+        started,
+        "http://schemas.openxmlformats.org/package/2006/content-types",
+        "Types",
+        |tag| {
+            {
+                if !matches!(tag.name.as_str(), "Override" | "Default") {
+                    return Err(xml::bad("Unexpected content-type element"));
                 }
-                main += 1;
+                if tag.ns != "http://schemas.openxmlformats.org/package/2006/content-types" {
+                    return Err(xml::bad("Invalid DOCX content-type namespace"));
+                }
+                if tag.attrs.get("ContentType").is_some_and(|t| {
+                    t.to_ascii_lowercase().contains("macroenabled")
+                        || t.to_ascii_lowercase().contains("vbaproject")
+                }) {
+                    return Err(unsupported("macro-enabled package"));
+                }
+                if tag.name == "Override"
+                    && tag
+                        .attrs
+                        .get("PartName")
+                        .is_some_and(|p| p == "/word/document.xml")
+                {
+                    if tag.attrs.get("ContentType").map(String::as_str)
+                        != Some(
+                            "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+                        )
+                    {
+                        return Err(unsupported("non-DOCX main content type"));
+                    }
+                    main += 1;
+                }
             }
-        }
-        Ok(())
-    })?;
+            Ok(())
+        },
+    )?;
     if main != 1 {
-        return Err(xml::bad("DOCX must declare exactly one word/document.xml main part"));
+        return Err(xml::bad(
+            "DOCX must declare exactly one word/document.xml main part",
+        ));
     }
     let rels = archive.xml("_rels/.rels", 1024 * 1024)?;
     let mut main = 0;
-    metadata(&rels, started, "http://schemas.openxmlformats.org/package/2006/relationships", "Relationships", |tag| {
-        {
-            if tag.name != "Relationship" {
-                return Err(xml::bad("Unexpected relationship element"));
-            }
-            if tag.ns != "http://schemas.openxmlformats.org/package/2006/relationships" {
-                return Err(xml::bad("Invalid package relationship namespace"));
-            }
-            if tag.name == "Relationship"
+    metadata(
+        &rels,
+        started,
+        "http://schemas.openxmlformats.org/package/2006/relationships",
+        "Relationships",
+        |tag| {
+            {
+                if tag.name != "Relationship" {
+                    return Err(xml::bad("Unexpected relationship element"));
+                }
+                if tag.ns != "http://schemas.openxmlformats.org/package/2006/relationships" {
+                    return Err(xml::bad("Invalid package relationship namespace"));
+                }
+                if tag.name == "Relationship"
                 && tag.attrs.get("Type").is_some_and(|t| {
                     t == "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
                         || t == "http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument"
@@ -115,11 +140,14 @@ fn package(archive: &mut Archive<'_>, started: Instant) -> Result<()> {
                 }
                 main += 1;
             }
-        }
-        Ok(())
-    })?;
+            }
+            Ok(())
+        },
+    )?;
     if main != 1 {
-        return Err(xml::bad("DOCX must have exactly one internal main-document relationship"));
+        return Err(xml::bad(
+            "DOCX must have exactly one internal main-document relationship",
+        ));
     }
     Ok(())
 }
@@ -135,7 +163,10 @@ struct Page<'a> {
 impl Page<'_> {
     fn push(&mut self, mut item: Value) -> Result<()> {
         if self.observed >= 100_000 {
-            return Err(Failure::new("OUTPUT_LIMIT", "DOCX exceeds 100000 observed paragraphs"));
+            return Err(Failure::new(
+                "OUTPUT_LIMIT",
+                "DOCX exceeds 100000 observed paragraphs",
+            ));
         }
         self.observed += 1;
         item["block"] = json!(self.observed);
@@ -162,7 +193,8 @@ impl Page<'_> {
 fn paragraphs(text: &str, started: Instant, page: &mut Page<'_>) -> Result<()> {
     let mut stack = Vec::<String>::new();
     let (mut body, mut document) = (0, 0);
-    let (mut paragraph, mut content, mut table, mut row, mut cell) = (None::<Value>, String::new(), 0, 0, 0);
+    let (mut paragraph, mut content, mut table, mut row, mut cell) =
+        (None::<Value>, String::new(), 0, 0, 0);
     let mut in_table = false;
     xml::walk(text, started, |token| {
         match token {
@@ -172,10 +204,16 @@ fn paragraphs(text: &str, started: Instant, page: &mut Page<'_>) -> Result<()> {
                 }
                 let parent = stack.last().map(String::as_str);
                 let property = stack.iter().any(|n| {
-                    matches!(n.as_str(), "pPr" | "rPr" | "tblPr" | "trPr" | "tcPr" | "sectPr" | "tblGrid" | "sdtPr")
+                    matches!(
+                        n.as_str(),
+                        "pPr" | "rPr" | "tblPr" | "trPr" | "tcPr" | "sectPr" | "tblGrid" | "sdtPr"
+                    )
                 });
                 if property {
-                    if matches!(tag.name.as_str(), "document" | "body" | "p" | "r" | "t" | "tbl" | "tr" | "tc") {
+                    if matches!(
+                        tag.name.as_str(),
+                        "document" | "body" | "p" | "r" | "t" | "tbl" | "tr" | "tc"
+                    ) {
                         return Err(xml::bad("Content nested inside formatting properties"));
                     }
                     stack.push(tag.name);
@@ -233,8 +271,9 @@ fn paragraphs(text: &str, started: Instant, page: &mut Page<'_>) -> Result<()> {
                         }
                         content.push(if tag.name == "tab" { '\t' } else { '\n' });
                     }
-                    "drawing" | "pict" | "object" | "fldSimple" | "fldChar" | "instrText" | "altChunk" | "del"
-                    | "ins" | "moveFrom" | "moveTo" | "sym" | "footnoteReference" | "endnoteReference" => {
+                    "drawing" | "pict" | "object" | "fldSimple" | "fldChar" | "instrText"
+                    | "altChunk" | "del" | "ins" | "moveFrom" | "moveTo" | "sym"
+                    | "footnoteReference" | "endnoteReference" => {
                         return Err(unsupported(&tag.name));
                     }
                     "document" | "body" => return Err(xml::bad("Invalid document/body nesting")),
@@ -262,12 +301,19 @@ fn paragraphs(text: &str, started: Instant, page: &mut Page<'_>) -> Result<()> {
                         if paragraph.is_none() || parent != Some("r") {
                             return Err(xml::bad("Text control outside a paragraph run"));
                         }
-                        content.push(if tag.name == "noBreakHyphen" { '\u{2011}' } else { '\u{ad}' });
+                        content.push(if tag.name == "noBreakHyphen" {
+                            '\u{2011}'
+                        } else {
+                            '\u{ad}'
+                        });
                     }
                     _ => return Err(unsupported(&tag.name)),
                 }
                 if content.len() > 1024 * 1024 {
-                    return Err(Failure::new("OUTPUT_LIMIT", "One DOCX paragraph exceeds 1 MiB"));
+                    return Err(Failure::new(
+                        "OUTPUT_LIMIT",
+                        "One DOCX paragraph exceeds 1 MiB",
+                    ));
                 }
                 stack.push(tag.name);
             }
@@ -276,12 +322,17 @@ fn paragraphs(text: &str, started: Instant, page: &mut Page<'_>) -> Result<()> {
                     return Err(xml::bad("DOCX element nesting differs"));
                 }
                 if stack.iter().any(|n| {
-                    matches!(n.as_str(), "pPr" | "rPr" | "tblPr" | "trPr" | "tcPr" | "sectPr" | "tblGrid" | "sdtPr")
+                    matches!(
+                        n.as_str(),
+                        "pPr" | "rPr" | "tblPr" | "trPr" | "tcPr" | "sectPr" | "tblGrid" | "sdtPr"
+                    )
                 }) {
                     return Ok(());
                 }
                 if name == "p" {
-                    let mut item = paragraph.take().ok_or_else(|| xml::bad("Unmatched paragraph"))?;
+                    let mut item = paragraph
+                        .take()
+                        .ok_or_else(|| xml::bad("Unmatched paragraph"))?;
                     item["text"] = json!(std::mem::take(&mut content));
                     page.push(item)?;
                 }
@@ -292,7 +343,10 @@ fn paragraphs(text: &str, started: Instant, page: &mut Page<'_>) -> Result<()> {
             Token::Text(text) => {
                 if stack.last().is_some_and(|n| n == "t") {
                     if content.len().saturating_add(text.len()) > 1024 * 1024 {
-                        return Err(Failure::new("OUTPUT_LIMIT", "One DOCX paragraph exceeds 1 MiB"));
+                        return Err(Failure::new(
+                            "OUTPUT_LIMIT",
+                            "One DOCX paragraph exceeds 1 MiB",
+                        ));
                     }
                     content.push_str(&text);
                 } else if !text.trim().is_empty() {
@@ -303,14 +357,19 @@ fn paragraphs(text: &str, started: Instant, page: &mut Page<'_>) -> Result<()> {
         Ok(())
     })?;
     if document != 1 || body != 1 {
-        return Err(xml::bad("DOCX main part requires one document and one body"));
+        return Err(xml::bad(
+            "DOCX main part requires one document and one body",
+        ));
     }
     Ok(())
 }
 pub fn read(request: &Request) -> Result<Value> {
     let args: Args = serde_json::from_value(request.args.clone())?;
     if args.offset == 0 || args.offset > 100_000 || args.limit == 0 || args.limit > 1000 {
-        return Err(Failure::new("INVALID_ARGUMENT", "read_docx offset is 1-100000 paragraphs and limit is 1-1000"));
+        return Err(Failure::new(
+            "INVALID_ARGUMENT",
+            "read_docx offset is 1-100000 paragraphs and limit is 1-1000",
+        ));
     }
     request.authorize_path(Path::new(&args.path))?;
     let target = ops_files::file_path::checked(&args.path)?;
@@ -322,14 +381,27 @@ pub fn read(request: &Request) -> Result<Value> {
         return Err(Failure::new("OUTPUT_LIMIT", "DOCX archive exceeds 32 MiB"));
     }
     let mut bytes = Vec::new();
-    file.by_ref().take(MAX_ARCHIVE as u64 + 1).read_to_end(&mut bytes)?;
+    file.by_ref()
+        .take(MAX_ARCHIVE as u64 + 1)
+        .read_to_end(&mut bytes)?;
     if bytes.len() > MAX_ARCHIVE {
-        return Err(Failure::new("OUTPUT_LIMIT", "DOCX archive grew beyond 32 MiB"));
+        return Err(Failure::new(
+            "OUTPUT_LIMIT",
+            "DOCX archive grew beyond 32 MiB",
+        ));
     }
     let mut archive = Archive::new(&bytes)?;
     package(&mut archive, started)?;
     let text = archive.xml("word/document.xml", 8 * 1024 * 1024)?;
-    let mut page = Page { request, args: &args, items: Vec::new(), observed: 0, selected: 0, bytes: 0, cut: false };
+    let mut page = Page {
+        request,
+        args: &args,
+        items: Vec::new(),
+        observed: 0,
+        selected: 0,
+        bytes: 0,
+        cut: false,
+    };
     let mut failure = paragraphs(&text, started, &mut page).err();
     let after = file.metadata()?;
     if before.len() != after.len() || before.modified().ok() != after.modified().ok() {
@@ -377,7 +449,10 @@ pub fn read(request: &Request) -> Result<Value> {
         output["nextOffset"] = json!(args.offset + page.items.len());
         if scan {
             output["truncatedBy"] = json!("output-budget");
-            output["omitted"] = json!(page.observed.saturating_sub(args.offset - 1 + page.items.len()));
+            output["omitted"] = json!(
+                page.observed
+                    .saturating_sub(args.offset - 1 + page.items.len())
+            );
         }
         if output.get("nextAction").is_none() {
             output["nextAction"] = json!(

@@ -142,22 +142,52 @@ struct Scan {
 /// The policy comes only from the host request, never from model arguments.
 pub fn authorize_tree(root: &Dir, path: &str, request: &crate::contract::Request) -> Result<()> {
     let (dir, name) = parent(root, path)?;
-    fn check(dir: &Dir, name: &str, display: &Path, request: &crate::contract::Request, depth: usize, visited: &mut u64) -> Result<()> {
+    fn check(
+        dir: &Dir,
+        name: &str,
+        display: &Path,
+        request: &crate::contract::Request,
+        depth: usize,
+        visited: &mut u64,
+    ) -> Result<()> {
         *visited += 1;
-        if depth > MAX_DEPTH || *visited > MAX_ENTRIES { return Err(Failure::new("OUTPUT_LIMIT", "Credential preflight traversal budget exceeded")); }
+        if depth > MAX_DEPTH || *visited > MAX_ENTRIES {
+            return Err(Failure::new(
+                "OUTPUT_LIMIT",
+                "Credential preflight traversal budget exceeded",
+            ));
+        }
         request.authorize_path(display)?;
         let metadata = dir.symlink_metadata(name)?;
-        if is_link(&metadata) { return Ok(()); }
+        if is_link(&metadata) {
+            return Ok(());
+        }
         if metadata.is_dir() {
             let child = dir.open_dir_nofollow(name)?;
             for entry in child.entries()? {
-                let name = entry?.file_name().into_string().map_err(|_| Failure::new("PATH_RESTRICTED", "Non-UTF8 credential preflight entry"))?;
-                check(&child, &name, &display.join(&name), request, depth + 1, visited)?;
+                let name = entry?.file_name().into_string().map_err(|_| {
+                    Failure::new("PATH_RESTRICTED", "Non-UTF8 credential preflight entry")
+                })?;
+                check(
+                    &child,
+                    &name,
+                    &display.join(&name),
+                    request,
+                    depth + 1,
+                    visited,
+                )?;
             }
         }
         Ok(())
     }
-    check(&dir, &name, &Path::new(&request.root).join(path), request, 0, &mut 0)
+    check(
+        &dir,
+        &name,
+        &Path::new(&request.root).join(path),
+        request,
+        0,
+        &mut 0,
+    )
 }
 
 pub fn snapshot(root: &Dir, path: &str, kind: Kind) -> Result<Snapshot> {

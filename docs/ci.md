@@ -1,38 +1,64 @@
 # CI
 
-Three workflows, one gate. This page is the map: what runs, what actually blocks a merge, how to
-reproduce any of it locally, and the repository settings that make the gate real. The intent is that
-a reviewer can trust a green PR without re-running anything by hand.
+Four workflows, one gate — and every merge-gating job is a real gate. This page is the map: what
+runs, what actually blocks a merge, how to reproduce any of it locally, and the repository settings
+that make the gate real. The intent is that a reviewer can trust a green PR without re-running
+anything by hand, and that a red check is never something to "read and ignore".
 
 ## What runs
 
 | Workflow | Trigger | Blocks a merge? | Purpose |
 | --- | --- | --- | --- |
-| `ci.yml` — **Cross-platform validation** | `push: main`, `pull_request: main`, `merge_group`, manual dispatch | **Yes** (via the single `CI required` check) | The functional gate on Linux and macOS arm64 (blocking), macOS Intel and Windows (non-blocking signals), plus the Node floor, the source size gate, workflow lint and the tool trial |
+| `ci.yml` — **Cross-platform validation** | `push: main`, `pull_request` (no filters), `merge_group`, manual dispatch | **Yes** (via the single `CI required` check) | The functional gate on Linux x64, macOS arm64, macOS Intel and Windows x64, plus the Node floor, the source size gate, workflow lint, Rust lint and the tool trial |
 | `sync-master.yml` — **Sync master with main** | `push: main`, manual dispatch | No | Fast-forwards the `master` mirror; fast-forward only, so a divergent `master` fails loudly |
-| `release.yml` — **Release** | `push: v*` tags, manual dispatch | No (`disabled_manually` today) | Builds the four declared targets, gates them, and publishes the GitHub Release. Nothing here runs on a branch or a pull request |
+| `release.yml` — **Release** | `push: v*` tags, manual dispatch | No (but it publishes) | Builds the four declared targets, gates them, and publishes the GitHub Release. Nothing here runs on a branch or a pull request. `release.yml` is **active**: v0.5.0 was published by it |
+| `benchmark-gates.yml` — **Opt-in OPS acceptance benchmarks** | manual dispatch, monthly schedule | No | Real-host acceptance gates (dispatch) and the tool-level bench smoke (also monthly). A benchmark is a measurement; it never gates a merge |
 
-### Jobs inside `ci.yml`
+`sync-master.yml` is not a gate and never touches `main`. It exists so the `master` mirror cannot go
+stale by accident.
+
+### Jobs inside `ci.yml` — all of them are gates
 
 | Job | Runner | Blocking? | What it proves |
 | --- | --- | --- | --- |
 | `validate-posix` | `ubuntu-24.04` (linux-x64), `macos-latest` (darwin-arm64) | **Yes** | `cargo test --workspace --locked`, the native worker builds, then `scripts/verify-gate.mjs --skip-install`: no unauthorised skips (`DSH_OPS_REQUIRE_RUNTIME=1` on POSIX turns a missing runtime into a failure), every suite file on disk was collected, and the packed artifact unpacks and passes `native-runtime check` |
-| `validate-macos-intel` | `macos-15-intel` (darwin-x64) | **No** (`continue-on-error`) | The same gate on Intel macOS, including the Mach-O x86_64 worker and its receipt; it runs on every push, pull request and merge group and uploads `native-darwin-x64`. The leg measured **318 s**, past the >300 s line (#316), so it is a signal, not a gate (see below) |
-| `validate-windows` | `windows-latest` (win32-x64) | **No** (`continue-on-error`) | The same gate on Windows, and it still runs on every push, pull request and merge group — the result is a **signal, not a gate**: a red Windows leg is a defect to fix, but it does not hold a merge (see below) |
-| `node-floor` | `ubuntu-24.04` | **Yes** | `package.json` promises `^22.19 \|\| >=24`; this runs the same gate on the declared **floor** so the promise is exercised rather than asserted |
-| `workflow-lint` | `ubuntu-24.04` | **Yes** | `scripts/check-workflows.mjs`: every workflow parses, declares triggers/jobs/permissions, bounds each job with `timeout-minutes`, avoids `write-all` and `pull_request_target`, and keeps `ci.yml`'s aggregate check wired to every blocking job — in `needs` and in its failure loop — while keeping every `continue-on-error` job out of both |
+| `validate-macos-intel` | `macos-15-intel` (darwin-x64) | **Yes** | The same gate on Intel macOS, including the Mach-O x86_64 worker and its receipt; uploads `native-darwin-x64` |
+| `validate-windows` | `windows-latest` (win32-x64) | **Yes** | The same gate on Windows, plus the UNC directory regression; uploads `native-win32-x64` |
+| `tools-trial` | `ubuntu-24.04` | **Yes** | Boots a real host and calls every published tool; a broken tool is a blocked merge |
+| `node-floor` | `ubuntu-24.04`, `windows-latest` | **Yes** | `package.json` promises `^22.19 \|\| >=24`; this runs the same gate on the declared **floor** on both platform families |
+| `workflow-lint` | `ubuntu-24.04` | **Yes** | `scripts/check-workflows.mjs`: every workflow parses, declares triggers/jobs/permissions, bounds each job with `timeout-minutes`, avoids `write-all` and `pull_request_target`, keeps `ci.yml`'s aggregate check wired to every blocking job, every job classified, and the release path's guards present |
 | `source-size` | `ubuntu-24.04` | **Yes** | `scripts/check-file-size.mjs`: every tracked code file stays at or under 1000 lines. The file set comes from `git ls-files`, so a new module is in scope the moment it is added |
-| `tools-trial` | `ubuntu-24.04` | **No** (`continue-on-error`) | Boots a real host and calls every published tool; a broken tool shows up in its own job and in the uploaded `tools-trial-report` without blocking unrelated work |
-| `ci-required` | `ubuntu-24.04` | — (this is the check to require) | Collapses the matrix into one status: it fails unless every blocking job succeeded, and it waits only on blocking jobs — `validate-windows`, `validate-macos-intel`, `tools-trial` and `bench-smoke` are `continue-on-error` and are deliberately not in its `needs` |
+| `rust-lint` | `ubuntu-24.04` | **Yes** | `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` with the toolchain pinned by `native/rust-toolchain.toml` (1.97.1) |
+| `ci-required` | `ubuntu-24.04` | — (this is the check to require) | Collapses the matrix into one status: it waits on every job above and fails unless all of them succeeded |
 
-`validate-windows` is non-blocking by measurement, not by preference: on `main` after #307 the leg took **527 / 529 s** — up from 482 s before #307, because `npm ci` now downloads the 411 MB Windows Bash payload — while the blocking legs took 136–139 s (Linux x64) and 168–182 s (macOS arm64). That is well past the approved ">300 s → non-blocking" line (#316); splitting the leg into shards was measured at 1.5–2.4× the runner minutes and still stayed above 300 s on a slow runner. It is still a signal worth reading — a red Windows run is a defect — but the aggregate check does not wait for it, so a merge does not pay for the slowest leg.
+There are **no non-blocking jobs in `ci.yml`**. The former `continue-on-error` legs (Windows, Intel,
+tools-trial) are gates: their red runs were real defects — DACL handling, Niubash execution, the pack
+consumer — and a gate that "reads" a red leg is a gate that merges broken Windows code. The one job
+that is not deterministic enough to gate a merge (the bench smoke) lives in `benchmark-gates.yml`,
+where it is dispatched or scheduled monthly and where failing it never holds a PR.
 
-`validate-macos-intel` follows the same rule. On the PR run that added the target it took **318 s**, against 174 s for Linux x64 and 146 s for macOS arm64 in the same run. It still runs on every event and uploads `native-darwin-x64`; a red Intel run is a defect to fix, not a reason to hold the merge. The blocking set remains Linux x64 and macOS arm64, plus `node-floor`, `workflow-lint` and `source-size`.
+The set of blocking jobs is stated once, in `scripts/check-workflows.mjs` (`EXPECTED_BLOCKING`).
+Adding a job to `ci.yml` without classifying it fails `workflow-lint`; so does a `needs` list or a
+failure loop that disagrees with the classification. A job cannot quietly opt out of the gate.
 
-`connectivity` of the required check matters more than its name: require **`CI required`**, not the
-per-platform names. The blocking matrix expands into one check per runner, so requiring those names
-by hand means keeping them in sync forever, and losing the gate the day a runner label changes.
-`scripts/check-workflows.mjs` fails if `ci-required` stops depending on every blocking job, starts depending on a `continue-on-error` one, or drops a blocking job from its failure loop.
+### Measured durations (30-day window ending 2026-11-07)
+
+| Job | p50 | p90 | p99 / max |
+| --- | --- | --- | --- |
+| `validate-posix` (linux-x64) | 271 s | 389 s | 424 s |
+| `validate-posix` (darwin-arm64) | 249 s | 378 s | 581 s |
+| `validate-macos-intel` | 494 s | 730 s | 1292 s |
+| `validate-windows` | 573 s | 1335 s | 1514 s |
+| `node-floor` | 253 s | 364 s | 402 s |
+| `tools-trial` | 42 s | 49 s | 209 s |
+| `workflow-lint` | 11 s | 16 s | 193 s |
+| `source-size` | 7 s | 12 s | 23 s |
+| `ci-required` | 3 s | 4 s | 6 s |
+
+Timeouts are set from these numbers with headroom (20 minutes for the POSIX legs and `node-floor`,
+30 for Intel and Windows), so a hung job fails in minutes rather than in the old 35-minute default.
+The 411 MB Windows Bash payload is installed by `npm ci` in ~11 s on the hosted image; it is not the
+reason the Windows leg is slow — the suites are.
 
 ## Reproduce it locally
 
@@ -44,53 +70,51 @@ npm run build:ptc
 # The gate, exactly as CI runs it (POSIX: a skipped runtime suite is a failure, not a pass)
 DSH_HOME=$(mktemp -d) node scripts/verify-gate.mjs --skip-install
 
-# The workflow lint, the size gate and the tool trial
+# The structural gates
 node scripts/check-workflows.mjs
 node scripts/check-file-size.mjs
+
+# Rust formatting and lints, with the toolchain the repository pins
+cargo +1.97.1 fmt --all --check --manifest-path native/Cargo.toml
+cargo +1.97.1 clippy --workspace --all-targets --locked --manifest-path native/Cargo.toml -- -D warnings
+
+# The bench smoke (a measurement; never a merge gate)
 node scripts/tools-trial.mjs
+node test/run.mjs bench
 ```
 
-`DSH_OPS_SUITE_TIMEOUT_MS` and `DSH_OPS_RETRY_TIMEOUTS=1` are set in CI (300s and one retry of a
-*deadline* only — a logic failure is never retried). Without them a slow runner can turn a passing
-suite into a red run; with them, a retry prints, so a green summary still shows what happened.
+`native/rust-toolchain.toml` is the single source of the Rust version: it lists 1.97.1 with `rustfmt`
+and `clippy`, and every workflow's `rustup toolchain install` must name the same channel
+(`workflow-lint` asserts that).
 
-## One-time repository settings (admin)
+`DSH_OPS_SUITE_TIMEOUT_MS` and `DSH_OPS_RETRY_TIMEOUTS=1` are set in CI (300 s; 600 s on Windows)
+and one retry of a *deadline only* — a logic failure is never retried. Without them a slow runner can
+turn a passing suite into a red run; with them, a retry prints, so a green summary still shows what
+happened.
 
-Actions are **enabled** at repository level — `ci.yml` and `sync-master.yml` are `active`; only
-`release.yml` is `disabled_manually`, which is that file's documented state, not a repository
-outage. Verify at any time:
+## The required check and the ruleset
+
+`main`, `0.3.2` and `release/0.4.0` are protected by the ruleset template in
+`.github/required-ci-ruleset.json`: pull request required, `CI required` required as a status check,
+strict (up to date with the base), no bypass actors, no force pushes — and a merge queue, which is
+part of the same ruleset write.
+
+Applying it is a **one-time admin action**; the repository cannot grant it to itself:
 
 ```bash
-gh api repos/T-Auto/dsh-ops/actions/workflows --jq '.workflows[] | "\(.state)\t\(.path)"'
+# Dry run: prints the desired vs live fingerprint and writes nothing.
+node scripts/apply-ruleset.mjs
+
+# Apply once, from a machine holding an admin token. The merge queue is enabled by the same write.
+GH_ADMIN_TOKEN=… node scripts/apply-ruleset.mjs --apply
 ```
 
-Two settings still have to be made by a maintainer with admin rights (they cannot be expressed in a
-workflow file):
+`scripts/check-workflows.mjs` keeps the template honest offline; `scripts/apply-ruleset.mjs` is the
+only thing that talks to the live API and it is never run by CI.
 
-1. **Require the gate on `main`.** Until this exists, every green check above is advisory: a reviewer
-   can merge on red.
-
-   ```bash
-   gh api -X PUT repos/T-Auto/dsh-ops/branches/main/protection \
-     -H 'Accept: application/vnd.github+json' \
-     -f 'required_status_checks[strict]=true' \
-     -f 'required_status_checks[checks][][context]=CI required' \
-     -F 'enforce_admins=false' \
-     -F 'required_pull_request_reviews=' \
-     -F 'restrictions='
-   ```
-
-   `strict=true` also demands that the branch be up to date with `main` before merging, which is what
-   stops "green on an old base" from being merged on top of a red `main`.
-
-2. **(Optional, recommended) Turn on the merge queue.** CI already listens for `merge_group`, so a
-   queued group is validated as a unit. Enable it in **Settings → Rules → Rulesets** for `main`
-   (admin), then the required check above applies to groups instead of individual PRs.
-
-`release.yml` stays disabled on purpose. When a release is actually planned, an admin enables it with
-`gh workflow enable Release`, dispatches it once on `main` as a dry run (the `publish` job is skipped
-for a non-tag ref, so nothing is written), checks the three `native-*` artifacts plus `release-dist`
-and `SHA256SUMS`, and only then pushes the `v*` tag.
+Require **`CI required`**, not the per-platform names: the matrix expands into one check per runner,
+so requiring those names by hand means keeping them in sync forever and losing the gate the day a
+runner label changes.
 
 ## Fork pull requests
 
@@ -100,8 +124,9 @@ Two GitHub mechanics decide whether a pull request runs anything at all:
   from `main`. A branch whose head predates the live `ci.yml` therefore starts no run, and the
   checks listed above only appear once the branch carries a `pull_request` trigger.
 - The first run for a pull request opened from a fork waits for a maintainer to approve it
-  (`action_required`); every later push to that branch runs without a new approval. Approving one is
-  a write on the run, not on the branch:
+  (`action_required`); every later push to that branch runs without a new approval. A fork PR whose
+  run never starts shows a red X with no jobs — that is the approval gate, not a code failure.
+  Approving one is a write on the run, not on the branch:
 
   ```bash
   gh api -X POST repos/T-Auto/dsh-ops/actions/runs/<run-id>/approve
@@ -109,17 +134,27 @@ Two GitHub mechanics decide whether a pull request runs anything at all:
 
 A pull request whose head is a branch of this repository runs immediately and needs neither.
 
-## Known gaps, stated rather than hidden
+## How to add a job
 
-- **`rustfmt` and `clippy` are not enforced.** `cargo fmt --all --check` is currently not clean, so
-  wiring it in as a blocking job would paint every PR red for formatting. Fix the tree first, then
-  add the job.
+1. Add it to `ci.yml`.
+2. Add its id to `EXPECTED_BLOCKING` in `scripts/check-workflows.mjs`, and to `ci-required`'s `needs`
+   and failure loop.
+3. Run `node scripts/check-workflows.mjs` locally — it fails until all three agree.
+
+A job that genuinely cannot gate a merge (a measurement) does not belong in `ci.yml`: put it in a
+non-gating workflow. There is currently exactly one such job, the bench smoke in
+`benchmark-gates.yml`.
+
+## Known limits, stated rather than hidden
+
 - **`actionlint` is not used.** It cannot be installed on these runners without network installs, so
   `scripts/check-workflows.mjs` covers the structural half of what it does (triggers, permissions,
-  job shape, the aggregate-check wiring). Expression-level type checking is not covered.
-- **One suite is intermittently red on macOS.** `linux-protocol`'s "concurrent replaces of one file
-  are atomic" has failed on `macos-latest` in several unrelated runs (#163); re-running the job
-  passes. It is a real concurrency window in the native publication path, not a test defect — see
-  #168.
-- **`Release` has never run end to end.** It is disabled, so its YAML is reviewed but unexecuted;
-  the first dispatch on `main` is the real test.
+  job shape, the aggregate-check wiring, the release guards). Expression-level type checking is not
+  covered.
+- **Benchmarks are measurements.** The bench smoke and the acceptance gates cannot produce a
+  performance verdict on a shared runner; they print medians as evidence and assert only
+  deterministic outcomes. Making a timing threshold a merge gate would block PRs on runner noise.
+- **One native concurrency window is still open.** `linux-protocol`'s "concurrent replaces of one
+  file are atomic" has failed on `macos-latest` in unrelated runs (#163). It is a real window in the
+  native publication path (#168), not a test defect; a stress reproduction is the prerequisite for
+  fixing it, and until then it is tracked rather than papered over with a retry.

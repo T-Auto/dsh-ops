@@ -1,16 +1,19 @@
 #![forbid(unsafe_code)]
 use ops_protocol as contract;
+pub mod cache_io;
 mod file;
 pub mod file_path;
-pub mod cache_io;
 pub mod paths;
-pub use file::{dispatch, target, relative_display, read_bytes, result, lock_and_read_for_update, atomic_write, authorize_write, check_revision, UpdateLock, MAX_OUTPUT_BYTES, MAX_FILE_BYTES};
-#[cfg(unix)]
-use cap_std::fs::Dir;
 #[cfg(all(test, unix))]
 use cap_std::ambient_authority;
 #[cfg(unix)]
+use cap_std::fs::Dir;
+#[cfg(unix)]
 use contract::Result;
+pub use file::{
+    MAX_FILE_BYTES, MAX_OUTPUT_BYTES, UpdateLock, atomic_write, authorize_write, check_revision,
+    dispatch, lock_and_read_for_update, read_bytes, relative_display, result, target,
+};
 
 /// Persist a directory's entries after an atomic publish.
 ///
@@ -45,7 +48,8 @@ mod tests {
     fn directory_sync_succeeds_on_ambient_directories() {
         let root = std::env::temp_dir().join(format!("dsh-ops-sync-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&root).expect("create temporary directory");
-        let dir = Dir::open_ambient_dir(&root, ambient_authority()).expect("open ambient directory");
+        let dir =
+            Dir::open_ambient_dir(&root, ambient_authority()).expect("open ambient directory");
         sync_directory(&dir).expect("directory sync");
         std::fs::remove_dir(&root).expect("remove temporary directory");
     }

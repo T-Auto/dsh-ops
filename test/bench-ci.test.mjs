@@ -1,19 +1,20 @@
 /**
- * P15: the bench smoke is opt-in, non-blocking and self-describing.
+ * P15: the bench smoke is a measurement that lives outside the merge-gating workflow.
  *
- * Three properties keep the smoke from becoming a gate, and a regression in any one of them is
- * invisible in a green CI run — which is exactly why they are asserted here instead of described:
+ * `ci.yml` is now entirely gates — every job is in `CI required`'s `needs` and failure loop — so the
+ * smoke would either have to gate a merge on harness noise or stay in a workflow that does not gate
+ * anything. It lives in `benchmark-gates.yml`: dispatched by hand, and also scheduled monthly so the
+ * harness is exercised without anyone remembering. The regression this suite exists to catch is the
+ * smoke quietly moving back into `ci.yml` (or a `bench` dispatch input reappearing there), because
+ * that is how a measurement becomes a merge gate.
  *
- * 1. it hangs off a `workflow_dispatch` **boolean input that defaults to false**, so `push`,
- *    `pull_request` and `merge_group` cannot start it;
- * 2. the aggregate `CI required` job neither names it in `needs` nor judges it in its failure loop:
- *    waiting on a non-blocking job would keep the required check pending until that job finished, so
- *    a `continue-on-error` job is not waited on at all (#316);
+ * Three properties of the smoke itself are still asserted here, since a green run cannot show them:
+ *
+ * 1. it is not started by `push`, `pull_request` or `merge_group` from the gating workflow;
+ * 2. it runs the deterministic, model-free comparison: `bench/cli.mjs tools` with the **same**
+ *    worker binary on both sides, and asserts no duration anywhere;
  * 3. it uploads evidence under the names the repository already uses (`*-report`, `warn` when a run
- *    produced nothing to upload) and asserts no duration anywhere.
- *
- * What it runs is the deterministic, model-free comparison: `bench/cli.mjs tools` with the **same**
- * worker binary on both sides. A model-driven sweep asserts a cost direction and must stay out of CI.
+ *    produced nothing to upload).
  *
  * @module dsh-ops/test/bench-ci
  */
@@ -23,43 +24,35 @@ import path from 'node:path'
 import { parse } from 'yaml'
 import { assert, test, report, PACKAGE_ROOT } from './lib/harness.mjs'
 
-const ciText = fs.readFileSync(path.join(PACKAGE_ROOT, '.github', 'workflows', 'ci.yml'), 'utf8')
-const ci = parse(ciText)
-const jobs = ci.jobs ?? {}
-const input = ci.on?.workflow_dispatch?.inputs?.bench
-const benchJobs = Object.entries(jobs).filter(([, job]) => String(job?.if ?? '').includes('inputs.bench'))
-const [benchId, benchJob] = benchJobs[0] ?? []
+const readWorkflow = (name) => parse(fs.readFileSync(path.join(PACKAGE_ROOT, '.github', 'workflows', name), 'utf8'))
+const ci = readWorkflow('ci.yml')
+const bench = readWorkflow('benchmark-gates.yml')
+const ciJobs = ci.jobs ?? {}
+const benchJobs = bench.jobs ?? {}
+const benchJob = benchJobs['bench-smoke']
 // Shell line continuations are joined, so a reformatted command still matches: this suite pins what
 // the smoke *runs*, not how the command is wrapped.
 const benchRuns = (benchJob?.steps ?? [])
   .map((step) => String(step?.run ?? ''))
   .join('\n')
   .replace(/\\\r?\n\s*/gu, ' ')
-const [, required] = Object.entries(jobs).find(([, job]) => job?.name === 'CI required') ?? []
-const requiredScript = (required?.steps ?? []).map((step) => String(step?.run ?? '')).join('\n')
 
-await test('the bench smoke is behind a manual, boolean, default-off input', () => {
-  assert.ok(input, 'ci.yml: workflow_dispatch declares a `bench` input')
-  assert.equal(input.type, 'boolean', 'a boolean cannot be turned on by a stray string value')
-  assert.equal(input.default, false, 'the smoke is off unless a human asks for it')
-  assert.ok(String(input.description ?? '').trim() !== '', 'the input explains what it turns on')
+await test('the gating workflow has no bench input and no bench job', () => {
+  assert.equal(ci.on?.workflow_dispatch?.inputs, undefined, 'ci.yml: workflow_dispatch declares no inputs')
+  assert.equal(ciJobs['bench-smoke'], undefined, 'ci.yml: the smoke does not live in the gating workflow')
+  for (const [id, job] of Object.entries(ciJobs)) {
+    assert.doesNotMatch(String(job?.if ?? ''), /inputs\.bench/u, `ci.yml: job ${id} is not gated on a bench input`)
+  }
+  assert.doesNotMatch(JSON.stringify(ci), /bench\/cli\.mjs/u, 'ci.yml: no job runs the benchmark harness')
 })
 
-await test('exactly one job is gated on that input, and only workflow_dispatch can start it', () => {
-  assert.equal(benchJobs.length, 1, 'one job owns the input, so the trigger surface is one place')
-  assert.match(String(benchJob.if), /github\.event_name\s*==\s*'workflow_dispatch'/u, 'push and pull_request cannot start it')
-  assert.equal(benchJob['continue-on-error'], true, 'a red smoke must not turn the run red')
+await test('the smoke lives in the benchmark workflow, which never gates a merge', () => {
+  assert.ok(benchJob, 'benchmark-gates.yml: declares the bench-smoke job')
+  assert.equal(bench.on?.workflow_dispatch !== undefined, true, 'the smoke can be dispatched by hand')
+  assert.equal(bench.on?.schedule !== undefined, true, 'the smoke is also scheduled, not only remembered')
+  assert.equal(benchJobs['CI required'], undefined, 'the benchmark workflow exposes no required check')
+  assert.doesNotMatch(JSON.stringify(bench), /CI required|ci-required/u, 'the benchmark workflow does not impersonate the gate')
   assert.ok(Number(benchJob['timeout-minutes']) > 0, 'the job bounds its runtime')
-})
-
-await test('"CI required" neither waits on nor judges the smoke', () => {
-  assert.ok(required, 'ci.yml still exposes the aggregate "CI required" check')
-  const needs = [].concat(required.needs ?? [])
-  assert.equal(needs.includes(benchId), false, 'being in needs would keep the required check pending until the smoke finished')
-  const loop = requiredScript.match(/for job in ([^;]+);/u)
-  assert.ok(loop, 'the aggregate still has a blocking-job loop')
-  assert.equal(loop[1].split(/\s+/u).includes(benchId), false, 'the smoke is not one of the blocking jobs')
-  assert.doesNotMatch(requiredScript, new RegExp(`echo "${benchId}:`, 'u'), 'the aggregate has no result to print for a job it does not wait on')
 })
 
 await test('the smoke drives the one CLI entry point with the same binary on both sides', () => {

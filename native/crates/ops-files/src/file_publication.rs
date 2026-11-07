@@ -11,18 +11,25 @@ pub(super) fn open_update_lock(parent: &Dir, name: &str, conflict: &str) -> Resu
     let file = {
         // A single validated sibling beneath an already-held no-follow directory.
         // Avoid cap-std's emulated create/open dance under simultaneous creators.
-        let flags = rustix::fs::OFlags::RDWR | rustix::fs::OFlags::NOFOLLOW
-            | rustix::fs::OFlags::CLOEXEC | rustix::fs::OFlags::NONBLOCK;
+        let flags = rustix::fs::OFlags::RDWR
+            | rustix::fs::OFlags::NOFOLLOW
+            | rustix::fs::OFlags::CLOEXEC
+            | rustix::fs::OFlags::NONBLOCK;
         // Darwin may return ENOENT to simultaneous non-exclusive O_CREAT opens.
         // Elect one creator with O_EXCL; EEXIST selects the persistent inode.
         // This is create-or-open, not a retry of a failed business operation.
-        let created = rustix::fs::openat(parent, name,
+        let created = rustix::fs::openat(
+            parent,
+            name,
             flags | rustix::fs::OFlags::CREATE | rustix::fs::OFlags::EXCL,
-            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR);
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        );
         let fd = match created {
             Ok(fd) => fd,
-            Err(rustix::io::Errno::EXIST) => rustix::fs::openat(parent, name, flags, rustix::fs::Mode::empty())
-                .map_err(|error| Failure::from(std::io::Error::from(error)))?,
+            Err(rustix::io::Errno::EXIST) => {
+                rustix::fs::openat(parent, name, flags, rustix::fs::Mode::empty())
+                    .map_err(|error| Failure::from(std::io::Error::from(error)))?
+            }
             Err(error) => return Err(Failure::from(std::io::Error::from(error))),
         };
         File::from_std(std::fs::File::from(fd))
@@ -71,77 +78,58 @@ fn lock_failure(error: std::io::Error, conflict: &str) -> Failure {
 }
 
 pub fn check_revision(bytes: Option<&[u8]>, expected: &str) -> Result<()> {
-    if expected != "absent" && !(expected.len() == 64 && expected.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))) {
-        return Err(Failure::new("INVALID_ARGUMENT", "expectedRevision must be absent or lowercase SHA-256"));
+    if expected != "absent"
+        && !(expected.len() == 64
+            && expected
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+    {
+        return Err(Failure::new(
+            "INVALID_ARGUMENT",
+            "expectedRevision must be absent or lowercase SHA-256",
+        ));
     }
-    let actual = bytes.map(|bytes| format!("{:x}", Sha256::digest(bytes))).unwrap_or_else(|| "absent".into());
-    if actual != expected { return Err(Failure::new("REVISION_CONFLICT", "Revision differs; inspect before preparing a new request")); }
+    let actual = bytes
+        .map(|bytes| format!("{:x}", Sha256::digest(bytes)))
+        .unwrap_or_else(|| "absent".into());
+    if actual != expected {
+        return Err(Failure::new(
+            "REVISION_CONFLICT",
+            "Revision differs; inspect before preparing a new request",
+        ));
+    }
     Ok(())
 }
 
 pub fn authorize_write(request: &Request, raw: &str) -> Result<PathBuf> {
-    if request.read_only { return Err(Failure::policy("read-only", "User authorization is read-only")); }
+    if request.read_only {
+        return Err(Failure::policy(
+            "read-only",
+            "User authorization is read-only",
+        ));
+    }
     let checked = crate::file_path::checked_leaf(raw, true)?;
     request.authorize_path(&checked.display)?;
     if let Some(roots) = &request.write_roots {
-        let parent = fs::canonicalize(checked.display.parent().ok_or_else(|| Failure::new("INVALID_ARGUMENT", "No parent"))?)?;
+        let parent = fs::canonicalize(
+            checked
+                .display
+                .parent()
+                .ok_or_else(|| Failure::new("INVALID_ARGUMENT", "No parent"))?,
+        )?;
         let candidate = parent.join(&checked.name);
-        if !roots.iter().any(|root| fs::canonicalize(root).is_ok_and(|root| candidate.starts_with(root))) {
-            return Err(Failure::policy("write-roots", "Target is outside authorized write roots"));
+        if !roots
+            .iter()
+            .any(|root| fs::canonicalize(root).is_ok_and(|root| candidate.starts_with(root)))
+        {
+            return Err(Failure::policy(
+                "write-roots",
+                "Target is outside authorized write roots",
+            ));
         }
     }
     Ok(checked.display)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use fs2::FileExt;
-    #[test]
-    fn simultaneous_lock_creators_keep_one_live_inode() {
-        let root = std::fs::canonicalize(std::env::temp_dir()).unwrap().join(format!("ops-lock-test-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir(&root).unwrap();
-        let barrier = std::sync::Arc::new(std::sync::Barrier::new(12));
-        let handles: Vec<_> = (0..12).map(|_| {
-            let root = root.clone(); let barrier = barrier.clone();
-            std::thread::spawn(move || {
-                let parent = Dir::open_ambient_dir(root, cap_std::ambient_authority()).unwrap();
-                barrier.wait();
-                open_update_lock(&parent, ".dsh-ops-lock-test.lock", "held").unwrap()
-            })
-        }).collect();
-        let files: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
-        FileExt::try_lock_exclusive(&files[0]).unwrap();
-        for file in &files[1..] { assert!(FileExt::try_lock_exclusive(file).is_err(), "all creators must share one lock inode"); }
-        drop(files);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn revision_cas_never_treats_absent_as_a_wildcard() {
-        check_revision(None, "absent").unwrap();
-        assert_eq!(check_revision(Some(b"old"), "absent").unwrap_err().code, "REVISION_CONFLICT");
-        let hash = format!("{:x}", Sha256::digest(b"old"));
-        check_revision(Some(b"old"), &hash).unwrap();
-        assert_eq!(check_revision(None, &hash).unwrap_err().code, "REVISION_CONFLICT");
-        assert_eq!(check_revision(Some(b"new"), &hash).unwrap_err().code, "REVISION_CONFLICT");
-        assert_eq!(check_revision(Some(b"old"), &hash.to_uppercase()).unwrap_err().code, "INVALID_ARGUMENT");
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn unsupported_lock_errors_are_classified_apart_from_contention() {
-        for code in [1, 50, 120] {
-            assert!(lock_unsupported(&std::io::Error::from_raw_os_error(code)), "raw {code} means the filesystem cannot lock");
-            assert_eq!(lock_error(std::io::Error::from_raw_os_error(code), "held").code, "LOCK_UNSUPPORTED");
-        }
-        for code in [32, 33] {
-            assert!(!lock_unsupported(&std::io::Error::from_raw_os_error(code)), "raw {code} means another holder, not a filesystem limit");
-            assert_eq!(lock_error(std::io::Error::from_raw_os_error(code), "held").code, "REVISION_CONFLICT");
-        }
-    }
-}
-
 
 pub(super) fn create_sibling(
     parent: &Dir,
@@ -278,12 +266,104 @@ pub(super) fn discard_sibling(parent: &Dir, name: &str, file: File) -> Result<()
     #[cfg(not(windows))]
     drop(file);
     #[cfg(windows)]
-    if removed.is_ok() { return Ok(()); }
+    if removed.is_ok() {
+        return Ok(());
+    }
     parent.remove_file(name).map_err(|error| {
-        let mut failure = Failure::new("CLEANUP_FAILED", format!("Could not remove staging sibling {name}: {error}"));
+        let mut failure = Failure::new(
+            "CLEANUP_FAILED",
+            format!("Could not remove staging sibling {name}: {error}"),
+        );
         failure.phase = "cleanup".into();
         failure.effect_state = "unknown".into();
-        failure.next_action = "Inspect the staging sibling and target before retrying; unpublished bytes may remain.".into();
+        failure.next_action =
+            "Inspect the staging sibling and target before retrying; unpublished bytes may remain."
+                .into();
         failure
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs2::FileExt;
+    #[test]
+    fn simultaneous_lock_creators_keep_one_live_inode() {
+        let root = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!("ops-lock-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(12));
+        let handles: Vec<_> = (0..12)
+            .map(|_| {
+                let root = root.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let parent = Dir::open_ambient_dir(root, cap_std::ambient_authority()).unwrap();
+                    barrier.wait();
+                    open_update_lock(&parent, ".dsh-ops-lock-test.lock", "held").unwrap()
+                })
+            })
+            .collect();
+        let files: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        FileExt::try_lock_exclusive(&files[0]).unwrap();
+        for file in &files[1..] {
+            assert!(
+                FileExt::try_lock_exclusive(file).is_err(),
+                "all creators must share one lock inode"
+            );
+        }
+        drop(files);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn revision_cas_never_treats_absent_as_a_wildcard() {
+        check_revision(None, "absent").unwrap();
+        assert_eq!(
+            check_revision(Some(b"old"), "absent").unwrap_err().code,
+            "REVISION_CONFLICT"
+        );
+        let hash = format!("{:x}", Sha256::digest(b"old"));
+        check_revision(Some(b"old"), &hash).unwrap();
+        assert_eq!(
+            check_revision(None, &hash).unwrap_err().code,
+            "REVISION_CONFLICT"
+        );
+        assert_eq!(
+            check_revision(Some(b"new"), &hash).unwrap_err().code,
+            "REVISION_CONFLICT"
+        );
+        assert_eq!(
+            check_revision(Some(b"old"), &hash.to_uppercase())
+                .unwrap_err()
+                .code,
+            "INVALID_ARGUMENT"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unsupported_lock_errors_are_classified_apart_from_contention() {
+        for code in [1, 50, 120] {
+            assert!(
+                lock_unsupported(&std::io::Error::from_raw_os_error(code)),
+                "raw {code} means the filesystem cannot lock"
+            );
+            assert_eq!(
+                lock_error(std::io::Error::from_raw_os_error(code), "held").code,
+                "LOCK_UNSUPPORTED"
+            );
+        }
+        for code in [32, 33] {
+            assert!(
+                !lock_unsupported(&std::io::Error::from_raw_os_error(code)),
+                "raw {code} means another holder, not a filesystem limit"
+            );
+            assert_eq!(
+                lock_error(std::io::Error::from_raw_os_error(code), "held").code,
+                "REVISION_CONFLICT"
+            );
+        }
+    }
 }

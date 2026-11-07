@@ -16,7 +16,10 @@ const EINVAL: i32 = 22;
 pub fn require_no_extended_acl(file: &File) -> io::Result<()> {
     // SAFETY: __error returns this thread's errno pointer; acl_get_fd_np borrows
     // a valid live fd. A successful non-null ACL is released exactly once.
-    let acl = unsafe { *__error() = 0; acl_get_fd_np(file.as_raw_fd(), ACL_TYPE_EXTENDED) };
+    let acl = unsafe {
+        *__error() = 0;
+        acl_get_fd_np(file.as_raw_fd(), ACL_TYPE_EXTENDED)
+    };
     if acl.is_null() {
         let error = io::Error::last_os_error();
         // Apple's acl_get_fd_np delegates to filesec_get_property(FILESEC_ACL),
@@ -32,13 +35,22 @@ pub fn require_no_extended_acl(file: &File) -> io::Result<()> {
     let mut entry = std::ptr::null_mut();
     // Darwin acl_get_entry returns 0 for success, -1/EINVAL for no first entry
     // (unlike the POSIX convention used by Linux implementations).
-    let status = unsafe { *__error() = 0; acl_get_entry(acl, 0, &mut entry) };
+    let status = unsafe {
+        *__error() = 0;
+        acl_get_entry(acl, 0, &mut entry)
+    };
     let error = io::Error::last_os_error();
-    unsafe { acl_free(acl); }
-    if status == 0 {
-        return Err(io::Error::new(io::ErrorKind::Unsupported,
-            "Darwin extended ACL publication is not supported; source untouched and no sibling created"));
+    unsafe {
+        acl_free(acl);
     }
-    if error.raw_os_error() == Some(EINVAL) { return Ok(()); }
+    if status == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Darwin extended ACL publication is not supported; source untouched and no sibling created",
+        ));
+    }
+    if error.raw_os_error() == Some(EINVAL) {
+        return Ok(());
+    }
     Err(error)
 }

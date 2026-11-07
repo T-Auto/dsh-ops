@@ -312,8 +312,16 @@ fn a_default_windows_build_never_serves_an_index() {
         "the default Windows build must not link the MFT source (#718)"
     );
     let walked = glob(&request(&fixture.root, None, glob_args(&fixture.root))).unwrap();
-    let with_cache = glob(&request(&fixture.root, Some(&cache), glob_args(&fixture.root))).unwrap();
-    assert_eq!(walked, with_cache, "the gated source still falls back to the walk");
+    let with_cache = glob(&request(
+        &fixture.root,
+        Some(&cache),
+        glob_args(&fixture.root),
+    ))
+    .unwrap();
+    assert_eq!(
+        walked, with_cache,
+        "the gated source still falls back to the walk"
+    );
 }
 
 #[cfg(all(windows, feature = "win-index"))]

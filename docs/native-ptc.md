@@ -368,9 +368,9 @@ the DSH local sandbox's workspace/temporary-area policy fence. The *released* Li
 x64 worker is built for `x86_64-unknown-linux-musl` and statically linked, so the
 shipped artifact no longer requires a `GLIBC_*` floor; reproduce it with
 `npm run build:ptc -- --target x86_64-unknown-linux-musl`.
-macOS arm64 (`aarch64-apple-darwin`) and macOS Intel (`x86_64-apple-darwin`) now run
-the full gate in CI: `macos-latest` (arm64) is blocking, and `macos-15-intel` (x64)
-is a non-blocking signal because the leg measured 318 s > 300 s. Both build and stage
+macOS arm64 (`aarch64-apple-darwin`) and macOS Intel (`x86_64-apple-darwin`) run the
+full gate in CI: `macos-latest` (arm64) and `macos-15-intel` (x64) are both blocking
+legs. Both build and stage
 their Mach-O worker, run the suite, and verify the receipt. The earlier 0.3.1
 `cargo check --locked`-only record is superseded. A local Intel macOS 12.7.6 run
 still has one expected `CLONE_ACL` failure, so macOS 12 remains a follow-up.

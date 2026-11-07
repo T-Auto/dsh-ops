@@ -12,16 +12,34 @@ pub struct StorageContext {
 }
 impl StorageContext {
     pub fn validate(&self) -> Result<()> {
-        if !std::path::Path::new(&self.root).is_absolute() || self.root.len() > 4096 || self.root.contains('\0')
-            || self.authority_id.len() != 64 || !self.authority_id.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
-            || self.windows_write_sid.as_deref().is_some_and(|sid| !valid_temp_sid(sid))
-            || self.allowed_tools.len() > 64 || self.allowed_tools.iter().any(|tool| !valid_tool(tool))
-        { return Err(Failure::new("INVALID_ARGUMENT", "Invalid trusted storage context")); }
+        if !std::path::Path::new(&self.root).is_absolute()
+            || self.root.len() > 4096
+            || self.root.contains('\0')
+            || self.authority_id.len() != 64
+            || !self
+                .authority_id
+                .bytes()
+                .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+            || self
+                .windows_write_sid
+                .as_deref()
+                .is_some_and(|sid| !valid_temp_sid(sid))
+            || self.allowed_tools.len() > 64
+            || self.allowed_tools.iter().any(|tool| !valid_tool(tool))
+        {
+            return Err(Failure::new(
+                "INVALID_ARGUMENT",
+                "Invalid trusted storage context",
+            ));
+        }
         Ok(())
     }
     pub fn authorize(&self, tool: &str) -> Result<()> {
         if !self.allowed_tools.iter().any(|allowed| allowed == tool) {
-            return Err(Failure::new("POLICY_DENIED", "Reference producer is outside the current capability set"));
+            return Err(Failure::new(
+                "POLICY_DENIED",
+                "Reference producer is outside the current capability set",
+            ));
         }
         Ok(())
     }
@@ -29,11 +47,20 @@ impl StorageContext {
 /// Exact private-temp family emitted by the pinned Windows confinement provider.
 pub fn valid_temp_sid(sid: &str) -> bool {
     let parts: Vec<_> = sid.split('-').collect();
-    parts.len() == 6 && parts[..3] == ["S", "1", "4"] && parts[5] == "1"
-        && parts[3..5].iter().all(|part| part.parse::<u32>().is_ok_and(|value| value > 0 && value < 1 << 30 && value.to_string() == *part))
+    parts.len() == 6
+        && parts[..3] == ["S", "1", "4"]
+        && parts[5] == "1"
+        && parts[3..5].iter().all(|part| {
+            part.parse::<u32>()
+                .is_ok_and(|value| value > 0 && value < 1 << 30 && value.to_string() == *part)
+        })
 }
 pub fn valid_tool(tool: &str) -> bool {
-    !tool.is_empty() && tool.len() <= 64 && tool.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+    !tool.is_empty()
+        && tool.len() <= 64
+        && tool
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
