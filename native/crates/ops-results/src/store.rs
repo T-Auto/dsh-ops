@@ -65,8 +65,12 @@ impl Store {
     }
     /// Whether a file name is one of this store's writer temporaries.
     fn is_temporary(name: &str) -> bool {
-        let Some(stem) = name.strip_suffix(".tmp") else { return false };
-        let Some((id, nonce)) = stem.split_once('.') else { return false };
+        let Some(stem) = name.strip_suffix(".tmp") else {
+            return false;
+        };
+        let Some((id, nonce)) = stem.split_once('.') else {
+            return false;
+        };
         Self::validate_id(id).is_ok() && nonce.len() == 36 && uuid::Uuid::parse_str(nonce).is_ok()
     }
     pub fn validate_id(id: &str) -> Result<()> {
@@ -234,23 +238,51 @@ mod tests {
             // A read-only open cannot legitimately delete anything, so it must leave the file.
             {
                 let _store = open(root, true);
-                assert!(directory.join(&orphan).exists(), "a read-only open must not reclaim bytes");
+                assert!(
+                    directory.join(&orphan).exists(),
+                    "a read-only open must not reclaim bytes"
+                );
             }
             {
                 let store = open(root, false);
-                assert!(!directory.join(&orphan).exists(), "the writer temporary is gone");
-                assert!(directory.join("notes.txt").exists(), "a foreign name is never removed");
-                assert!(store.latest(&id).is_ok(), "the committed generation survives");
+                assert!(
+                    !directory.join(&orphan).exists(),
+                    "the writer temporary is gone"
+                );
+                assert!(
+                    directory.join("notes.txt").exists(),
+                    "a foreign name is never removed"
+                );
+                assert!(
+                    store.latest(&id).is_ok(),
+                    "the committed generation survives"
+                );
                 // The reclaimed temporary no longer counts against the quota.
-                store.save(&format!("j-{}", uuid::Uuid::new_v4()), &serde_json::json!({"items": []})).unwrap();
+                store
+                    .save(
+                        &format!("j-{}", uuid::Uuid::new_v4()),
+                        &serde_json::json!({"items": []}),
+                    )
+                    .unwrap();
             }
             // Malformed names near the namespace are not this store's to delete.
             let store = open(root, false);
             drop(store);
-            std::fs::write(directory.join("j-notauuid.00000000-0000-0000-0000-000000000000.tmp"), b"x").unwrap();
+            std::fs::write(
+                directory.join("j-notauuid.00000000-0000-0000-0000-000000000000.tmp"),
+                b"x",
+            )
+            .unwrap();
             let _store = open(root, false);
-            assert!(directory.join("j-notauuid.00000000-0000-0000-0000-000000000000.tmp").exists());
-            std::fs::remove_file(directory.join("j-notauuid.00000000-0000-0000-0000-000000000000.tmp")).unwrap();
+            assert!(
+                directory
+                    .join("j-notauuid.00000000-0000-0000-0000-000000000000.tmp")
+                    .exists()
+            );
+            std::fs::remove_file(
+                directory.join("j-notauuid.00000000-0000-0000-0000-000000000000.tmp"),
+            )
+            .unwrap();
         });
     }
 }
