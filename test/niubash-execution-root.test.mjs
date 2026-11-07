@@ -348,9 +348,9 @@ await test('a payload on another volume moves the execution root onto that volum
   const cross = executionRootFor('Z:\\payload\\niubash', 'C:\\temp', 'tester', rootOf)
   assert.match(path.basename(cross), /^dsh-ops-exec-[a-f0-9]{12}$/u)
   assert.equal(executionRootFor('C:\\payload\\niubash', 'C:\\temp', 'tester', rootOf), 'C:\\temp')
-  // The account hash separates two accounts without exposing the account name.
-  assert.equal(executionRootFor('Z:\\payload', 'C:\\temp', 'tester', rootOf),
-    executionRootFor('Z:\\payload', 'C:\\temp', 'tester', rootOf))
+  // The directory name is a fixed-shape account digest, and two accounts differ.
+  assert.match(path.basename(executionRootFor('Z:\\payload', 'C:\\temp', 'tester', rootOf)),
+    /^dsh-ops-exec-[a-f0-9]{12}$/u)
   assert.notEqual(executionRootFor('Z:\\payload', 'C:\\temp', 'tester', rootOf),
     executionRootFor('Z:\\payload', 'C:\\temp', 'other', rootOf))
 

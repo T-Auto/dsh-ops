@@ -97,6 +97,17 @@ export function sameVolume(left: string, right: string): boolean {
   return sameVolumeRoots(volumeRoot(left), volumeRoot(right))
 }
 
+/** The current account identity, or a stable placeholder when none is reported. */
+function accountName(): string {
+  try {
+    // The host name keeps two same-named local accounts on different domains from
+    // landing on one directory; it is not a secret, only a collision breaker.
+    return `${os.userInfo().username}@${os.hostname()}`
+  } catch {
+    return 'unknown-account'
+  }
+}
+
 /**
  * The volume-root directory name this account may own.
  *
@@ -105,7 +116,7 @@ export function sameVolume(left: string, right: string): boolean {
  * clone `mkdtemp` builds below it. The account hash keeps two accounts from
  * colliding without writing the user name into a world-readable path.
  */
-function sameVolumeDirectory(account: string = os.userInfo().username): string {
+function sameVolumeDirectory(account: string = accountName()): string {
   return `${SAME_VOLUME_EXEC_DIRECTORY}-${createHash('sha256').update(account).digest('hex').slice(0, 12)}`
 }
 
@@ -195,6 +206,9 @@ async function assertPrivateExecutionRoot(directory: string): Promise<void> {
   }
 }
 
+/** Fallback roots already reported, so a permanently unusable volume root warns once. */
+const reportedRootFallbacks = new Set<string>()
+
 /**
  * Create the execution-root parent and return the directory actually used.
  *
@@ -208,15 +222,25 @@ async function assertPrivateExecutionRoot(directory: string): Promise<void> {
  * payload also recovers instead of failing the whole call.
  */
 async function ensureExecutionRoot(parent: string, source: string, configured: boolean): Promise<string> {
+  const temporary = os.tmpdir()
   try {
     await assertExecutionRoot(parent, source)
     await fs.promises.mkdir(parent, { recursive: true })
-    await assertPrivateExecutionRoot(parent)
+    // Only a root this function derived below a volume root is a new trust
+    // boundary. The OS temp directory keeps the platform's own owner — POSIX
+    // `/tmp` belongs to root — so validating it here would fail every call.
+    if (!configured && parent !== temporary) await assertPrivateExecutionRoot(parent)
     return parent
   } catch (error) {
-    const temporary = os.tmpdir()
     if (configured || parent === temporary) throw error
-    console.error(`dsh-ops: could not use the same-volume execution root ${parent}: ${error instanceof Error ? error.message : String(error)}; falling back to ${temporary}, where the clone copies the payload instead of linking it`)
+    // One warning per root: a permanently unusable volume root must not turn into
+    // one stderr line per shell command.
+    if (!reportedRootFallbacks.has(parent)) {
+      reportedRootFallbacks.add(parent)
+      console.error(`dsh-ops: could not use the same-volume execution root ${parent}: ${error instanceof Error ? error.message : String(error)}; falling back to ${temporary}, where the clone copies the payload instead of linking it`)
+    }
+    // A temp directory that still contains the payload cannot host the clone;
+    // that is a broken installation, not a reason to keep guessing.
     await assertExecutionRoot(temporary, source)
     await fs.promises.mkdir(temporary, { recursive: true })
     return temporary
