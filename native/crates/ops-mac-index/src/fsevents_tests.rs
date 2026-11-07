@@ -21,7 +21,10 @@ use std::os::unix::fs::MetadataExt;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// How long a real-delivery test waits before declaring failure.
-const DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
+// FSEvents replay is delivered asynchronously; on a hosted runner the callback can arrive a
+// dozen seconds after the write that caused it. This bound exists to fail a stream that is
+// genuinely broken, not to grade latency, so it is generous enough for a loaded CI host (#775).
+const DELIVERY_TIMEOUT: Duration = Duration::from_secs(30);
 
 static NEXT_TREE: AtomicU64 = AtomicU64::new(0);
 
