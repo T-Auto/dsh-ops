@@ -19,6 +19,10 @@ Plugin authors can also mount the [public integration API](integration-api.md) i
 | `panel`, `tui` | Disabled by default; opt-in capture and read-only sidebar |
 | `resultCache` | Enabled; sweeps idle result-cache roots at start-up and after the last owner unloads. `maxRoots`/`maxTotalBytes` default 0 (report only), `maxAgeMs` defaults to 3600000 (idle grace), `sweepEnabled` defaults true |
 | `other.pwsh7Link` | When absent follows companion detection; saved boolean wins |
+| `disk` | Read-only ownership report; `status.includeRepository` false and `status.maxEntries` 5000 by default; the `retention` block is a validated contract only (no eviction in this release) |
+
+`disk.status.*` and the reserved `disk.retention.*` keys are YAML-only. See [Disk and cache](disk-and-cache.md) for
+the resource inventory, the read-only `dsh-ops disk status` report and what it deliberately never scans.
 
 The page uses native Switch controls. Built-in cards start collapsed. Disabling a card greys its
 switches without erasing saved values. Standard/PTC/Cordis have `residentTools` (default true),

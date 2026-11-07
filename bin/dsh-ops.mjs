@@ -27,6 +27,7 @@ import { commandResultCache } from '../lib/cli/result-cache.js'
 import { CACHE_KINDS, commandCache } from '../lib/cli/cache-reclaim.js'
 import { commandUninstall } from '../lib/cli/uninstall.js'
 import { commandPanel } from '../lib/cli/panel.js'
+import { commandDisk } from '../lib/cli/disk.js'
 
 /**
  * Print one usage block.
@@ -55,6 +56,9 @@ Usage:
   dsh-ops ladder [--json] [--config <file>]
                                   Report the native worker, both shells, and the rungs the
                                   prompt ladder renders; Windows labels are inspected read-only
+  dsh-ops disk status [--json] [--config <file>]
+                                  Report every disk resource OPS may create: owner, category,
+                                  bytes, age and why it is or is not reclaimable. Read-only; deletes nothing
   dsh-ops panel [--serve] [dir] [--port <n>]
                                   Serve the panel viewer and capture reports over loopback
                                   (default: ./.dsh-ops/panel, latest session preselected)
@@ -148,7 +152,7 @@ async function main() {
     },
   })
   const command = positionals[0] ?? 'help'
-  if (positionals.length > (command === 'bash-runtime' || command === 'panel' || command === 'cache' || command === 'result-cache' ? 2 : 1)) throw new Error('Unexpected positional arguments.')
+  if (positionals.length > (['bash-runtime', 'panel', 'disk', 'cache', 'result-cache'].includes(command) ? 2 : 1)) throw new Error('Unexpected positional arguments.')
   // Declared globally so `panel --serve` parses, but it is meaningful for that command only.
   if (values.serve === true && command !== 'panel') throw new Error('--serve only applies to the panel command.')
   if (command === 'install' || (['uninstall', 'status'].includes(command) && values.profile !== undefined)) {
@@ -167,6 +171,8 @@ async function main() {
       return commandBashRuntime(positionals[1], { yes: values.yes, dryRun: values['dry-run'], force: values.force, configFile: values.config, path: values.path, allHostsStopped: values['all-hosts-stopped'], json: values.json === true, sweep: values.sweep === true })
     case 'ladder':
       return commandLadder({ json: values.json === true, configFile: values.config })
+    case 'disk':
+      return commandDisk({ action: positionals[1], json: values.json === true, configFile: values.config })
     case 'panel': {
       const port = values.port === undefined ? 0 : Number(values.port)
       if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new Error(`--port must be an integer from 0 to 65535, got ${JSON.stringify(values.port)}`)

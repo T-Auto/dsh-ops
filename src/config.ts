@@ -22,7 +22,7 @@ export const LEGACY_FASTCTX_KEYS = Object.freeze(['serverName', 'enableShellTool
 export const CORE_CONFIG_KEYS = Object.freeze([
   ...LEGACY_FASTCTX_KEYS, 'binaryPath', 'required', 'shellPolicy', 'deniedHostTools', 'promptPolicy',
   'extraGuidance', 'bashPath', 'publishBashTool', 'allowSystemShellFallback', 'denyCredentialReads', 'configUpdateVersion', 'indexCache',
-  'downloadGuard', 'spillRetentionDays', 'spillTotalBudgetMiB', 'spillSweepEnabled', 'resultCache',
+  'downloadGuard', 'spillRetentionDays', 'spillTotalBudgetMiB', 'spillSweepEnabled', 'resultCache', 'disk',
 ])
 
 /** Upper bound accepted for the legacy `toolCallTimeoutMs`, matching the loader's timer ceiling. */
@@ -36,6 +36,8 @@ export const DEFAULT_DENIED_HOST_TOOLS = ['pwsh', 'bash', 'pwsh_persistent']
 
 import { ConfigError } from './config-error.js'
 import { DEFAULT_SPILL_RETENTION_DAYS, DEFAULT_SPILL_SWEEP_ENABLED, DEFAULT_SPILL_TOTAL_BUDGET_MIB } from './shells/spill-retention.js'
+import { resolveDiskConfig } from './disk/ownership.js'
+import type { DiskConfig } from './disk/ownership.js'
 export { ConfigError } from './config-error.js'
 
 /**
@@ -219,6 +221,7 @@ export interface ResolvedConfig {
   /** Whether an active component runs automatic bounded spill passes. */
   spillSweepEnabled: boolean
   resultCache: ResultCacheConfig
+  disk: DiskConfig
 }
 
 /**
@@ -301,6 +304,7 @@ export function resolveConfig(rawConfig?: unknown): ResolvedConfig {
     spillTotalBudgetMiB: optionalInteger(raw, 'spillTotalBudgetMiB', DEFAULT_SPILL_TOTAL_BUDGET_MIB, 0, 1_048_576),
     spillSweepEnabled: optionalBoolean(raw, 'spillSweepEnabled', DEFAULT_SPILL_SWEEP_ENABLED),
     resultCache: resolveResultCacheConfig(raw.resultCache),
+    disk: resolveDiskConfig(raw.disk),
   }
 }
 

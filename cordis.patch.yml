@@ -60,3 +60,13 @@
           enabled: false
         tui:
           enabled: false
+        # Read-only disk ownership reporting. The retention block is a validated
+        # contract only: this release evicts nothing.
+        disk:
+          status:
+            includeRepository: false
+            maxEntries: 5000
+          retention:
+            enabled: false
+            maxAgeDays: 0
+            maxBytes: 0
