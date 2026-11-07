@@ -22,4 +22,4 @@ notify = "=8.2.1"
 # newest compatible release (0.4.35, 2026-10-30) is inside the seven-day window,
 # so the crate also uses the log facade and pins the last release outside it
 # (0.4.34, 2026-08-22). Remove the pin once 0.4.35 has aged seven days.
-log = "=0.4.34"
+log = "=0.4.35"
