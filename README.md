@@ -119,6 +119,7 @@ npx --yes dsh-ops@latest uninstall --profile desktop
 - [Windows 运行时证据](docs/windows-runtime-evidence.zh.md)：载荷兼容、Low 完整性、MSYS 启动及杀软/审批排查。
 - [PTC 设计与使用](docs/native-ptc.md) · [手动验证](docs/手动验收.md)
 - [贡献指南](docs/贡献指南.md) · [路线图](docs/路线图.md) · [变更日志](docs/CHANGELOG.md) · [溯源记录](docs/PROVENANCE.md)
+- [CI 排错说明](docs/ci-troubleshooting.zh.md) · [CI troubleshooting](docs/ci-troubleshooting.md)
 
 ## Windows Bash 自检
 
