@@ -26,7 +26,7 @@ import {
   sealTree,
   unsealTree,
 } from '../lib/niubash/seal.js'
-import { niubashDeepVerification, niubashExecutionRootParent, prepareNiubash } from '../lib/niubash/runtime.js'
+import { executionRootFor, isSameDirectory, niubashDeepVerification, niubashExecutionRootParent, prepareNiubash, sameVolume, sameVolumeRoots } from '../lib/niubash/runtime.js'
 import { NIUBASH_PIN, niubashExecutionReceipt } from '../lib/cli/niubash-payload.js'
 
 const CONTENT = {
@@ -324,6 +324,61 @@ await test('the execution root parent and the deep escape hatch come from the en
   assert.equal(niubashDeepVerification({ NIUBASH_VERIFY: 'DEEP' }), false)
   assert.equal(niubashDeepVerification({}), false)
 })
+
+await test('a same-volume payload keeps the OS temporary directory', () => {
+  // Without a source there is nothing to compare against.
+  assert.equal(niubashExecutionRootParent({}), os.tmpdir())
+  // A payload below the temp directory is on the same volume by construction.
+  assert.equal(niubashExecutionRootParent({}, path.join(os.tmpdir(), 'payload', 'niubash')), os.tmpdir())
+  assert.equal(sameVolume(os.tmpdir(), path.join(os.tmpdir(), 'payload')), true)
+})
+
+await test('a payload on another volume moves the execution root onto that volume', () => {
+  // Synthetic drive roots keep this deterministic on every platform: reverting the
+  // same-volume rule now fails here instead of skipping on POSIX or a non-C: TEMP.
+  const rootOf = name => name.startsWith('Z:') ? 'z:\\' : 'c:\\'
+  assert.equal(sameVolumeRoots('c:\\', 'c:\\'), true)
+  assert.equal(sameVolumeRoots('c:\\', 'z:\\'), false)
+  // A UNC share or an extended-length prefix is never proven equal to a drive root.
+  assert.equal(sameVolumeRoots('\\\\server\\share\\', '\\\\server\\share\\sub'), false)
+  assert.equal(sameVolumeRoots('\\\\?\\C:\\', 'c:\\'), false)
+  // Equal UNC roots do read as the same share.
+  assert.equal(sameVolumeRoots('\\\\server\\share\\', '\\\\server\\share\\'), true)
+
+  const cross = executionRootFor('Z:\\payload\\niubash', 'C:\\temp', rootOf)
+  // One fixed, readable name: the ownership check decides who may use it, not
+  // whether the name hides the account.
+  assert.equal(path.basename(cross), 'dsh-ops-exec')
+  assert.equal(executionRootFor('C:\\payload\\niubash', 'C:\\temp', rootOf), 'C:\\temp')
+
+  // An explicit operator choice always wins over the same-volume heuristic.
+  assert.equal(niubashExecutionRootParent({ DSH_OPS_EXEC_ROOT: 'D:\\custom-root' }, 'Z:\\payload'),
+    path.resolve('D:\\custom-root'))
+})
+
+await test('a symlinked temp path still names the same directory', async () => withTempDir('niu-same-dir', async base => {
+  // Only the realpath short-circuit makes a link and its target compare equal; a
+  // plain `path.resolve` comparison reports two different directories and would
+  // then treat the platform temp directory as a foreign, owner-checked root.
+  const target = path.join(base, 'real-temp')
+  fs.mkdirSync(target)
+  const link = path.join(base, 'linked-temp')
+  try {
+    fs.symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir')
+  } catch (error) {
+    // No symbolic-link privilege: name the skip instead of passing with zero
+    // assertions. A run that requires the runtime treats it as a failure, exactly
+    // as a suite skip does, so a green gate can never hide an unverified path.
+    const code = error && typeof error === 'object' && 'code' in error ? error.code : 'unknown'
+    if (process.env.DSH_OPS_REQUIRE_RUNTIME === '1') throw new Error(`cannot create a symbolic-link fixture on this platform (${code})`)
+    console.log(`  skip a symlinked temp path still names the same directory (no symbolic-link privilege: ${code})`)
+    return
+  }
+  assert.equal(await isSameDirectory(link, target), true)
+  assert.equal(await isSameDirectory(link, path.join(base, 'other')), false)
+  // A trailing separator must not change the answer.
+  assert.equal(await isSameDirectory(link + path.sep, target), true)
+}))
 
 await test('a hardlink refusal builds a complete copy tree and records the cause', async () => withTempDir('niu-fallback', async base => {
   try {

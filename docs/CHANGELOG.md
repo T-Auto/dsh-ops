@@ -15,6 +15,10 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 失败的 provision 下载登记到 `<DSH_HOME>/dsh-ops/pending/` 并按数量/字节/年龄预算回收；shell 版本先在 staging 兄弟目录中解包校验、再 rename 就位，失败或中断不再留下半解包目录，也不再破坏旧版本。
 - Niubash 的 staging/previous 兄弟目录先验证后使用：完整 staging 直接复用、target 缺失时用完整 previous 恢复、无法验证的保留；删除 previous 失败不再把已完成的安装报成失败。
 - 离线 Bash IPC 清理会回收最新两份之外被隔离的副本；审计存储以写模式打开时清扫 `.tmp` 写入残留。
+- The per-call Niubash execution root now follows the payload's volume on Windows. When `DSH_OPS_EXEC_ROOT` is unset and `os.tmpdir()` sits on another volume, the clone is created below `<payload volume>\dsh-ops-exec`, and the default configuration keeps the zero-copy hardlink path instead of silently falling back to copying 785 MiB per call. That directory must be a real directory the current account owns — a junction, a directory owned by another account, or a path overlapping the payload is refused and the call falls back to the temp directory with the reason reported; an explicit `DSH_OPS_EXEC_ROOT` is validated the same way but fails loudly instead of being silently replaced. POSIX paths always reduce to one volume root, so a tmpfs `/tmp` still needs an explicit `DSH_OPS_EXEC_ROOT`.
+- 每次调用的 Niubash 执行根在 Windows 上改为跟随载荷所在卷：未设置 `DSH_OPS_EXEC_ROOT` 且 `os.tmpdir()` 与之不同卷时，克隆改在 `<载荷所在卷>\dsh-ops-exec` 下创建，默认配置因此保持零拷贝硬链接路径，而不是静默回退为每次调用复制 785 MiB。该目录必须是当前账户拥有的真实目录——重解析点、被其他账户拥有的目录、或与载荷路径重叠时会被拒绝，调用回退到临时目录并报告原因；显式设置的 `DSH_OPS_EXEC_ROOT` 走同样校验，但会直接报错，不会被静默替换。POSIX 路径一律归约为同一个卷根，因此 tmpfs 上的 `/tmp` 仍需显式设置 `DSH_OPS_EXEC_ROOT`。
+- Fixed the stale `niubash-consumer` assertion that still expected `all 10 checks passed` after `niubash-security-host` grew to 11 checks, which failed every full-gate run.
+- 修正 `niubash-consumer` 中过时的断言：`niubash-security-host` 增至 11 项检查后，consumer 仍断言 `all 10 checks passed`，导致完整门禁必挂。
 
 ## [0.5.0] — 2026-11-06 — Stable release
 
