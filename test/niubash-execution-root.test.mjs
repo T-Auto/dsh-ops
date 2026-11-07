@@ -363,8 +363,17 @@ await test('a symlinked temp path still names the same directory', async () => w
   const target = path.join(base, 'real-temp')
   fs.mkdirSync(target)
   const link = path.join(base, 'linked-temp')
-  try { fs.symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir') }
-  catch { return }  // The platform refused the link type: nothing to assert here.
+  try {
+    fs.symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir')
+  } catch (error) {
+    // No symbolic-link privilege: name the skip instead of passing with zero
+    // assertions. A run that requires the runtime treats it as a failure, exactly
+    // as a suite skip does, so a green gate can never hide an unverified path.
+    const code = error && typeof error === 'object' && 'code' in error ? error.code : 'unknown'
+    if (process.env.DSH_OPS_REQUIRE_RUNTIME === '1') throw new Error(`cannot create a symbolic-link fixture on this platform (${code})`)
+    console.log(`  skip a symlinked temp path still names the same directory (no symbolic-link privilege: ${code})`)
+    return
+  }
   assert.equal(await isSameDirectory(link, target), true)
   assert.equal(await isSameDirectory(link, path.join(base, 'other')), false)
   // A trailing separator must not change the answer.
