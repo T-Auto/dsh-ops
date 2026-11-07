@@ -200,6 +200,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 新增可选下载约束，由用户配置 Bash/PowerShell 替代下载命令，保守识别字面命令并覆盖真实 Native/PTC 派发。未配置、含歧义或流式输出的调用保持原状，绝不自动执行替代命令（#506）。
 - Inspect Windows Bash image and ancestor integrity labels in `ladder`, warn about Low labels, and keep unreadable labels and runtime health distinct from static payload compatibility (#446).
 - `ladder` 只读检查 Windows Bash 映像与祖先路径的完整性标签，告警 Low 标签，并区分不可读标签、运行时健康和静态载荷兼容性（#446）。
+- Record every host subprocess spill path the plugin settles in `$DSH_HOME/ops-spill-ledger.jsonl` and reclaim only those ledger-owned files: a TTL window (default 30 days), an oldest-first total byte budget (default 256 MiB), at most 64 files per bounded pass, plus `bash-runtime spill-report [--json] [--sweep --yes]` and a one-line `bash-runtime status` summary. The provider's `dsh-subprocess-*` directories are never removed, unrecorded files and other providers' paths are never touched, and a failed unlink keeps its entry with `lastError` for the next pass (#720).
+- 在结算点把宿主 subprocess 的每个 spill 路径登记到 `$DSH_HOME/ops-spill-ledger.jsonl`，并且只回收账本内的文件：TTL 窗口（默认 30 天）、最旧优先的总字节预算（默认 256 MiB）、单次有界 pass 最多 64 个文件，并提供 `bash-runtime spill-report [--json] [--sweep --yes]` 与 `bash-runtime status` 的一行摘要。永不删除宿主的 `dsh-subprocess-*` 目录，不触碰未登记文件与其它 provider 的路径，删除失败时保留条目与 `lastError` 供下一轮重试（#720）。
 
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 
