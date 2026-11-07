@@ -27,7 +27,11 @@ if (process.platform !== 'win32' || !file) skipSuite('niubash-security-host', 'r
 verifiedNiubash(file)
 const { bashIntegrityReport } = await moduleAt('lib/cli/integrity.js')
 console.error('DEBUG integrity ' + JSON.stringify(bashIntegrityReport(file)))
+const hostGroups = spawnSync(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'whoami.exe'), ['/groups'], { encoding: 'utf8' })
+console.error('DEBUG host whoami: ' + JSON.stringify((hostGroups.stdout ?? '').split(/\r?\n/u).filter(line => /Mandatory Label/u.test(line))))
 const root = scenarioDir('niu-host-中文'), outside = scenarioDir('niu-outside')
+console.error('DEBUG outside label ' + JSON.stringify(bashIntegrityReport(outside)))
+console.error('DEBUG home label ' + JSON.stringify(bashIntegrityReport(TEST_HOME)))
 const bash = consumerRoot ? resolveShells({}, { bundleRoot: consumerRoot }).bash : resolveShells({ bashPath: file }).bash
 assert.equal(bash.available, true, bash.detail)
 const { ctx } = await bootHost({ withWorkingDirectory: true })
