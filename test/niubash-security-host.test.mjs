@@ -198,19 +198,30 @@ try {
       ok(await call('printf full > full.txt', { workdir: outside }))
     } catch (error) {
       // Temporary diagnostics for the packaged-consumer-only Windows failure (#766).
+      const system32 = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32')
+      const icaclsExe = path.join(system32, 'icacls.exe')
       const acl = target => {
-        const result = spawnSync('icacls.exe', [target], { encoding: 'utf8', windowsHide: true })
-        return (result.stdout ?? '') + (result.stderr ?? '')
+        const result = spawnSync(icaclsExe, [target], { encoding: 'utf8', windowsHide: true })
+        return `status=${result.status} error=${result.error?.message ?? 'none'}\n${result.stdout ?? ''}${result.stderr ?? ''}`
       }
-      const namespace = ['TEMP', 'TMP', 'DSH_HOME', 'DSH_OPS_NIUBASH_CONSUMER'].map(key => key + '=' + JSON.stringify(process.env[key])).join(' ')
-      console.error('DEBUG env ' + namespace)
-      console.error('DEBUG os.tmpdir()=' + JSON.stringify(os.tmpdir()) + ' TEST_HOME=' + JSON.stringify(TEST_HOME) + ' outside=' + JSON.stringify(outside))
-      console.error('DEBUG full.txt exists=' + fs.existsSync(path.join(outside, 'full.txt')))
-      console.error('DEBUG icacls outside:\n' + acl(outside))
-      console.error('DEBUG icacls TEST_HOME:\n' + acl(TEST_HOME))
-      const roots = fs.readdirSync(TEST_HOME).filter(name => name.startsWith('dsh-ops-niu-exec-'))
-      console.error('DEBUG exec roots=' + JSON.stringify(roots))
-      for (const name of roots.slice(0, 2)) console.error('DEBUG icacls ' + name + ':\n' + acl(path.join(TEST_HOME, name)))
+      console.error('DEBUG failure=' + String(error?.message ?? error))
+      console.error('DEBUG outside stat=' + JSON.stringify(fs.statSync(outside).mode))
+      console.error('DEBUG outside acl (test token):\n' + acl(outside))
+      console.error('DEBUG root acl (test token):\n' + acl(root))
+      console.error('DEBUG home acl (test token):\n' + acl(TEST_HOME))
+      try { fs.writeFileSync(path.join(outside, 'node-probe.txt'), 'x'); console.error('DEBUG node probe write: ok') }
+      catch (probeError) { console.error('DEBUG node probe write failed: ' + probeError.code) }
+      const cmd = spawnSync(process.env.ComSpec ?? path.join(system32, 'cmd.exe'), ['/d', '/c', `echo x> "${path.join(outside, 'cmd-probe.txt')}"`], { encoding: 'utf8', windowsHide: true })
+      console.error('DEBUG cmd probe: status=' + cmd.status + ' error=' + (cmd.error?.message ?? 'none') + ' stderr=' + JSON.stringify(cmd.stderr))
+      try {
+        const identity = await call('id -a', { workdir: root })
+        console.error('DEBUG child id: exit=' + identity.exitCode + ' stdout=' + JSON.stringify(identity.stdout?.text) + ' stderr=' + JSON.stringify(identity.stderr?.text))
+      } catch (identityError) { console.error('DEBUG child id threw: ' + String(identityError)) }
+      try {
+        const childAcl = await call(quote(icaclsExe) + ' ' + quote(outside), { workdir: root })
+        console.error('DEBUG child acl outside: exit=' + childAcl.exitCode + ' stdout=' + JSON.stringify(childAcl.stdout?.text) + ' stderr=' + JSON.stringify(childAcl.stderr?.text))
+      } catch (childAclError) { console.error('DEBUG child acl threw: ' + String(childAclError)) }
+      console.error('DEBUG outside entries=' + JSON.stringify(fs.readdirSync(outside)))
       throw error
     }
     assert.equal(fs.readFileSync(path.join(outside, 'full.txt'), 'utf8'), 'full')
