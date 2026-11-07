@@ -6,7 +6,9 @@ import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
 import FileSystem from '@deepseek-ai/dsh-fs-local'
 import { createScope } from '@deepseek-ai/dsh-scope'
-import { assert, test, report, skipSuite, scenarioDir, waitFor } from './lib/harness.mjs'
+import { assert, test, report, skipSuite, scenarioDir, TEST_HOME, waitFor } from './lib/harness.mjs'
+import { spawnSync } from 'node:child_process'
+import os from 'node:os'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { verifiedNiubash } from '../lib/niubash/runtime.js'
 import { resolveShells } from '../lib/shells/resolve.js'
@@ -192,7 +194,25 @@ try {
     const denied = await ptc('printf blocked > ptc-readonly.txt')
     assert.equal(denied.timedOut, false, JSON.stringify(denied)); assert.notEqual(denied.exitCode, 0, JSON.stringify(denied)); assert.equal(fs.existsSync(path.join(root, 'ptc-readonly.txt')), false)
     agent.session.mode = 'danger-full-access'
-    ok(await call('printf full > full.txt', { workdir: outside }))
+    try {
+      ok(await call('printf full > full.txt', { workdir: outside }))
+    } catch (error) {
+      // Temporary diagnostics for the packaged-consumer-only Windows failure (#766).
+      const acl = target => {
+        const result = spawnSync('icacls.exe', [target], { encoding: 'utf8', windowsHide: true })
+        return (result.stdout ?? '') + (result.stderr ?? '')
+      }
+      const namespace = ['TEMP', 'TMP', 'DSH_HOME', 'DSH_OPS_NIUBASH_CONSUMER'].map(key => key + '=' + JSON.stringify(process.env[key])).join(' ')
+      console.error('DEBUG env ' + namespace)
+      console.error('DEBUG os.tmpdir()=' + JSON.stringify(os.tmpdir()) + ' TEST_HOME=' + JSON.stringify(TEST_HOME) + ' outside=' + JSON.stringify(outside))
+      console.error('DEBUG full.txt exists=' + fs.existsSync(path.join(outside, 'full.txt')))
+      console.error('DEBUG icacls outside:\n' + acl(outside))
+      console.error('DEBUG icacls TEST_HOME:\n' + acl(TEST_HOME))
+      const roots = fs.readdirSync(TEST_HOME).filter(name => name.startsWith('dsh-ops-niu-exec-'))
+      console.error('DEBUG exec roots=' + JSON.stringify(roots))
+      for (const name of roots.slice(0, 2)) console.error('DEBUG icacls ' + name + ':\n' + acl(path.join(TEST_HOME, name)))
+      throw error
+    }
     assert.equal(fs.readFileSync(path.join(outside, 'full.txt'), 'utf8'), 'full')
   })
   await test('the real frozen payload remains byte-identical after execution', async () => {
