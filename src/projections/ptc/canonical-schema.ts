@@ -36,7 +36,7 @@ export function canonicalOutput(tool: FileToolName | PtcToolName): JsonSchemaNod
   if (tool === 'inspect_local_file') Object.assign(properties, facts, { path: string, items: array(physicalLine) })
   else if (tool === 'read_files') properties.items = array(object({ ...range, items: array(physicalLine) }))
   else if (tool === 'glob') properties.items = array({ oneOf: [string, object({ path: string, bytes: integer, modified: nullableInteger })] })
-  else if (tool === 'grep') properties.items = array(object({ path: string, line: integer, text: string, count: integer, matches: integer }))
+  else if (tool === 'grep') properties.items = array(object({ path: string, line: integer, text: string, count: integer, matches: integer, kind: string }))
   else if (tool === 'stat') Object.assign(properties, facts, { exists: boolean, path: string, readonly: boolean, mode: string, modifiedMs: nullableInteger })
   else if (tool === 'diff') Object.assign(properties, { before: object(facts), after: object(facts),
     hunk: object({ startLine: integer, removed: integer, added: integer }), items: array(object({ kind: string, line: integer, text: string })) })

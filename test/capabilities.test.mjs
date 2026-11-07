@@ -67,9 +67,10 @@ await test('business file and batch definitions retain their original serialized
 })
 
 await test('file parameter schemas preserve their reviewed structural constraints', () => {
-  // #384 intentionally adds the optional exactTotal boolean; all other constraints remain pinned.
+  // #384 intentionally adds the optional exactTotal boolean; the grep definition mode adds one
+  // outputMode enum value. All other constraints remain pinned.
   const hash = createHash('sha256').update(JSON.stringify(withoutDescriptions(fileParameters))).digest('hex')
-  assert.equal(hash, '637df1383940fa6fdb2d65a68e67ce1e333a7e2ecbfceff5ffef7a4c1133ea8b')
+  assert.equal(hash, '82075821c5e3dc12e234c09b1144713e5c28b21b5d2bf5d9acc73703a6948078')
 })
 
 await test('create-only help names the required literal instead of suggesting an omitted revision', () => {

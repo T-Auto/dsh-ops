@@ -66,6 +66,18 @@ await test('real grep context and glob paths survive the Native projection', asy
   })
 })
 
+await test('definitions rows carry their declaration kind through the Native projection', async () => {
+  await withTempDir('native-definitions', async root => {
+    fs.writeFileSync(path.join(root, 'a.ts'), 'export function greet() {}\ngreet()\n')
+    const args = { path: root, pattern: 'greet', outputMode: 'definitions' }
+    const value = await call('grep', args, root)
+    const native = render('grep', args, value)
+    assert.ok(native.includes('| function export function greet() {}'), native)
+    assert.match(native, /matched=2/)
+    assert.match(native, /total=1/)
+  })
+})
+
 await test('invalid UTF-8 and unsupported encoding report an actionable refusal without lossy decoding or mutation', async () => {
   await withTempDir('native-encoding', async root => {
     const target = path.join(root, 'binary'); const bytes = Buffer.from([0xff, 0xfe, 0x61, 0])

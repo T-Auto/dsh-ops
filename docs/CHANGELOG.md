@@ -7,11 +7,12 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-
+- `ops_grep` gains `outputMode: "definitions"`: it returns only the lines where the matched identifier is declared (function, method, type, variable, macro), classified lexically in the native worker — no parser, no new dependency, same no-follow/credential/limit boundaries. `matched` counts every matching line and `total` the returned declarations, so a complete scan reports how many references it withheld; `multiline` and context flags are refused in this mode.
 - Add `dsh-ops cache status|reclaim`: report every temporary resource OPS can reproduce — kept provision downloads, Niubash staging/previous siblings, quarantined Bash IPC generations, audit-store writer temporaries and per-call execution trees — with per-row ownership evidence, `deleted`/`kept`/`unverified` decisions and byte totals. It previews by default, refuses `--yes` without `--all-hosts-stopped`, and never deletes on a name pattern, mtime or dead PID.
 - Failed provision downloads are registered under `<DSH_HOME>/dsh-ops/pending/` and reclaimed under a count/byte/age budget; a shell version is unpacked and verified in a staging sibling and only then renamed into place, so a failed or interrupted install leaves the previous version usable and no half-unpacked tree.
 - Niubash staging and previous siblings are verified before use: a complete staged tree is reused, a complete previous tree is restored when the target is missing, and trees that do not verify are kept. A refused previous-tree removal no longer reports a completed install as failed.
 - Offline Bash IPC cleanup reclaims quarantined copies beyond the newest two; audit-store `.tmp` writer files are swept when the store is opened for writing.
+- `ops_grep` 新增 `outputMode: "definitions"`：只返回匹配标识符处于声明位置的行（函数、方法、类型、变量、宏），由 native worker 做词法判定——不引入解析器与新依赖，沿用 no-follow/凭证/限额边界。`matched` 计所有匹配行、`total` 计返回的声明行，完整扫描可据此知道略过了多少引用；该模式拒绝 `multiline` 与上下文参数。
 - 新增 `dsh-ops cache status|reclaim`：报告 OPS 可再生的全部临时资源（保留的 provision 下载、Niubash staging/previous 兄弟目录、被隔离的 Bash IPC generation、审计写入临时文件和每调用执行树），逐项给出来源证据、`deleted`/`kept`/`unverified` 决策与字节数。默认预览，缺少 `--all-hosts-stopped` 时拒绝 `--yes`，绝不按名字、mtime 或死 PID 删除。
 - 失败的 provision 下载登记到 `<DSH_HOME>/dsh-ops/pending/` 并按数量/字节/年龄预算回收；shell 版本先在 staging 兄弟目录中解包校验、再 rename 就位，失败或中断不再留下半解包目录，也不再破坏旧版本。
 - Niubash 的 staging/previous 兄弟目录先验证后使用：完整 staging 直接复用、target 缺失时用完整 previous 恢复、无法验证的保留；删除 previous 失败不再把已完成的安装报成失败。

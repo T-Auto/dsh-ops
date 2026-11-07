@@ -4,6 +4,7 @@ use super::{
     paging::{Cursor, Page, finish},
     scan::{Scan, SourceKind},
 };
+use crate::definitions::{classify, whole_identifier};
 use ops_index::FsDataSource;
 use ops_protocol::search::TruncatedBy;
 
@@ -268,9 +269,16 @@ fn grep_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
     }
     if !matches!(
         args.output_mode.as_str(),
-        "" | "content" | "files_with_matches" | "count" | "summary"
+        "" | "content" | "files_with_matches" | "count" | "summary" | "definitions"
     ) {
         return Err(Failure::new("INVALID_ARGUMENT", "invalid grep outputMode"));
+    }
+    let definitions = args.output_mode == "definitions";
+    if definitions && (args.multiline || args.before_context > 0 || args.after_context > 0) {
+        return Err(Failure::new(
+            "INVALID_ARGUMENT",
+            "definitions mode searches individual lines and takes no multiline or context options",
+        ));
     }
     let regex = RegexBuilder::new(&args.pattern)
         .case_insensitive(args.case_insensitive)
@@ -283,6 +291,7 @@ fn grep_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
     let mut page = Page::new(cursor.offset, args.limit, request.output_sink.clone());
     let mut file_count = 0;
     let mut match_count = 0;
+    let mut observed = 0usize;
     let content = matches!(args.output_mode.as_str(), "" | "content");
     // Cursors must revalidate a complete snapshot; summaries always need every match.
     let early = !args.exact_total && args.continuation.is_none() && args.output_mode != "summary";
@@ -298,6 +307,10 @@ fn grep_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
             let Some(bytes) = scan.read(file) else {
                 return Ok(());
             };
+            let extension = file
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("");
             let started = scan.profile.start();
             let result = (|| {
                 let text = match String::from_utf8(bytes) {
@@ -311,19 +324,19 @@ fn grep_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
                     return Ok(());
                 }
                 let mut hits = 0;
-                let mut hit = |first: usize, last: usize, line: usize| -> Result<bool> {
-                    let ordinal = match_count + hits;
-                    hits += 1;
-                    if content && page.wants(ordinal) {
-                        page.push(
-                            json!({"path":file,"line":if args.line_numbers {line} else {0},
-                    "text":excerpt(&text, first, last, args.before_context, args.after_context)}),
-                            ordinal,
-                        )?;
-                    }
-                    Ok(early && content && ordinal.saturating_add(1) >= wanted)
-                };
                 if args.multiline {
+                    let mut hit = |first: usize, last: usize, line: usize| -> Result<bool> {
+                        let ordinal = match_count + hits;
+                        hits += 1;
+                        if content && page.wants(ordinal) {
+                            page.push(
+                                json!({"path":file,"line":if args.line_numbers {line} else {0},
+                        "text":excerpt(&text, first, last, args.before_context, args.after_context)}),
+                                ordinal,
+                            )?;
+                        }
+                        Ok(early && content && ordinal.saturating_add(1) >= wanted)
+                    };
                     let mut previous = 0;
                     let mut line = 1;
                     for found in regex.find_iter(&text) {
@@ -349,7 +362,54 @@ fn grep_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
                             break;
                         }
                     }
+                } else if definitions {
+                    for (index, raw) in text.split_inclusive('\n').enumerate() {
+                        if !scan.running() {
+                            break;
+                        }
+                        let line = raw
+                            .strip_suffix('\n')
+                            .map(|line| line.strip_suffix('\r').unwrap_or(line))
+                            .unwrap_or(raw);
+                        let Some(found) = regex.find(line) else {
+                            continue;
+                        };
+                        observed += 1;
+                        let declaration = if whole_identifier(line, found.start(), found.end()) {
+                            classify(extension, line, found.start(), found.end())
+                        } else {
+                            None
+                        };
+                        let Some(kind) = declaration else {
+                            continue;
+                        };
+                        let ordinal = match_count + hits;
+                        hits += 1;
+                        if page.wants(ordinal) {
+                            page.push(
+                                json!({"path":file,"line":index + 1,"text":line.trim_end(),
+                                    "kind":kind.as_str()}),
+                                ordinal,
+                            )?;
+                        }
+                        if early && ordinal.saturating_add(1) >= wanted {
+                            scan.stopped = Some(TruncatedBy::RowLimit);
+                            break;
+                        }
+                    }
                 } else {
+                    let mut hit = |first: usize, last: usize, line: usize| -> Result<bool> {
+                        let ordinal = match_count + hits;
+                        hits += 1;
+                        if content && page.wants(ordinal) {
+                            page.push(
+                                json!({"path":file,"line":if args.line_numbers {line} else {0},
+                        "text":excerpt(&text, first, last, args.before_context, args.after_context)}),
+                                ordinal,
+                            )?;
+                        }
+                        Ok(early && content && ordinal.saturating_add(1) >= wanted)
+                    };
                     let mut start = 0;
                     for (index, raw) in text.split_inclusive('\n').enumerate() {
                         if !scan.running() {
@@ -374,7 +434,7 @@ fn grep_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
                     let ordinal = file_count;
                     file_count += 1;
                     match_count += hits;
-                    if !content && args.output_mode != "summary" {
+                    if !content && !definitions && args.output_mode != "summary" {
                         page.push(
                             if args.output_mode == "count" {
                                 json!({"path":file,"count":hits})
@@ -384,7 +444,7 @@ fn grep_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
                             ordinal,
                         )?;
                     }
-                    if early && !content && file_count >= wanted {
+                    if early && !content && !definitions && file_count >= wanted {
                         scan.stopped = Some(TruncatedBy::RowLimit);
                     }
                 }
@@ -397,7 +457,7 @@ fn grep_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
     let cursor = actual_cursor(request, cursor, expected, used)?;
     let total = if args.output_mode == "summary" {
         0
-    } else if content {
+    } else if content || definitions {
         match_count
     } else {
         file_count
@@ -407,7 +467,11 @@ fn grep_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
     } else {
         json!({})
     };
-    finish(scan, cursor, page, match_count, total, extra)
+    // `matched` counts every matching line the scan observed; `total` counts the
+    // declaration rows this mode returns. A complete scan therefore lets the caller
+    // read `matched - total` as the reference hits it did not return.
+    let observed = if definitions { observed } else { match_count };
+    finish(scan, cursor, page, observed, total, extra)
 }
 
 #[cfg(test)]
