@@ -26,7 +26,7 @@ import {
   sealTree,
   unsealTree,
 } from '../lib/niubash/seal.js'
-import { executionRootFor, niubashDeepVerification, niubashExecutionRootParent, prepareNiubash, sameVolume, sameVolumeRoots } from '../lib/niubash/runtime.js'
+import { executionRootFor, isSameDirectory, niubashDeepVerification, niubashExecutionRootParent, prepareNiubash, sameVolume, sameVolumeRoots } from '../lib/niubash/runtime.js'
 import { NIUBASH_PIN, niubashExecutionReceipt } from '../lib/cli/niubash-payload.js'
 
 const CONTENT = {
@@ -355,6 +355,21 @@ await test('a payload on another volume moves the execution root onto that volum
   assert.equal(niubashExecutionRootParent({ DSH_OPS_EXEC_ROOT: 'D:\\custom-root' }, 'Z:\\payload'),
     path.resolve('D:\\custom-root'))
 })
+
+await test('a symlinked temp path still names the same directory', async () => withTempDir('niu-same-dir', async base => {
+  // Only the realpath short-circuit makes a link and its target compare equal; a
+  // plain `path.resolve` comparison reports two different directories and would
+  // then treat the platform temp directory as a foreign, owner-checked root.
+  const target = path.join(base, 'real-temp')
+  fs.mkdirSync(target)
+  const link = path.join(base, 'linked-temp')
+  try { fs.symlinkSync(target, link, process.platform === 'win32' ? 'junction' : 'dir') }
+  catch { return }  // The platform refused the link type: nothing to assert here.
+  assert.equal(await isSameDirectory(link, target), true)
+  assert.equal(await isSameDirectory(link, path.join(base, 'other')), false)
+  // A trailing separator must not change the answer.
+  assert.equal(await isSameDirectory(link + path.sep, target), true)
+}))
 
 await test('a hardlink refusal builds a complete copy tree and records the cause', async () => withTempDir('niu-fallback', async base => {
   try {

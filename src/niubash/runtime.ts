@@ -183,24 +183,36 @@ async function assertExecutionRoot(parent: string, source: string): Promise<void
  * the owner directly. `requireOwner` is false only for the OS temp directory,
  * which belongs to root on POSIX and is handed out by the platform on purpose.
  */
-async function assertPrivateExecutionRoot(directory: string, requireOwner = true): Promise<void> {
+async function assertPrivateExecutionRoot(directory: string, requireOwner = true, acceptShared = false): Promise<void> {
   const info = await fs.promises.lstat(directory)
   if (info.isSymbolicLink() || !info.isDirectory()) throw Error(`The execution root must be a real directory, not a link or a file: ${directory}`)
-  if (requireOwner && process.platform !== 'win32' && process.getuid !== undefined && info.uid !== process.getuid()) {
-    throw Error(`The execution root must be owned by the current account: ${directory}`)
-  }
+  if (!requireOwner || process.platform === 'win32' || process.getuid === undefined) return
+  if (info.uid === process.getuid()) return
+  // An operator-configured root the platform already shares — a 1777 `/tmp` or
+  // `/dev/shm` — is used as-is. Failing it instead would reject the documented way
+  // to point the clone at a tmpfs, and the operator named that directory on
+  // purpose. Every other foreign owner still fails closed.
+  if (acceptShared && (info.mode & 0o002) !== 0) return
+  throw Error(`The execution root must be owned by the current account: ${directory}`)
 }
 
 /** Fallback roots already reported, so a permanently unusable volume root warns once. */
 const reportedRootFallbacks = new Set<string>()
 
-/** Whether two paths name the same directory, folding case on Windows. */
-function isSameDirectory(left: string, right: string): boolean {
-  const canonical = (value: string): string => {
-    const resolved = path.resolve(value)
-    return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+/**
+ * Whether two paths name the same directory, folding case on Windows.
+ *
+ * `realpath` is consulted first because a symbolic link is enough to hide the
+ * identity: macOS reports its temp directory as `/var/folders/...` while `/var`
+ * links to `/private/var`, so a string comparison would call the very same
+ * directory two different roots.
+ */
+export async function isSameDirectory(left: string, right: string): Promise<boolean> {
+  const canonical = async (value: string): Promise<string> => {
+    try { return await fs.promises.realpath(value) } catch { return path.resolve(value) }
   }
-  return canonical(left) === canonical(right)
+  const [a, b] = await Promise.all([canonical(left), canonical(right)])
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
 }
 
 /**
@@ -217,15 +229,15 @@ function isSameDirectory(left: string, right: string): boolean {
  */
 async function ensureExecutionRoot(parent: string, source: string, configured: boolean): Promise<string> {
   const temporary = os.tmpdir()
-  const parentIsOsTemp = isSameDirectory(parent, temporary)
+  const parentIsOsTemp = await isSameDirectory(parent, temporary)
   try {
     await assertExecutionRoot(parent, source)
     await fs.promises.mkdir(parent, { recursive: true })
     // The OS temp directory keeps the platform's own owner — POSIX `/tmp` belongs
     // to root — so only its shape can be checked there. Every other root, an
-    // operator-configured one included, must also be owned by this account: a
-    // mistyped path or a pre-created junction is exactly what the check catches.
-    await assertPrivateExecutionRoot(parent, !parentIsOsTemp)
+    // operator-configured one included, must also be owned by this account; only a
+    // deliberately shared system directory the operator named stays usable.
+    await assertPrivateExecutionRoot(parent, !parentIsOsTemp, configured)
     return parent
   } catch (error) {
     if (configured || parentIsOsTemp) throw error
