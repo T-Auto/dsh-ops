@@ -32,23 +32,6 @@ console.error('DEBUG host whoami: ' + JSON.stringify((hostGroups.stdout ?? '').s
 const root = scenarioDir('niu-host-中文'), outside = scenarioDir('niu-outside')
 console.error('DEBUG outside label ' + JSON.stringify(bashIntegrityReport(outside)))
 console.error('DEBUG home label ' + JSON.stringify(bashIntegrityReport(TEST_HOME)))
-const debugSystem32 = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32')
-const debugWhoami = path.join(debugSystem32, 'whoami.exe')
-const probeToken = (label, executable, args, options = {}) => {
-  const result = spawnSync(executable, args, { encoding: 'utf8', windowsHide: true, ...options })
-  const token = String(result.stdout ?? '').split(/\r?\n/u).filter(line => /Mandatory Label/u.test(line))
-  console.error(`DEBUG ${label}: status=${result.status} error=${result.error?.message ?? 'none'} token=${JSON.stringify(token)} stderr=${JSON.stringify((result.stderr ?? '').slice(0, 160))}`)
-}
-const debugPayloadRoot = path.dirname(file)
-const debugNiuEnv = { ...process.env, NIU_ROOT: path.join(debugPayloadRoot, 'winuxcmd'), WINUXCMD_PATH: path.join(debugPayloadRoot, 'winuxcmd', 'usr', 'bin', 'winuxcmd.exe'), NIU_SKIP_WINUXCMD_ACTIVATION: '1' }
-const debugGlobalTemp = path.join(process.env.USERPROFILE ?? 'C:\\Users\\runneradmin', 'AppData', 'Local', 'Temp')
-probeToken('plain cmd child', process.env.ComSpec ?? path.join(debugSystem32, 'cmd.exe'), ['/d', '/c', 'whoami /groups'])
-probeToken('plain niu', file, ['-c', `"${debugWhoami}" /groups`], { env: debugNiuEnv })
-probeToken('plain niu norc', file, ['--noprofile', '--norc', '-c', `"${debugWhoami}" /groups`], { env: debugNiuEnv })
-probeToken('plain niu cwd-C', file, ['-c', `"${debugWhoami}" /groups`], { env: debugNiuEnv, cwd: 'C:\\' })
-probeToken('plain niu global-temp', file, ['-c', `"${debugWhoami}" /groups`], { env: { ...debugNiuEnv, TEMP: debugGlobalTemp, TMP: debugGlobalTemp } })
-const debugLayers = spawnSync(path.join(debugSystem32, 'reg.exe'), ['query', 'HKCU\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers'], { encoding: 'utf8' })
-console.error('DEBUG appcompat layers: ' + JSON.stringify((debugLayers.stdout ?? '').slice(0, 800)))
 const bash = consumerRoot ? resolveShells({}, { bundleRoot: consumerRoot }).bash : resolveShells({ bashPath: file }).bash
 assert.equal(bash.available, true, bash.detail)
 const { ctx } = await bootHost({ withWorkingDirectory: true })
@@ -212,6 +195,19 @@ try {
       assert.notEqual(result.isError, true, JSON.stringify(result)); return result.value.result
     }
     assert.equal(ok(await ptc("printf 'PTC_OK' | cat")).stdout.text, 'PTC_OK')
+    const pendingSleep = call('sleep 15')
+    await waitFor(() => fs.readdirSync(os.tmpdir()).some(name => name.startsWith('dsh-ops-niu-exec-')), { what: 'execution root' })
+    for (const name of fs.readdirSync(os.tmpdir()).filter(name => name.startsWith('dsh-ops-niu-exec-'))) {
+      const directory = path.join(os.tmpdir(), name)
+      console.error('DEBUG exec dir ' + name + ' label=' + JSON.stringify(bashIntegrityReport(directory)))
+      const image = path.join(directory, 'niu.exe')
+      if (fs.existsSync(image)) {
+        const live = fs.statSync(image), source = fs.statSync(file)
+        console.error('DEBUG exec image ' + JSON.stringify({ ino: live.ino, sourceIno: source.ino, hardlinked: live.ino === source.ino, nlink: live.nlink, entry: bashIntegrityReport(image).entries?.[0] }))
+      }
+    }
+    const slept = await pendingSleep
+    console.error('DEBUG sleep result=' + JSON.stringify({ exit: slept.exitCode, stderr: slept.stderr?.text }))
     const value = await ptc('printf blocked > ptc-outside.txt', outside)
     assert.equal(value.timedOut, false, JSON.stringify(value)); assert.notEqual(value.exitCode, 0, JSON.stringify(value)); assert.equal(fs.existsSync(path.join(outside, 'ptc-outside.txt')), false)
     agent.session.mode = 'read-only'
