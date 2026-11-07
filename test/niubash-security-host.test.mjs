@@ -13,6 +13,7 @@ import { bootHost, shutdown } from './lib/host.mjs'
 import { verifiedNiubash } from '../lib/niubash/runtime.js'
 import { resolveShells } from '../lib/shells/resolve.js'
 import { pathToFileURL } from 'node:url'
+process.env.DSH_OPS_DEBUG_EXEC = '1'
 const consumerRoot = process.env.DSH_OPS_NIUBASH_CONSUMER
 const moduleAt = relative => import(consumerRoot ? pathToFileURL(path.join(consumerRoot, relative)).href : new URL(`../${relative}`, import.meta.url).href)
 const { mountSessionBash } = await moduleAt('lib/session-shells.js')
