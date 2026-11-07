@@ -22,7 +22,7 @@ export const LEGACY_FASTCTX_KEYS = Object.freeze(['serverName', 'enableShellTool
 export const CORE_CONFIG_KEYS = Object.freeze([
   ...LEGACY_FASTCTX_KEYS, 'binaryPath', 'required', 'shellPolicy', 'deniedHostTools', 'promptPolicy',
   'extraGuidance', 'bashPath', 'publishBashTool', 'allowSystemShellFallback', 'denyCredentialReads', 'configUpdateVersion', 'indexCache',
-  'downloadGuard',
+  'downloadGuard', 'spillRetentionDays', 'spillTotalBudgetMiB', 'spillSweepEnabled', 'resultCache', 'disk',
 ])
 
 /** Upper bound accepted for the legacy `toolCallTimeoutMs`, matching the loader's timer ceiling. */
@@ -35,6 +35,9 @@ export const SHELL_POLICIES = ['advise', 'deny-host-shell']
 export const DEFAULT_DENIED_HOST_TOOLS = ['pwsh', 'bash', 'pwsh_persistent']
 
 import { ConfigError } from './config-error.js'
+import { DEFAULT_SPILL_RETENTION_DAYS, DEFAULT_SPILL_SWEEP_ENABLED, DEFAULT_SPILL_TOTAL_BUDGET_MIB } from './shells/spill-retention.js'
+import { resolveDiskConfig } from './disk/ownership.js'
+import type { DiskConfig } from './disk/ownership.js'
 export { ConfigError } from './config-error.js'
 
 /**
@@ -80,6 +83,24 @@ function optionalBoolean(raw: Record<string, unknown>, key: string, fallback: bo
   if (value === undefined || value === null) return fallback
   if (typeof value !== 'boolean') {
     throw new ConfigError(`${key} must be a boolean, got ${JSON.stringify(value)}`)
+  }
+  return value
+}
+
+/**
+ * Read an optional bounded integer.
+ * @param raw - the whole row config.
+ * @param key - the key to read.
+ * @param fallback - the value when the key is absent.
+ * @param min - the smallest accepted value.
+ * @param max - the largest accepted value.
+ * @returns the value.
+ */
+function optionalInteger(raw: Record<string, unknown>, key: string, fallback: number, min: number, max: number): number {
+  const value = raw[key]
+  if (value === undefined || value === null) return fallback
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) {
+    throw new ConfigError(`${key} must be an integer from ${min} to ${max}, got ${JSON.stringify(value)}`)
   }
   return value
 }
@@ -150,6 +171,33 @@ function resolveDownloadGuard(rawConfig: unknown): DownloadGuardConfig {
   return { template, ...(shell === undefined ? {} : { shell }) }
 }
 
+/**
+ * Retention policy for the result-cache roots under the system temp directory.
+ *
+ * The native quota (100 MiB per cache root) is a per-nonce limit and never a global budget, so
+ * the aggregate limits below are the only thing that surfaces a machine accumulating one root per
+ * session. They are reporting thresholds: the sweep never deletes a root that still holds snapshot
+ * data, so both limits default to 0 and merely mark over-budget roots as blocked.
+ */
+export interface ResultCacheConfig {
+  /** Aggregate root count; exceeding it marks roots over budget, it never deletes data. */
+  maxRoots: number
+  /** Aggregate byte count; exceeding it marks roots over budget, it never deletes data. */
+  maxTotalBytes: number
+  /** Minimum idle time before a root is touched; 0 disables the grace period. */
+  maxAgeMs: number
+  /** Whether the start-up/shutdown sweep may remove anything at all. */
+  sweepEnabled: boolean
+}
+
+/** Shipped retention defaults; `cordis.patch.yml` repeats them and must stay equal. */
+export const DEFAULT_RESULT_CACHE: ResultCacheConfig = Object.freeze({
+  maxRoots: 0,
+  maxTotalBytes: 0,
+  maxAgeMs: 3_600_000,
+  sweepEnabled: true,
+})
+
 /** The resolved configuration, with every default applied. */
 export interface ResolvedConfig {
   configUpdateVersion: number
@@ -166,6 +214,14 @@ export interface ResolvedConfig {
   publishBashTool: boolean
   allowSystemShellFallback: boolean
   downloadGuard: DownloadGuardConfig
+  /** Spill files older than this many days are evicted; 0 reports only. */
+  spillRetentionDays: number
+  /** Total retained spill bytes allowed, in MiB; 0 means no budget. */
+  spillTotalBudgetMiB: number
+  /** Whether an active component runs automatic bounded spill passes. */
+  spillSweepEnabled: boolean
+  resultCache: ResultCacheConfig
+  disk: DiskConfig
 }
 
 /**
@@ -242,6 +298,45 @@ export function resolveConfig(rawConfig?: unknown): ResolvedConfig {
     // directory and every search keeps the live traversal.
     indexCache: optionalBoolean(raw, 'indexCache', false),
     downloadGuard: resolveDownloadGuard(raw.downloadGuard),
+    // Host subprocess spill files have no TTL upstream; these three keys bound
+    // the plugin's own ledger-driven retention (see shells/spill-retention.ts).
+    spillRetentionDays: optionalInteger(raw, 'spillRetentionDays', DEFAULT_SPILL_RETENTION_DAYS, 0, 3650),
+    spillTotalBudgetMiB: optionalInteger(raw, 'spillTotalBudgetMiB', DEFAULT_SPILL_TOTAL_BUDGET_MIB, 0, 1_048_576),
+    spillSweepEnabled: optionalBoolean(raw, 'spillSweepEnabled', DEFAULT_SPILL_SWEEP_ENABLED),
+    resultCache: resolveResultCacheConfig(raw.resultCache),
+    disk: resolveDiskConfig(raw.disk),
+  }
+}
+
+/**
+ * Validate the `resultCache` block.
+ *
+ * Absent is the normal state and resolves to the shipped defaults. A malformed block fails loud
+ * and names the offending key, matching the rest of this file, because a budget typo that silently
+ * became "unlimited" is the failure mode this feature exists to remove.
+ * @param rawConfig - the raw `resultCache` value, or undefined.
+ * @returns the resolved retention policy.
+ */
+export function resolveResultCacheConfig(rawConfig: unknown): ResultCacheConfig {
+  if (rawConfig === undefined || rawConfig === null) return { ...DEFAULT_RESULT_CACHE }
+  if (typeof rawConfig !== 'object' || Array.isArray(rawConfig)) {
+    throw new ConfigError(`resultCache must be an object, got ${JSON.stringify(rawConfig)}`)
+  }
+  const raw = rawConfig as Record<string, unknown>
+  rejectUnknownKeys(raw, ['maxRoots', 'maxTotalBytes', 'maxAgeMs', 'sweepEnabled'])
+  const count = (key: keyof typeof DEFAULT_RESULT_CACHE): number => {
+    const value = raw[key]
+    if (value === undefined || value === null) return DEFAULT_RESULT_CACHE[key] as number
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+      throw new ConfigError(`resultCache.${key} must be a non-negative safe integer, got ${JSON.stringify(value)}`)
+    }
+    return value
+  }
+  return {
+    maxRoots: count('maxRoots'),
+    maxTotalBytes: count('maxTotalBytes'),
+    maxAgeMs: count('maxAgeMs'),
+    sweepEnabled: optionalBoolean(raw, 'sweepEnabled', DEFAULT_RESULT_CACHE.sweepEnabled),
   }
 }
 

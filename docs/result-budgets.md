@@ -28,11 +28,32 @@ references retain their separate contract.
 Session disposal immediately expires references, cancels queued/running work, awaits settlement,
 then purges validated snapshot/staging blobs through the current host authority. The stable lock
 and unknown names remain; audit data is never purged. Read-only mode or unavailable host services
-can prevent physical cleanup, with a diagnostic. No automatic retry is scheduled; up to the session
-quota can remain for host temporary-directory cleanup or operator removal. A fresh in-memory session nonce prevents reopening
-disk leftovers as valid references after a restart. Component owners share this lifetime; unloading
-the last Native/PTC owner expires its remaining sessions. Cleanup is an internal operation and
-cannot be requested through model tool arguments.
+can prevent physical cleanup; the root is then recorded in a private pending ledger under the
+temporary directory instead of being forgotten, together with the failure reason (read-only,
+changed authority, cache grant, timeout, EPERM) and its attempt count. A later workspace-write
+authorization, the next start-up or an operator command retries it with bounded exponential
+backoff; nothing is deleted while the host stays read-only. A fresh in-memory session nonce
+prevents reopening disk leftovers as valid references after a restart. Component owners share this
+lifetime; unloading the last Native/PTC owner expires its remaining sessions. Cleanup is an
+internal operation and cannot be requested through model tool arguments.
+
+The native purge deliberately keeps the root directory, its `s-<hash>/` scope directory and the
+stable lock inode, and the root is created eagerly on the first non-read-only call. A host-side
+sweep therefore reclaims roots at start-up and after the last owner unloads. It only touches a
+directory named `dsh-ops-results-<64 hex>` that is a private, current-user-owned, non-linked
+directory whose contents are limited to `s-<64 hex>/` scope directories holding `lock`,
+`<uuid>.json` and `<uuid>.tmp`; one unknown entry skips the whole root and is reported. Roots
+referenced by this process are excluded, a root must be idle for `resultCache.maxAgeMs` before it
+is touched (roots this process created skip that grace during shutdown), and one pass is bounded by
+a root count and a wall-clock budget and stops at the first failed removal. By default only roots
+that hold no snapshot data — an empty root, or scope directories with just their lock — are
+reclaimed. `MAX_SESSION_BYTES` stays a per-nonce quota for one cache root and is never used as a
+global budget: the aggregate limits are `resultCache.maxRoots` and `resultCache.maxTotalBytes`,
+both 0. They are reporting thresholds, not deletion budgets — a root that still holds snapshot data
+is classified as blocked (age, live set or over budget) and is never removed by the sweep; only the
+authorized session purge or its deferred retry may reclaim that data. `dsh-ops result-cache status`
+reports the inventory and `dsh-ops result-cache reclaim [--apply]` previews or performs the same
+bounded pass.
 
 ## Native and PTC reference pages
 

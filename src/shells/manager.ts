@@ -2,6 +2,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { NIUBASH_HOME_PATH, NIUBASH_PIN, NIUBASH_RECEIPT } from '../cli/niubash-payload.js'
+import { unsealDirectorySync } from '../niubash/seal.js'
 import { isNiubashExecutable, niubashCandidates, verifiedNiubash } from '../niubash/runtime.js'
 import { PACKAGE_ROOT, dshHome } from '../paths.js'
 import { provisionedShellStore } from './pins.js'
@@ -70,6 +71,9 @@ export function removeManagedBash({ env = process.env, yes = false, dryRun = fal
   if (yes && !dryRun) {
     // Validate the complete plan before the first deletion. Never touch an unmarked or system copy.
     for (const entry of selected) assertPhysicalDirectory(entry.directory, dshHome(env))
+    // A previous execution seals the shared payload inodes read-only; clear that
+    // before deleting an owned copy or Windows refuses with EPERM.
+    for (const entry of selected) if (entry.backend === 'niubash') unsealDirectorySync(entry.directory)
     for (const entry of selected) fs.rmSync(entry.directory, { recursive: true, force: false })
   }
   return { action: yes && !dryRun ? 'removed' : 'preview', versions: selected, kept: inventory.filter(entry => !entry.owned) }

@@ -12,6 +12,7 @@ import { companionVersion } from './settings/companion.js'
 import * as panelModule from './components/panel/index.js'
 import * as tuiModule from './components/tui/index.js'
 import * as downloadGuardModule from './components/download-guard/index.js'
+import { configureResultCacheGc } from './kernel/result-cache-gc.js'
 export { Config } from './settings/merged.js'
 export { applyComponent } from './legacy/host.js'
 export const name = 'dsh-ops'
@@ -38,6 +39,11 @@ export async function apply(root: Context, rawConfig: unknown): Promise<void> {
     }
     await host.plugin(module, payload)
   }
+  // The retention sweep is process-wide (it scans the temp directory once per start-up and once
+  // per shutdown), so its validated budget is installed here instead of inside each consumer.
+  const retention = config.resultCache
+  configureResultCacheGc(retention.enabled ? retention.config : undefined)
+  root.effect(() => () => configureResultCacheGc(undefined), 'dsh-ops: result cache retention')
   beginMergedRow()
   try {
     // The browser half mounts its `opsSettings` remote; the legacy shell row used

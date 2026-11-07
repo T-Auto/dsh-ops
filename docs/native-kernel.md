@@ -106,8 +106,18 @@ accepts no other arguments. It removes only validated snapshot/stage names for t
 the lock inode, directories and unknown/audit names. It returns `removed`, `retained`, `complete`
 and `effectState`; partial cleanup failures identify prior effects. Readonly purge is refused.
 The host must first invalidate references logically and await active calls; a denied or interrupted
-purge is deferred cleanup, never a reason to rerun business operations. Host lifecycle hooks are
-attached by the host integration slice.
+purge is deferred cleanup, never a reason to rerun business operations. A failed purge records the
+root in a private pending ledger under the temporary directory (bounded attempts, last reason, boot
+id) and is retried when workspace-write authority returns, at the next start-up or through
+`dsh-ops result-cache reclaim --apply`; nothing is removed while the host stays read-only. Because
+the purge keeps the root, the scope directory and the lock, a host-side sweep reclaims idle
+structural leftovers at start-up and after the last owner unloads: it validates the name, the owner,
+the private mode, single-link files and the complete content whitelist, skips and reports a root
+with an unknown entry, excludes this process's live roots, honors `resultCache.maxAgeMs` and stops
+at the first failed removal. Aggregate root/byte budgets (`resultCache.maxRoots`,
+`resultCache.maxTotalBytes`) default to 0 and only classify roots as blocked; the sweep never
+removes a root that still holds snapshot data, which only the authorized purge path may reclaim.
+Host lifecycle hooks are attached by the host integration slice.
 
 ## Index cache directory (PS3, #601)
 

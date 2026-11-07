@@ -12,6 +12,7 @@ import { sameAuthority } from '../authority-paths.js'
 import { prepareWorkspace } from '../workspace-preparation.js'
 import { resultSessionNonce, registerResultCleanup } from './result-lifecycle.js'
 import type { ResultSession } from './result-lifecycle.js'
+import { markCleanupRootLive, registerCleanupRoot, releaseCleanupRootLive } from './result-cleanup-registry.js'
 
 interface Subprocess {
   spawn(spec: { argv: string[]; cwd: string; stdio: { stdin: { data: string }; stdout: { maxBytes: number }; stderr: { maxBytes: number } }; graceMs: number; signal: AbortSignal }): {
@@ -144,6 +145,9 @@ export async function resultStorage(ctx: StorageHost, session: ResultSession, sc
     }
   } else {
     if (admission && !admission()) return undefined
+    // An external reclaimer or the result-cache sweep may have removed the root since the last
+    // call; never hand a stale path to the worker. A read-only call simply loses the cache.
+    if (location !== undefined && !fs.existsSync(location.root)) { location = undefined; cache.delete(key) }
     location ??= posixCacheLocation(key, policy.mode !== 'read-only')
   }
   if (admission && !admission()) return undefined
@@ -152,11 +156,21 @@ export async function resultStorage(ctx: StorageHost, session: ResultSession, sc
     const current = windowsCacheLocation(confined.argv)
     if (current?.root !== location.root || current?.windowsWriteSid !== location.windowsWriteSid) throw new Error('Session cache grant changed')
   }
+  const known = cache.has(key)
   cache.set(key, location)
+  const root = location.root
+  // Register the root in the durable ledger before any caller can use it: a crash between the
+  // create above and this write would still leave a reclaimable directory, and a cleanup that
+  // fails later must not lose the only name that can address it (#714 mechanism 3). A root that
+  // was recreated after an external removal is registered again.
+  if (!known) {
+    registerCleanupRoot(root, { sessionHeading: digest(session.id), workspaceRoot: policy.workspaceRoot })
+    markCleanupRootLive(root)
+  }
   const storage: WorkerStorage = { ...location, authorityId: digest([nonce, policy.mode, policy.workspaceRoot, policy.additionalWritableRoots ?? [], denyRoots, denyNames]), allowedTools: currentTools(ctx, scope, tool) }
   registerResultCleanup(ctx, session, key, async () => {
     try { await purge(ctx, session, file, storage, policy) }
-    finally { cache.delete(key) }
-  })
+    finally { cache.delete(key); releaseCleanupRootLive(root) }
+  }, root)
   return storage
 }
