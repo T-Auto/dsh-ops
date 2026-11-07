@@ -421,4 +421,29 @@ await test('an execution root that resolves inside the payload is refused', asyn
   } finally { await tidy(base) }
 }))
 
+// The Low-label poisoning this guard prevents is a Windows mandatory-integrity
+// mechanism; POSIX has no equivalent, so the shared root is accepted there.
+if (process.platform === 'win32') await test('an execution root inside the session workspace is refused', async () => withTempDir('niu-workspace', async base => {
+  try {
+    const source = buildPinnedPayload(base)
+    const workspace = path.join(base, 'workspace')
+    fs.mkdirSync(workspace)
+    const previous = process.env.DSH_OPS_EXEC_ROOT
+    try {
+      process.env.DSH_OPS_EXEC_ROOT = path.join(workspace, 'exec-root')
+      await assert.rejects(prepareNiubash(path.join(source, 'niu.exe'), '', new AbortController().signal, { workspaceRoot: workspace }),
+        /must not be inside the session workspace/u)
+    } finally {
+      if (previous === undefined) delete process.env.DSH_OPS_EXEC_ROOT
+      else process.env.DSH_OPS_EXEC_ROOT = previous
+    }
+    // The refusal happens before mkdir, so nothing was left below the workspace.
+    assert.equal(fs.existsSync(path.join(workspace, 'exec-root')), false)
+    // A derived root equal to the OS temp directory is refused the same way when
+    // the configured workspace contains it; there is no safe root to fall back to.
+    await assert.rejects(prepareNiubash(path.join(source, 'niu.exe'), '', new AbortController().signal,
+      { workspaceRoot: path.dirname(os.tmpdir()) }), /inside the session workspace|no safe Niubash execution root/u)
+  } finally { await tidy(base) }
+}))
+
 report('niubash-execution-root')

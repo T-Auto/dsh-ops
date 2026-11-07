@@ -48,7 +48,11 @@ const node = code => {
 const ok = value => { assert.equal(value.exitCode, 0, JSON.stringify(value)); assert.equal(value.status, 'completed', JSON.stringify(value)); return value }
 try {
   await test('the execution root parent honours DSH_OPS_EXEC_ROOT', async () => {
-    const configured = path.join(root, 'exec-root')
+    // Outside the session workspace: the workspace-write grant writes an
+    // inheritable Low label on the workspace root, and a clone below it would
+    // mark the payload's shared inodes Low (the shell then starts at Low
+    // integrity and every Medium sibling path is refused).
+    const configured = path.join(path.dirname(root), 'exec-root')
     const previous = process.env.DSH_OPS_EXEC_ROOT
     process.env.DSH_OPS_EXEC_ROOT = configured
     try {

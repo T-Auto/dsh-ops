@@ -173,6 +173,34 @@ async function assertExecutionRoot(parent: string, source: string): Promise<void
 }
 
 /**
+ * Reject an execution root below the session workspace.
+ *
+ * On Windows the sandbox's workspace-write grant writes an inheritable Low
+ * mandatory label on the workspace root, and Windows propagates it to the
+ * existing subtree. A clone created there therefore marks the payload's shared
+ * inodes Low (hardlink clone) or inherits the label itself (copy clone), and
+ * Windows launches a process at its image's mandatory label: every later
+ * `niu.exe` taken from that payload runs at Low integrity, where writes to
+ * Medium-integrity paths — the workspace's own siblings included — are refused.
+ * The clone must stay outside the workspace. Both the written path and its
+ * physical resolution are compared, as for the payload check.
+ */
+async function assertOutsideWorkspace(parent: string, workspace: string): Promise<void> {
+  const physicalParent = await physicalPath(parent)
+  const physicalWorkspace = await physicalPath(workspace)
+  // Windows compares paths case-insensitively; `path.relative` alone would let
+  // `C:\Work` and `c:\work` name two different trees.
+  const windows = process.platform === 'win32'
+  for (const [candidate, base] of [[parent, workspace], [physicalParent, physicalWorkspace],
+    [physicalParent, workspace], [parent, physicalWorkspace]] as const) {
+    const relative = windows ? path.relative(base.toLowerCase(), candidate.toLowerCase()) : path.relative(base, candidate)
+    if (isInside(relative)) {
+      throw new Error(`the Niubash execution root must not be inside the session workspace (the workspace-write grant labels that subtree; set DSH_OPS_EXEC_ROOT outside it): ${parent}`)
+    }
+  }
+}
+
+/**
  * Reject a directory that is not a real directory, and — unless the platform or
  * the caller says otherwise — one this account does not own.
  *
@@ -225,13 +253,20 @@ export async function isSameDirectory(left: string, right: string): Promise<bool
  * never falls back: silently ignoring `DSH_OPS_EXEC_ROOT` would move the clone
  * into the temporary directory the configuration exists to avoid (#715). The
  * containment check sits inside the same try so a derived root that overlaps the
- * payload also recovers instead of failing the whole call.
+ * payload also recovers instead of failing the whole call. A root below the
+ * session workspace is refused the same way — operator-configured loudly, a
+ * derived one by falling back — because the workspace-write grant labels that
+ * subtree and would mark the payload Low.
  */
-async function ensureExecutionRoot(parent: string, source: string, configured: boolean): Promise<string> {
+async function ensureExecutionRoot(parent: string, source: string, configured: boolean, workspaceRoot?: string): Promise<string> {
   const temporary = os.tmpdir()
   const parentIsOsTemp = await isSameDirectory(parent, temporary)
+  // The Low label is a Windows mandatory-integrity mechanism; POSIX has no
+  // equivalent, so a workspace check there would reject harmless roots.
+  const guardedWorkspace = process.platform === 'win32' ? workspaceRoot : undefined
   try {
     await assertExecutionRoot(parent, source)
+    if (guardedWorkspace !== undefined) await assertOutsideWorkspace(parent, guardedWorkspace)
     await fs.promises.mkdir(parent, { recursive: true })
     // The OS temp directory keeps the platform's own owner — POSIX `/tmp` belongs
     // to root — so only its shape can be checked there. Every other root, an
@@ -252,6 +287,14 @@ async function ensureExecutionRoot(parent: string, source: string, configured: b
     // A temp directory that still contains the payload cannot host the clone;
     // that is a broken installation, not a reason to keep guessing.
     await assertExecutionRoot(temporary, source)
+    if (guardedWorkspace !== undefined) {
+      // Falling back into a workspace that already rejected the derived root
+      // would poison the payload the same way; there is no safe root left.
+      try { await assertOutsideWorkspace(temporary, guardedWorkspace) }
+      catch {
+        throw new Error(`no safe Niubash execution root: the OS temporary directory ${temporary} is also inside the session workspace ${guardedWorkspace}; set DSH_OPS_EXEC_ROOT to a directory outside the workspace, on another volume if necessary`)
+      }
+    }
     await fs.promises.mkdir(temporary, { recursive: true })
     return temporary
   }
@@ -293,6 +336,16 @@ export function verifiedNiubash(file: string, inheritedPath = process.env.PATH ?
   }
 }
 
+/** Inputs the shell layer supplies that the payload path alone cannot answer. */
+export interface PrepareNiubashOptions {
+  /**
+   * The session workspace root. The execution tree is never created below it:
+   * the host's workspace-write grant writes an inheritable Low mandatory label
+   * there, and a clone below that label would mark the payload's inodes Low.
+   */
+  workspaceRoot?: string
+}
+
 /**
  * Each call gets a new, verified execution clone: upstream startup must not
  * mutate package/home sources. The clone is hardlinked from the immutable
@@ -302,7 +355,8 @@ export function verifiedNiubash(file: string, inheritedPath = process.env.PATH ?
  * No execution copy is reused or trusted after a command. The outer host still
  * owns confinement.
  */
-export async function prepareNiubash(file: string, inheritedPath = process.env.PATH ?? process.env.Path ?? '', signal: AbortSignal): Promise<NiubashRuntime> {
+export async function prepareNiubash(file: string, inheritedPath = process.env.PATH ?? process.env.Path ?? '',
+  signal: AbortSignal, options: PrepareNiubashOptions = {}): Promise<NiubashRuntime> {
   signal.throwIfAborted()
   if (!path.isAbsolute(file) || !isNiubashExecutable(file)) throw unavailable('expected an absolute niu.exe path')
   const source = path.dirname(file)
@@ -311,7 +365,8 @@ export async function prepareNiubash(file: string, inheritedPath = process.env.P
   const configuredRoot = process.env.DSH_OPS_EXEC_ROOT?.trim()
   const parent = niubashExecutionRootParent(process.env, source)
   const root = await fs.promises.mkdtemp(path.join(
-    await ensureExecutionRoot(parent, source, configuredRoot !== undefined && configuredRoot !== ''), EXECUTION_ROOT_PREFIX))
+    await ensureExecutionRoot(parent, source, configuredRoot !== undefined && configuredRoot !== '',
+      options.workspaceRoot === undefined ? undefined : path.resolve(options.workspaceRoot)), EXECUTION_ROOT_PREFIX))
   // Sealing is per inode, so concurrent calls for the same payload share one
   // reference count; disposal of the first must not unseal a sibling's tree.
   let released = false

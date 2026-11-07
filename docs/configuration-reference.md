@@ -131,7 +131,12 @@ choice for that consumer, not an authorization grant.
 `DSH_OPS_EXEC_ROOT` names the parent directory of the per-call Windows Niubash execution tree
 (default: the OS temporary directory). Point it at an antivirus allow-list location or a specific
 volume to keep hardlink cloning on the payload's volume; a cross-volume root still works through the
-copy fallback recorded in the execution receipt. The root must not be inside the payload.
+copy fallback recorded in the execution receipt. The root must not be inside the payload, and on
+Windows it must not be inside the session workspace: the workspace-write grant writes an
+inheritable Low mandatory label on that subtree, which would turn the payload's shared inodes into
+Low-integrity images whose `niu.exe` cannot write Medium paths. An operator-configured root in
+either place fails the call; an automatically derived root falls back to the OS temporary
+directory with a warning.
 `NIUBASH_VERIFY=deep` restores the full per-call payload re-hash; the default per-call check is
 stat-only (path set, sizes, directories, read-only seal, link counts).
 

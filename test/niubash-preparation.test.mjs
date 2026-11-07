@@ -145,5 +145,31 @@ if (process.platform === 'win32') {
       await runtime.verify()
     } finally { await runtime.dispose() }
   })
+  await test('a session workspace cannot host the execution root', async () => {
+    await withTempDir('niu-workspace', async root => {
+      const file = process.env.DSH_OPS_TEST_NIUBASH
+      const policy = { mode: 'workspace-write', workspaceRoot: root }
+      const previous = process.env.DSH_OPS_EXEC_ROOT
+      process.env.DSH_OPS_EXEC_ROOT = path.join(root, 'exec-root')
+      let spawned = 0
+      const ctx = { get(name) {
+        if (name === 'sandboxPolicy') return { resolve: () => policy }
+        if (name === 'subprocess') return { spawn() { spawned += 1; throw new Error('must not spawn') } }
+      } }
+      try {
+        const execution = startSessionBash({ ctx, bash: { file, source: 'bundled' }, active: () => true },
+          { command: 'printf never', workdir: root }, { agent: { session: { id: 'workspace-guard' } } }, policy, policy, {}, {})
+        const value = await execution.result()
+        // The shell layer passes policy.workspaceRoot into preparation; without it
+        // the clone lands below the workspace and the payload turns Low-integrity.
+        assert.match(value.error, /must not be inside the session workspace/u)
+        assert.equal(spawned, 0, 'no command may run from a poisoned execution root')
+        assert.equal(fs.existsSync(path.join(root, 'exec-root')), false)
+      } finally {
+        if (previous === undefined) delete process.env.DSH_OPS_EXEC_ROOT
+        else process.env.DSH_OPS_EXEC_ROOT = previous
+      }
+    })
+  })
 }
 report('niubash-preparation')
