@@ -47,12 +47,12 @@ await test('clean full-plugin pack consumer uses production prepare for repeated
       // an alias/short spelling unlike the physical parent fixture; keep its home
       // and tmpdir identical instead of weakening the harness's isolation guard.
       cwd: consumer, env: { ...process.env, TEMP: home, TMP: home, DSH_HOME: home,
-        DSH_OPS_NIUBASH_CONSUMER: installed, DSH_OPS_REQUIRE_RUNTIME: '1' },
+        DSH_OPS_NIUBASH_CONSUMER: installed, DSH_OPS_REQUIRE_RUNTIME: '1', DSH_OPS_DEBUG_EXEC: '1' },
       encoding: 'utf8', windowsHide: true, timeout: securityBudget, maxBuffer: 4 * 1024 * 1024,
     })
     console.log(run.stdout)
     assert.equal(run.status, 0, `${run.error ?? ''}\n${run.stderr}\n${run.stdout}`)
-    assert.match(run.stdout, /all 10 checks passed/)
+    assert.match(run.stdout, /all 11 checks passed/)
     assert.doesNotMatch(run.stdout, /SKIP|FAIL/)
   })
 })

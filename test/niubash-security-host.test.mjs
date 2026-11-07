@@ -6,11 +6,14 @@ import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
 import FileSystem from '@deepseek-ai/dsh-fs-local'
 import { createScope } from '@deepseek-ai/dsh-scope'
-import { assert, test, report, skipSuite, scenarioDir, waitFor } from './lib/harness.mjs'
+import { assert, test, report, skipSuite, scenarioDir, TEST_HOME, waitFor } from './lib/harness.mjs'
+import { spawnSync } from 'node:child_process'
+import os from 'node:os'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { verifiedNiubash } from '../lib/niubash/runtime.js'
 import { resolveShells } from '../lib/shells/resolve.js'
 import { pathToFileURL } from 'node:url'
+process.env.DSH_OPS_DEBUG_EXEC = '1'
 const consumerRoot = process.env.DSH_OPS_NIUBASH_CONSUMER
 const moduleAt = relative => import(consumerRoot ? pathToFileURL(path.join(consumerRoot, relative)).href : new URL(`../${relative}`, import.meta.url).href)
 const { mountSessionBash } = await moduleAt('lib/session-shells.js')
@@ -22,6 +25,8 @@ const { DEFAULT_BASH_TIMEOUT_MS } = await moduleAt('lib/shells/constants.js')
 const file = consumerRoot ? path.join(consumerRoot, 'runtime/win32-x64/niubash/niu.exe') : process.env.DSH_OPS_TEST_NIUBASH
 if (process.platform !== 'win32' || !file) skipSuite('niubash-security-host', 'requires Windows x64 and DSH_OPS_TEST_NIUBASH pointing at the complete frozen v1.5.0 payload')
 verifiedNiubash(file)
+const { bashIntegrityReport } = await moduleAt('lib/cli/integrity.js')
+console.error('DEBUG integrity ' + JSON.stringify(bashIntegrityReport(file)))
 const root = scenarioDir('niu-host-中文'), outside = scenarioDir('niu-outside')
 const bash = consumerRoot ? resolveShells({}, { bundleRoot: consumerRoot }).bash : resolveShells({ bashPath: file }).bash
 assert.equal(bash.available, true, bash.detail)
@@ -47,14 +52,35 @@ const node = code => {
 }
 const ok = value => { assert.equal(value.exitCode, 0, JSON.stringify(value)); assert.equal(value.status, 'completed', JSON.stringify(value)); return value }
 try {
+  await test('the execution root parent honours DSH_OPS_EXEC_ROOT', async () => {
+    const configured = path.join(root, 'exec-root')
+    const previous = process.env.DSH_OPS_EXEC_ROOT
+    process.env.DSH_OPS_EXEC_ROOT = configured
+    try {
+      const value = ok(await call(node('process.stdout.write(process.env.NIU_ROOT)')))
+      // NIU_ROOT is the clone's winuxcmd directory; its parent is the per-call tree.
+      const instance = path.dirname(value.stdout.text)
+      assert.match(path.basename(instance), /^dsh-ops-niu-exec-/u)
+      assert.equal(fs.realpathSync.native(path.dirname(instance)), fs.realpathSync.native(configured))
+      assert.equal(fs.existsSync(instance), false, 'the execution tree is disposed')
+    } finally {
+      if (previous === undefined) delete process.env.DSH_OPS_EXEC_ROOT
+      else process.env.DSH_OPS_EXEC_ROOT = previous
+    }
+  })
   await test('real host confines Niubash command, script, EOF stdin and native children with Unicode cwd/env', async () => {
     const value = ok(await call("printf '牛'; printf pipe | cat; read x; printf 'EOF=%s' \"$?\""))
     assert.equal(value.stdout.text, '牛pipeEOF=1'); assert.equal(value.sandbox.mode, 'workspace-write'); assert.equal(value.sandbox.enforcement, 'partial')
     fs.writeFileSync(path.join(root, '脚本 file.sh'), "printf 'SCRIPT中文'\n")
     assert.equal(ok(await call(undefined, { script_path: path.join(root, '脚本 file.sh') })).stdout.text, 'SCRIPT中文')
-    const native = ok(await call(node('process.stdout.write(JSON.stringify({cwd:process.cwd(),root:process.env.NIU_ROOT}));')))
+    const native = ok(await call(node("const fs=require('fs'),path=require('path');const base=path.dirname(process.env.NIU_ROOT);const receipt=JSON.parse(fs.readFileSync(path.join(base,'execution-provenance.json'),'utf8'));const cat=fs.statSync(path.join(process.env.NIU_ROOT,'usr/bin/cat.exe'));process.stdout.write(JSON.stringify({cwd:process.cwd(),root:process.env.NIU_ROOT,mode:receipt.mode,seal:receipt.seal,writeBits:cat.mode & 0o222,nlink:cat.nlink}));")))
     const data = JSON.parse(native.stdout.text)
     assert.equal(fs.realpathSync.native(data.cwd), fs.realpathSync.native(root)); assert.notEqual(data.root, path.dirname(file)); assert.equal(path.basename(data.root), 'winuxcmd'); assert.match(path.basename(path.dirname(data.root)), /^dsh-ops-niu-exec-/); assert.equal(fs.existsSync(data.root), false, 'execution copy disposed after settlement')
+    assert.ok(data.mode === 'hardlink' || data.mode === 'copy', JSON.stringify(data))
+    assert.equal(data.seal === 'readonly+acl' || data.seal === 'readonly', true, JSON.stringify(data))
+    assert.equal(data.writeBits, 0, 'the payload is sealed read-only while the command runs')
+    if (data.mode === 'hardlink') assert.ok(data.nlink >= 2, JSON.stringify(data))
+    else assert.equal(data.nlink, 1, JSON.stringify(data))
   })
   await test('workspace in/out and read-only effects are confined for shell and native child', async () => {
     ok(await call('printf allowed > allowed.txt'))
@@ -171,7 +197,41 @@ try {
     const denied = await ptc('printf blocked > ptc-readonly.txt')
     assert.equal(denied.timedOut, false, JSON.stringify(denied)); assert.notEqual(denied.exitCode, 0, JSON.stringify(denied)); assert.equal(fs.existsSync(path.join(root, 'ptc-readonly.txt')), false)
     agent.session.mode = 'danger-full-access'
-    ok(await call('printf full > full.txt', { workdir: outside }))
+    const idProbe = await call('id -a')
+    console.error('DEBUG full id: ' + JSON.stringify({ exit: idProbe.exitCode, out: idProbe.stdout?.text, sandbox: idProbe.sandbox }))
+    const whoamiExe = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'whoami.exe')
+    const whoProbe = await call(quote(whoamiExe) + ' /groups')
+    console.error('DEBUG full whoami: ' + JSON.stringify({ exit: whoProbe.exitCode, mandatory: (whoProbe.stdout?.text ?? '').split(/\r?\n/u).filter(line => /Mandatory Label/u.test(line)) }))
+    try {
+      ok(await call('printf full > full.txt', { workdir: outside }))
+    } catch (error) {
+      // Temporary diagnostics for the packaged-consumer-only Windows failure (#766).
+      const system32 = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32')
+      const icaclsExe = path.join(system32, 'icacls.exe')
+      const acl = target => {
+        const result = spawnSync(icaclsExe, [target], { encoding: 'utf8', windowsHide: true })
+        return `status=${result.status} error=${result.error?.message ?? 'none'}\n${result.stdout ?? ''}${result.stderr ?? ''}`
+      }
+      console.error('DEBUG failure=' + String(error?.message ?? error))
+      console.error('DEBUG outside stat=' + JSON.stringify(fs.statSync(outside).mode))
+      console.error('DEBUG outside acl (test token):\n' + acl(outside))
+      console.error('DEBUG root acl (test token):\n' + acl(root))
+      console.error('DEBUG home acl (test token):\n' + acl(TEST_HOME))
+      try { fs.writeFileSync(path.join(outside, 'node-probe.txt'), 'x'); console.error('DEBUG node probe write: ok') }
+      catch (probeError) { console.error('DEBUG node probe write failed: ' + probeError.code) }
+      const cmd = spawnSync(process.env.ComSpec ?? path.join(system32, 'cmd.exe'), ['/d', '/c', `echo x> "${path.join(outside, 'cmd-probe.txt')}"`], { encoding: 'utf8', windowsHide: true })
+      console.error('DEBUG cmd probe: status=' + cmd.status + ' error=' + (cmd.error?.message ?? 'none') + ' stderr=' + JSON.stringify(cmd.stderr))
+      try {
+        const identity = await call('id -a', { workdir: root })
+        console.error('DEBUG child id: exit=' + identity.exitCode + ' stdout=' + JSON.stringify(identity.stdout?.text) + ' stderr=' + JSON.stringify(identity.stderr?.text))
+      } catch (identityError) { console.error('DEBUG child id threw: ' + String(identityError)) }
+      try {
+        const childAcl = await call(quote(icaclsExe) + ' ' + quote(outside), { workdir: root })
+        console.error('DEBUG child acl outside: exit=' + childAcl.exitCode + ' stdout=' + JSON.stringify(childAcl.stdout?.text) + ' stderr=' + JSON.stringify(childAcl.stderr?.text))
+      } catch (childAclError) { console.error('DEBUG child acl threw: ' + String(childAclError)) }
+      console.error('DEBUG outside entries=' + JSON.stringify(fs.readdirSync(outside)))
+      throw error
+    }
     assert.equal(fs.readFileSync(path.join(outside, 'full.txt'), 'utf8'), 'full')
   })
   await test('the real frozen payload remains byte-identical after execution', async () => {

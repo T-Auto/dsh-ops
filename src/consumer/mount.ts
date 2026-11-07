@@ -11,6 +11,8 @@ import { NATIVE_RESIDENT_RAW } from '../capabilities/profiles.js'
 import { BASH_TOOL, publicToolName } from '../policy.js'
 import { BASH_PROMPT_SECTION, renderBashGuidance } from '../shells/prompt.js'
 import { mountJobWaitGuidance } from '../shells/job-wait-guidance.js'
+import { mountSpillRetention } from '../shells/spill-retention-runtime.js'
+import { spillRetentionConfig } from '../shells/spill-retention.js'
 import type { ConsumerPlan } from './types.js'
 
 export function mountConsumer(ctx: Context, plan: ConsumerPlan): void {
@@ -18,6 +20,12 @@ export function mountConsumer(ctx: Context, plan: ConsumerPlan): void {
   let renderShellGuidance: (agent: Agent) => string = () => ''
   const shellOwnsGuidance = (agent: Agent): boolean => Boolean(renderShellGuidance(agent))
   if (plan.shell) {
+    // Host subprocess spills outlive the call that produced them upstream, so the
+    // row that publishes the shell also owns one bounded retention runtime.
+    const releaseSpillRetention = mountSpillRetention(spillRetentionConfig(core), {
+      report: message => ctx.logger?.warn?.(message),
+    })
+    ctx.effect(() => () => releaseSpillRetention(), 'dsh-ops: spill retention')
     if (process.platform === 'win32') mountWorkspacePreparation(ctx)
     const shells = resolveShells(core)
     ctx.inject(['tools'], inner => mountSessionBash(inner, core, shells, gate))

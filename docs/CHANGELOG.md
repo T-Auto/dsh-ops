@@ -5,7 +5,23 @@ All notable changes to this package are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+- Add `dsh-ops cache status|reclaim`: report every temporary resource OPS can reproduce — kept provision downloads, Niubash staging/previous siblings, quarantined Bash IPC generations, audit-store writer temporaries and per-call execution trees — with per-row ownership evidence, `deleted`/`kept`/`unverified` decisions and byte totals. It previews by default, refuses `--yes` without `--all-hosts-stopped`, and never deletes on a name pattern, mtime or dead PID.
+- Failed provision downloads are registered under `<DSH_HOME>/dsh-ops/pending/` and reclaimed under a count/byte/age budget; a shell version is unpacked and verified in a staging sibling and only then renamed into place, so a failed or interrupted install leaves the previous version usable and no half-unpacked tree.
+- Niubash staging and previous siblings are verified before use: a complete staged tree is reused, a complete previous tree is restored when the target is missing, and trees that do not verify are kept. A refused previous-tree removal no longer reports a completed install as failed.
+- Offline Bash IPC cleanup reclaims quarantined copies beyond the newest two; audit-store `.tmp` writer files are swept when the store is opened for writing.
+- 新增 `dsh-ops cache status|reclaim`：报告 OPS 可再生的全部临时资源（保留的 provision 下载、Niubash staging/previous 兄弟目录、被隔离的 Bash IPC generation、审计写入临时文件和每调用执行树），逐项给出来源证据、`deleted`/`kept`/`unverified` 决策与字节数。默认预览，缺少 `--all-hosts-stopped` 时拒绝 `--yes`，绝不按名字、mtime 或死 PID 删除。
+- 失败的 provision 下载登记到 `<DSH_HOME>/dsh-ops/pending/` 并按数量/字节/年龄预算回收；shell 版本先在 staging 兄弟目录中解包校验、再 rename 就位，失败或中断不再留下半解包目录，也不再破坏旧版本。
+- Niubash 的 staging/previous 兄弟目录先验证后使用：完整 staging 直接复用、target 缺失时用完整 previous 恢复、无法验证的保留；删除 previous 失败不再把已完成的安装报成失败。
+- 离线 Bash IPC 清理会回收最新两份之外被隔离的副本；审计存储以写模式打开时清扫 `.tmp` 写入残留。
+- The per-call Niubash execution root now follows the payload's volume on Windows. When `DSH_OPS_EXEC_ROOT` is unset and `os.tmpdir()` sits on another volume, the clone is created below `<payload volume>\dsh-ops-exec`, and the default configuration keeps the zero-copy hardlink path instead of silently falling back to copying 785 MiB per call. That directory must be a real directory the current account owns — a junction, a directory owned by another account, or a path overlapping the payload is refused and the call falls back to the temp directory with the reason reported; an explicit `DSH_OPS_EXEC_ROOT` is validated the same way but fails loudly instead of being silently replaced. POSIX paths always reduce to one volume root, so a tmpfs `/tmp` still needs an explicit `DSH_OPS_EXEC_ROOT`.
+- 每次调用的 Niubash 执行根在 Windows 上改为跟随载荷所在卷：未设置 `DSH_OPS_EXEC_ROOT` 且 `os.tmpdir()` 与之不同卷时，克隆改在 `<载荷所在卷>\dsh-ops-exec` 下创建，默认配置因此保持零拷贝硬链接路径，而不是静默回退为每次调用复制 785 MiB。该目录必须是当前账户拥有的真实目录——重解析点、被其他账户拥有的目录、或与载荷路径重叠时会被拒绝，调用回退到临时目录并报告原因；显式设置的 `DSH_OPS_EXEC_ROOT` 走同样校验，但会直接报错，不会被静默替换。POSIX 路径一律归约为同一个卷根，因此 tmpfs 上的 `/tmp` 仍需显式设置 `DSH_OPS_EXEC_ROOT`。
+- Fixed the stale `niubash-consumer` assertion that still expected `all 10 checks passed` after `niubash-security-host` grew to 11 checks, which failed every full-gate run.
+- 修正 `niubash-consumer` 中过时的断言：`niubash-security-host` 增至 11 项检查后，consumer 仍断言 `all 10 checks passed`，导致完整门禁必挂。
+
 ## [0.5.0] — 2026-11-06 — Stable release
+
 
 - This stable release summarizes the user- and developer-facing changes since v0.4.0, including the 0.4.1-0.4.4 patch releases and the 0.5.0 previews. **Breaking:** the 0.5 series targets DSH 0.2.2-rc.1 and later 0.2.2 releases only; older hosts are no longer supported.
 - 本正式版汇总自 v0.4.0 起（含 0.4.1-0.4.4 补丁版与 0.5.0 预览版）的用户与开发者相关变更。**破坏性变更**：0.5 系列仅面向 DSH 0.2.2-rc.1 起的 0.2.2 发行线，不再支持旧宿主。
@@ -31,8 +47,16 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Add the read-only `dsh-ops disk status [--json]` report: an ownership registry for every disk family the plugin writes (R1–R13), a bounded measurement that never follows links, per-category default actions, reclaim evidence with blocked reasons, and a validated `disk.status`/`disk.retention` config skeleton (the retention keys are a contract only; this release deletes nothing).
+- 新增只读的 `dsh-ops disk status [--json]`：为插件写入的每个磁盘家族（R1–R13）建立归属清单，提供不跟随链接的有界测量、按类别的默认动作、带阻塞原因的回收证据，以及经校验的 `disk.status`/`disk.retention` 配置骨架（retention 键只是契约，本版不删除任何内容）。
+
 - Keep zero-byte ERROR_MORE_DATA completions incomplete instead of treating them as end-of-data.
 - ERROR_MORE_DATA 零字节完成保留不完整状态，不再误报数据结束。
+
+- Record deferred result-cache cleanup for a root before its first caller can use it, retry it with bounded exponential backoff when workspace-write authority returns or at the next start-up, and reclaim idle roots that no session references. The native purge deliberately keeps the root, its scope directory and the lock; the new host-side sweep reclaims empty and lock-only roots by default, validates the whole directory structure before deleting a name, skips and reports any root with an unknown entry, excludes this process's live roots, and reports aggregate root/byte budget violations as blocked roots without ever deleting a root that still holds snapshot data. A session whose cache root was removed externally now recreates it instead of failing. `dsh-ops result-cache status|reclaim [--apply]` exposes the same bounded pass (#721).
+- 在首个调用可使用结果缓存根之前登记该根的延迟清理；恢复 workspace-write 授权或下次启动时按有界指数退避重试，并回收已无会话引用的空闲根。native purge 有意保留根目录、作用域目录与锁，新的宿主侧清扫默认回收空根与只剩 lock 的根，删除任何名字前校验完整目录结构，遇未知条目整根跳过并报告，排除本进程活跃根，并把聚合根数/字节预算超限的根标为 blocked，永不删除仍含快照数据的根。缓存根被外部删除后，会话会重建它而不是报错。`dsh-ops result-cache status|reclaim [--apply]` 暴露同一次有界清扫（#721）。
+- Clone each Windows Niubash execution tree by hardlink, seal the shared payload inodes read-only for the duration of the command, and verify the clone stat-only before spawn. The execution receipt records the clone mode, the copy-fallback cause when hardlinks are refused, the source manifest digest and the seal level; `DSH_OPS_EXEC_ROOT` moves the execution root parent (physically resolved against the payload) and `NIUBASH_VERIFY=deep` restores the full per-call re-hash.
+- 每调用的 Windows Niubash 执行树改为硬链接克隆，命令运行期间把共享载荷 inode 封印为只读，spawn 前只做 stat 校验。执行收据记录克隆模式、硬链接被拒时的复制回退原因、源清单摘要与封印级别；`DSH_OPS_EXEC_ROOT` 移动执行根父目录（按载荷做物理路径解析），`NIUBASH_VERIFY=deep` 恢复每调用全量重哈希。
 - Preserve PTC paging of session-owned legacy snapshots and batch audits through the shared result adapter, while Native still accepts only ref:// references. Refuse result storage when the active PTC parent's presentation changes or its inspection fails before cache IO. Await shared publication readiness and roll back permanent delayed initialization failures.
 - 共享 result 适配器保留 PTC 对会话自有旧快照与 batch 审计的分页，Native 仍仅接受 ref:// 引用；活动 PTC 父调用的展示变化或检查失败时，在缓存 IO 前拒绝存储。等待共享发布就绪，并回滚延迟初始化的永久失败。
 
@@ -200,6 +224,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 新增可选下载约束，由用户配置 Bash/PowerShell 替代下载命令，保守识别字面命令并覆盖真实 Native/PTC 派发。未配置、含歧义或流式输出的调用保持原状，绝不自动执行替代命令（#506）。
 - Inspect Windows Bash image and ancestor integrity labels in `ladder`, warn about Low labels, and keep unreadable labels and runtime health distinct from static payload compatibility (#446).
 - `ladder` 只读检查 Windows Bash 映像与祖先路径的完整性标签，告警 Low 标签，并区分不可读标签、运行时健康和静态载荷兼容性（#446）。
+- Record every host subprocess spill path the plugin settles in `$DSH_HOME/ops-spill-ledger.jsonl` and reclaim only those ledger-owned files: a TTL window (default 30 days), an oldest-first total byte budget (default 256 MiB), at most 64 files per bounded pass, plus `bash-runtime spill-report [--json] [--sweep --yes]` and a one-line `bash-runtime status` summary. The provider's `dsh-subprocess-*` directories are never removed, unrecorded files and other providers' paths are never touched, and a failed unlink keeps its entry with `lastError` for the next pass (#720).
+- 在结算点把宿主 subprocess 的每个 spill 路径登记到 `$DSH_HOME/ops-spill-ledger.jsonl`，并且只回收账本内的文件：TTL 窗口（默认 30 天）、最旧优先的总字节预算（默认 256 MiB）、单次有界 pass 最多 64 个文件，并提供 `bash-runtime spill-report [--json] [--sweep --yes]` 与 `bash-runtime status` 的一行摘要。永不删除宿主的 `dsh-subprocess-*` 目录，不触碰未登记文件与其它 provider 的路径，删除失败时保留条目与 `lastError` 供下一轮重试（#720）。
 
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 

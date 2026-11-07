@@ -9,6 +9,8 @@ import { SECTION_ORDERS, TOOLING_SECTION, BASH_TOOL, publicToolName, hostShellRe
 import { NATIVE_FILE_TOOLS as FILE_TOOLS, NATIVE_RESIDENT_FILE_TOOLS } from '../capabilities/registry.js'
 import { resolveShells } from '../shells.js'
 import { mountSessionBash } from '../session-shells.js'
+import { mountSpillRetention } from '../shells/spill-retention-runtime.js'
+import { spillRetentionConfig } from '../shells/spill-retention.js'
 import { NativeFileTools } from '../projections/native/runtime.js'
 import { resolveWorker } from '../execution/runtime.js'
 import { visibleNames } from '../publication/surface.js'
@@ -124,6 +126,11 @@ export function applyComponent(root: Context, rawConfig: unknown, component: Com
     }), `dsh-ops: ${component} tooling`)
   })
   if (component === 'shell') {
+    // The retained legacy shell row owns the host spill files its calls create.
+    root.effect(() => {
+      const release = mountSpillRetention(spillRetentionConfig(config), { report: message => report(root, message, 'warn') })
+      return () => release()
+    }, 'dsh-ops: spill retention')
     // Workspace preparation is Windows-specific; the host owns its PowerShell executor.
     if (process.platform === 'win32') mountWorkspacePreparation(root)
     root.inject(['tools'], ctx => {

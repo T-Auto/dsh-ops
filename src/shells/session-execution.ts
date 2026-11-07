@@ -57,6 +57,11 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
       await runtime.verify?.()
       signal.throwIfAborted()
       assertAuthority()
+      if (process.env.DSH_OPS_DEBUG_EXEC === '1') console.error('DEBUGEXEC ' + JSON.stringify({
+        mode: policy.mode, standing: standing.mode, confined: confinement !== undefined,
+        exec: (confinement?.argv ?? argv)[0],
+        argv: argv.map(argument => argument.length > 120 ? argument.slice(0, 120) + '…' : argument),
+      }))
       return confinement?.argv ?? argv
     },
     projectResult: (value: ShellResult) => {

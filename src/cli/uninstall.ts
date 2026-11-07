@@ -13,6 +13,7 @@ import fs from 'node:fs'
 import { errorMessage } from '../shells/types.js'
 import path from 'node:path'
 import { fastctxDataDir, managedDir } from './report.js'
+import { unsealDirectorySync } from '../niubash/seal.js'
 
 /**
  * Render a byte count for a human report.
@@ -122,6 +123,7 @@ export function commandUninstall({ yes, purgeFastctx, dryRun }: { yes: boolean; 
     console.log(`  action:    would remove this directory and its ${formatBytes(managedReport.bytes)}`)
   } else {
     try {
+      unsealDirectorySync(managed)
       fs.rmSync(managed, { recursive: true, force: true })
       console.log('  action:    removed')
     } catch (error) {

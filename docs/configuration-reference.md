@@ -17,7 +17,12 @@ Plugin authors can also mount the [public integration API](integration-api.md) i
 | `presets` | Empty by default; map of exact preset ids to explicit consumer options |
 | `discovery` | Enabled; default built-in Native pool, maxResults 3, no always-loaded selections |
 | `panel`, `tui` | Disabled by default; opt-in capture and read-only sidebar |
+| `resultCache` | Enabled; sweeps idle result-cache roots at start-up and after the last owner unloads. `maxRoots`/`maxTotalBytes` default 0 (report only), `maxAgeMs` defaults to 3600000 (idle grace), `sweepEnabled` defaults true |
 | `other.pwsh7Link` | When absent follows companion detection; saved boolean wins |
+| `disk` | Read-only ownership report; `status.includeRepository` false and `status.maxEntries` 5000 by default; the `retention` block is a validated contract only (no eviction in this release) |
+
+`disk.status.*` and the reserved `disk.retention.*` keys are YAML-only. See [Disk and cache](disk-and-cache.md) for
+the resource inventory, the read-only `dsh-ops disk status` report and what it deliberately never scans.
 
 The page uses native Switch controls. Built-in cards start collapsed. Disabling a card greys its
 switches without erasing saved values. Standard/PTC/Cordis have `residentTools` (default true),
@@ -111,6 +116,20 @@ Built-in sections retain validated worker/Shell settings (`binaryPath`, `require
 `publishBashTool` alias for `bash`. `ptc.allowedTools` / `ptc.alwaysLoaded` control typed SDK APIs;
 `discovery.allowedTools` / `discovery.alwaysLoaded` configure the built-in Native pool. Use
 `presets.<id>` for an exact fully customized profile rather than adding preset-name exceptions.
+`resultCache` is a YAML section: the default sweep only reclaims roots with no snapshot data left
+(empty roots, or scope directories holding just the lock). The aggregate root/byte budgets default
+to 0 and mark over-budget roots as blocked in the report; the sweep never deletes a root that still
+holds snapshot data. `dsh-ops result-cache status|reclaim [--apply]` reports and runs the same
+bounded pass.
+
+Host subprocess spill retention is bounded by three more built-in keys. `spillRetentionDays`
+(default 30; `0` reports only and never deletes) is the window applied to the mtime of a spilled
+file. `spillTotalBudgetMiB` (default 256; `0` disables the budget) caps the total retained bytes,
+evicting the oldest first. `spillSweepEnabled` (default true) controls the automatic pass on
+component activation and every 256 settlements. Only paths recorded at a settlement in
+`<DSH_HOME>/ops-spill-ledger.jsonl` are eligible, at most 64 files are removed per pass, and the
+host's `dsh-subprocess-*` directories are never removed. Inspect and sweep from the CLI with
+`dsh-ops bash-runtime spill-report` (see [usage](usage.md)).
 
 The bundle's `discovery.enabled` controls built-in **Native** dynamic entry publication, not the
 PTC SDK loader. PTC loading follows `ptc.dynamicTools` and `global.dynamicTools`. The Native keys
@@ -127,6 +146,13 @@ therefore covers more than reads. It defaults on even in danger-full-access. Ref
 report `CREDENTIAL_DENIED`, no effect and no retry, and do not disclose denied paths or parents.
 `DSH_OPS_DENY_READ` can widen the fence; disabling the Native override is an explicit operator
 choice for that consumer, not an authorization grant.
+
+`DSH_OPS_EXEC_ROOT` names the parent directory of the per-call Windows Niubash execution tree
+(default: the OS temporary directory). Point it at an antivirus allow-list location or a specific
+volume to keep hardlink cloning on the payload's volume; a cross-volume root still works through the
+copy fallback recorded in the execution receipt. The root must not be inside the payload.
+`NIUBASH_VERIFY=deep` restores the full per-call payload re-hash; the default per-call check is
+stat-only (path set, sizes, directories, read-only seal, link counts).
 
 On Windows restricted Bash requires the pinned MSYS and verified private IPC proxies. Unsupported
 custom Bash returns `EXECUTOR_UNAVAILABLE`; never bypass confinement or change shells as a repair.

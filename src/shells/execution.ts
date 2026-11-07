@@ -5,6 +5,8 @@ import type { SubprocessHandle, SubprocessOutputReader, SubprocessOutputRead } f
 import type { ShellExecutorOptions, ShellExecutionSpec, ShellCall, ShellExecution, ShellResult, ShellStream } from './types.js'
 import { errorMessage } from './types.js'
 import { DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_SPILL_BYTES, shellEnvOverrides } from './constants.js'
+import { recordSettledSpill } from './spill-ledger.js'
+import { noteSpillSettled } from './spill-retention-runtime.js'
 import { formatBashSpawnError } from './spawn-error.js'
 
 const emptyRead = (): SubprocessOutputRead => ({ text: '', nextOffset: 0, lossy: false })
@@ -24,20 +26,45 @@ function adaptElectronRunner(argv: string[], env: NodeJS.ProcessEnv): NodeJS.Pro
   return { ...cleaned, [ELECTRON_NODE_MODE]: '1' }
 }
 
-/** Read the retained stream after settlement, preserving honest truncation facts. */
-export function settledStream(reader: SubprocessOutputReader | undefined, includeMetadata = false): ShellStream {
+/** One settled stream plus the total the reader reported, for the ledger. */
+interface SettledStream { stream: ShellStream; bytesTotal: number }
+
+function collectStream(reader: SubprocessOutputReader | undefined, includeMetadata: boolean): SettledStream {
   const read = reader?.readFrom?.(0) ?? emptyRead()
   const text = typeof read.text === 'string' ? read.text : ''
+  const bytesTotal = Number.isFinite(read.nextOffset) ? read.nextOffset : Buffer.byteLength(text)
   return {
-    text,
-    truncated: read.lossy === true,
-    ...(read.spillPath !== undefined ? { spillPath: read.spillPath } : {}),
-    ...(includeMetadata ? {
-      bytes: Buffer.byteLength(text),
-      bytesTotal: Number.isFinite(read.nextOffset) ? read.nextOffset : Buffer.byteLength(text),
-      lines: text === '' ? 0 : text.split(/\n/).length - (text.endsWith('\n') ? 1 : 0),
-    } : {}),
+    stream: {
+      text,
+      truncated: read.lossy === true,
+      ...(read.spillPath !== undefined ? { spillPath: read.spillPath } : {}),
+      ...(includeMetadata ? {
+        bytes: Buffer.byteLength(text),
+        bytesTotal,
+        lines: text === '' ? 0 : text.split(/\n/).length - (text.endsWith('\n') ? 1 : 0),
+      } : {}),
+    },
+    bytesTotal,
   }
+}
+
+/** Read the retained stream after settlement, preserving honest truncation facts. */
+export function settledStream(reader: SubprocessOutputReader | undefined, includeMetadata = false): ShellStream {
+  return collectStream(reader, includeMetadata).stream
+}
+
+/**
+ * Record the host's settled spill files in the ownership ledger and tell the
+ * retention runtime a settlement happened. Settlement belongs to the command:
+ * neither step may change its result or throw.
+ */
+function recordSettledStreams(streams: readonly SettledStream[], exec: ShellCall): void {
+  for (const { stream, bytesTotal } of streams) {
+    if (typeof stream.spillPath !== 'string') continue
+    recordSettledSpill({ path: stream.spillPath, bytes: bytesTotal,
+      ...(typeof exec.agent?.session?.id === 'string' ? { sessionId: exec.agent.session.id } : {}) })
+  }
+  noteSpillSettled()
 }
 
 /**
@@ -90,6 +117,7 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
   const assertRunning = () => { expire(); controller.signal.throwIfAborted() }
   const run = async (): Promise<ShellResult> => {
     let value: ShellResult
+    let streams: SettledStream[] = []
     let phase: 'preparation' | 'spawn' = 'preparation'
     try {
       assertRunning()
@@ -125,23 +153,28 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
         env: prepareArgv ? adaptElectronRunner(preparedArgv, childEnv) : childEnv,
       })
       const outcome = await handle.done
+      streams = [collectStream(handle.collected?.stdout, spec.includeDiagnostics), collectStream(handle.collected?.stderr, spec.includeDiagnostics)]
       value = {
         ...(outcome?.exitCode != null ? { exitCode: outcome.exitCode } : {}),
         ...(outcome?.signal != null ? { signal: outcome.signal } : {}),
         ...flags(),
-        stdout: settledStream(handle.collected?.stdout, spec.includeDiagnostics),
-        stderr: settledStream(handle.collected?.stderr, spec.includeDiagnostics),
+        stdout: streams[0].stream,
+        stderr: streams[1].stream,
       }
     } catch (error) {
       expire()
+      streams = [collectStream(handle?.collected?.stdout, spec.includeDiagnostics), collectStream(handle?.collected?.stderr, spec.includeDiagnostics)]
       value = {
         // Preparation owns authority/runtime diagnostics; spawn errors need routing.
         error: phase === 'preparation' ? errorMessage(error) : formatBashSpawnError(error, file, source, spec.workdir),
         ...flags(),
-        stdout: settledStream(handle?.collected?.stdout, spec.includeDiagnostics),
-        stderr: settledStream(handle?.collected?.stderr, spec.includeDiagnostics),
+        stdout: streams[0].stream,
+        stderr: streams[1].stream,
       }
     } finally {
+      // Settlement is the one place the plugin learns a spill path exists, so the
+      // ownership ledger and the bounded retention counter are updated here.
+      try { recordSettledStreams(streams, exec) } catch { /* retention must never fail a command */ }
       clearTimeout(timer)
       callerSignal?.removeEventListener('abort', onCallerAbort)
     }
