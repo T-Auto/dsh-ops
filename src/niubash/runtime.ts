@@ -302,7 +302,34 @@ export function verifiedNiubash(file: string, inheritedPath = process.env.PATH ?
  * No execution copy is reused or trusted after a command. The outer host still
  * owns confinement.
  */
-export async function prepareNiubash(file: string, inheritedPath = process.env.PATH ?? process.env.Path ?? '', signal: AbortSignal): Promise<NiubashRuntime> {
+/** Who the execution tree must not share inodes with, when the caller knows it. */
+export interface PrepareNiubashOptions {
+  /**
+   * The session workspace root. A root below it must clone by copy: the host
+   * sandbox labels the workspace tree with an inheritable Low mandatory label,
+   * and a hard-linked payload would export that label onto the shared inode, so
+   * every later executable image would run at Low integrity — including full
+   * access, which must not be confined.
+   */
+  workspaceRoot?: string
+}
+
+/**
+ * Whether an execution root may share the payload's inodes. Sharing is refused
+ * for a root below the workspace, judged on the written path and its physical
+ * resolution so a junction cannot hide the root there.
+ */
+async function sharesPayloadInodes(root: string, workspaceRoot: string | undefined): Promise<boolean> {
+  if (typeof workspaceRoot !== 'string' || workspaceRoot === '') return true
+  for (const [candidate, base] of [[root, workspaceRoot],
+    [await physicalPath(root), await physicalPath(workspaceRoot)]] as const) {
+    if (isInside(path.relative(base, candidate))) return false
+  }
+  return true
+}
+
+export async function prepareNiubash(file: string, inheritedPath = process.env.PATH ?? process.env.Path ?? '', signal: AbortSignal,
+  options: PrepareNiubashOptions = {}): Promise<NiubashRuntime> {
   signal.throwIfAborted()
   if (!path.isAbsolute(file) || !isNiubashExecutable(file)) throw unavailable('expected an absolute niu.exe path')
   const source = path.dirname(file)
@@ -322,6 +349,7 @@ export async function prepareNiubash(file: string, inheritedPath = process.env.P
   }
   try {
     const clone = await cloneExecutionTree({ source, root, signal,
+      hardlink: await sharesPayloadInodes(root, options.workspaceRoot),
       files: NIUBASH_PIN.sizes, derived: EXECUTION_DERIVED,
       directories: NIUBASH_PIN.directories, stateDirectories: NIUBASH_EXECUTION_DIRECTORIES, extra: [NIUBASH_RECEIPT] })
     const immutable = Object.keys(clone.sizes).map(name => path.join(root, name))

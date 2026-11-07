@@ -70,6 +70,13 @@ export interface CloneRequest extends TreeInventory {
   source: string
   /** The fresh, empty execution root. */
   root: string
+  /**
+   * Share the immutable payload's inodes. A tree placed below a directory the
+   * host sandbox labels (the workspace) must pass `false`: an inheritable
+   * mandatory label applied to that tree would otherwise reach the payload's
+   * shared file objects and make every later executable image run Low.
+   */
+  hardlink?: boolean
   signal?: AbortSignal
   ops?: Partial<TreeOps>
 }
@@ -146,20 +153,24 @@ export async function cloneExecutionTree(request: CloneRequest): Promise<CloneRe
   }
 
   await createDirectories()
-  let mode: CloneMode = 'hardlink'
+  let mode: CloneMode = request.hardlink === false ? 'copy' : 'hardlink'
   let fallback: CloneFallback | undefined
-  try {
-    await materialize('hardlink')
-  } catch (error) {
-    if (!isCrossDeviceLinkFailure(error)) throw error
-    fallback = { code: String((error as NodeJS.ErrnoException).code ?? 'unknown'), detail: errorMessage(error) }
-    signal?.throwIfAborted()
-    // A partial hardlink clone cannot be converted in place; rebuild the tree as
-    // copies, which is the documented cross-device fallback.
-    await ops.rm(root)
-    await createDirectories()
-    mode = 'copy'
+  if (mode === 'copy') {
     await materialize('copy')
+  } else {
+    try {
+      await materialize('hardlink')
+    } catch (error) {
+      if (!isCrossDeviceLinkFailure(error)) throw error
+      fallback = { code: String((error as NodeJS.ErrnoException).code ?? 'unknown'), detail: errorMessage(error) }
+      signal?.throwIfAborted()
+      // A partial hardlink clone cannot be converted in place; rebuild the tree as
+      // copies, which is the documented cross-device fallback.
+      await ops.rm(root)
+      await createDirectories()
+      mode = 'copy'
+      await materialize('copy')
+    }
   }
 
   const links: Record<string, number> = {}

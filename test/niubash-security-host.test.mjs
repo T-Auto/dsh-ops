@@ -61,11 +61,16 @@ try {
     const previous = process.env.DSH_OPS_EXEC_ROOT
     process.env.DSH_OPS_EXEC_ROOT = configured
     try {
-      const value = ok(await call(node('process.stdout.write(process.env.NIU_ROOT)')))
-      // NIU_ROOT is the clone's winuxcmd directory; its parent is the per-call tree.
-      const instance = path.dirname(value.stdout.text)
+      const value = ok(await call(node("const fs=require('fs'),path=require('path');const instance=path.dirname(process.env.NIU_ROOT);const receipt=JSON.parse(fs.readFileSync(path.join(instance,'execution-provenance.json'),'utf8'));const image=fs.statSync(path.join(instance,'niu.exe'));process.stdout.write(JSON.stringify({instance,receipt:receipt.mode,nlink:image.nlink}))")))
+      const data = JSON.parse(value.stdout.text)
+      const instance = data.instance
       assert.match(path.basename(instance), /^dsh-ops-niu-exec-/u)
       assert.equal(fs.realpathSync.native(path.dirname(instance)), fs.realpathSync.native(configured))
+      // A root below the workspace is inside the tree the host sandbox labels Low;
+      // sharing the payload's inodes would export that label onto the payload and
+      // make every later image, full access included, run at Low integrity.
+      assert.equal(data.receipt, 'copy', 'an execution root below the workspace clones by copy')
+      assert.equal(data.nlink, 1, 'the workspace-rooted clone does not share the payload inode')
       assert.equal(fs.existsSync(instance), false, 'the execution tree is disposed')
     } finally {
       if (previous === undefined) delete process.env.DSH_OPS_EXEC_ROOT

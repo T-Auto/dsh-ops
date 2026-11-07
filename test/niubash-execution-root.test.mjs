@@ -400,6 +400,22 @@ await test('a hardlink refusal builds a complete copy tree and records the cause
   } finally { await tidy(base) }
 }))
 
+await test('a clone that must not share payload inodes copies without a fallback', async () => withTempDir('niu-copy', async base => {
+  try {
+    const { source, root, clone } = await cloneTree(base, { hardlink: false })
+    assert.equal(clone.mode, 'copy')
+    assert.equal(clone.fallback, undefined)
+    assert.equal(clone.dataBytes, Object.values(clone.sizes).reduce((total, size) => total + size, 0))
+    for (const name of Object.keys(CONTENT)) {
+      assert.equal(fs.statSync(path.join(root, name)).nlink, 1, name + ' is a private copy')
+      assert.equal(fs.statSync(path.join(source, name)).nlink, 1, name + ' stays unshared in the payload')
+    }
+    await verifyTreeStat({ root, sizes: clone.sizes, links: clone.links,
+      directories: [...DIRECTORIES, ...STATE_DIRECTORIES], sealed: false })
+    assert.equal(niubashExecutionReceipt({ mode: clone.mode, seal: 'readonly' }).mode, 'copy')
+  } finally { await tidy(base) }
+}))
+
 await test('an execution root that resolves inside the payload is refused', async () => withTempDir('niu-root', async base => {
   try {
     const source = buildPinnedPayload(base)
