@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Stop treating the composition root as the receiver for event subscriptions and effects. All four such call sites now take the row context they were given, and dsh-tui's first-launch session creation no longer fails with `root.events.on is unavailable from a plugin activation` (or the `root.effect` refusal that followed it). **Behaviour change, not an equivalent refactor:** a subscription's lifetime moves from the composition root fiber back to the registering row fiber, so listeners are released when that plugin row unloads or reloads instead of living until the process exits. The shared registry-refusal queue keeps its cross-row 25/100/400/1000 ms recovery window; teardown is now reference-counted per owner fiber and fires only when the last reference goes, and a queue whose teardown effect was refused is no longer left half built.
+- 不再把组合根当作事件订阅与 effect 的接收者：四处调用点改回它们各自收到的行上下文，dsh-tui 首启创建会话不再以 `root.events.on is unavailable from a plugin activation` 失败（其后接着拦的 `root.effect` 拒斥同样消失）。**这是行为改变，不是等价重构**：订阅生命周期从组合根 fiber 回到注册方的行 fiber，插件行卸载或热重载时监听者随之释放，不再一直活到进程结束。跨插件行共享的注册拒绝队列保留 25/100/400/1000 ms 恢复窗口；销毁时机改为按 owner fiber 引用计数、归零才销毁，`queueFor` 中 teardown effect 被拒后留下「队列仍在却无 teardown」的顺序问题一并修掉。
+
 ## [0.5.1] — 2026-11-08 — Patch release
 
 - Bound temporary-resource growth through ownership ledgers, deferred result-cache cleanup and explicit cache reclamation; preserve data-bearing snapshots and user content. Host output spills now have bounded retention rather than accumulating indefinitely.
