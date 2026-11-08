@@ -317,4 +317,18 @@ await test('an explicit events ctx carries the subscriptions and the admission l
   assert.deepEqual(sorted(eventsB.disposed), sorted(ADMISSION_EVENTS))
 })
 
+await test('an explicit events ctx receives the runtime subscriptions instead of the read ctx', async () => {
+  const read = subscriptionRecorder()
+  const events = subscriptionRecorder()
+  const runtime = new NativeFileTools({ ctx: read.ctx, events: events.ctx, config: { workerPath: WORKER, required: true } })
+  try {
+    assert.deepEqual(await runtime.start([]), [])
+  } finally {
+    await runtime.stop()
+  }
+  assert.deepEqual(read.subscribed, [], 'the read ctx does not become the event receiver')
+  assert.deepEqual(sorted(events.subscribed), sorted([...RUNTIME_EVENTS, ...ADMISSION_EVENTS]))
+  assert.deepEqual(sorted(events.disposed), sorted([...RUNTIME_EVENTS, ...ADMISSION_EVENTS]), 'disposal releases every runtime listener')
+})
+
 report('context-read-dedup')
