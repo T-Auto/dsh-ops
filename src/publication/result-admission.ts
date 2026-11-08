@@ -2,20 +2,31 @@
 import type { Context, ToolRunContext, ToolExecution } from '../adapter/dsh/types.js'
 import { inspectPresentation } from './presentation.js'
 const owners = new WeakMap<object, { refs: number; active: Map<symbol, ToolExecution>; revision(): number; dispose(): void }>()
-export function acquireResultAdmission(ctx: Context): { authorize(exec: ToolRunContext): Promise<(() => boolean) | undefined>; dispose(): void } {
-  const root = ctx.root ?? ctx
-  let owner = owners.get(root)
+/**
+ * Track the live `run_code` parent behind one execution surface.
+ *
+ * `ctx` answers the authorization questions (the prompt service and the
+ * agent/toolSet identity); `subscribe` only receives the two event
+ * subscriptions and keys the shared ledger, so the ledger is released with the
+ * listeners that feed it. The two differ where a shared file source reads
+ * through an agent-scoped ctx but must still observe `session/event`.
+ * @param ctx - the context that serves authorization.
+ * @param subscribe - the context that receives events; defaults to `ctx`.
+ * @returns the per-surface admission handle.
+ */
+export function acquireResultAdmission(ctx: Context, subscribe: Context = ctx): { authorize(exec: ToolRunContext): Promise<(() => boolean) | undefined>; dispose(): void } {
+  let owner = owners.get(subscribe)
   if (!owner) {
     const active = new Map<symbol, ToolExecution>()
     let revision = 0
-    const unwatchPrompt = root.on('system-prompt/change', () => { ++revision })
-    const unwatch = root.on('tools/execute', async (exec, next) => {
+    const unwatchPrompt = subscribe.on('system-prompt/change', () => { ++revision })
+    const unwatch = subscribe.on('tools/execute', async (exec, next) => {
       if (exec.name !== 'run_code' || exec.parent || !exec.agent || !exec.toolSet) return next()
       active.set(exec.token, exec)
       try { return await next() } finally { active.delete(exec.token) }
     })
     owner = { refs: 0, active, revision: () => revision, dispose() { unwatch(); unwatchPrompt() } }
-    owners.set(root, owner)
+    owners.set(subscribe, owner)
   }
   const owned = owner
   ++owned.refs
@@ -44,7 +55,7 @@ export function acquireResultAdmission(ctx: Context): { authorize(exec: ToolRunC
     dispose() {
       if (disposed) return
       disposed = true
-      if (--owned.refs === 0) { owned.dispose(); owned.active.clear(); owners.delete(root) }
+      if (--owned.refs === 0) { owned.dispose(); owned.active.clear(); owners.delete(subscribe) }
     },
   }
 }

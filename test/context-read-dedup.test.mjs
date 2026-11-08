@@ -3,6 +3,7 @@ import { ToolExecutionPipeline } from '@deepseek-ai/dsh-tools/pipeline'
 import { createAssistantMessage, createToolResultMessage, createUserMessage, freezeMessage } from '@deepseek-ai/dsh-llm'
 import { assert, test, report } from './lib/harness.mjs'
 import { NativeFileTools } from '../lib/projections/native/runtime.js'
+import { acquireResultAdmission } from '../lib/publication/result-admission.js'
 import { WORKER } from './lib/boundary.mjs'
 import { requireWorker } from './lib/boundary.mjs'
 import { fixture, READ, text, full, elided } from './lib/context-read.mjs'
@@ -264,4 +265,56 @@ await test('root observers remain runtime-owned and separate source lifetimes ca
   elided(await read())
   assert.equal(first.value.data.items.length, 30)
 }))
+
+// A host that guards the compose root refuses `root.events.*` from a plugin
+// activation (dsh-tui 0.19.0). Subscriptions must therefore be owned by the ctx
+// that constructs the runtime, never by `ctx.root`.
+const guardedRoot = () => {
+  const deny = method => () => { throw new Error(`root.events.${method} is unavailable from a plugin activation`) }
+  const events = { on: deny('on'), once: deny('once'), register: deny('register'), unregister: deny('unregister') }
+  return { events, on: (...args) => events.on(...args), once: (...args) => events.once(...args), effect: (...args) => events.register(...args) }
+}
+const subscriptionRecorder = () => {
+  const subscribed = [], disposed = []
+  return { subscribed, disposed, ctx: { on(name) { subscribed.push(name); return () => disposed.push(name) } } }
+}
+const ADMISSION_EVENTS = ['system-prompt/change', 'tools/execute']
+const RUNTIME_EVENTS = ['agent/disposed', 'llm/stream', 'session/disposed', 'session/event', 'tools/result']
+const sorted = names => [...names].sort()
+
+await test('a guarded compose root cannot receive subscriptions; the constructing ctx owns them', async () => {
+  const subscribed = []
+  const ctx = { root: guardedRoot(), get: () => undefined, on(name) { subscribed.push(name); return () => {} } }
+  const runtime = new NativeFileTools({ ctx, config: { workerPath: WORKER, required: true } })
+  const admission = acquireResultAdmission(ctx)
+  try {
+    assert.deepEqual(await runtime.start([]), [])
+  } finally {
+    await runtime.stop()
+    admission.dispose()
+  }
+  assert.deepEqual(sorted(subscribed), sorted([...RUNTIME_EVENTS, ...ADMISSION_EVENTS]),
+    'every subscription lands on the constructing ctx; a root receiver would have thrown')
+})
+
+await test('an explicit events ctx carries the subscriptions and the admission ledger', async () => {
+  const identity = subscriptionRecorder()
+  const eventsA = subscriptionRecorder()
+  const eventsB = subscriptionRecorder()
+  const first = acquireResultAdmission(identity.ctx, eventsA.ctx)
+  const second = acquireResultAdmission(identity.ctx, eventsB.ctx)
+  try {
+    assert.deepEqual(identity.subscribed, [], 'the authorization ctx never receives an event listener')
+    assert.deepEqual(sorted(eventsA.subscribed), sorted(ADMISSION_EVENTS))
+    assert.deepEqual(sorted(eventsB.subscribed), sorted(ADMISSION_EVENTS),
+      'the ledger is keyed by the subscription ctx, not shared through the authorization ctx')
+    first.dispose()
+    assert.deepEqual(sorted(eventsA.disposed), sorted(ADMISSION_EVENTS), 'disposal releases by the same key')
+    assert.deepEqual(eventsB.disposed, [], 'another subscription ctx keeps its listeners and ledger')
+  } finally {
+    second.dispose()
+  }
+  assert.deepEqual(sorted(eventsB.disposed), sorted(ADMISSION_EVENTS))
+})
+
 report('context-read-dedup')

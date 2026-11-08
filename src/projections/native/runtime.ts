@@ -21,6 +21,8 @@ export interface NativeRuntimeConfig { workerPath?: string; required?: boolean; 
 type Reporter = (message: string, level?: string) => void
 export class NativeFileTools {
   readonly ctx: Context
+  /** The context that receives provider and execution events. */
+  readonly events: Context
   readonly config: NativeRuntimeConfig
   readonly report: Reporter
   file: string | undefined
@@ -31,17 +33,20 @@ export class NativeFileTools {
   private readonly readDedup: ReturnType<typeof createNativeReadDedup>
   private readonly resultAdmission: ReturnType<typeof acquireResultAdmission>
   private unregisterProvider: (() => void) | undefined
-  constructor({ ctx, config, report }: { ctx: Context; config: NativeRuntimeConfig; report?: Reporter }) {
+  constructor({ ctx, events, config, report }: { ctx: Context; events?: Context; config: NativeRuntimeConfig; report?: Reporter }) {
     this.ctx = ctx
+    this.events = events ?? ctx
     this.config = config
     this.report = report ?? (() => {})
     this.file = undefined
     this.disposers = []
     this.stopped = false
-    // Provider and execution events originate at root, not the agent source scope.
-    // The runtime still owns (and disposes) its independent evidence observer.
-    this.readDedup = createNativeReadDedup(ctx.root ?? ctx)
-    this.resultAdmission = acquireResultAdmission(ctx)
+    // Provider and execution events are subscribed on this ctx: an untagged
+    // row-level ctx sees the same seven events as the compose root, whereas
+    // agent.ctx misses `session/event` and `session/disposed`. A shared file
+    // source passes the row ctx as `events` while it reads through agent.ctx.
+    this.readDedup = createNativeReadDedup(this.events)
+    this.resultAdmission = acquireResultAdmission(ctx, this.events)
   }
 
   async start(names: readonly NativeToolName[] = NATIVE_FILE_TOOLS as readonly NativeToolName[]): Promise<string[]> {
