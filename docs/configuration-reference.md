@@ -152,7 +152,7 @@ choice for that consumer, not an authorization grant.
 volume to keep hardlink cloning on the payload's volume; a cross-volume root still works through the
 copy fallback recorded in the execution receipt. The root must not be inside the payload.
 `NIUBASH_VERIFY=deep` restores the full per-call payload re-hash; the default per-call check is
-stat-only (path set, sizes, directories, read-only seal, link counts).
+stat-only (path set, sizes, directories, read-only seal, stable file identities and private-file link counts).
 
 On Windows restricted Bash requires the pinned MSYS and verified private IPC proxies. Unsupported
 custom Bash returns `EXECUTOR_UNAVAILABLE`; never bypass confinement or change shells as a repair.

@@ -22,7 +22,7 @@ import {
   verifyTreeStat,
   type TreeExpectation,
 } from './execution-tree.js'
-import { releaseShared, sealReadOnly, sealShared, sealTree, unsealTree } from './seal.js'
+import { releaseShared, retainShared, sealReadOnly, sealShared, sealTree, unsealTree } from './seal.js'
 
 const unavailable = (detail: string): Error => new Error(`EXECUTOR_UNAVAILABLE: Niubash payload verification failed: ${detail}. Restore the complete pinned v1.5.0 portable tree; this is not a user authorization denial. Do not bypass confinement or fall back to another shell.`)
 
@@ -348,6 +348,7 @@ export async function prepareNiubash(file: string, inheritedPath = process.env.P
     await releaseShared(source, root)
   }
   try {
+    await retainShared(source, root)
     const clone = await cloneExecutionTree({ source, root, signal,
       hardlink: await sharesPayloadInodes(root, options.workspaceRoot),
       files: NIUBASH_PIN.sizes, derived: EXECUTION_DERIVED,
@@ -365,8 +366,13 @@ export async function prepareNiubash(file: string, inheritedPath = process.env.P
     await fs.promises.writeFile(receiptFile, receiptText)
     await sealReadOnly([receiptFile])
     const sizes = { ...clone.sizes, [EXECUTION_RECEIPT]: Buffer.byteLength(receiptText) }
-    const links = { ...clone.links, [EXECUTION_RECEIPT]: (await fs.promises.lstat(receiptFile)).nlink }
-    const expectation: TreeExpectation = { sizes, links, directories: EXECUTION_DIRECTORIES, sealed: true }
+    // nlink belongs to the shared inode, not this tree: sibling calls and other
+    // hosts may change it at any instant. Pin the inode itself instead. Copies
+    // and the private execution receipt still require their original link count.
+    const receiptStat = await fs.promises.lstat(receiptFile)
+    const links = { ...(clone.mode === 'copy' ? clone.links : {}), [EXECUTION_RECEIPT]: receiptStat.nlink }
+    const identities = { ...clone.identities, [EXECUTION_RECEIPT]: { dev: receiptStat.dev, ino: receiptStat.ino } }
+    const expectation: TreeExpectation = { sizes, links, identities, directories: EXECUTION_DIRECTORIES, sealed: true }
     const verifyNow = async () => {
       await verifySourceTree(source, deep, signal)
       // Defence in depth: re-apply the read-only seal immediately before the stat

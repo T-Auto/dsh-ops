@@ -20,6 +20,7 @@ import {
 import {
   isSealedMode,
   releaseShared,
+  retainShared,
   removeSealedTree,
   sealReadOnly,
   sealShared,
@@ -434,6 +435,64 @@ await test('an execution root that resolves inside the payload is refused', asyn
       if (previous === undefined) delete process.env.DSH_OPS_EXEC_ROOT
       else process.env.DSH_OPS_EXEC_ROOT = previous
     }
+  } finally { await tidy(base) }
+}))
+
+await test('shared identities survive sibling churn without copying, and reject same-size replacement', async () => withTempDir('niu-identity', async base => {
+  try {
+    const source = buildSource(base)
+    const firstRoot = path.join(base, 'first')
+    const first = await cloneInto(source, firstRoot)
+    const verify = () => verifyTreeStat({ root: firstRoot, sizes: first.sizes, identities: first.identities,
+      directories: [...DIRECTORIES, ...STATE_DIRECTORIES], sealed: false })
+    await verify()
+    // Force a count change AFTER the first expectation was captured.
+    for (let i = 0; i < 8; i++) {
+      const sibling = path.join(base, `sibling-${i}`)
+      const clone = await cloneInto(source, sibling)
+      assert.equal(clone.mode, 'hardlink'); assert.equal(clone.dataBytes, 0)
+      assert.notEqual(fs.statSync(path.join(firstRoot, 'LICENSE.txt')).nlink, first.links['LICENSE.txt'])
+      await verify()
+      await removeSealedTree(sibling, NO_ACL)
+      await verify()
+    }
+    assert.equal(fs.statSync(path.join(source, 'LICENSE.txt')).nlink, 2, 'only source and live tree remain')
+    // Keep the old inode alive through source; replacing a name with identical
+    // bytes/size must fail identity verification, not pass as an equivalent file.
+    const target = path.join(firstRoot, 'LICENSE.txt')
+    fs.unlinkSync(target); fs.copyFileSync(path.join(source, 'LICENSE.txt'), target)
+    await assert.rejects(verify(), /identity mismatch/)
+  } finally { await tidy(base) }
+}))
+
+await test('unregistered failed clones cannot release a sealed sibling or leak after final disposal', async () => withTempDir('niu-failed-clone', async base => {
+  try {
+    const source = buildSource(base), live = path.join(base, 'live'), failed = path.join(base, 'failed')
+    const clone = await cloneInto(source, live)
+    await sealShared(source, { root: live, files: filesOf(live, clone), ...NO_ACL })
+    await cloneInto(source, failed)
+    await releaseShared(source, failed, NO_ACL)
+    assert.ok(fs.existsSync(live)); assert.ok(fs.existsSync(failed))
+    assert.equal(isSealedMode(fs.statSync(path.join(live, 'LICENSE.txt')).mode), true)
+    await releaseShared(source, live, NO_ACL)
+    assert.equal(fs.existsSync(live), false); assert.equal(fs.existsSync(failed), false)
+    assert.equal(fs.statSync(path.join(source, 'LICENSE.txt')).nlink, 1)
+  } finally { await tidy(base) }
+}))
+
+await test('a preparing tree retains the shared seal until its own cleanup', async () => withTempDir('niu-retain', async base => {
+  try {
+    const source = buildSource(base), live = path.join(base, 'live'), preparing = path.join(base, 'preparing')
+    const clone = await cloneInto(source, live)
+    await sealShared(source, { root: live, files: filesOf(live, clone), ...NO_ACL })
+    await retainShared(source, preparing)
+    await releaseShared(source, live, NO_ACL)
+    assert.ok(fs.existsSync(live))
+    assert.equal(isSealedMode(fs.statSync(path.join(source, 'LICENSE.txt')).mode), true)
+    await cloneInto(source, preparing)
+    await releaseShared(source, preparing, NO_ACL)
+    assert.equal(fs.existsSync(live), false); assert.equal(fs.existsSync(preparing), false)
+    assert.equal(fs.statSync(path.join(source, 'LICENSE.txt')).nlink, 1)
   } finally { await tidy(base) }
 }))
 

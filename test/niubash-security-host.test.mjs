@@ -103,6 +103,19 @@ try {
     for (const mode of ['read-only', 'workspace-write']) {
       agent.session.mode = mode
       for (let n = 0; n < 2; n++) assert.equal(ok(await call('printf repeated')).stdout.text, 'repeated')
+      const baselineLinks = fs.statSync(file).nlink
+      const parallel = await Promise.all([call('printf parallel-one'), call('printf parallel-two')])
+      assert.deepEqual(parallel.map(value => ok(value).stdout.text), ['parallel-one', 'parallel-two'])
+      // Session identity must not create an implicit recovery boundary.
+      const siblingAgent = { ...agent, session: { ...agent.session, id: 'niu-sibling' } }
+      siblingAgent.ctx = createScope(ctx, siblingAgent).ctx
+      await ctx.serial('agent/created', { agent: siblingAgent })
+      await waitFor(() => ctx.get('tools').get('ops_bash', siblingAgent), { what: 'sibling Bash publication' })
+      const siblingTool = ctx.get('tools').get('ops_bash', siblingAgent)
+      const crossSession = await Promise.all([call('printf original'), siblingTool.execute({ description: 'Verify concurrent session',
+        command: 'printf sibling', workdir: root }, { agent: siblingAgent, signal: new AbortController().signal })])
+      assert.deepEqual(crossSession.map(value => ok(value).stdout.text), ['original', 'sibling'])
+      assert.equal(fs.statSync(file).nlink, baselineLinks, 'settled calls do not accumulate shared links')
       verifiedNiubash(file)
     }
     agent.session.mode = 'workspace-write'

@@ -127,7 +127,9 @@ An interrupted staging leaves a `stage-*` directory in the cache. Confined calls
 Each Windows `ops_bash` call now clones the verified Niubash payload by hardlink below
 `%TEMP%\dsh-ops-niu-exec-*` and seals the shared inodes read-only for the duration of the command.
 No payload data is copied, so the clone costs metadata only; the pre-spawn check compares the path
-set, sizes, directory set, read-only seal and link counts instead of re-hashing 1.85 GiB per call.
+set, sizes, directory set, read-only seal and stable file identities instead of re-hashing 1.85 GiB per call.
+Shared inode link counts are not invariants: other calls or hosts can add/remove aliases; private copies
+and the execution receipt still enforce their recorded counts.
 The execution receipt `execution-provenance.json` in that tree records `mode` (`hardlink` or
 `copy`), the source manifest digest and the seal level.
 
@@ -137,9 +139,18 @@ The execution receipt `execution-provenance.json` in that tree records `mode` (`
   that refuses hardlinks, or an ACL/permission refusal trigger the whole-tree copy fallback; the
   receipt records `"mode": "copy"`, `cloneFallbackCode` (`EXDEV`, `EPERM`, …) and
   `cloneDiagnostics` with the first failed `link`, so a slow path is diagnosable instead of silent.
-- An `EXECUTOR_UNAVAILABLE` naming a size, seal or link-count mismatch means the clone changed
-  between creation and spawn. Nothing was executed; retry once, and restore the pinned payload if
-  it repeats.
+- In 0.5.1, parallel clones could trigger `link count mismatch` without any payload corruption.
+  Upgrade to 0.5.2 or later; retrying or clearing caches cannot fix that race. Identity, size, seal
+  and receipt failures still fail closed; restore the pinned payload after investigating.
+- To remove leftovers, stop **every OPS host and Bash job**, then run the installed package's CLI
+  with the same `DSH_HOME` and `DSH_OPS_EXEC_ROOT`: `dsh-ops cache status --kind exec-tree`, followed
+  by `dsh-ops cache reclaim --kind exec-tree --all-hosts-stopped --yes`. This discovers temporary,
+  configured and default same-volume roots, validates ownership, and unseals verified trees before
+  deleting. Unknown/partial trees stay untouched. Do not recursively delete a wildcard by name,
+  or remove trees while calls are running. Reclamation does not reinstall a corrupt source.
+- The settings page can explicitly save `D:\Git\bin\bash.exe` (the missing editable field in 0.5.1
+  is fixed). This is not a generic restricted-mode workaround: only the pinned compatible MSYS
+  build can run restricted; an arbitrary Git Bash remains rejected rather than run unconfined.
 - While a command runs, the payload files are read-only (the Windows READONLY attribute plus a
   deny-write/deny-delete ACL) and `winuxcmd.exe` with all argv0 faces share one inode. Disposal,
   `provision-shells --force`, upgrade and `uninstall` unseal first.

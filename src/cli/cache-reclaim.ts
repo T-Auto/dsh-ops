@@ -18,7 +18,9 @@ import path from 'node:path'
 import { bashIpcInventory, currentBashIpcIdentity, reclaimBashGenerations } from '../bash-ipc.js'
 import { QUARANTINE_RETAIN } from '../bash-ipc.js'
 import { hasLiveLease, plainTree } from '../bash-ipc-lifecycle.js'
-import { dshHome } from '../paths.js'
+import { dshHome, PACKAGE_ROOT } from '../paths.js'
+import { niubashCandidates, niubashExecutionRootParent } from '../niubash/runtime.js'
+import { unsealDirectorySync } from '../niubash/seal.js'
 import { provisionedShellStore } from '../shells.js'
 import { errorMessage } from '../shells/types.js'
 import { reclaimNiubashSiblings, verifyNiubashTree, NIUBASH_EXECUTION_DIRECTORIES, NIUBASH_HOME_PATH, NIUBASH_MANIFEST_SHA256, NIUBASH_PIN, NIUBASH_RECEIPT } from './niubash-payload.js'
@@ -254,8 +256,8 @@ function execItems(tmpRoot: string): CacheItem[] {
  * @param options - the home, named audit roots and clock.
  * @returns every candidate row, its evidence, and byte totals.
  */
-export function cacheInventory({ home = dshHome(), roots = [], tmpRoot = os.tmpdir(), now = Date.now() }: CacheOptions = {}): CacheInventory {
-  const canonicalTmp = canonical(tmpRoot)
+export function cacheInventory({ home = dshHome(), roots = [], tmpRoot, now = Date.now() }: CacheOptions = {}): CacheInventory {
+  const canonicalTmp = canonical(tmpRoot ?? os.tmpdir())
   const items: CacheItem[] = []
   const unreadable: string[] = []
   const pending = planPendingSweep({ home, tmpRoot: canonicalTmp, now: () => now })
@@ -283,7 +285,15 @@ export function cacheInventory({ home = dshHome(), roots = [], tmpRoot = os.tmpd
   const ipc = bashIpcInventory({ home, confirmedStopped: true })
   items.push(...quarantineItems(home, ipc))
   for (const root of roots) items.push(...auditItems(root))
-  items.push(...execItems(canonicalTmp))
+  const executionRoots = new Set([canonicalTmp])
+  // Match preparation's same-volume/explicit root policy. An injected tmpRoot
+  // keeps fixtures isolated; no real execution root is inspected by those tests.
+  if (tmpRoot === undefined) {
+    for (const candidate of niubashCandidates(PACKAGE_ROOT, { ...process.env, DSH_HOME: home })) {
+      executionRoots.add(canonical(niubashExecutionRootParent(process.env, path.dirname(candidate.file))))
+    }
+  }
+  for (const root of executionRoots) items.push(...execItems(root))
   const totals = { reclaimableBytes: 0, keptBytes: 0, unverifiedBytes: 0, files: 0 }
   for (const item of items) {
     totals.files += item.files
@@ -301,9 +311,12 @@ export interface CacheReclaimResult extends CacheInventory {
 }
 
 /** Rename one entry aside, then remove it; a failed removal leaves the aside for the next run. */
-function removeAsAside(target: string, now: number): { ok: boolean, detail?: string } {
+function removeAsAside(target: string, now: number, sealed = false): { ok: boolean, detail?: string } {
   const aside = target + '.reclaim-' + now.toString(36)
   try {
+    // Execution files share the seal's deny-delete ACL/READONLY attribute.
+    // This path is reached only after provenance checks and offline confirmation.
+    if (sealed) unsealDirectorySync(target)
     fs.renameSync(target, aside)
   } catch (error) {
     return { ok: false, detail: 'could not move it aside: ' + errorMessage(error) }
@@ -354,7 +367,7 @@ export function cacheReclaim({
               : decision.action === 'removed' ? 'deleted' : 'kept'
         if (item.action === 'deleted' || item.action === 'reused' || item.action === 'restored') result.deletedBytes += item.bytes
       } else {
-        const outcome = removeAsAside(item.path, now)
+        const outcome = removeAsAside(item.path, now, item.kind === 'exec-tree')
         item.action = outcome.ok ? 'deleted' : 'kept'
         if (outcome.ok) result.deletedBytes += item.bytes
         if (!outcome.ok) {

@@ -247,6 +247,7 @@ const MODE_SWITCHES: Record<string, Field> = {
 function modeSection(mode: ModeKey): Field {
   return { type: 'object', dict: { enabled: boolean('Apply this mode to its sessions.'),
     ...(mode === 'minimal' ? {} : { residentTools: boolean('Publish baseline file tools independently of dynamic loading.') }),
+    bashPath: editable('string', 'Optional explicit Bash executable selected on the runtime page.'),
     ...MODE_SWITCHES } }
 }
 

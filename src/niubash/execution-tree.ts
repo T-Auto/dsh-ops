@@ -12,7 +12,8 @@
  * Verification is stat-only. The compiled manifest authorizes bytes once, at
  * installation/selection time ({@link verifyNiubashTree} in the payload module);
  * a running call compares the path set, every file size, the directory set, the
- * read-only seal and the link counts recorded at creation. It reads zero payload
+ * read-only seal and stable file identities recorded at creation. Shared link
+ * counts are diagnostic only: another call/host can add or remove hardlinks. It reads zero payload
  * bytes, which is what removes the old 1.85 GiB of SHA-256 per call. The
  * `NIUBASH_VERIFY=deep` escape hatch restores a full re-hash for operators who
  * want it.
@@ -94,7 +95,9 @@ export interface CloneResult {
   mode: CloneMode
   /** Expected byte size for every relative path in the tree. */
   sizes: Record<string, number>
-  /** Expected link count for every relative path, captured after creation. */
+  /** Stable file identity per relative path; unlike nlink this survives sibling clones. */
+  identities: Record<string, FileIdentity>
+  /** Observed link counts (diagnostic for shared inodes, invariant only for private copies). */
   links: Record<string, number>
   /** File data actually written into the tree; zero for a hardlink clone. */
   dataBytes: number
@@ -174,12 +177,15 @@ export async function cloneExecutionTree(request: CloneRequest): Promise<CloneRe
   }
 
   const links: Record<string, number> = {}
+  const identities: Record<string, FileIdentity> = {}
   for (const name of Object.keys(sizes)) {
     signal?.throwIfAborted()
-    links[name] = (await ops.lstat(path.join(root, name))).nlink
+    const stat = await ops.lstat(path.join(root, name))
+    links[name] = stat.nlink
+    identities[name] = { dev: stat.dev, ino: stat.ino }
   }
   const dataBytes = mode === 'copy' ? Object.values(sizes).reduce((total, size) => total + size, 0) : 0
-  return { mode, sizes, links, dataBytes, ...(fallback === undefined ? {} : { fallback }) }
+  return { mode, sizes, links, identities, dataBytes, ...(fallback === undefined ? {} : { fallback }) }
 }
 
 /** One error's message, without assuming it is an `Error`. */
@@ -220,11 +226,16 @@ export async function readTree(root: string, options: TreeReadOptions = {}): Pro
   return { files, directories }
 }
 
+/** The filesystem identity of a file, not its process-global hardlink count. */
+export interface FileIdentity { dev: number; ino: number }
+
 /** What a stat-only verification expects to see. */
 export interface TreeExpectation {
   /** Expected byte size per relative file path. */
   sizes: Readonly<Record<string, number>>
-  /** Expected link count per relative file path. */
+  /** Stable identity per relative file path, including hardlinked payload members. */
+  identities?: Readonly<Record<string, FileIdentity>>
+  /** Expected link counts for private files only; shared counts change across calls/hosts. */
   links?: Readonly<Record<string, number>>
   /** The complete allowed directory set, relative to the root. */
   directories: readonly string[]
@@ -240,7 +251,7 @@ export interface TreeVerifyRequest extends TreeExpectation {
 
 /**
  * Compare a tree with a recorded expectation without reading one payload byte:
- * path set, sizes, directory set, seal and link counts only. Every deviation is
+ * path set, sizes, directory set, seal, identities and private link counts only. Every deviation is
  * fail-closed; the caller does not retry a changed tree.
  */
 export async function verifyTreeStat(request: TreeVerifyRequest): Promise<void> {
@@ -253,6 +264,10 @@ export async function verifyTreeStat(request: TreeVerifyRequest): Promise<void> 
     if (!Object.hasOwn(request.sizes, name)) throw Error(`Unsafe Niubash execution tree member: ${name}`)
     if (stat.size !== request.sizes[name]) throw Error(`Niubash execution tree size mismatch: ${name}`)
     if (request.sealed && (stat.mode & 0o222) !== 0) throw Error(`Niubash execution tree member is not sealed: ${name} (mode ${stat.mode.toString(8)})`)
+    const identity = request.identities?.[name]
+    if (identity !== undefined && (stat.dev !== identity.dev || stat.ino !== identity.ino)) {
+      throw Error(`Niubash execution tree identity mismatch: ${name}`)
+    }
     const expectedLinks = request.links?.[name]
     if (expectedLinks !== undefined && stat.nlink !== expectedLinks) throw Error(`Niubash execution tree link count mismatch: ${name}`)
   }

@@ -9,6 +9,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { PACKAGE_ROOT, assert, report, test, withTempDir } from './lib/harness.mjs'
+import { cacheInventory, cacheReclaim } from '../lib/cli/cache-reclaim.js'
+import { NIUBASH_PIN, niubashExecutionReceipt } from '../lib/cli/niubash-payload.js'
+import { sealTree, unsealTree } from '../lib/niubash/seal.js'
 import { pendingRoot, recordPendingScratch } from '../lib/cli/pending-scratch.js'
 
 const CLI = path.join(PACKAGE_ROOT, 'bin', 'dsh-ops.mjs')
@@ -143,6 +146,41 @@ await test('cache status on a clean home succeeds and a bad kind is rejected', a
     assert.match(status.stdout, /Preview only/u)
     const bad = runCli(home, user, ['status', '--kind', 'session-temp'])
     assert.notEqual(bad.status, 0, 'an unknown kind is rejected rather than scanned')
+  })
+})
+
+await test('offline execution reclaim removes sealed owned trees, preserves foreign names, and finds configured roots', async () => {
+  await withTempDir('cache-execution', async root => {
+    const home = path.join(root, 'home'), temp = path.join(root, 'temp')
+    const owned = path.join(temp, 'dsh-ops-niu-exec-owned'), foreign = path.join(temp, 'dsh-ops-niu-exec-foreign')
+    fs.mkdirSync(owned, { recursive: true }); fs.mkdirSync(foreign)
+    const [name, size] = Object.entries(NIUBASH_PIN.sizes)[0]
+    const file = path.join(owned, name)
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, ''); fs.truncateSync(file, size)
+    const receipt = path.join(owned, 'execution-provenance.json')
+    fs.writeFileSync(receipt, JSON.stringify(niubashExecutionReceipt({ mode: 'hardlink', seal: 'readonly+acl' })))
+    fs.writeFileSync(path.join(foreign, 'notes.txt'), 'keep')
+    const previous = process.env.DSH_OPS_EXEC_ROOT
+    try {
+      await sealTree({ root: owned, files: [file, receipt], writableDirectories: [owned] })
+      process.env.DSH_OPS_EXEC_ROOT = temp
+      const inventory = cacheInventory({ home })
+      assert.equal(inventory.items.find(item => item.path === owned)?.decision, 'reclaimable')
+      const options = { home, tmpRoot: temp, kinds: ['exec-tree'] }
+      assert.throws(() => cacheReclaim({ ...options, apply: true }), /all-hosts-stopped/)
+      cacheReclaim(options)
+      assert.ok(fs.existsSync(owned), 'preview preserves sealed trees')
+      const result = cacheReclaim({ ...options, apply: true, allHostsStopped: true })
+      assert.equal(result.errors, 0, JSON.stringify(result.items))
+      assert.equal(fs.existsSync(owned), false)
+      assert.equal(fs.readFileSync(path.join(foreign, 'notes.txt'), 'utf8'), 'keep')
+      assert.equal(cacheInventory({ home, tmpRoot: temp }).items.some(item => item.decision === 'reclaimable'), false)
+    } finally {
+      if (previous === undefined) delete process.env.DSH_OPS_EXEC_ROOT
+      else process.env.DSH_OPS_EXEC_ROOT = previous
+      if (fs.existsSync(owned)) await unsealTree(owned)
+    }
   })
 })
 

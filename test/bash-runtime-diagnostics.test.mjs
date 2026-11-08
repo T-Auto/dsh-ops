@@ -175,4 +175,12 @@ await test('a restricted bash that cannot run reports which bash and why, not a 
   })
 })
 
+  await test('Niubash recovery names the fixed version and offline command without promising a retry', async () => {
+    const message = executorUnavailableMessage(new Error('Niubash execution tree link count mismatch: assets/icon.png'))
+    assert.match(message, /0\.5\.2/)
+    assert.match(message, /cache reclaim --kind exec-tree --all-hosts-stopped --yes/)
+    assert.doesNotMatch(message, /one retry may complete/)
+    assert.match(message, /No command was executed/)
+  })
+
 report('bash-runtime-diagnostics')

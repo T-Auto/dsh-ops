@@ -282,7 +282,7 @@ export function unsealDirectorySync(directory: string, options: { platform?: Nod
  * a privileged process can still clear the attribute. See the docs for that
  * residual boundary.
  */
-const sharedSeals = new Map<string, { active: number; pending: string[] }>()
+const sharedSeals = new Map<string, { roots: Set<string>; pending: string[] }>()
 const sealChains = new Map<string, Promise<unknown>>()
 
 function serializeSeal<T>(key: string, task: () => Promise<T>): Promise<T> {
@@ -292,12 +292,21 @@ function serializeSeal<T>(key: string, task: () => Promise<T>): Promise<T> {
   return next
 }
 
+/** Reserve a tree before cloning so sibling disposal cannot unseal it mid-preparation. */
+export function retainShared(key: string, root: string): Promise<void> {
+  return serializeSeal(key, async () => {
+    const state = sharedSeals.get(key) ?? { roots: new Set<string>(), pending: [] }
+    state.roots.add(root)
+    sharedSeals.set(key, state)
+  })
+}
+
 /** Seal one execution tree and count it against the shared payload's live trees. */
 export function sealShared(key: string, request: SealTreeRequest): Promise<SealResult> {
   return serializeSeal(key, async () => {
     const result = await sealTree(request)
-    const state = sharedSeals.get(key) ?? { active: 0, pending: [] }
-    state.active += 1
+    const state = sharedSeals.get(key) ?? { roots: new Set<string>(), pending: [] }
+    state.roots.add(request.root)
     sharedSeals.set(key, state)
     return result
   })
@@ -315,8 +324,10 @@ export function releaseShared(key: string, root: string, options: SealOptions = 
       return
     }
     state.pending.push(root)
-    state.active -= 1
-    if (state.active > 0) return
+    // A clone that failed before sealShared registered it must not consume a
+    // live sibling's reference or unseal its shared payload.
+    state.roots.delete(root)
+    if (state.roots.size > 0) return
     sharedSeals.delete(key)
     let failure: unknown
     for (const pending of state.pending) {

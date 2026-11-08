@@ -109,8 +109,44 @@ if (process.platform === 'win32') {
       }
     })
   })
-  await test('derived faces and extra executable members fail closed', async () => {
-    const runtime = await prepareNiubash(process.env.DSH_OPS_TEST_NIUBASH, '', new AbortController().signal)
+  await test('parallel production trees remain usable across overlapping calls and drain after disposal', async () => {
+    const file = process.env.DSH_OPS_TEST_NIUBASH
+    const baseline = fs.statSync(file).nlink
+    for (let round = 0; round < 2; round++) {
+      const runtimes = []
+      const roots = []
+      try {
+        // allSettled retains every successful handle even if another preparation
+        // fails, so a failed regression never leaves unowned trees behind.
+        const results = await Promise.allSettled(Array.from({ length: 2 }, () =>
+          prepareNiubash(file, '', new AbortController().signal)))
+        for (const result of results) if (result.status === 'fulfilled') {
+          runtimes.push(result.value); roots.push(path.dirname(result.value.file))
+        }
+        for (const result of results) if (result.status === 'rejected') throw result.reason
+        for (const runtime of runtimes) await runtime.verify()
+        await runtimes[0].dispose()
+        await runtimes[1].verify()
+        const later = await prepareNiubash(file, '', new AbortController().signal)
+        runtimes.push(later); roots.push(path.dirname(later.file))
+        await runtimes[1].verify(); await later.verify()
+      } finally { for (const runtime of runtimes) await runtime.dispose() }
+      for (const root of roots) assert.equal(fs.existsSync(root), false, 'completed trees are reclaimed')
+      assert.equal(fs.statSync(file).nlink, baseline, 'no hardlink accumulation after concurrency')
+    }
+  })
+  await test('derived faces and extra executable members fail closed', async () => withTempDir('niu-tamper-private', async base => {
+    const previousRoot = process.env.DSH_OPS_EXEC_ROOT
+    process.env.DSH_OPS_EXEC_ROOT = path.join(base, 'executions')
+    let runtime
+    try {
+      // Tamper a private copy, never a shared executable inode that an earlier
+      // real-host suite or an image scanner may still have mapped.
+      runtime = await prepareNiubash(process.env.DSH_OPS_TEST_NIUBASH, '', new AbortController().signal, { workspaceRoot: base })
+    } finally {
+      if (previousRoot === undefined) delete process.env.DSH_OPS_EXEC_ROOT
+      else process.env.DSH_OPS_EXEC_ROOT = previousRoot
+    }
     const root = path.dirname(runtime.file)
     const face = path.join(root, 'winuxcmd/usr/bin/cat.exe')
     try {
@@ -135,15 +171,18 @@ if (process.platform === 'win32') {
       await assert.rejects(runtime.verify(), /Unsafe Niubash execution tree member/)
       await fs.promises.unlink(extra)
 
-      // Link the inode from OUTSIDE the tree so the failure is the recorded link
-      // count, not an unknown member name inside the tree.
+      // Private copies keep an exact link count, unlike shared payload clones.
       await runtime.seal()
-      const alias = path.join(path.dirname(root), 'outside-hardlink')
+      const alias = `${root}-outside-hardlink`
       await fs.promises.link(face, alias)
       await assert.rejects(runtime.verify(), /link count mismatch/)
+      // The alias shares the deny ACL/READONLY attribute too; clear them before
+      // unlinking, then restore the live tree's seal.
+      await runtime.unseal()
       await fs.promises.unlink(alias)
+      await runtime.seal()
       await runtime.verify()
     } finally { await runtime.dispose() }
-  })
+  }))
 }
 report('niubash-preparation')

@@ -7,6 +7,15 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-11-08 — Patch release
+
+- Fix concurrent Windows Niubash preparation by verifying stable file identities instead of shared hardlink counts; retain preparing trees through disposal without replacing the zero-copy path or reverting 0.5.1's bounded retention.
+- 修复 Windows Niubash 并发准备：以稳定文件身份而非共享硬链接计数校验，准备中的执行树参与释放协调；保留零拷贝路径和 0.5.1 的有界保留修复。
+- Allow the merged settings row to persist and clear the selected Git Bash path in all four built-in modes.
+- 合并设置行可在四种内置模式中保存、清除选定的 Git Bash 路径。
+- Offline execution-cache reclamation discovers configured/same-volume roots and clears the verified tree's read-only/deny-delete seal before removal; Niubash failures give specific recovery commands instead of promising a retry fixes every failure.
+- 离线执行缓存回收覆盖显式及同卷根目录，删除前解除已验证树的只读/拒绝删除封印；Niubash 故障提供具体恢复命令，不再笼统承诺重试可修复。
+
 ## [0.5.1] — 2026-11-08 — Patch release
 
 - Bound temporary-resource growth through ownership ledgers, deferred result-cache cleanup and explicit cache reclamation; preserve data-bearing snapshots and user content. Host output spills now have bounded retention rather than accumulating indefinitely.

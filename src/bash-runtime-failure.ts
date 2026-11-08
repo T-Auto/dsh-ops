@@ -163,6 +163,13 @@ export function executorUnavailableMessage(error: unknown): string {
   if (code !== undefined) {
     return `EXECUTOR_UNAVAILABLE: ${code}: ${reason} ${REMEDIES[code].remedy}`
   }
+  if (/Niubash/i.test(reason)) {
+    return 'EXECUTOR_UNAVAILABLE: Niubash preparation failed: '
+      + `${reason}. No command was executed. For link-count mismatches from 0.5.1, upgrade dsh-ops to 0.5.2 or later; retries and cache cleanup do not fix that concurrency bug. `
+      + 'For leftover trees, stop every OPS host and Bash job, preview `dsh-ops cache status --kind exec-tree`, then run '
+      + '`dsh-ops cache reclaim --kind exec-tree --all-hosts-stopped --yes` from the same DSH_HOME and execution-root environment. '
+      + 'Only verified trees are reclaimed. Restore the pinned payload for identity/size/receipt failures; do not bypass confinement.'
+  }
   return 'EXECUTOR_UNAVAILABLE: the restricted Bash runtime could not be prepared: '
     + `${reason}. No command was executed. If this was a transient filesystem refusal, one retry may complete the `
     + 'private copy; do not switch shells to bypass confinement.'
