@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Load `@deepseek-ai/dsh-scope` from the copy the running host resolves. A bundle that hoists its own copy into the profile tree used to shadow the host's, so scope contexts read as unscoped and creating a session failed with `Publication scope must match its registration context` (#752). The adapter resolves the host entry's copy, then the profile layer, then the bare specifier.
+- 从宿主实际解析到的那份 `@deepseek-ai/dsh-scope` 加载 scope 助手。某个 bundle 把副本提升进 profile 目录树时会遮蔽宿主那份，作用域上下文读不到标签，新建会话报 `Publication scope must match its registration context`（#752）。adapter 依次从运行入口、profile 层、最后才是裸导入解析。
+
 ## [0.5.1] — 2026-11-08 — Patch release
 
 - Bound temporary-resource growth through ownership ledgers, deferred result-cache cleanup and explicit cache reclamation; preserve data-bearing snapshots and user content. Host output spills now have bounded retention rather than accumulating indefinitely.
