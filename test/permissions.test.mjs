@@ -78,6 +78,19 @@ await test('the real worker behaves as the file-tool descriptions say (#44)', as
       // replace matches literal text: "a.b" does not match "axb".
       const replaced=await call('replace',{path:'a.txt',pattern:'a.b',replacement:'Z'})
       assert.equal(replaced.changed,1,JSON.stringify(replaced)); assert.equal(fs.readFileSync(path.join(root,'a.txt'),'utf8'),'Z axb\n')
+      // #734: dot directories are reachable only when the caller asks, and the
+      // plugin's own sidecars are never reachable at all.
+      fs.mkdirSync(path.join(root,'.github'),{recursive:true}); fs.mkdirSync(path.join(root,'.dsh-ops'),{recursive:true})
+      fs.writeFileSync(path.join(root,'.github','ci.md'),'needle\n')
+      fs.writeFileSync(path.join(root,'.dsh-ops','state.md'),'needle\n')
+      assert.deepEqual(names(await call('glob',{pattern:['**/*.md','!vendor/**']})),['sub/nested.md','top.md'])
+      assert.deepEqual(names(await call('glob',{pattern:['**/*.md','!vendor/**'],includeHidden:true})),['.github/ci.md','sub/nested.md','top.md'])
+      assert.deepEqual(names(await call('grep',{pattern:'needle',glob:['**/*.md','!vendor/**'],outputMode:'files_with_matches',includeHidden:true})),['.github/ci.md','sub/nested.md','top.md'])
+      // The sidecar stays invisible under both settings, for both tools.
+      for (const includeHidden of [false,true]) {
+        assert.deepEqual(names(await call('glob',{pattern:['**/*','!vendor/**'],includeHidden})).filter(n=>n.startsWith('.dsh-ops')),[])
+        assert.deepEqual(names(await call('grep',{pattern:'needle',glob:['**/*','!vendor/**'],outputMode:'files_with_matches',includeHidden})).filter(n=>n.startsWith('.dsh-ops')),[])
+      }
     } finally { await shutdown(ctx) }
   })
 })

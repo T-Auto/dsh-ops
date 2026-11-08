@@ -46,7 +46,13 @@ where
 {
     // `cache_dir` says whether the index is available; `allow_index` is the G3
     // boundary that keeps it to `glob` (`grep` reads content and stays on the walk).
-    if !allow_index || request.cache_dir.is_none() {
+    //
+    // An index that enumerated below a dot directory cannot answer a question
+    // about that directory: its own pruning happens before any leaf is seen, so
+    // reusing it would silently drop what the caller just asked for. Rather than
+    // teach the index a second policy, `includeHidden` declines the index and
+    // takes the walk, which is where the caller's answer actually lives.
+    if !allow_index || scan.include_hidden || request.cache_dir.is_none() {
         scan.walk(root, patterns, request, &mut each)?;
         return Ok(SourceKind::Walk);
     }
@@ -91,6 +97,8 @@ struct GlobArgs {
     #[serde(default = "one_hundred")]
     limit: usize,
     continuation: Option<String>,
+    #[serde(default)]
+    include_hidden: bool,
 }
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -117,11 +125,187 @@ struct GrepArgs {
     limit: usize,
     #[serde(default = "yes")]
     exact_total: bool,
+    #[serde(default)]
+    include_hidden: bool,
     continuation: Option<String>,
 }
 
 pub fn glob(request: &Request) -> Result<Value> {
     glob_with(request, None)
+}
+
+#[cfg(test)]
+mod include_hidden_tests {
+    use super::*;
+
+    struct Fixture {
+        root: PathBuf,
+    }
+    impl Fixture {
+        fn new(tag: &str) -> Self {
+            let root = std::fs::canonicalize(std::env::temp_dir())
+                .unwrap()
+                .join(format!("dsh-ops-hidden-{tag}-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir(&root).unwrap();
+            Self { root }
+        }
+        fn file(&self, rel: &str, bytes: &[u8]) -> PathBuf {
+            let path = self.root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, bytes).unwrap();
+            path
+        }
+        /// A request whose `args` are this tool's arguments plus a fixed scope.
+        fn request(&self, tool: &str, args: serde_json::Value) -> Request {
+            let mut root = serde_json::to_value(&self.root).unwrap();
+            let mut args = args;
+            args["path"] = std::mem::take(&mut root);
+            serde_json::from_value(json!({
+                "root": self.root,
+                "scope": "hidden-test",
+                "tool": tool,
+                "args": args,
+            }))
+            .unwrap()
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    /// The answer's file list, as this platform's separator with a forward
+    /// slash and relative to the fixture root. `glob` and `grep` name files by
+    /// verbatim absolute path, so the comparison is made on the tail.
+    fn paths(root: &Path, value: &Value) -> Vec<String> {
+        let base = root.to_string_lossy().replace('\\', "/");
+        value["items"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|entry| {
+                        let raw = entry
+                            .as_str()
+                            .or_else(|| entry["path"].as_str())
+                            .unwrap_or("")
+                            .replace('\\', "/");
+                        // The answer names files by verbatim absolute path,
+                        // which may carry a `\\?\` prefix on Windows. Anchoring
+                        // on the root once is more robust than a prefix trim.
+                        match raw.find(&base) {
+                            Some(at) => raw[at + base.len()..].trim_start_matches('/').to_string(),
+                            None => raw,
+                        }
+                    })
+                    .filter(|path| !path.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The reported gap: a dot directory is silently absent from a glob answer.
+    #[test]
+    fn a_dot_directory_is_absent_unless_the_caller_asks_for_it() {
+        let fixture = Fixture::new("glob");
+        fixture.file("src/a.ts", b"export const a = 1;\n");
+        fixture.file(".github/b.ts", b"export const b = 2;\n");
+
+        let hidden = glob(&fixture.request("glob", json!({"pattern": ["**/*.ts"]}))).unwrap();
+        assert_eq!(paths(&fixture.root, &hidden), vec!["src/a.ts"]);
+
+        let shown = glob(&fixture.request(
+            "glob",
+            json!({"pattern": ["**/*.ts"], "includeHidden": true}),
+        ))
+        .unwrap();
+        let mut got = paths(&fixture.root, &shown);
+        got.sort();
+        assert_eq!(got, vec![".github/b.ts", "src/a.ts"]);
+    }
+
+    /// `grep` shares the switch, so the two tools cannot disagree about what
+    /// exists.
+    #[test]
+    fn grep_honours_the_same_switch() {
+        let fixture = Fixture::new("grep");
+        fixture.file("src/a.ts", b"export const a = 1;\n");
+        fixture.file(".github/b.ts", b"export const b = 2;\n");
+
+        let hidden = grep(&fixture.request("grep", json!({"pattern": "export"}))).unwrap();
+        let mut got = paths(&fixture.root, &hidden);
+        got.sort();
+        assert_eq!(got, vec!["src/a.ts"]);
+
+        let shown = grep(&fixture.request(
+            "grep",
+            json!({"pattern": "export", "includeHidden": true}),
+        ))
+        .unwrap();
+        let mut got = paths(&fixture.root, &shown);
+        got.sort();
+        assert_eq!(got, vec![".github/b.ts", "src/a.ts"]);
+    }
+
+    /// The switch must never reach the plugin's own bookkeeping: the update
+    /// lock lives under a dot name, and a directory-wide `ops_replace` that
+    /// rewrote it would defeat the concurrency guard it exists to provide.
+    #[test]
+    fn the_internal_sidecar_stays_invisible_under_every_setting() {
+        let fixture = Fixture::new("internal");
+        fixture.file("src/a.ts", b"export const a = 1;\n");
+        fixture.file(".dsh-ops/a.ts", b"export const hidden = 2;\n");
+        fixture.file(".dsh-ops-update-deadbeef.lock", b"lock");
+
+        for include_hidden in [false, true] {
+            for tool in ["glob", "grep"] {
+                let args = if tool == "glob" {
+                    json!({"pattern": ["**/*"], "includeHidden": include_hidden})
+                } else {
+                    json!({"pattern": "export", "glob": ["**/*"], "includeHidden": include_hidden})
+                };
+                let answer = if tool == "glob" {
+                    glob(&fixture.request(tool, args)).unwrap()
+                } else {
+                    grep(&fixture.request(tool, args)).unwrap()
+                };
+                let found = paths(&fixture.root, &answer);
+                assert!(
+                    !found.iter().any(|path| path.contains(".dsh-ops")),
+                    "{tool} includeHidden={include_hidden} returned {found:?}"
+                );
+            }
+        }
+    }
+
+    /// The walk that serves `ops_replace` keeps its own constant answer. It is
+    /// not a selection tool: it rewrites what it walks, so the caller's reading
+    /// preference is not an argument it takes.
+    #[test]
+    fn the_rewrite_walk_does_not_take_the_switch() {
+        let fixture = Fixture::new("replace");
+        fixture.file("src/a.ts", b"export const a = 1;\n");
+        fixture.file(".github/b.ts", b"export const b = 2;\n");
+
+        let walked = files_for(
+            fixture.root.to_str().unwrap(),
+            &["**/*.ts".to_string()],
+            &fixture.request("replace", json!({"pattern": "x", "replacement": "y"})),
+        )
+        .unwrap();
+        let names: Vec<String> = walked
+            .files
+            .iter()
+            .map(|path| {
+                path.strip_prefix(&fixture.root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(names, vec!["src/a.ts"]);
+    }
 }
 
 /// The same glob with an injected source: a `cfg(test)` seam for a fake-Ready
@@ -181,6 +365,7 @@ fn glob_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
     let (cursor, expected) = cursor_for(request, args.offset, args.continuation.as_deref())?;
     let mut scan = Scan::new();
     scan.include_directories = matches!(args.kind.as_str(), "directory" | "all");
+    scan.include_hidden = args.include_hidden;
     let allow_index = !scan.include_directories;
     let mut files = Vec::new();
     let used = walk_request(
@@ -324,6 +509,7 @@ fn grep_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
     let root = target(&args.path, false)?;
     let (cursor, expected) = cursor_for(request, args.offset, args.continuation.as_deref())?;
     let mut scan = Scan::new();
+    scan.include_hidden = args.include_hidden;
     let mut page = Page::new(cursor.offset, args.limit, request.output_sink.clone());
     let mut file_count = 0;
     let mut match_count = 0;

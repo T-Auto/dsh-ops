@@ -68,12 +68,34 @@ struct ReplaceArgs {
     #[serde(default)]
     dry_run: bool,
 }
-fn hidden(path: &Path, root: &Path) -> bool {
+/// An ordinary dot-prefixed path component (`.github`, `.config`, `.env`).
+///
+/// This is user content that a caller may ask to traverse. It is kept separate
+/// from [`internal`] so that opting in cannot reach the plugin's own sidecars.
+fn dotdir(path: &Path, root: &Path) -> bool {
     path.strip_prefix(root)
         .ok()
         .into_iter()
         .flat_map(|p| p.components())
-        .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
+        .any(|c| {
+            let name = c.as_os_str().to_string_lossy();
+            name.starts_with('.') && !internal(&name)
+        })
+}
+
+/// The plugin's own bookkeeping, which no selection tool may observe.
+///
+/// `ops_glob`, `ops_grep` and a directory-wide `ops_replace` must never return,
+/// count or rewrite these: the update lock in particular is what keeps two
+/// concurrent writes from interleaving. There is deliberately no flag that
+/// lifts this predicate — see `ops-files/src/file.rs` for the lock it shields.
+fn internal(name: &str) -> bool {
+    name.starts_with(".dsh-ops")
+}
+
+/// Every exclusion the walk applies that is not a caller-selectable dot path.
+fn reserved(name: &str) -> bool {
+    matches!(name, "node_modules" | "target" | ".venv" | ".git")
 }
 fn host_link_or_reparse(path: &Path, skipped: &mut Vec<PathBuf>, truncated: &mut bool) -> bool {
     host_link_or_reparse_with(path, |path| fs::symlink_metadata(path), skipped, truncated)
@@ -177,12 +199,10 @@ fn visit_dir(
         if request.denies_path(&child) {
             continue;
         }
-        if hidden(&child, root)
-            || matches!(
-                name.as_str(),
-                ".git" | ".dsh-ops" | "node_modules" | "target" | ".venv"
-            )
-        {
+        // This traversal serves `ops_replace`, which rewrites files. It never
+        // takes the caller's `includeHidden`: an update lock is not editable
+        // content, so the answer here stays constant.
+        if dotdir(&child, root) || internal(&name) || reserved(&name) {
             continue;
         }
         if metadata.is_file() {
