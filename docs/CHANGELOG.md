@@ -7,6 +7,11 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Two concurrent `ops_bash` calls no longer fail with `Niubash execution tree link count mismatch`. A link count belongs to the shared inode, so the expectation is now rebuilt on every check from a per-payload book of live trees (the count a tree observed, plus the links the live trees contribute now, minus the links they contributed then) instead of one value captured at clone time. A sibling clone, a deferred disposal and a tree left behind by an earlier run therefore stop invalidating a healthy tree; a link no live tree accounts for still fails the check, so a hardlink created outside the tree stays detected.
+- 并发的两次 `ops_bash` 调用不再报 `Niubash execution tree link count mismatch`：链接数属于共享 inode，期望值改为每次校验时从「每个载荷的活树账本」重算（该树观察到的计数 + 活树当前的贡献 − 当时的贡献），不再用克隆时抓取的单个数值。兄弟克隆、延迟释放和上次运行遗留的树因此不再把一棵正常的树判成错的；任何活树都解释不了的链接仍判失败，树外新建的硬链接依然能被发现。
+- A hardlink clone that would push a shared inode past the filesystem's 1024-link ceiling is now built as the documented copy clone and records `EMLINK` in the execution receipt, instead of refusing the whole command. Windows reports that refusal as `UNKNOWN`, which the cross-device fallback never matched, so a payload surrounded by leftover trees left the executor unavailable until those trees were deleted by hand.
+- 硬链接克隆会让共享 inode 越过文件系统 1024 条链接上限时，改为按文档走复制克隆并在执行收据里记录 `EMLINK`，不再拒绝整次调用。Windows 把该拒绝报成 `UNKNOWN`，跨卷回退匹配不到，于是载荷旁边只要堆着遗留树，执行器就一直不可用，直到手动删掉那些树。
+
 ## [0.5.1] — 2026-11-08 — Patch release
 
 - Bound temporary-resource growth through ownership ledgers, deferred result-cache cleanup and explicit cache reclamation; preserve data-bearing snapshots and user content. Host output spills now have bounded retention rather than accumulating indefinitely.

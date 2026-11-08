@@ -18,9 +18,9 @@ import {
 import {
   cloneExecutionTree,
   readTree,
+  SharedLinkBook,
   verifyExecutionReceipt,
   verifyTreeStat,
-  type TreeExpectation,
 } from './execution-tree.js'
 import { releaseShared, sealReadOnly, sealShared, sealTree, unsealTree } from './seal.js'
 
@@ -40,6 +40,25 @@ const EXECUTION_DERIVED: Readonly<Record<string, string>> = Object.freeze(Object
 /** The complete directory set one execution tree may contain. */
 const EXECUTION_DIRECTORIES: readonly string[] = Object.freeze(
   [...new Set([...NIUBASH_PIN.directories, ...NIUBASH_EXECUTION_DIRECTORIES])])
+
+/**
+ * One link book per immutable payload. Every tree of a payload hardlinks the same
+ * inodes, so a link count is shared by all of them and only process-wide
+ * accounting can tell a sibling clone from a link created outside the tree.
+ */
+const sharedLinkBooks = new Map<string, SharedLinkBook>()
+
+/**
+ * Drop the trees whose directory is really gone. A release can defer to a
+ * sibling tree, so the caller cannot know which trees left the disk; a failed
+ * removal keeps its tree registered, which is exactly the links that still exist.
+ */
+function forgetSharedTrees(source: string): void {
+  const book = sharedLinkBooks.get(source)
+  if (book === undefined) return
+  book.forgetMissing(root => fs.existsSync(root))
+  if (book.size === 0) sharedLinkBooks.delete(source)
+}
 
 /** The verified per-call tree handed to the shell layer. */
 export interface NiubashRuntime {
@@ -346,12 +365,23 @@ export async function prepareNiubash(file: string, inheritedPath = process.env.P
     if (released) return
     released = true
     await releaseShared(source, root)
+    forgetSharedTrees(source)
   }
   try {
     const clone = await cloneExecutionTree({ source, root, signal,
       hardlink: await sharesPayloadInodes(root, options.workspaceRoot),
       files: NIUBASH_PIN.sizes, derived: EXECUTION_DERIVED,
       directories: NIUBASH_PIN.directories, stateDirectories: NIUBASH_EXECUTION_DIRECTORIES, extra: [NIUBASH_RECEIPT] })
+    // A copy clone shares no inode with the payload, so only hardlink trees take
+    // part in the link book; their counts cannot drift from a sibling.
+    const sharedInodes = clone.mode === 'hardlink'
+    if (sharedInodes) {
+      const book = sharedLinkBooks.get(source) ?? new SharedLinkBook()
+      sharedLinkBooks.set(source, book)
+      const observed: Record<string, number> = {}
+      for (const name of Object.keys(clone.contributions)) observed[name] = clone.links[name]
+      book.record(root, observed, clone.contributions)
+    }
     const immutable = Object.keys(clone.sizes).map(name => path.join(root, name))
     const writable = [...NIUBASH_EXECUTION_DIRECTORIES.map(directory => path.join(root, directory)), root]
     const sealReadOnlyNow = () => sealTree({ root, files: immutable, writableDirectories: writable })
@@ -365,15 +395,38 @@ export async function prepareNiubash(file: string, inheritedPath = process.env.P
     await fs.promises.writeFile(receiptFile, receiptText)
     await sealReadOnly([receiptFile])
     const sizes = { ...clone.sizes, [EXECUTION_RECEIPT]: Buffer.byteLength(receiptText) }
-    const links = { ...clone.links, [EXECUTION_RECEIPT]: (await fs.promises.lstat(receiptFile)).nlink }
-    const expectation: TreeExpectation = { sizes, links, directories: EXECUTION_DIRECTORIES, sealed: true }
+    /**
+     * Rebuild the link expectation on every check. A sibling clone or a sibling
+     * disposal changes the shared inode's count between two calls, so a value
+     * captured at clone time makes one of two concurrent trees fail as soon as
+     * the other starts or ends. The book adds and removes exactly those siblings;
+     * a link it cannot account for still fails the comparison.
+     */
+    const expectedLinks = (): Record<string, number> => {
+      const links: Record<string, number> = {}
+      if (!sharedInodes) {
+        for (const name of Object.keys(sizes)) links[name] = 1
+        return links
+      }
+      const shared = sharedLinkBooks.get(source)?.expected(root)
+      if (shared === undefined) throw Error(`Unaccounted Niubash execution tree: ${root}`)
+      for (const name of Object.keys(sizes)) {
+        // The receipt is written into this tree only; it never shares an inode.
+        if (name === EXECUTION_RECEIPT) { links[name] = 1; continue }
+        const owner = Object.hasOwn(EXECUTION_DERIVED, name) ? EXECUTION_DERIVED[name] : name
+        const count = shared[owner]
+        if (count === undefined) throw Error(`Unaccounted Niubash execution tree inode: ${name}`)
+        links[name] = count
+      }
+      return links
+    }
     const verifyNow = async () => {
       await verifySourceTree(source, deep, signal)
       // Defence in depth: re-apply the read-only seal immediately before the stat
       // check, so a sibling's late disposal (or any external attribute reset)
       // cannot make a live tree look unsealed. The ACL already blocks writes.
       await sealReadOnly([...immutable, receiptFile])
-      await verifyTreeStat({ root, ...expectation, signal })
+      await verifyTreeStat({ root, sizes, links: expectedLinks(), directories: EXECUTION_DIRECTORIES, sealed: true, signal })
       await verifyExecutionReceipt(root, EXECUTION_RECEIPT, receipt)
       if (deep) await verifyExecutionTreeDeep(root, sizes, signal)
     }

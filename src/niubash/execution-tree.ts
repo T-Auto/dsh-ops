@@ -17,6 +17,13 @@
  * `NIUBASH_VERIFY=deep` escape hatch restores a full re-hash for operators who
  * want it.
  *
+ * A clone's link count is a property of the inode, not of one tree: every sibling
+ * clone of the same payload raises it and every disposal lowers it. This module
+ * records what one tree contributes ({@link CloneResult.contributions}); the
+ * expectation a check compares against is rebuilt per check by
+ * {@link SharedLinkBook}, and a hardlink clone that would push an inode past the
+ * filesystem's ceiling is built as copies instead of failing the command.
+ *
  * Every filesystem call is injected through {@link TreeOps}, so a synthetic tree
  * can prove hardlink cloning, EXDEV fallback, cancellation and every rejection
  * on a platform that cannot run the Windows payload itself.
@@ -96,6 +103,12 @@ export interface CloneResult {
   sizes: Record<string, number>
   /** Expected link count for every relative path, captured after creation. */
   links: Record<string, number>
+  /**
+   * Names this tree adds to each shared source inode, keyed by the source path.
+   * A derived argv0 face adds one name to its origin's inode and never gets an
+   * entry of its own.
+   */
+  contributions: Record<string, number>
   /** File data actually written into the tree; zero for a hardlink clone. */
   dataBytes: number
   /** Present when the tree was rebuilt with copies; says why the fast path failed. */
@@ -104,10 +117,42 @@ export interface CloneResult {
 
 const CROSS_DEVICE_CODES = new Set(['EXDEV', 'ENOTSUP', 'EOPNOTSUPP', 'EMLINK', 'EPERM'])
 
+/** The filesystem's link ceiling: NTFS allows 1024 links to one file, so the 1025th link fails. */
+export const HARDLINK_LIMIT = 1024
+
 function isCrossDeviceLinkFailure(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error
     && CROSS_DEVICE_CODES.has(String((error as NodeJS.ErrnoException).code))
 }
+
+/**
+ * How many names one clone adds to each shared inode, keyed by the source path.
+ * A derived target adds its name to the origin's inode, so the face names never
+ * appear as keys.
+ */
+function linkContributions(request: TreeInventory): Record<string, number> {
+  const contributions: Record<string, number> = {}
+  for (const name of Object.keys(request.files)) contributions[name] = (contributions[name] ?? 0) + 1
+  for (const name of request.extra) contributions[name] = (contributions[name] ?? 0) + 1
+  for (const origin of Object.values(request.derived)) contributions[origin] = (contributions[origin] ?? 0) + 1
+  return contributions
+}
+
+/**
+ * The first inode a hardlink clone would push past the ceiling, with the count it
+ * would reach. The source's own count already includes every live and leftover
+ * tree that shares the inode, so this needs no bookkeeping to stay accurate.
+ */
+async function linkCapacityOverflow(source: string, contributions: Record<string, number>, ops: TreeOps):
+Promise<{ name: string; projected: number } | undefined> {
+  for (const [name, added] of Object.entries(contributions)) {
+    const current = (await ops.lstat(path.join(source, name))).nlink
+    const projected = current + added
+    if (projected > HARDLINK_LIMIT) return { name, projected }
+  }
+  return undefined
+}
+
 
 function mergeOps(ops: Partial<TreeOps> | undefined): TreeOps {
   return { ...nodeTreeOps, ...ops }
@@ -153,19 +198,32 @@ export async function cloneExecutionTree(request: CloneRequest): Promise<CloneRe
   }
 
   await createDirectories()
+  const contributions = linkContributions(request)
   let mode: CloneMode = request.hardlink === false ? 'copy' : 'hardlink'
   let fallback: CloneFallback | undefined
+  if (mode === 'hardlink') {
+    const overflow = await linkCapacityOverflow(source, contributions, ops)
+    if (overflow !== undefined) {
+      fallback = { code: 'EMLINK', detail: `${overflow.name} would hold ${overflow.projected} links; the filesystem allows ${HARDLINK_LIMIT}` }
+      mode = 'copy'
+    }
+  }
   if (mode === 'copy') {
     await materialize('copy')
   } else {
     try {
       await materialize('hardlink')
     } catch (error) {
-      if (!isCrossDeviceLinkFailure(error)) throw error
-      fallback = { code: String((error as NodeJS.ErrnoException).code ?? 'unknown'), detail: errorMessage(error) }
+      // Windows reports the link ceiling as `UNKNOWN`, so a failed link is measured
+      // against the capacity again instead of being accepted on its code alone.
+      const overflow = await linkCapacityOverflow(source, contributions, ops).catch(() => undefined)
+      if (overflow === undefined && !isCrossDeviceLinkFailure(error)) throw error
+      fallback = overflow === undefined
+        ? { code: String((error as NodeJS.ErrnoException).code ?? 'unknown'), detail: errorMessage(error) }
+        : { code: 'EMLINK', detail: `${overflow.name} would hold ${overflow.projected} links; the filesystem allows ${HARDLINK_LIMIT}: ${errorMessage(error)}` }
       signal?.throwIfAborted()
       // A partial hardlink clone cannot be converted in place; rebuild the tree as
-      // copies, which is the documented cross-device fallback.
+      // copies, which is the documented cross-device and link-ceiling fallback.
       await ops.rm(root)
       await createDirectories()
       mode = 'copy'
@@ -179,7 +237,7 @@ export async function cloneExecutionTree(request: CloneRequest): Promise<CloneRe
     links[name] = (await ops.lstat(path.join(root, name))).nlink
   }
   const dataBytes = mode === 'copy' ? Object.values(sizes).reduce((total, size) => total + size, 0) : 0
-  return { mode, sizes, links, dataBytes, ...(fallback === undefined ? {} : { fallback }) }
+  return { mode, sizes, links, contributions, dataBytes, ...(fallback === undefined ? {} : { fallback }) }
 }
 
 /** One error's message, without assuming it is an `Error`. */
@@ -270,4 +328,79 @@ export async function verifyExecutionReceipt(root: string, name: string, expecte
   let actual: unknown
   try { actual = JSON.parse(await ops.readFile(path.join(root, name))) } catch { throw Error(`Invalid Niubash execution receipt: ${name}`) }
   if (JSON.stringify(actual) !== JSON.stringify(expected)) throw Error(`Invalid Niubash execution receipt: ${name}`)
+}
+
+/** What one registered tree saw and contributed, kept until its directory is gone. */
+interface SharedTreeEntry {
+  observed: Record<string, number>
+  contributed: Record<string, number>
+  atRegistration: Record<string, number>
+}
+
+/**
+ * Link accounting for every live tree of one immutable payload.
+ *
+ * `nlink` is a property of the inode, so a sibling clone raises it and a sibling
+ * disposal lowers it. An expectation captured once at clone time therefore goes
+ * stale as soon as another call starts or ends, and a strict comparison against
+ * it refuses a perfectly good tree — the "link count mismatch" a concurrent
+ * `ops_bash` call reports today. The book records, per live tree, the count it
+ * observed and what it contributes; a check then expects
+ * `observed + (contributed by live trees now - contributed at registration)`.
+ *
+ * A link no live tree accounts for still fails the comparison, so an outside
+ * hardlink stays detected. The book is per process: two DSH hosts sharing one
+ * payload are not coordinated, and the other host's tree reads as an outside
+ * link, which is the residual boundary the sealing docs already name.
+ */
+export class SharedLinkBook {
+  private readonly trees = new Map<string, SharedTreeEntry>()
+
+  /** How many trees are live in this process. */
+  get size(): number { return this.trees.size }
+
+  /** Register the tree that just finished cloning, with the counts it observes. */
+  record(root: string, observed: Readonly<Record<string, number>>, contributed: Readonly<Record<string, number>>): void {
+    const atRegistration = this.liveContributions()
+    for (const [name, count] of Object.entries(contributed)) atRegistration[name] = (atRegistration[name] ?? 0) + count
+    this.trees.set(root, { observed: { ...observed }, contributed: { ...contributed }, atRegistration })
+  }
+
+  /** Forget a tree whose directory is really gone; its names no longer hold links. */
+  forget(root: string): void { this.trees.delete(root) }
+
+  /** Forget every registered tree that no longer exists; returns how many were dropped. */
+  forgetMissing(exists: (root: string) => boolean): number {
+    let dropped = 0
+    for (const root of [...this.trees.keys()]) {
+      if (exists(root)) continue
+      this.trees.delete(root)
+      dropped += 1
+    }
+    return dropped
+  }
+
+  /**
+   * The link count every shared inode of the tree at `root` must show now, keyed
+   * by the source path. Throws when the tree was never registered: a check with
+   * no accounting must fail closed rather than skip the comparison.
+   */
+  expected(root: string): Record<string, number> {
+    const record = this.trees.get(root)
+    if (record === undefined) throw Error(`Unaccounted Niubash execution tree: ${root}`)
+    const now = this.liveContributions()
+    const links: Record<string, number> = {}
+    for (const [name, observed] of Object.entries(record.observed)) {
+      links[name] = observed + (now[name] ?? 0) - (record.atRegistration[name] ?? 0)
+    }
+    return links
+  }
+
+  private liveContributions(): Record<string, number> {
+    const total: Record<string, number> = {}
+    for (const tree of this.trees.values()) {
+      for (const [name, count] of Object.entries(tree.contributed)) total[name] = (total[name] ?? 0) + count
+    }
+    return total
+  }
 }

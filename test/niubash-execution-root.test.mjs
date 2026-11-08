@@ -13,7 +13,9 @@ import path from 'node:path'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import {
   cloneExecutionTree,
+  HARDLINK_LIMIT,
   nodeTreeOps,
+  SharedLinkBook,
   verifyExecutionReceipt,
   verifyTreeStat,
 } from '../lib/niubash/execution-tree.js'
@@ -434,6 +436,72 @@ await test('an execution root that resolves inside the payload is refused', asyn
       if (previous === undefined) delete process.env.DSH_OPS_EXEC_ROOT
       else process.env.DSH_OPS_EXEC_ROOT = previous
     }
+  } finally { await tidy(base) }
+}))
+
+const ownerOf = name => Object.hasOwn(DERIVED, name) ? DERIVED[name] : name
+
+/** Every name of one tree must show the count the book expects for its inode. */
+function assertBookMatches(book, root, clone) {
+  const expected = book.expected(root)
+  for (const name of Object.keys(clone.sizes)) {
+    assert.equal(fs.lstatSync(path.join(root, name)).nlink, expected[ownerOf(name)], name)
+  }
+}
+
+await test('two live trees of one payload share the link accounting instead of invalidating it', async () => withTempDir('niu-book', async base => {
+  try {
+    const source = buildSource(base)
+    const first = path.join(base, 'exec-1')
+    const second = path.join(base, 'exec-2')
+    const book = new SharedLinkBook()
+    const observed = clone => Object.fromEntries(Object.keys(clone.contributions).map(name => [name, clone.links[name]]))
+
+    const one = await cloneInto(source, first)
+    book.record(first, observed(one), one.contributions)
+    assertBookMatches(book, first, one)
+
+    // The second clone raises every shared inode; the first tree keeps matching,
+    // which is exactly what a recorded-at-clone-time count cannot do.
+    const two = await cloneInto(source, second)
+    book.record(second, observed(two), two.contributions)
+    assertBookMatches(book, first, one)
+    assertBookMatches(book, second, two)
+
+    // A link no live tree accounts for is still a mismatch, so the outside-tree
+    // detection the strict comparison provided is preserved.
+    const alias = path.join(base, 'outside-alias')
+    fs.linkSync(path.join(first, 'bin/helper.dll'), alias)
+    assert.equal(fs.lstatSync(path.join(first, 'bin/helper.dll')).nlink, book.expected(first)['bin/helper.dll'] + 1)
+    fs.unlinkSync(alias)
+
+    // Disposing one tree lowers the count of the tree that is still running.
+    await removeSealedTree(first, NO_ACL)
+    assert.equal(book.forgetMissing(root => fs.existsSync(root)), 1)
+    book.forget(first)
+    assert.equal(book.size, 1)
+    assertBookMatches(book, second, two)
+  } finally { await tidy(base) }
+}))
+
+await test('a hardlink clone that would pass the link ceiling is built as copies', async () => withTempDir('niu-ceiling', async base => {
+  try {
+    const source = buildSource(base)
+    const root = path.join(base, 'exec')
+    // Leftover trees push a shared inode toward the ceiling, and Windows reports
+    // the next link as UNKNOWN rather than EMLINK. Measuring first turns that
+    // refusal into the documented copy fallback instead of a dead executor.
+    const lstat = async file => {
+      const stat = await fs.promises.lstat(file)
+      return file.startsWith(source) ? Object.assign(Object.create(stat), { nlink: HARDLINK_LIMIT - 1 }) : stat
+    }
+    const clone = await cloneInto(source, root, { ops: { lstat } })
+    assert.equal(clone.mode, 'copy')
+    assert.equal(clone.fallback?.code, 'EMLINK')
+    assert.match(clone.fallback?.detail ?? '', /bin\/winuxcmd\.exe/u)
+    assert.match(clone.fallback?.detail ?? '', new RegExp(String(HARDLINK_LIMIT), 'u'))
+    assert.equal(clone.dataBytes, Object.values(clone.sizes).reduce((total, size) => total + size, 0))
+    for (const name of Object.keys(clone.sizes)) assert.equal(fs.lstatSync(path.join(root, name)).nlink, 1, name)
   } finally { await tidy(base) }
 }))
 
