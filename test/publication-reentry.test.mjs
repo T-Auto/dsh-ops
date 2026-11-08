@@ -220,4 +220,77 @@ await test('real session append ordering rolls back refused registry effects and
   } finally { steps.forEach(step => step.dispose()); await shutdown(ctx) }
 })
 
+await test('two rows share one refusal window and the first row leaving keeps it alive', async () => {
+  const { ctx, tools } = await bootHost()
+  const agents = [{ id: 'shared-window-a' }, { id: 'shared-window-b' }]
+  const [rowA, rowB] = agents.map(agent => createScope(ctx, agent))
+  let locked = true, attempts = 0
+  try {
+    publicationRegistration(rowA.ctx, () => {
+      if (locked) throw refusal()
+      return rowA.ctx.get('tools').register(definition('row-a-fixture'))
+    })
+    const second = publicationRegistration(rowB.ctx, () => {
+      ++attempts
+      if (locked) throw refusal()
+      return rowB.ctx.get('tools').register(definition('row-b-fixture'))
+    })
+    await wait(160)
+    assert.equal(attempts, 0, 'one queue holds row B behind the row A operation that opened the window')
+    locked = false
+    await rowA.dispose()
+    await ready(second)
+    assert.ok(tools.get('row-b-fixture', agents[1]), 'row B settles after row A is gone')
+    assert.equal(tools.get('row-a-fixture', agents[0]), undefined, 'row A never published')
+  } finally { locked = false; await rowB.dispose(); await shutdown(ctx) }
+})
+
+await test('a fiber buys one queue life however many contexts it derives', async () => {
+  const { ctx, tools } = await bootHost()
+  let inner
+  const fiber = await ctx.plugin({ inject: ['tools'], apply(pluginCtx) { inner = pluginCtx } })
+  let locked = true
+  const owned = fiber => fiber.getEffects().filter(effect => effect.label === 'dsh-ops: registry refusal queue').length
+  try {
+    const derived = [inner.extend(), inner.extend()]
+    assert.notEqual(derived[0], derived[1], 'extend returns distinct context objects')
+    assert.equal(derived[0].fiber, derived[1].fiber, 'both derived contexts belong to the one plugin fiber')
+    const pending = derived.map(entry => publicationRegistration(entry, () => {
+      if (locked) throw refusal()
+      return entry.get('tools').register(definition('derived-fixture'))
+    }))
+    assert.equal(owned(derived[0].fiber), 1, 'two derived contexts buy one queue reference, not one each')
+    assert.equal(owned(ctx.fiber), 0, 'the composition root owns no part of the queue')
+    await fiber.dispose()
+    for (const dispose of pending) await assert.rejects(publicationReady(dispose), /cancelled/)
+    // The queue must be destroyed, not merely stopped: the next row has to get a working one.
+    const nextAgent = { id: 'derived-contexts-next' }, next = createScope(ctx, nextAgent)
+    try {
+      const lease = publicationRegistration(next.ctx, () => next.ctx.get('tools').register(definition('next-fixture')))
+      await ready(lease)
+      assert.ok(tools.get('next-fixture', nextAgent), 'the queue is rebuilt after its last owner released it')
+    } finally { await next.dispose() }
+  } finally { locked = false; await shutdown(ctx) }
+})
+
+await test('a queue refused the effect that would release it is not left half built', async () => {
+  const { ctx } = await bootHost()
+  let attempts = 0
+  const agent = { id: 'half-built-queue' }, scope = createScope(ctx, agent)
+  try {
+    // A guarded host refuses the effect the queue has to own itself; the lease
+    // of the registration itself is untouched, exactly like dsh-tui's refusal.
+    const inherited = scope.ctx.effect.bind(scope.ctx)
+    const guarded = scope.ctx.extend()
+    guarded.effect = (execute, label) => {
+      if (label === 'dsh-ops: registry refusal queue') throw new Error('root.effect is unavailable from a plugin activation')
+      return inherited(execute, label)
+    }
+    const register = () => publicationRegistration(guarded, () => { ++attempts; return () => {} })
+    assert.throws(register, /root.effect is unavailable/)
+    assert.throws(register, /root.effect is unavailable/, 'a rejected retain must not leave a reusable queue behind')
+    assert.equal(attempts, 0, 'the half-built queue must never run the work it failed to own')
+  } finally { await scope.dispose(); await shutdown(ctx) }
+})
+
 report('publication-reentry')
