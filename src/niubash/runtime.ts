@@ -42,17 +42,32 @@ const EXECUTION_DIRECTORIES: readonly string[] = Object.freeze(
   [...new Set([...NIUBASH_PIN.directories, ...NIUBASH_EXECUTION_DIRECTORIES])])
 
 /**
- * One link book per immutable payload. Every tree of a payload hardlinks the same
- * inodes, so a link count is shared by all of them and only process-wide
- * accounting can tell a sibling clone from a link created outside the tree.
+ * One link book per immutable payload, plus one chain that keeps a clone, a
+ * check and a disposal from interleaving. Every tree of a payload hardlinks the
+ * same inodes, so only process-wide accounting can tell a sibling clone from a
+ * link created outside the tree — and that accounting is exact only while no
+ * clone is half-materialized.
  */
 const sharedLinkBooks = new Map<string, SharedLinkBook>()
+const linkChains = new Map<string, Promise<unknown>>()
 
-/**
- * Drop the trees whose directory is really gone. A release can defer to a
- * sibling tree, so the caller cannot know which trees left the disk; a failed
- * removal keeps its tree registered, which is exactly the links that still exist.
- */
+function serializeLinks<T>(source: string, task: () => Promise<T>): Promise<T> {
+  const previous = linkChains.get(source) ?? Promise.resolve()
+  const next = previous.then(task, task)
+  linkChains.set(source, next.then(() => undefined, () => undefined))
+  return next
+}
+
+function sharedLinkBook(source: string): SharedLinkBook {
+  let book = sharedLinkBooks.get(source)
+  if (book === undefined) {
+    book = new SharedLinkBook()
+    sharedLinkBooks.set(source, book)
+  }
+  return book
+}
+
+/** Drop the trees whose directory is really gone; a failed removal keeps its links registered. */
 function forgetSharedTrees(source: string): void {
   const book = sharedLinkBooks.get(source)
   if (book === undefined) return
@@ -364,24 +379,29 @@ export async function prepareNiubash(file: string, inheritedPath = process.env.P
   const dispose = async () => {
     if (released) return
     released = true
-    await releaseShared(source, root)
-    forgetSharedTrees(source)
+    await serializeLinks(source, async () => {
+      await releaseShared(source, root)
+      forgetSharedTrees(source)
+    })
   }
   try {
-    const clone = await cloneExecutionTree({ source, root, signal,
-      hardlink: await sharesPayloadInodes(root, options.workspaceRoot),
-      files: NIUBASH_PIN.sizes, derived: EXECUTION_DERIVED,
-      directories: NIUBASH_PIN.directories, stateDirectories: NIUBASH_EXECUTION_DIRECTORIES, extra: [NIUBASH_RECEIPT] })
-    // A copy clone shares no inode with the payload, so only hardlink trees take
-    // part in the link book; their counts cannot drift from a sibling.
-    const sharedInodes = clone.mode === 'hardlink'
-    if (sharedInodes) {
-      const book = sharedLinkBooks.get(source) ?? new SharedLinkBook()
-      sharedLinkBooks.set(source, book)
-      const observed: Record<string, number> = {}
-      for (const name of Object.keys(clone.contributions)) observed[name] = clone.links[name]
-      book.record(root, observed, clone.contributions)
-    }
+    // A copy clone shares no inode with the payload, so only a hardlink clone
+    // takes part in the link book. Calibrate and register inside the chain: a
+    // sibling that created its links before registering would otherwise read as
+    // an outside link.
+    const { clone, sharedInodes } = await serializeLinks(source, async () => {
+      const hardlink = await sharesPayloadInodes(root, options.workspaceRoot)
+      const cloned = await cloneExecutionTree({ source, root, signal, hardlink,
+        files: NIUBASH_PIN.sizes, derived: EXECUTION_DERIVED,
+        directories: NIUBASH_PIN.directories, stateDirectories: NIUBASH_EXECUTION_DIRECTORIES, extra: [NIUBASH_RECEIPT] })
+      const shared = cloned.mode === 'hardlink'
+      if (shared) {
+        const book = sharedLinkBook(source)
+        book.calibrate(cloned.links, cloned.contributions)
+        book.record(root, cloned.contributions)
+      }
+      return { clone: cloned, sharedInodes: shared }
+    })
     const immutable = Object.keys(clone.sizes).map(name => path.join(root, name))
     const writable = [...NIUBASH_EXECUTION_DIRECTORIES.map(directory => path.join(root, directory)), root]
     const sealReadOnlyNow = () => sealTree({ root, files: immutable, writableDirectories: writable })
@@ -420,7 +440,7 @@ export async function prepareNiubash(file: string, inheritedPath = process.env.P
       }
       return links
     }
-    const verifyNow = async () => {
+    const verifyNow = async () => serializeLinks(source, async () => {
       await verifySourceTree(source, deep, signal)
       // Defence in depth: re-apply the read-only seal immediately before the stat
       // check, so a sibling's late disposal (or any external attribute reset)
@@ -429,7 +449,7 @@ export async function prepareNiubash(file: string, inheritedPath = process.env.P
       await verifyTreeStat({ root, sizes, links: expectedLinks(), directories: EXECUTION_DIRECTORIES, sealed: true, signal })
       await verifyExecutionReceipt(root, EXECUTION_RECEIPT, receipt)
       if (deep) await verifyExecutionTreeDeep(root, sizes, signal)
-    }
+    })
     await verifyNow()
     return {
       file: path.join(root, NIUBASH_PIN.executable),

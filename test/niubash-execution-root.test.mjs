@@ -455,16 +455,16 @@ await test('two live trees of one payload share the link accounting instead of i
     const first = path.join(base, 'exec-1')
     const second = path.join(base, 'exec-2')
     const book = new SharedLinkBook()
-    const observed = clone => Object.fromEntries(Object.keys(clone.contributions).map(name => [name, clone.links[name]]))
 
     const one = await cloneInto(source, first)
-    book.record(first, observed(one), one.contributions)
+    book.calibrate(one.links, one.contributions)
+    book.record(first, one.contributions)
     assertBookMatches(book, first, one)
 
     // The second clone raises every shared inode; the first tree keeps matching,
     // which is exactly what a recorded-at-clone-time count cannot do.
     const two = await cloneInto(source, second)
-    book.record(second, observed(two), two.contributions)
+    book.record(second, two.contributions)
     assertBookMatches(book, first, one)
     assertBookMatches(book, second, two)
 
@@ -475,10 +475,13 @@ await test('two live trees of one payload share the link accounting instead of i
     assert.equal(fs.lstatSync(path.join(first, 'bin/helper.dll')).nlink, book.expected(first)['bin/helper.dll'] + 1)
     fs.unlinkSync(alias)
 
+    // A check with no accounting fails closed rather than skipping the compare.
+    const uncalibrated = new SharedLinkBook()
+    assert.throws(() => uncalibrated.expected(first), /Unaccounted/u)
+
     // Disposing one tree lowers the count of the tree that is still running.
     await removeSealedTree(first, NO_ACL)
     assert.equal(book.forgetMissing(root => fs.existsSync(root)), 1)
-    book.forget(first)
     assert.equal(book.size, 1)
     assertBookMatches(book, second, two)
   } finally { await tidy(base) }

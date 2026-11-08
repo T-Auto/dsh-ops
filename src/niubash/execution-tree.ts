@@ -330,51 +330,65 @@ export async function verifyExecutionReceipt(root: string, name: string, expecte
   if (JSON.stringify(actual) !== JSON.stringify(expected)) throw Error(`Invalid Niubash execution receipt: ${name}`)
 }
 
-/** What one registered tree saw and contributed, kept until its directory is gone. */
-interface SharedTreeEntry {
-  observed: Record<string, number>
-  contributed: Record<string, number>
-  atRegistration: Record<string, number>
-}
-
 /**
  * Link accounting for every live tree of one immutable payload.
  *
- * `nlink` is a property of the inode, so a sibling clone raises it and a sibling
- * disposal lowers it. An expectation captured once at clone time therefore goes
- * stale as soon as another call starts or ends, and a strict comparison against
- * it refuses a perfectly good tree — the "link count mismatch" a concurrent
- * `ops_bash` call reports today. The book records, per live tree, the count it
- * observed and what it contributes; a check then expects
- * `observed + (contributed by live trees now - contributed at registration)`.
+ * `nlink` is a property of the shared inode: each clone adds its own names to it
+ * and each disposal removes them again. A count captured once therefore stops
+ * matching as soon as a sibling appears or leaves, which is the "link count
+ * mismatch" a concurrent `ops_bash` call reports today. The book holds the
+ * payload's own baseline plus one contribution record per live tree, so the
+ * expectation is exactly their sum.
  *
- * A link no live tree accounts for still fails the comparison, so an outside
- * hardlink stays detected. The book is per process: two DSH hosts sharing one
- * payload are not coordinated, and the other host's tree reads as an outside
- * link, which is the residual boundary the sealing docs already name.
+ * The sum is only exact while no clone is half-materialized: a sibling whose
+ * links exist but whose registration has not run yet would read as an outside
+ * link. The caller therefore serializes cloning, checking and disposal per
+ * payload (see `runtime.ts`); this class assumes those three never interleave.
+ * A link no live tree accounts for still fails the check, so a hardlink created
+ * outside the tree stays detected. The book is per process: two DSH hosts
+ * sharing one payload are not coordinated, and the other host's tree reads as
+ * an outside link.
  */
 export class SharedLinkBook {
-  private readonly trees = new Map<string, SharedTreeEntry>()
+  private baseline: Record<string, number> | undefined
+  private readonly trees = new Map<string, Record<string, number>>()
 
   /** How many trees are live in this process. */
   get size(): number { return this.trees.size }
 
-  /** Register the tree that just finished cloning, with the counts it observes. */
-  record(root: string, observed: Readonly<Record<string, number>>, contributed: Readonly<Record<string, number>>): void {
-    const atRegistration = this.liveContributions()
-    for (const [name, count] of Object.entries(contributed)) atRegistration[name] = (atRegistration[name] ?? 0) + count
-    this.trees.set(root, { observed: { ...observed }, contributed: { ...contributed }, atRegistration })
+  /** Whether the payload's own counts are known, so a check can be exact. */
+  get calibrated(): boolean { return this.baseline !== undefined }
+
+  /**
+   * Fold the payload's own counts out of one freshly finished clone: what the
+   * tree observed, minus what it and every already registered tree contribute.
+   * Called inside the caller's chain, before this tree is registered, so the
+   * subtracted set is exactly the links that exist.
+   */
+  calibrate(observed: Readonly<Record<string, number>>, own: Readonly<Record<string, number>>): void {
+    if (this.baseline !== undefined) return
+    const baseline: Record<string, number> = {}
+    for (const [name, count] of Object.entries(own)) {
+      const registered = this.liveContributions()[name] ?? 0
+      baseline[name] = (observed[name] ?? 0) - count - registered
+    }
+    this.baseline = baseline
+  }
+
+  /** Register a tree whose names now exist in the shared inodes. */
+  record(root: string, contributed: Readonly<Record<string, number>>): void {
+    this.trees.set(root, { ...contributed })
   }
 
   /** Forget a tree whose directory is really gone; its names no longer hold links. */
-  forget(root: string): void { this.trees.delete(root) }
+  forget(root: string): void { this.drop(root) }
 
   /** Forget every registered tree that no longer exists; returns how many were dropped. */
   forgetMissing(exists: (root: string) => boolean): number {
     let dropped = 0
     for (const root of [...this.trees.keys()]) {
       if (exists(root)) continue
-      this.trees.delete(root)
+      this.drop(root)
       dropped += 1
     }
     return dropped
@@ -382,16 +396,16 @@ export class SharedLinkBook {
 
   /**
    * The link count every shared inode of the tree at `root` must show now, keyed
-   * by the source path. Throws when the tree was never registered: a check with
-   * no accounting must fail closed rather than skip the comparison.
+   * by the source path. Throws when the tree was never registered or the payload
+   * was never calibrated: a check with no accounting fails closed instead of
+   * skipping the comparison.
    */
   expected(root: string): Record<string, number> {
-    const record = this.trees.get(root)
-    if (record === undefined) throw Error(`Unaccounted Niubash execution tree: ${root}`)
-    const now = this.liveContributions()
-    const links: Record<string, number> = {}
-    for (const [name, observed] of Object.entries(record.observed)) {
-      links[name] = observed + (now[name] ?? 0) - (record.atRegistration[name] ?? 0)
+    if (!this.trees.has(root)) throw Error(`Unaccounted Niubash execution tree: ${root}`)
+    if (this.baseline === undefined) throw Error(`Uncalibrated Niubash execution tree book: ${root}`)
+    const links: Record<string, number> = { ...this.baseline }
+    for (const tree of this.trees.values()) {
+      for (const [name, count] of Object.entries(tree)) links[name] = (links[name] ?? 0) + count
     }
     return links
   }
@@ -399,8 +413,16 @@ export class SharedLinkBook {
   private liveContributions(): Record<string, number> {
     const total: Record<string, number> = {}
     for (const tree of this.trees.values()) {
-      for (const [name, count] of Object.entries(tree.contributed)) total[name] = (total[name] ?? 0) + count
+      for (const [name, count] of Object.entries(tree)) total[name] = (total[name] ?? 0) + count
     }
     return total
+  }
+
+  private drop(root: string): void {
+    this.trees.delete(root)
+    // The baseline folded in whatever existed when it was measured, including
+    // any tree that predates this process. Once none of ours is live, measure
+    // again rather than trust a value that may have gone stale.
+    if (this.trees.size === 0) this.baseline = undefined
   }
 }
