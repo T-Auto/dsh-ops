@@ -54,6 +54,42 @@ await test('presentation predicate only narrows a captured consumer', async () =
     lease.dispose()
   } finally { steps.forEach(step => step.dispose()); await shutdown(ctx) }
 })
+// A shared source reads through `agent.ctx` but must subscribe through the row
+// context: the agent's scope tag hides `session/event` / `session/disposed`, and
+// read-dedup would stop noticing source changes. The row context is passed
+// explicitly, so a reverted call path leaves it with no listener at all.
+await test('a shared source subscribes through the row context it is given', async () => {
+  const { ctx } = await bootHost()
+  try {
+    const agent = { id: 'shared-row-events', session: { id: 'shared-row-events' } }
+    agent.ctx = createScope(ctx, agent).ctx
+    const subscribed = [], disposed = []
+    const row = { on(name) { subscribed.push(name); return () => disposed.push(name) } }
+    const lease = await acquireSharedFile(agent, 'stat', { workerPath: process.execPath }, row)
+    try {
+      assert.ok(subscribed.includes('session/event'), `row context receives session/event: ${subscribed.join(', ')}`)
+      assert.ok(subscribed.includes('session/disposed'), `row context receives session/disposed: ${subscribed.join(', ')}`)
+    } finally { lease.dispose() }
+    assert.ok(disposed.includes('session/event'), 'disposing the lease releases the row subscriptions')
+  } finally { await shutdown(ctx) }
+})
+
+await test('subscribing on the reading ctx is refused instead of silently degrading', async () => {
+  const { ctx, tools } = await bootHost()
+  try {
+    const agent = { id: 'shared-scoped-events', session: { id: 'shared-scoped-events' } }
+    agent.ctx = createScope(ctx, agent).ctx
+    await assert.rejects(acquireSharedFile(agent, 'stat', { workerPath: process.execPath }, agent.ctx),
+      /must not be the reading ctx/)
+    assert.deepEqual(tools.definitions(agent), [], 'a refused subscription context creates neither a source nor a registration')
+    // A source carrying the refused call's config would reject this one as a conflict,
+    // so a row context configures its own source.
+    const lease = await acquireSharedFile(agent, 'stat', { workerPath: process.execPath, toolCallTimeoutMs: 1000 },
+      { on() { return () => {} } })
+    lease.dispose()
+  } finally { await shutdown(ctx) }
+})
+
 await test('asynchronous acquisition cannot revive a disposed source owner', async () => {
   const { ctx, tools } = await bootHost()
   try {

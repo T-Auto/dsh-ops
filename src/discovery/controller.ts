@@ -184,7 +184,7 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
           if (residentSet(agent).has(publicToolName(api))) continue
           if (isSharedFileApi(api)) {
             const lease = await acquireSharedFile(agent, api, { workerPath: worker, required: config.required,
-              denyCredentialReads: config.denyCredentialReads })
+              denyCredentialReads: config.denyCredentialReads }, ctx)
             if (!owns(agent) || entries.get(agent) !== entry) { lease.dispose(); return }
             entry.files.set(api, { lease })
           } else publish(agent, entry, entry.runtime.definition(api))

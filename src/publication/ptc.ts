@@ -152,7 +152,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         for (const api of pool) {
           const def = definition(api, execute(entry, api))
           if (isSharedFileApi(api) || capability(api)?.component === 'file') {
-            const lease = isSharedFileApi(api) ? await acquireSharedFile(agent, api, { workerPath: file, required: true }) : await acquirePtcFile(agent, api as FileToolName)
+            const lease = isSharedFileApi(api) ? await acquireSharedFile(agent, api, { workerPath: file, required: true }, ctx) : await acquirePtcFile(agent, api as FileToolName)
             // Ownership may change while the source starts. Never continue into
             // non-file publication using a superseded entry's disposed context.
             if (!owns(agent) || entries.get(agent) !== entry) { lease.dispose(); return }
