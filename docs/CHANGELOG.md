@@ -7,6 +7,15 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-11-08 — Patch release
+
+- Bound temporary-resource growth through ownership ledgers, deferred result-cache cleanup and explicit cache reclamation; preserve data-bearing snapshots and user content. Host output spills now have bounded retention rather than accumulating indefinitely.
+- 通过归属台账、结果缓存延迟清理与显式缓存回收约束临时资源增长，保留含数据的快照与用户内容；宿主输出 spill 采用有界保留，不再无限积累。
+- Packing an installed package no longer requires repository-only build scripts; source checkouts still build and verify their payload before packing.
+- 从已安装包重新打包不再依赖仓库专用构建脚本；源码检出打包前仍执行构建与载荷校验。
+- Include the integrated cross-platform index/query work and its verified Windows, Linux and macOS correctness fixes; the Windows MFT source remains opt-in.
+- 包含已集成的跨平台索引/查询及经过验证的 Windows、Linux、macOS 正确性修复；Windows MFT 来源仍须显式开启。
+
 - `ops_grep` gains `outputMode: "definitions"`: it returns only the lines where the matched identifier is declared (function, method, type, variable, macro), classified lexically in the native worker — no parser, no new dependency, same no-follow/credential/limit boundaries. `matched` counts every matching line and `total` the returned declarations, so a complete scan reports how many references it withheld; `multiline` and context flags are refused in this mode.
 - Add `dsh-ops cache status|reclaim`: report every temporary resource OPS can reproduce — kept provision downloads, Niubash staging/previous siblings, quarantined Bash IPC generations, audit-store writer temporaries and per-call execution trees — with per-row ownership evidence, `deleted`/`kept`/`unverified` decisions and byte totals. It previews by default, refuses `--yes` without `--all-hosts-stopped`, and never deletes on a name pattern, mtime or dead PID.
 - Failed provision downloads are registered under `<DSH_HOME>/dsh-ops/pending/` and reclaimed under a count/byte/age budget; a shell version is unpacked and verified in a staging sibling and only then renamed into place, so a failed or interrupted install leaves the previous version usable and no half-unpacked tree.
