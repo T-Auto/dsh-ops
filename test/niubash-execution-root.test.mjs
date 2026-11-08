@@ -508,4 +508,33 @@ await test('a hardlink clone that would pass the link ceiling is built as copies
   } finally { await tidy(base) }
 }))
 
+await test('two concurrent preparations of one payload both verify while a sibling is live', async () => withTempDir('niu-concurrent', async base => {
+  const previous = process.env.DSH_OPS_EXEC_ROOT
+  process.env.DSH_OPS_EXEC_ROOT = path.join(base, 'exec-root')
+  try {
+    const source = buildPinnedPayload(base)
+    const file = path.join(source, 'niu.exe')
+    const signal = new AbortController().signal
+    // The clone is asynchronous, so one tree can materialize its names while the
+    // other is mid-flight: registration inside the per-payload chain is what
+    // keeps that window from reading as an outside link.
+    const [a, b] = await Promise.all([prepareNiubash(file, '', signal), prepareNiubash(file, '', signal)])
+    const face = runtime => fs.lstatSync(path.join(path.dirname(runtime.file), 'winuxcmd/usr/bin/cat.exe')).nlink
+    assert.equal(face(a), face(b), 'both trees share the one inode')
+    await a.verify()
+    await b.verify()
+    assert.equal(a.file === b.file, false)
+    // The first disposal defers to the running sibling; the survivor must still
+    // match its rebuilt expectation after the count was recorded while both lived.
+    await a.dispose()
+    await b.verify()
+    await b.dispose()
+    assert.equal(fs.readdirSync(path.join(base, 'exec-root')).filter(name => name.startsWith('dsh-ops-niu-exec-')).length, 0)
+  } finally {
+    if (previous === undefined) delete process.env.DSH_OPS_EXEC_ROOT
+    else process.env.DSH_OPS_EXEC_ROOT = previous
+    await tidy(base)
+  }
+}))
+
 report('niubash-execution-root')
