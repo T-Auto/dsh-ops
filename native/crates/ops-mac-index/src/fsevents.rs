@@ -362,6 +362,12 @@ impl EventStream {
         })
     }
 
+    /// Test-only: arms the per-stream FFI panic probe (#775).
+    #[cfg(test)]
+    pub(crate) fn arm_panic_probe(&self) {
+        self.inner.arm_panic_probe();
+    }
+
     /// The id the stream was opened with.
     pub fn since(&self) -> EventId {
         self.since

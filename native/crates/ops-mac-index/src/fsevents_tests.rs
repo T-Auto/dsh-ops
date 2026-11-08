@@ -533,7 +533,9 @@ fn a_panic_inside_the_callback_cannot_cross_the_ffi_boundary() {
     let root = tree.to_path_buf();
     let mut stream = open_stream(std::slice::from_ref(&root), EventId::SINCE_NOW);
     let before = ffi::CAUGHT_PANICS.load(Ordering::Relaxed);
-    ffi::PANIC_IN_DELIVERY.store(true, Ordering::Relaxed);
+    // Arm only this stream. A process-wide switch would panic a parallel test's
+    // callback and drop its batch, which made the persisted-id replay flaky (#775).
+    stream.arm_panic_probe();
     std::fs::write(root.join("trigger.txt"), b"x").expect("write trigger file");
     // Every delivery panics now. Without the catch_unwind boundary the process
     // would abort here; with it the stream keeps running and the count rises.
@@ -543,7 +545,6 @@ fn a_panic_inside_the_callback_cannot_cross_the_ffi_boundary() {
             break;
         }
     }
-    ffi::PANIC_IN_DELIVERY.store(false, Ordering::Relaxed);
     assert!(
         ffi::CAUGHT_PANICS.load(Ordering::Relaxed) > before,
         "the callback never ran while the panic probe was set"

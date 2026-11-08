@@ -54,11 +54,6 @@ use std::time::Duration;
 #[cfg(test)]
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-/// Test-only switch that makes the next delivery panic inside the callback, so
-/// the panic boundary is exercised on a real stream.
-#[cfg(test)]
-pub(crate) static PANIC_IN_DELIVERY: AtomicBool = AtomicBool::new(false);
-
 /// Counts panics the callback boundary caught; a test asserts it advanced.
 #[cfg(test)]
 pub(crate) static CAUGHT_PANICS: AtomicUsize = AtomicUsize::new(0);
@@ -118,6 +113,30 @@ pub(crate) struct RawEvent {
     pub(crate) file_id: Option<u64>,
 }
 
+/// Callback sink for one stream.
+///
+/// The test-only panic probe lives here, on the stream's own sink, instead of a
+/// process-wide switch: arming one stream must not panic another test's callback
+/// and silently drop its batch (#775).
+struct Sink {
+    /// Events the callback appended since the last take_events call.
+    events: Mutex<Vec<RawEvent>>,
+    /// Test-only switch: the next delivery on THIS stream panics, proving the
+    /// FFI boundary contains it.
+    #[cfg(test)]
+    panic_on_delivery: AtomicBool,
+}
+
+impl Sink {
+    fn new() -> Self {
+        Self {
+            events: Mutex::new(Vec::new()),
+            #[cfg(test)]
+            panic_on_delivery: AtomicBool::new(false),
+        }
+    }
+}
+
 /// An owned, started FSEvents stream.
 ///
 /// Not `Send`/`Sync` on purpose: it is bound to the run loop of the thread
@@ -128,7 +147,7 @@ pub(crate) struct Stream {
     handle: FSEventStreamRef,
     /// Sink the callback appends to. The stream context holds another strong
     /// reference to this allocation through the `release` callback.
-    sink: Arc<Mutex<Vec<RawEvent>>>,
+    sink: Arc<Sink>,
     /// Paths the kernel reported at creation; captured before the stream starts
     /// so a later query cannot be confused by replay traffic.
     watched: Vec<PathBuf>,
@@ -161,7 +180,7 @@ impl Stream {
         latency: Duration,
     ) -> Result<Self, EventError> {
         let paths = path_array(roots)?;
-        let sink = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::new(Sink::new());
         // The stream takes ownership of one strong reference through the
         // context; the raw pointer is reclaimed either by `release_sink` (on
         // success) or explicitly below (on creation failure).
@@ -190,7 +209,7 @@ impl Stream {
         if handle.is_null() {
             // SAFETY: creation failed, so the stream never took ownership of
             // the context; this drops the reference `Arc::into_raw` produced.
-            drop(unsafe { Arc::from_raw(context_info.cast::<Mutex<Vec<RawEvent>>>()) });
+            drop(unsafe { Arc::from_raw(context_info.cast::<Sink>()) });
             return Err(EventError::CreationFailed);
         }
 
@@ -231,13 +250,20 @@ impl Stream {
 
     /// Removes every event the callback collected since the last call.
     pub(crate) fn take_events(&self) -> Vec<RawEvent> {
-        let mut sink = match self.sink.lock() {
+        let mut events = match self.sink.events.lock() {
             Ok(guard) => guard,
             // The callback cannot panic while holding the lock, so poisoning is
             // not reachable from this crate; recover instead of propagating it.
             Err(poisoned) => poisoned.into_inner(),
         };
-        std::mem::take(&mut *sink)
+        std::mem::take(&mut *events)
+    }
+
+    /// Arms the callback panic probe for THIS stream only, so the FFI boundary
+    /// test cannot panic a sibling test's delivery (#775).
+    #[cfg(test)]
+    pub(crate) fn arm_panic_probe(&self) {
+        self.sink.panic_on_delivery.store(true, Ordering::Relaxed);
     }
 
     /// Paths FSEvents reported as being watched when the stream was created.
@@ -326,7 +352,7 @@ unsafe extern "C-unwind" fn release_sink(info: *const c_void) {
     }
     // SAFETY: per the contract above this pointer owns exactly one strong
     // reference created by `Arc::into_raw`.
-    drop(unsafe { Arc::from_raw(info.cast::<Mutex<Vec<RawEvent>>>()) });
+    drop(unsafe { Arc::from_raw(info.cast::<Sink>()) });
 }
 
 /// FSEvents delivery callback.
@@ -382,17 +408,17 @@ unsafe fn deliver(
     event_flags: NonNull<FSEventStreamEventFlags>,
     event_ids: NonNull<FSEventStreamEventId>,
 ) {
-    #[cfg(test)]
-    if PANIC_IN_DELIVERY.load(Ordering::Relaxed) {
-        panic!("injected panic from the FSEvents callback");
-    }
     if info.is_null() || num_events == 0 {
         return;
     }
     // SAFETY: `info` is the sink pointer installed by `Stream::create`, and the
     // stream context holds a strong reference for as long as callbacks can run.
-    let sink = unsafe { &*info.cast::<Mutex<Vec<RawEvent>>>() };
-    let Ok(mut sink) = sink.lock() else {
+    let sink = unsafe { &*info.cast::<Sink>() };
+    #[cfg(test)]
+    if sink.panic_on_delivery.load(Ordering::Relaxed) {
+        panic!("injected panic from the FSEvents callback");
+    }
+    let Ok(mut events) = sink.events.lock() else {
         // A poisoned sink would mean a panic in a path that cannot panic; do
         // not propagate, just drop this batch.
         return;
@@ -411,7 +437,7 @@ unsafe fn deliver(
         let Some(event) = read_path(paths, index as CFIndex, &path_key, &file_id_key) else {
             continue;
         };
-        sink.push(RawEvent {
+        events.push(RawEvent {
             id: ids[index],
             flags: flags[index],
             path: event.0,
