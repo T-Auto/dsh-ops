@@ -82,9 +82,9 @@ await test('subscribing on the reading ctx is refused instead of silently degrad
     await assert.rejects(acquireSharedFile(agent, 'stat', { workerPath: process.execPath }, agent.ctx),
       /must not be the reading ctx/)
     assert.deepEqual(tools.definitions(agent), [], 'a refused subscription context creates neither a source nor a registration')
-    // A source carrying the refused call's config would reject this one as a conflict,
-    // so a row context configures its own source.
-    const lease = await acquireSharedFile(agent, 'stat', { workerPath: process.execPath, toolCallTimeoutMs: 1000 },
+    // The same config succeeds once a row context supplies the subscription: the
+    // refusal leaves no source behind to be reported as a conflicting one.
+    const lease = await acquireSharedFile(agent, 'stat', { workerPath: process.execPath },
       { on() { return () => {} } })
     lease.dispose()
   } finally { await shutdown(ctx) }
