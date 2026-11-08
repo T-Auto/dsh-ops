@@ -86,9 +86,10 @@ export function registerNativeProviderAtScope(ctx: Context, scope: unknown, defi
   try {
     refresh(owner, scope)
     // Metadata-only changes still need notification when every provider is
-    // hidden. This is not another registry mutation; share its refusal window
-    // and keep teardown observable after the row context begins unloading.
-    notification = publicationRegistration(ctx.root ?? ctx, () => { notify(); return notify })
+    // hidden. It is not another registry mutation, but it is still a
+    // registration: the row context owns it, so it unloads with the row, and a
+    // host that guards its composition root refuses root-owned capabilities.
+    notification = publicationRegistration(ctx, () => { notify(); return notify })
   } catch (error) {
     try { stop() } catch (cleanup) { ctx.logger.warn(`dsh-ops: native provider cleanup failed: ${publicationError(cleanup)}`) }
     throw error
