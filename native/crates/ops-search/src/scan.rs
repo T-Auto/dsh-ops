@@ -522,9 +522,7 @@ impl Scan {
             // A caller may opt into ordinary dot directories, but never into
             // the plugin's own sidecars: `internal` shields the update lock, so
             // no flag makes an `.dsh-ops-*` file observable here.
-            if (dotdir(&child, root) && !self.include_hidden)
-                || internal(&name)
-                || reserved(&name)
+            if (dotdir(&child, root) && !self.include_hidden) || internal(&name) || reserved(&name)
             {
                 self.skip("excluded", file, false);
                 continue;

@@ -238,11 +238,9 @@ mod include_hidden_tests {
         got.sort();
         assert_eq!(got, vec!["src/a.ts"]);
 
-        let shown = grep(&fixture.request(
-            "grep",
-            json!({"pattern": "export", "includeHidden": true}),
-        ))
-        .unwrap();
+        let shown =
+            grep(&fixture.request("grep", json!({"pattern": "export", "includeHidden": true})))
+                .unwrap();
         let mut got = paths(&fixture.root, &shown);
         got.sort();
         assert_eq!(got, vec![".github/b.ts", "src/a.ts"]);
