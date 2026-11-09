@@ -154,8 +154,12 @@ Their important fields are (paths resolve relative to the DSH session cwd):
 
 - `ops_glob`: required `pattern: string[]`, optional `path`, `sort`
   (`path` | `modified`) and `outputMode: "details"` (on-disk `bytes`,
-  epoch-millisecond `modified`); at least one positive glob is required.
-- `ops_grep`: required regex `pattern`, optional `path` and array `glob` filter.
+  epoch-millisecond `modified`); at least one positive glob is required, and any
+  entry that cannot name a relative path segment (empty, whitespace-only, or
+  with an empty, `.` or `..` segment) is refused rather than silently matching
+  nothing.
+- `ops_grep`: required regex `pattern`, optional `path` and array `glob` filter;
+  the filter follows the same entry rule as `ops_glob`.
   Use `summary` for aggregate file/match totals, `count` for per-file counts,
   `content` for matching text (default), or `definitions` for only the lines
   where the matched identifier is declared (lexical classification, no

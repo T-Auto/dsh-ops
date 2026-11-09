@@ -134,6 +134,16 @@ fn glob_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
     if args.limit == 0 || args.limit > 10_000 {
         return Err(Failure::new("INVALID_ARGUMENT", "glob limit is 1-10000"));
     }
+    // #797: an entry the compiler can never match (empty, whitespace, or a
+    // segment no relative path carries) used to come back as a complete scan
+    // with zero files, indistinguishable from an empty tree. Reject before the
+    // path is opened, so a bad pattern never costs a traversal.
+    if let Some((index, fault)) = super::patterns::first_invalid(&args.pattern) {
+        return Err(Failure::new(
+            "INVALID_ARGUMENT",
+            super::patterns::invalid_message("pattern", index, fault),
+        ));
+    }
     if args.pattern.is_empty() || args.pattern.iter().all(|pattern| pattern.starts_with('!')) {
         return Err(Failure::new(
             "INVALID_ARGUMENT",
@@ -259,6 +269,15 @@ fn grep_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
         return Err(Failure::new(
             "INVALID_ARGUMENT",
             "pattern and bounded limit are required",
+        ));
+    }
+    // The glob filter is compiled by the same Patterns type as glob's pattern,
+    // so an impossible entry would filter every file out and report a complete
+    // scan with zero matches (#797).
+    if let Some((index, fault)) = super::patterns::first_invalid(&args.glob) {
+        return Err(Failure::new(
+            "INVALID_ARGUMENT",
+            super::patterns::invalid_message("glob", index, fault),
         ));
     }
     if args.before_context > 32 || args.after_context > 32 {
@@ -472,6 +491,98 @@ fn grep_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
     // read `matched - total` as the reference hits it did not return.
     let observed = if definitions { observed } else { match_count };
     finish(scan, cursor, page, observed, total, extra)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    /// The message each fault class must produce, named by its field.
+    fn expected(field: &str, index: usize, empty: bool) -> String {
+        if empty {
+            format!("{field}[{index}] must be a non-empty glob")
+        } else {
+            format!("{field}[{index}] must not contain an empty, \".\" or \"..\" path segment")
+        }
+    }
+
+    /// #797: an empty entry used to compile to a literal that only the search
+    /// root satisfies, so a populated directory reported a complete scan with
+    /// zero files. An entry with an empty or "."/".." segment is just as
+    /// impossible against walked relative paths. Both are refused by name
+    /// before the path is opened, so a malformed request never costs a traversal.
+    #[test]
+    fn glob_refuses_entries_that_can_never_match() {
+        let root = std::env::temp_dir();
+        let root = root.to_str().unwrap();
+        for (patterns, index, empty) in [
+            (vec![""], 0, true),
+            (vec!["", "!vendor/**"], 0, true),
+            (vec!["**/*.md", "  "], 1, true),
+            (vec!["\u{3000}"], 0, true),
+            (vec!["./"], 0, true),
+            (vec!["/"], 0, false),
+            (vec!["src/"], 0, false),
+            (vec!["a//b"], 0, false),
+            (vec![".."], 0, false),
+            (vec!["../**/*.md"], 0, false),
+            (vec!["!src/"], 0, false),
+        ] {
+            let request = serde_json::from_value(json!({
+                "root": root, "scope": "glob-invalid-pattern", "tool": "glob",
+                "args": {"path": root, "pattern": patterns}
+            }))
+            .unwrap();
+            let error = crate::dispatch(&request).unwrap_err();
+            assert_eq!(error.code, "INVALID_ARGUMENT");
+            assert_eq!(
+                error.message,
+                format!("glob: {}", expected("pattern", index, empty)),
+                "{patterns:?}"
+            );
+        }
+    }
+
+    /// grep and replace filter with the same compiler, so the same impossible
+    /// entries must fail loudly instead of matching every file out (#797).
+    #[test]
+    fn grep_and_replace_refuse_filters_that_can_never_match() {
+        let root = std::env::temp_dir();
+        let root = root.to_str().unwrap();
+        for (tool, args, empty) in [
+            (
+                "grep",
+                json!({"path": root, "pattern": "needle", "glob": [""]}),
+                true,
+            ),
+            (
+                "grep",
+                json!({"path": root, "pattern": "needle", "glob": ["src/"]}),
+                false,
+            ),
+            (
+                "replace",
+                json!({"path": root, "pattern": "needle", "replacement": "x", "glob": ["  "]}),
+                true,
+            ),
+            (
+                "replace",
+                json!({"path": root, "pattern": "needle", "replacement": "x", "glob": [".."]}),
+                false,
+            ),
+        ] {
+            let request = serde_json::from_value(json!({
+                "root": root, "scope": "filter-invalid-glob", "tool": tool, "args": args
+            }))
+            .unwrap();
+            let error = crate::dispatch(&request).unwrap_err();
+            assert_eq!(error.code, "INVALID_ARGUMENT");
+            assert_eq!(
+                error.message,
+                format!("{tool}: {}", expected("glob", 0, empty))
+            );
+        }
+    }
 }
 
 #[cfg(test)]
