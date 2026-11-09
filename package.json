@@ -142,7 +142,10 @@
   },
   "dsh": {
     "bundle": {
-      "patch": "./cordis.patch.yml"
+      "patch": [
+        "./cordis.patch.yml",
+        "./presets/ops.patch.yml"
+      ]
     },
     "client": {
       "inject": [
@@ -160,6 +163,7 @@
     "lib",
     "bin",
     "cordis.patch.yml",
+    "presets/ops.patch.yml",
     "dsh-plugin.json",
     "docs/assets/icon.png",
     "locale",

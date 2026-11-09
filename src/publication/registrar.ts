@@ -54,10 +54,29 @@ export function ownsPublication(ctx: Context, tool: ToolDefinition): boolean {
  * Same-layer foreign insertion still fails at the host's duplicate check before
  * tools/change; transparent takeover of that case is deliberately unsupported.
  */
+/**
+ * Whether `ctx` is literally the context the claimed scope owns.
+ *
+ * `scopeOf` compares an opaque Symbol minted by whichever copy of
+ * `@deepseek-ai/dsh-scope` this plugin resolved. When the host and the plugin
+ * resolve two module instances of that package — identical source, different
+ * file URL, therefore different Symbols — the tag read returns `undefined` and
+ * the identity check fails for a correct publication, which silently disables
+ * every tool. Comparing the owning context object proves the same thing without
+ * depending on module identity, and it never admits a context the scope does not
+ * own: `agent.ctx` is the only object that satisfies it.
+ * @param ctx - the context being published through.
+ * @param scope - the scope the caller claims to publish for.
+ * @returns whether `ctx` is that scope's own context.
+ */
+export function ownsScopeContext(ctx: Context, scope: object | undefined): boolean {
+  return scope !== undefined && (scope as { ctx?: unknown }).ctx === ctx
+}
+
 export async function acquire(ctx: Context, scope: object | undefined, name: string, canonical: Canonical): Promise<PublicationLease> {
   const { scopeOf, scopeChainOf } = await loadScopes()
   ctx.fiber.assertActive()
-  if (scopeOf(ctx) !== scope) throw new Error('Publication scope must match its registration context')
+  if (scopeOf(ctx) !== scope && !ownsScopeContext(ctx, scope)) throw new Error('Publication scope must match its registration context')
   const root = ctx.root ?? ctx
   let scopes = roots.get(root)
   if (!scopes) { scopes = new Map(); roots.set(root, scopes) }

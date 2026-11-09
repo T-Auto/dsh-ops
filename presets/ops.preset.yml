@@ -1,0 +1,27 @@
+# OPS preset — a Cordis composition row for the DSH agent-preset registry.
+#
+# Mount with two rows in a profile's cordis.patch.yml:
+#   1. the registry, whose default decides what new sessions use
+#   2. this preset, whose plugins list IS the composition of an OPS session
+#
+# In DSH 0.2.2 a preset is mounted into its own scope (agent-preset-registry
+# mints one per definition), so every plugin listed here shares that scope and
+# its tools are visible to every agent created from this preset.
+- id: preset-ops
+  name: '@deepseek-ai/dsh-agent-preset'
+  config:
+    id: ops
+    name: OPS
+    description: OPS tool surface — one run_code step per batch, ops_* file tools, PTC by default.
+    order: 10
+    plugins:
+      # The plugin under test. It publishes ops_* tools, the PTC SDK section and
+      # the batching guidance; providers (fs, subprocess, sandbox, ptcRuntime)
+      # come from the host root and are reached through ctx.inject.
+      - id: dsh-ops
+        name: dsh-ops
+        config:
+          ptc:
+            enabled: true
+            residentTools: true
+            batchingGuidance: true

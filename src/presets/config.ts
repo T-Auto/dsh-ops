@@ -25,6 +25,8 @@ export interface ModeConfig extends ResolvedConfig {
   dynamicTools: boolean
   /** Publish baseline file tools independently of progressive discovery. */
   residentTools: boolean
+  /** Render the PTC batching guidance while an agent keeps spending steps on single operations. */
+  batchingGuidance: boolean
 }
 
 /** Every key a mode row accepts: the settings each enhanced preset really reads. */
@@ -33,11 +35,11 @@ export const MODE_CONFIG_KEYS: readonly string[] = Object.freeze([
   'binaryPath', 'required', 'denyCredentialReads', 'promptPolicy', 'extraGuidance',
   'bashPath', 'publishBashTool', 'allowSystemShellFallback', 'configUpdateVersion',
   'spillRetentionDays', 'spillTotalBudgetMiB', 'spillSweepEnabled',
-  'allowedTools', 'alwaysLoaded',
+  'allowedTools', 'alwaysLoaded', 'batchingGuidance',
   'bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools', 'residentTools',
 ])
 
-const PTC_KEYS = new Set(['allowedTools', 'alwaysLoaded'])
+const PTC_KEYS = new Set(['allowedTools', 'alwaysLoaded', 'batchingGuidance'])
 /** Mode publication switches; enhanced presets default to on. */
 const SWITCH_KEYS = new Set(['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools', 'residentTools'])
 
@@ -70,7 +72,7 @@ export function resolveModeConfig(rawConfig?: unknown, mode?: ModeId): ModeConfi
   // keeps working for saved rows and is owned by the same resolver.
   const resolved = resolveConfig({ ...core, publishBashTool: bash })
   const api = parsePtcConfig(ptc)
-  return { ...resolved, allowedTools: api.allowedTools, alwaysLoaded: api.alwaysLoaded,
+  return { ...resolved, allowedTools: api.allowedTools, alwaysLoaded: api.alwaysLoaded, batchingGuidance: api.batchingGuidance,
     bash, hidePwsh: sw('hidePwsh', true),
     hideOfficialTools: sw('hideOfficialTools', true), dynamicTools: sw('dynamicTools', true),
     residentTools: mode !== 'minimal' && sw('residentTools', true) }

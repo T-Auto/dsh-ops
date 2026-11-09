@@ -33,7 +33,7 @@ export function applyResolvedMode(root: Context, config: ModeConfig, mode: ModeI
     shell: enabled && plan.shell && config.bash && process.platform === 'win32',
     presentation: plan.ptc ? 'ptc' : 'native', residentTools: enabled && config.residentTools,
     discovery: plan.ptc ? config.dynamicTools : options.discovery !== undefined && options.dynamic !== false && discovery.enabled,
-    native: discovery, ptc: { binaryPath: config.binaryPath, required: config.required, allowedTools: config.allowedTools, alwaysLoaded: config.alwaysLoaded },
+    native: discovery, ptc: { binaryPath: config.binaryPath, required: config.required, allowedTools: config.allowedTools, alwaysLoaded: config.alwaysLoaded, batchingGuidance: config.batchingGuidance },
     replaceOfficial: enabled && (config.hideOfficialTools || config.hidePwsh),
     replacementTargets: consumerTargets(config.hideOfficialTools && plan.nativeFiles, config.hidePwsh && config.bash && plan.shell),
     section: plan.section === null ? null : `mode-${plan.section}`,

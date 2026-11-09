@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- The PTC prompt section now carries a batching shape, not only an imperative. After two consecutive `run_code` programs shorter than 800 characters the section publishes a short example a model can copy — parallel reads, an anchor checked before the edit, a revision-checked edit, and a summarised print — and withdraws it after one dense program. The decision is latched per turn, so the cached system-prompt prefix is rewritten at most once per turn instead of on every thin step.
+- PTC 提示段落不再只有一句祈使句，而是补上可照抄的批量范式：连续两个短于 800 字符的 `run_code` 程序之后，段落发布一段示例（并行读取、编辑前校验锚点、带版本号编辑、摘要式输出），遇到一次长程序即撤销。该决策按轮锁存，系统提示的缓存前缀每轮最多重写一次，而不是每个薄步骤都重写。
+
 ## [0.5.1] — 2026-11-08 — Patch release
 
 - Bound temporary-resource growth through ownership ledgers, deferred result-cache cleanup and explicit cache reclamation; preserve data-bearing snapshots and user content. Host output spills now have bounded retention rather than accumulating indefinitely.

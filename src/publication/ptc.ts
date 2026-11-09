@@ -21,6 +21,7 @@ import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
 import { activationIsPtc, inspectPresentation, isPresentationProbe } from './presentation.js'
 import { visibleNames } from './surface.js'
 import { publicationRegistration, publicationReady } from './reentry.js'
+import { BATCHING_GUIDANCE, createBatchingTracker } from '../projections/ptc/batching-guidance.js'
 import { retired as retiredLegacyRow } from '../settings/legacy.js'
 export { resolvePtcConfig } from '../config.js'
 export const name = 'dsh-ops-ptc'
@@ -59,6 +60,17 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
   root.inject(['tools', 'systemPrompt', 'sandboxPolicy', 'subprocess'], async ctx => {
     const tools = ctx.get('tools')!, prompt = ctx.get('systemPrompt')!
     mountResultLifecycle(ctx)
+    // A thin run_code program is the only batching signal a plugin can observe on
+    // the outer call: nested dispatches happen inside the program and never reach
+    // this hook. The streak decides whether the guidance is rendered at all.
+    const batching = createBatchingTracker()
+    ctx.on('tools/post-execute', async (exec, result, next) => {
+      const decision = await next()
+      const agent = exec.agent
+      if (!agent || exec.name !== 'run_code') return decision
+      batching.observe(agent, (exec.arguments as Record<string, unknown> | undefined)?.code)
+      return decision
+    })
     const entries = new Map<Agent, Entry>(), retired = new WeakSet<Agent>()
     let stopped = false
     let presentationRevision = 0
@@ -223,7 +235,10 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     ctx.on('session/event', (session, event) => {
       if ((event as { type: string }).type === 'agent-preset/selected') { refresh(); return }
       for (const [agent, entry] of entries) if (agent.session === session) {
-        if (event.type === 'step/end') {
+        // The batching hint is latched per turn so the system prompt prefix stays
+        // byte-stable inside one turn; a new turn is the only place it may flip.
+        if (event.type === 'turn/start') batching.reopen(agent)
+        else if (event.type === 'step/end') {
           for (const api of entry.pending) if (permitted(agent, api)) entry.selected.add(api)
           entry.pending.clear()
           rotateFiles(entry)
@@ -242,7 +257,11 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       if (!active) return ''
       const guidance = 'OPS APIs return typed Outcome values. Inspect status before data; preserve partial coverage and continuation. Process results locally in run_code and return only needed summaries. References do not grant authority.'
       const directory = callable.has(publicToolName('load_sdk')) ? renderSdkDirectory(allowedApis(agent), callable) : ''
-      return guidance + (directory ? '\n\n' + directory : '')
+      // Rendered only while the agent keeps spending steps on single operations, and only when
+      // this row allows it: the switch is the A/B variable, so it must stay observable.
+      const batchingText = config.batchingGuidance && (batching.primed(agent) || batching.active(agent))
+        ? '\n\n' + BATCHING_GUIDANCE : ''
+      return guidance + batchingText + (directory ? '\n\n' + directory : '')
     }
     ctx.effect(() => prompt.section({ name: ownership!.sectionName(PTC_SECTION), order: 3252, interpolate: false, text: '' }), 'dsh-ops: progressive PTC guidance')
     ctx.effect(() => async () => {
