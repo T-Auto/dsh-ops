@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- A Bash/Niubash preparation failure now shows the link-count paragraph only when the failure itself carries a link-count signature, and that paragraph no longer tells an installation already on 0.5.2 to upgrade to 0.5.2. Every other unclassified failure keeps its own reason and falls through to the default text (#805).
+- Bash/Niubash 准备失败现在只在错误本身带 link-count 特征时才显示那段说明，且该段不再要求已经运行 0.5.2 的安装去升级到 0.5.2；其余未分类失败保留自身原因、走默认文案（#805）。
+
 ## [0.5.2] — 2026-11-08 — Patch release
 
 - Fix concurrent Windows Niubash preparation by verifying stable file identities instead of shared hardlink counts; retain preparing trees through disposal without replacing the zero-copy path or reverting 0.5.1's bounded retention.
