@@ -127,7 +127,7 @@ An interrupted staging leaves a `stage-*` directory in the cache. Confined calls
 Selecting Niubash verifies the source against the frozen manifest and prepares one runtime per
 manifest hash at `<DSH_HOME>/dsh-ops/shells/niubash-prepared/<manifest hash>`. Preparation copies
 the payload without source hardlinks, materializes the command faces and six startup directories,
-and publishes the completed tree with an atomic sibling rename. Subsequent calls reuse it; they
+and publishes the completed tree with an atomic sibling rename. Ordinary subsequent calls reuse it; they
 do not clone, hash, seal, write an execution receipt or dispose a per-call tree.
 
 The prepared runtime must be **outside the session workspace**. Every call checks that boundary
@@ -150,6 +150,19 @@ security boundary against the account or an administrator.
   `DSH_OPS_EXEC_ROOT` remains relevant only for discovering those legacy trees. Reclamation clears
   legacy seals before deletion and does not reinstall a corrupt source. Do not recursively delete
   trees by wildcard or remove them while jobs are running.
+- Successful selection retires obsolete prepared versions, broken/retired leftovers, and staging
+  leftovers of its own hash only. Other hashes' staging directories may still be building and are
+  left for offline `cache reclaim --kind exec-tree --all-hosts-stopped --yes`.
+  Each matching sibling is renamed once to `.retired-<uuid>` before best-effort deletion, never
+  deleted in place. On Windows an in-use version whose rename is refused stays for the next
+  selection; cleanup does not retry or fail the selected runtime. Unrelated names and links are
+  untouched. The same `cache status/reclaim --kind exec-tree` commands include these leftovers
+  while always excluding the current plain manifest hash.
+- Profiles sharing one `DSH_HOME` can run dsh-ops versions with different Niubash pins. Starting
+  one can retire the other's prepared version between commands. The other profile's next call
+  re-prepares its selected pin once from its verified source and continues through normal host
+  confinement. This recovery does not retire anything belonging to another pin, so both versions
+  can continue; ordinary calls still do no deployment work.
 - If a prepared version fails its selection-time integrity check, selection moves it to a
   `.broken-<random>` sibling and makes one fresh preparation from the verified source. Removal
   of the broken sibling is best-effort. If repair fails, the error reports both the old integrity

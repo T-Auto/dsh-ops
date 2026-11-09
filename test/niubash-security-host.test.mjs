@@ -9,6 +9,7 @@ import { createScope } from '@deepseek-ai/dsh-scope'
 import { assert, test, report, skipSuite, scenarioDir, waitFor } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { verifiedNiubash } from '../lib/niubash/runtime.js'
+import { reclaimPreparedNiubash } from '../lib/niubash/prepared-cache.js'
 import { resolveShells } from '../lib/shells/resolve.js'
 import { pathToFileURL } from 'node:url'
 const consumerRoot = process.env.DSH_OPS_NIUBASH_CONSUMER
@@ -53,7 +54,18 @@ try {
     process.env.DSH_OPS_EXEC_ROOT = configured
     try {
       const command = node("process.stdout.write(process.env.NIU_ROOT)")
+      const otherPin = path.join(path.dirname(path.dirname(bash.file)), '0'.repeat(64))
+      const otherStage = `${otherPin}.stage-live`
+      fs.mkdirSync(otherPin)
+      fs.writeFileSync(path.join(otherPin, 'keep'), 'host B')
+      // Host B's successful H2 selection retires H1 between host A's commands.
+      reclaimPreparedNiubash(otherPin)
+      fs.mkdirSync(otherStage)
+      assert.equal(fs.existsSync(bash.file), false, 'host B retired the selected H1 tree')
       const first = ok(await call(command)).stdout.text
+      assert.ok(fs.existsSync(bash.file), 'host A recovered H1 from its selected source before spawn')
+      assert.equal(fs.readFileSync(path.join(otherPin, 'keep'), 'utf8'), 'host B', 'per-call recovery does not retire H2')
+      assert.ok(fs.existsSync(otherStage), 'per-call recovery does not touch another pin being built')
       const second = ok(await call(command)).stdout.text
       assert.equal(first, second, 'consecutive calls reuse the prepared runtime')
       const concurrent = await Promise.all([call(command), call(command)])

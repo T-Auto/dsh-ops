@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { niubashPreparedRoot, prepareNiubash, prepareNiubashVersion, publishNiubashVersion, verifiedNiubash } from '../lib/niubash/runtime.js'
 import { NIUBASH_FACES } from '../lib/niubash/faces.js'
-import { NIUBASH_PIN, NIUBASH_EXECUTION_DIRECTORIES, verifyNiubashTree } from '../lib/cli/niubash-payload.js'
+import { NIUBASH_PIN, NIUBASH_EXECUTION_DIRECTORIES, NIUBASH_MANIFEST_SHA256, verifyNiubashTree } from '../lib/cli/niubash-payload.js'
 import { assert, test, report, withTempDir, skipSuite } from './lib/harness.mjs'
 
 const file = process.env.DSH_OPS_TEST_NIUBASH
@@ -83,6 +83,10 @@ await test('persistent publication failure is bounded and names the failed renam
 if (file) {
 await test('version preparation is idempotent, complete and does not hardlink the source', async () => withTempDir('niu-version', async root => {
   const target = niubashPreparedRoot({ DSH_HOME: root })
+  const parent = path.dirname(target), older = 'f'.repeat(64)
+  const leftovers = [older, `${older}.broken-old`, `${NIUBASH_MANIFEST_SHA256}.stage-old`, `${older}.retired-old`]
+  fs.mkdirSync(parent, { recursive: true })
+  for (const name of [...leftovers, 'unrelated']) fs.mkdirSync(path.join(parent, name))
   const before = snapshot(source), read = fs.readFileSync
   let scratchReads = 0, selected
   fs.readFileSync = (file, ...args) => {
@@ -92,7 +96,21 @@ await test('version preparation is idempotent, complete and does not hardlink th
   try { selected = prepareNiubashVersion(source, target) } finally { fs.readFileSync = read }
   assert.equal(scratchReads, 0, 'cold preparation copies verified source bytes without rehashing all generated faces')
   const prepared = snapshot(target)
-  assert.equal(prepareNiubashVersion(source, target), selected)
+  for (const name of leftovers) assert.equal(fs.existsSync(path.join(parent, name)), false, 'successful fresh preparation retires older and leftover versions')
+  assert.ok(fs.existsSync(path.join(parent, 'unrelated')))
+  const busy = path.join(parent, older), originalRename = fs.renameSync
+  fs.mkdirSync(busy)
+  let busyAttempts = 0
+  fs.renameSync = (from, to) => {
+    if (from === busy) { busyAttempts++; throw Object.assign(Error('another host is using this version'), { code: 'EBUSY' }) }
+    return originalRename(from, to)
+  }
+  try { assert.equal(prepareNiubashVersion(source, target), selected, 'busy older versions do not fail selection') }
+  finally { fs.renameSync = originalRename }
+  assert.equal(busyAttempts, 1); assert.ok(fs.existsSync(busy))
+  assert.equal(verifiedNiubash(selected, '', { DSH_HOME: root }).file, selected, 'selecting the prepared path also retires unused siblings')
+  assert.equal(fs.existsSync(busy), false)
+  fs.rmdirSync(path.join(parent, 'unrelated'))
   assert.equal(verifiedNiubash(file, '', { DSH_HOME: root }).file, selected, 'selection honors the supplied home')
   assert.deepEqual(snapshot(target), prepared)
   assert.deepEqual(snapshot(source), before)
@@ -102,6 +120,21 @@ await test('version preparation is idempotent, complete and does not hardlink th
     assert.notEqual(fs.statSync(path.join(source, name)).ino, fs.statSync(path.join(target, name)).ino, name)
   }
   assert.equal(verifyNiubashTree(target, true), selected)
+  const exists = fs.existsSync, copy = fs.copyFileSync, retirementRename = fs.renameSync
+  let sawTarget = false, interruptedCopies = 0, scratchRetirements = 0
+  fs.existsSync = candidate => {
+    if (candidate === target && !sawTarget) { sawTarget = true; return false }
+    return exists(candidate)
+  }
+  fs.copyFileSync = () => { interruptedCopies++; throw Object.assign(Error('winner retired the unfinished scratch'), { code: 'ENOENT' }) }
+  fs.renameSync = (from, to) => {
+    if (String(from).startsWith(`${target}.stage-`)) { scratchRetirements++; throw Object.assign(Error('scratch still busy'), { code: 'EBUSY' }) }
+    return retirementRename(from, to)
+  }
+  try { assert.equal(prepareNiubashVersion(source, target), selected, 'an interrupted builder uses the verified published winner') }
+  finally { fs.existsSync = exists; fs.copyFileSync = copy; fs.renameSync = retirementRename }
+  assert.equal(interruptedCopies, 1)
+  assert.equal(scratchRetirements, 1, 'a busy losing scratch is not retried by both builder cleanup and selection cleanup')
   const face = path.join(target, 'winuxcmd/usr/bin/cat.exe')
   fs.unlinkSync(face)
   assert.equal(prepareNiubashVersion(source, target), selected, 'a missing face is repaired once at selection')
@@ -127,7 +160,7 @@ await test('version preparation is idempotent, complete and does not hardlink th
   assert.throws(() => prepareNiubashVersion(invalidSource, target), /checksum mismatch/, 'a good prepared target cannot authorize an invalid source')
 }))
 await test('one failed fresh repair reports both causes without another preparation attempt', async () => withTempDir('niu-repair-fail', async root => {
-  const target = path.join(root, 'prepared'), copy = fs.copyFileSync
+  const target = path.join(root, NIUBASH_MANIFEST_SHA256), copy = fs.copyFileSync
   prepareNiubashVersion(source, target)
   fs.appendFileSync(path.join(target, 'niu.exe'), 'corrupt')
   let copies = 0
@@ -140,8 +173,11 @@ await test('one failed fresh repair reports both causes without another preparat
 }))
 await test('scratch cleanup failure cannot replace the publication rename diagnostic', async () => withTempDir('niu-cleanup-diagnostic', async root => {
   const rename = fs.renameSync, remove = fs.rmSync, warn = console.error, warnings = []
-  const target = path.join(root, 'prepared')
-  fs.renameSync = () => { throw Object.assign(Error('publication refused'), { code: 'EINVAL' }) }
+  const target = path.join(root, NIUBASH_MANIFEST_SHA256)
+  fs.renameSync = (from, to) => {
+    if (to === target) throw Object.assign(Error('publication refused'), { code: 'EINVAL' })
+    return rename(from, to)
+  }
   fs.rmSync = (file, options) => {
     if (String(file).startsWith(`${target}.stage-`)) throw Error('cleanup refused')
     return remove(file, options)
@@ -149,10 +185,10 @@ await test('scratch cleanup failure cannot replace the publication rename diagno
   console.error = text => warnings.push(text)
   try { assert.throws(() => prepareNiubashVersion(source, target), /EXECUTOR_UNAVAILABLE:.*publication rename failed.*publication refused/) }
   finally { fs.renameSync = rename; fs.rmSync = remove; console.error = warn }
-  assert.equal(warnings.length, 1); assert.match(warnings[0], /preparation scratch.*cleanup refused/)
+  assert.equal(warnings.length, 1); assert.match(warnings[0], /could not retire.*preparation scratch/)
 }))
 await test('filesystems without hardlinks prepare command faces by independent copies once', async () => withTempDir('niu-copy-faces', async root => {
-  const target = path.join(root, 'prepared'), link = fs.linkSync
+  const target = path.join(root, NIUBASH_MANIFEST_SHA256), link = fs.linkSync
   fs.linkSync = () => { throw Object.assign(Error('hardlinks unsupported'), { code: 'ENOTSUP' }) }
   try { prepareNiubashVersion(source, target) } finally { fs.linkSync = link }
   assert.equal(verifyNiubashTree(target, true), path.join(target, 'niu.exe'))
@@ -160,13 +196,13 @@ await test('filesystems without hardlinks prepare command faces by independent c
   assert.equal(fs.statSync(path.join(target, 'winuxcmd/usr/bin/winuxcmd.exe')).nlink, 1)
 }))
 await test('two independent preparers safely publish the same complete version', async () => withTempDir('niu-race', async root => {
-  const target = path.join(root, 'prepared'), barrier = path.join(root, 'barrier')
+  const target = path.join(root, NIUBASH_MANIFEST_SHA256), barrier = path.join(root, 'barrier')
   fs.mkdirSync(barrier)
   const results = await Promise.allSettled([childPrepare(source, target, barrier), childPrepare(source, target, barrier)])
   for (const result of results) if (result.status === 'rejected') throw result.reason
   fs.rmSync(barrier, { recursive: true })
   assert.equal(verifyNiubashTree(target, true), path.join(target, 'niu.exe'))
-  assert.deepEqual(fs.readdirSync(root), ['prepared'], 'the losing scratch directory is removed')
+  assert.deepEqual(fs.readdirSync(root), [NIUBASH_MANIFEST_SHA256], 'the losing scratch directory is removed')
 }))
 await test('consecutive and concurrent invocation preparation is read-only and creates no execution trees', async () => {
   const selected = verifiedNiubash(file)
