@@ -4,7 +4,7 @@ import path from 'node:path'
 import { PACKAGE_ROOT } from './harness.mjs'
 import { NIUBASH_PACKAGE_PATH, stageNiubashArchive, verifyNiubashTree } from '../../lib/cli/niubash-payload.js'
 
-export const NIUBASH_MODULES = ['niubash/runtime.js', 'niubash/faces.js', 'niubash/execution-tree.js',
+export const NIUBASH_MODULES = ['niubash/runtime.js', 'niubash/faces.js',
   'niubash/seal.js', 'cli/niubash-payload.js', 'cli/niubash-payload-manifest.json']
 
 export function copyFixtureModules(root, files = NIUBASH_MODULES) {

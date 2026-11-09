@@ -213,7 +213,7 @@ export function resolveShells(config: ShellConfig | undefined, options: ShellRes
     if (candidate) {
       try {
         if (arch !== 'x64') throw new Error('Niubash requires Windows x64')
-        const runtime = verifiedNiubash(candidate.file)
+        const runtime = verifiedNiubash(candidate.file, env.PATH ?? env.Path, env)
         return { bash: { available: true, file: runtime.file, source: candidate.source,
           detail: 'verified complete Niubash v1.5.0 portable runtime' }, pwsh }
       } catch (error) {

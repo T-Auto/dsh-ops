@@ -7,12 +7,15 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-- Unsealing an execution tree no longer skips a file whose Windows `dev:ino` matches another member's. That key is not unique on Windows, so a skipped file stayed read-only, could not be removed, and left the whole tree behind in the temp directory; a repeated `chmod` on a genuinely shared inode is harmless (#804).
-- 解封执行树时不再按 `dev:ino` 跳过文件：该键在 Windows 上并不唯一，被跳过的成员会一直只读、删不掉，进而把整棵树留在临时目录里。对真正共享的 inode 重复 `chmod` 无害（#804）。
-- A hardlink clone the filesystem refuses with `UNKNOWN` now rebuilds the tree as copies. Windows reports the per-inode link limit under that single code, so the five-code fallback gate never matched and every Bash call failed until the condition cleared on its own; the fallback now also records the payload's highest link count so the ceiling is visible next time (#804).
-- 硬链接克隆遇到 `UNKNOWN` 失败时改为重建为复制副本。Windows 把 inode 链接上限归到这一个错误码下，此前五码白名单永远匹配不到，复制兜底不触发，每次 Bash 调用都会失败，只能等外部条件自行消失；现在回退还会记录 payload 的最高链接数，下次能直接看出是否触顶（#804）。
-- A Bash/Niubash preparation failure now shows the link-count paragraph only when the failure itself carries a link-count signature, and that paragraph no longer tells an installation already on 0.5.2 to upgrade to 0.5.2. Every other unclassified failure keeps its own reason and falls through to the default text (#805).
-- Bash/Niubash 准备失败现在只在错误本身带 link-count 特征时才显示那段说明，且该段不再要求已经运行 0.5.2 的安装去升级到 0.5.2；其余未分类失败保留自身原因、走默认文案（#805）。
+- Prepare Windows Niubash once per frozen manifest hash under `DSH_HOME`, copying the source without hardlinks and publishing command faces plus startup directories atomically. Calls reuse the prepared runtime outside the workspace and retain host confinement, without per-call execution trees, hashing, seals, receipts or disposal. `DSH_OPS_EXEC_ROOT` and `NIUBASH_VERIFY=deep` no longer configure execution; the former remains available only to discover legacy trees for offline reclamation (#817).
+- Windows Niubash 按冻结清单哈希在 `DSH_HOME` 中一次性准备：复制源载荷但不建立源硬链接，预生成命令 face 与启动目录后原子发布。每次调用复用工作区外的准备运行时、保留宿主约束，不再创建执行树、哈希、封印、写收据或释放副本。`DSH_OPS_EXEC_ROOT` 与 `NIUBASH_VERIFY=deep` 不再配置运行行为；前者仅为离线回收发现旧执行树保留（#817）。
+
+- Bound Windows first-preparation publication rename backoff to 10 seconds for temporary scanner sharing refusals only; preserve explicit publication diagnostics and never retry commands.
+- Windows 首次准备发布时，仅对扫描器临时共享拒绝的目录 rename 退避最多 10 秒，保留明确发布诊断，绝不重试命令。
+- Repair a damaged prepared Niubash version once at selection: move it aside, rebuild from the verified source, clean the old version best-effort, and report both causes if fresh preparation fails.
+- 准备后的 Niubash 版本损坏时，在选择阶段移走旧目录并从已验证源载荷重建一次，尽力清理旧版本；新准备仍失败时同时报告两次错误。
+- Reclaim incomplete legacy Niubash execution trees without requiring a completed execution receipt; verify every existing payload member, clear legacy deny ACEs/read-only attributes, and retain unknown contents. Offline confirmation is still required (#808).
+- 回收不完整的旧 Niubash 执行树时不再要求完整执行收据；核验每个现存载荷成员，解除旧 deny ACE/只读属性，保留未知内容，仍要求明确离线确认（#808）。
 - A Bash slot whose executor never resolved now says so in the prompt instead of rendering an empty section: the notice quotes the resolution `source` and `detail` (which already ends with the deployment remedy), points file work at the OPS file tools, and refuses to imply that swapping shells is a repair. Official PowerShell is still never hidden while Bash is unavailable.
 - Bash 执行器未能解析时，提示段落不再留空，而是明确说明不可用：引用解析结果的 `source` 与 `detail`（后者已含部署侧修复办法），指明文件读写应走 OPS 文件工具，并明确不得以换 shell 充当修复；Bash 不可用时官方 PowerShell 仍绝不被隐藏。
 - Load `@deepseek-ai/dsh-scope` from the copy the running host resolves. A bundle that hoists its own copy into the profile tree used to shadow the host's, so scope contexts read as unscoped and creating a session failed with `Publication scope must match its registration context` (#752). The adapter resolves the host entry's copy, then the profile layer, then the bare specifier.

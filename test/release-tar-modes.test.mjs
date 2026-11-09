@@ -87,7 +87,11 @@ await test('actual npm pack hashes, provenance and SHA256SUMS describe repaired 
     const { verifyNiubashTree } = await import(pathToFileURL(path.join(consumer, 'lib/cli/niubash-payload.js')).href)
     const { verifiedNiubash } = await import(pathToFileURL(path.join(consumer, 'lib/niubash/runtime.js')).href)
     const executable = verifyNiubashTree(path.join(consumer, NIUBASH_PACKAGE_PATH))
-    assert.equal(verifiedNiubash(executable).file, executable)
+    const prepared = verifiedNiubash(executable)
+    assert.notEqual(prepared.file, executable, 'selection prepares a separate runtime without mutating the package')
+    assert.equal(path.basename(path.dirname(path.dirname(prepared.file))), 'niubash-prepared')
+    assert.equal(verifiedNiubash(executable).file, prepared.file, 'selection reuses the version-keyed runtime')
+    assert.equal(verifyNiubashTree(path.join(consumer, NIUBASH_PACKAGE_PATH)), executable)
     assert.equal(packed.sha256, await sha256File(packed.path))
     assert.equal(packed.bytes, fs.statSync(packed.path).size)
     await writeReleaseRecords({dist, packages:[], plan:{mainTarball:packed.path,

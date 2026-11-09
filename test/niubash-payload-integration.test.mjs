@@ -54,7 +54,9 @@ await test('default provision uses fixed Niubash home, verifies reuse, rejects c
   const selected = selectBashRuntime('niubash', { platform: 'win32', arch: 'x64' })
   assert.equal(selected.clear, true)
   assert.equal(selected.engine, 'niubash')
-  assert.equal(selected.file, path.join(target, 'niu.exe'))
+  assert.notEqual(selected.file, path.join(target, 'niu.exe'))
+  assert.equal(path.basename(path.dirname(path.dirname(selected.file))), 'niubash-prepared')
+  assert.equal(selectBashRuntime('niubash', { platform: 'win32', arch: 'x64' }).file, selected.file, 'managed selection reuses the prepared runtime')
   assert.match(selected.restriction, /verified|sandbox/i)
   assert.equal(removeManagedBash().action, 'preview'); assert.equal(fs.existsSync(target), true)
   removeManagedBash({ yes: true })
@@ -90,15 +92,24 @@ await test('npm pack carries every frozen file; consumer verifies and runs Niuba
   const deployed = path.join(consumer, 'package', NIUBASH_PACKAGE_PATH)
   const executable = verifyNiubashTree(deployed)
   if (process.platform === 'win32') {
-    const { prepareNiubash } = await import('../lib/niubash/runtime.js')
+    const { prepareNiubash, verifiedNiubash } = await import('../lib/niubash/runtime.js')
+    const sourceLinks = fs.statSync(executable).nlink
+    const selected = verifiedNiubash(executable, '')
+    assert.notEqual(selected.file, executable, 'the package source is not executed directly')
+    assert.equal(fs.statSync(executable).nlink, sourceLinks, 'preparation does not hardlink the source executable')
+    const before = fs.statSync(selected.file)
     for (let n = 0; n < 2; n++) {
-      const execution = await prepareNiubash(executable, '', new AbortController().signal)
-      try {
-        const run = spawnSync(execution.file, ['-c', "printf 'niu-ok\n'; printf '2\n' | awk '{print $1+1}'; printf packed | cat"], { cwd: root, env: { ...process.env, ...execution.env }, encoding: 'utf8', timeout: 30000, windowsHide: true })
-        assert.equal(run.status, 0, `${run.stdout}
+      const execution = await prepareNiubash(selected.file, '', new AbortController().signal)
+      assert.equal(execution.file, selected.file, 'consecutive calls reuse one prepared runtime')
+      assert.deepEqual(Object.keys(execution).sort(), ['env', 'file'], 'execution has no per-call lifecycle')
+      const run = spawnSync(execution.file, ['-c', "printf 'niu-ok\n'; printf '2\n' | awk '{print $1+1}'; printf packed | cat"], { cwd: root, env: { ...process.env, ...execution.env }, encoding: 'utf8', timeout: 30000, windowsHide: true })
+      assert.equal(run.status, 0, `${run.stdout}
 ${run.stderr}`)
-        assert.match(run.stdout, /niu-ok/); assert.match(run.stdout, /3/); assert.match(run.stdout, /packed/)
-      } finally { await execution.dispose() }
+      assert.match(run.stdout, /niu-ok/); assert.match(run.stdout, /3/); assert.match(run.stdout, /packed/)
+      const after = fs.statSync(selected.file)
+      assert.equal(after.size, before.size)
+      assert.equal(after.mtimeMs, before.mtimeMs)
+      assert.equal(fs.existsSync(selected.file), true, 'settlement retains the prepared runtime')
     }
     verifyNiubashTree(deployed)
   }
