@@ -47,8 +47,14 @@ export async function runSuite(suite, { cwd, env = {}, timeoutMs }) {
     }
   }, timeoutMs)
   const status = await new Promise(resolve => {
-    child.once('error', error => chunks.push(Buffer.from(`${error}\n`)))
-    child.once('close', resolve)
+    let settled = false
+    const finish = code => {
+      if (settled) return
+      settled = true
+      resolve(code)
+    }
+    child.once('error', error => { chunks.push(Buffer.from(`${error}\n`)); finish(null) })
+    child.once('close', finish)
   })
   clearTimeout(timer)
   let cleanupFailed = false

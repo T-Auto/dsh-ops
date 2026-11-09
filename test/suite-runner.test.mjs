@@ -49,6 +49,10 @@ await test('suite processes isolate and remove homes, buffer both streams, prese
       cwd: PACKAGE_ROOT, env: { FIXTURE_EXIT: String(code) }, timeoutMs: 10000,
     })))
     assert.deepEqual(results.map(result => result.status), [0, 77, 3])
+    const spawnFailure = await runSuite(suite, { cwd: path.join(root, 'missing'), timeoutMs: 10000 })
+    assert.equal(spawnFailure.status, null)
+    assert.equal(spawnFailure.timedOut, false)
+    assert.match(spawnFailure.output, /ENOENT/)
     const homes = results.map(result => result.output.split(/\r?\n/).find(line => line.includes('dsh-ops-test-home-')))
     assert.equal(new Set(homes).size, 3)
     for (const [index, result] of results.entries()) {
@@ -84,6 +88,13 @@ const originalRead = fs.readdirSync, originalSpawn = cp.spawn;
 fs.readdirSync = (directory, ...args) => path.resolve(String(directory)) === ${JSON.stringify(testDir)}
   ? ['pass.test.mjs', 'skip.test.mjs', 'hang.test.mjs', 'permissions.test.mjs', 'niubash-consumer.test.mjs'] : originalRead(directory, ...args);
 cp.spawn = (command, args, options) => {
+  if (process.env.FIXTURE_SPAWN_ERROR === '1') {
+    const child = new (require('node:events').EventEmitter)();
+    child.stdout = new (require('node:stream').PassThrough)();
+    child.stderr = new (require('node:stream').PassThrough)();
+    queueMicrotask(() => child.emit('error', new Error('fixture spawn ENOENT')));
+    return child; // Deliberately no close event after the failed spawn.
+  }
   const label = path.basename(args[0]);
   fs.appendFileSync(${JSON.stringify(calls)}, label + '\\n');
   const source = label.startsWith('hang') ? 'setInterval(() => {}, 1000)'
@@ -104,6 +115,11 @@ require('node:module').syncBuiltinESMExports();
     const invalid = invoke(['pass'], { DSH_OPS_TEST_JOBS: '0' })
     assert.equal(invalid.status, 2)
     assert.match(invalid.stderr, /invalid DSH_OPS_TEST_JOBS/)
+    const spawnFailure = invoke(['pass'], { FIXTURE_SPAWN_ERROR: '1' })
+    assert.equal(spawnFailure.status, 1, spawnFailure.stdout + spawnFailure.stderr)
+    assert.match(spawnFailure.stdout, /fixture spawn ENOENT/)
+    assert.match(spawnFailure.stderr, /pass.test.mjs exited null/)
+    assert.doesNotMatch(spawnFailure.stdout, /exceeded.*suite deadline/)
     const heavy = invoke(['pass', 'permissions'], { DSH_OPS_TEST_JOBS: '1' })
     assert.equal(heavy.status, 0, heavy.stdout + heavy.stderr)
     assert.deepEqual(fs.readFileSync(calls, 'utf8').trim().split('\n'), ['permissions.test.mjs', 'pass.test.mjs'])
