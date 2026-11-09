@@ -196,7 +196,7 @@ await test('Native pager denies hidden producers, other sessions, narrower autho
       await waitAdmission(async () => (await admittedDefinition(ctx, 'ops_result', owner)) && (await admittedDefinition(ctx, 'ops_grep', owner)))
       const retained = (await admittedDefinition(ctx, 'ops_result', owner))
       await file.fiber.dispose()
-      assert.equal((await retained.execute({ action: 'page', id: grepId }, { agent: owner, signal: new AbortController().signal })).error.code, 'PUBLICATION_DENIED')
+      assert.equal((await retained.execute({ action: 'page', id: grepId }, { agent: owner, signal: new AbortController().signal })).error.code, 'PUBLICATION_IDENTITY_MISMATCH')
     } finally { await shutdown(ctx) }
   })
 })
@@ -219,7 +219,7 @@ await test('Native children of PTC parents share one result schema with Native p
       const nativeDefinition = (await resultFor(child))
       await file.fiber.dispose()
       await waitAdmission(async () => !(await admitted(ctx, child)).some(tool => tool.name === 'ops_result'), { timeoutMs: 5000, what: 'file pager withdrawal' })
-      assert.equal((await nativeDefinition.execute({ action: 'page', id: stored.id }, { agent: child, signal: new AbortController().signal })).error.code, 'PUBLICATION_DENIED')
+      assert.equal((await nativeDefinition.execute({ action: 'page', id: stored.id }, { agent: child, signal: new AbortController().signal })).error.code, 'PUBLICATION_IDENTITY_MISMATCH')
       await waitAdmission(async () => (await resultFor(parent))?.parameters.properties.action.enum.includes('put'), { timeoutMs: 5000, what: 'PTC remains available' })
       const ptcStored = await ptcPut(ctx, parent, [{ ptc: true }])
       assert.equal(ptcStored.status, 'completed', JSON.stringify(ptcStored))

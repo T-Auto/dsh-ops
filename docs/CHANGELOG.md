@@ -16,6 +16,17 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 准备后的 Niubash 版本损坏时，在选择阶段移走旧目录并从已验证源载荷重建一次，尽力清理旧版本；新准备仍失败时同时报告两次错误。
 - Reclaim incomplete legacy Niubash execution trees without requiring a completed execution receipt; verify every existing payload member, clear legacy deny ACEs/read-only attributes, and retain unknown contents. Offline confirmation is still required (#808).
 - 回收不完整的旧 Niubash 执行树时不再要求完整执行收据；核验每个现存载荷成员，解除旧 deny ACE/只读属性，保留未知内容，仍要求明确离线确认（#808）。
+- Official read/glob/grep declarations now yield to an admitted OPS replacement in the same model step, sharing the source's conditional admission rather than publishing both and refusing official calls with `MODE_REPLACEMENT`. When the counterpart is unavailable, official fallback keeps its schema and execution callbacks and respects existing restrictions; an unlinked host scope leaves the original official definitions untouched (#787).
+- 官方 read/glob/grep 与 OPS 替代工具现在按同一模型步骤的准入结果互斥声明，不再同时发布后以 `MODE_REPLACEMENT` 拒绝官方调用；替代工具不可用时，官方回退保留原 schema 和执行回调，并遵守已有工具限制；宿主作用域关联失效时保留官方原始定义（#787）。
+- Publication diagnostics distinguish stale or unadmitted definitions (`PUBLICATION_IDENTITY_MISMATCH`) from missing or conflicting dispatch grants (`PUBLICATION_GRANT_UNAVAILABLE`), without changing authorization boundaries or claiming a root-cause fix for #784.
+- 发布诊断区分过期或未准入的定义（`PUBLICATION_IDENTITY_MISMATCH`）与缺失或冲突的分派授权（`PUBLICATION_GRANT_UNAVAILABLE`）；不改变授权边界，也不将诊断改进宣称为 #784 根因修复。
+
+- Unsealing an execution tree no longer skips a file whose Windows `dev:ino` matches another member's. That key is not unique on Windows, so a skipped file stayed read-only, could not be removed, and left the whole tree behind in the temp directory; a repeated `chmod` on a genuinely shared inode is harmless (#804).
+- 解封执行树时不再按 `dev:ino` 跳过文件：该键在 Windows 上并不唯一，被跳过的成员会一直只读、删不掉，进而把整棵树留在临时目录里。对真正共享的 inode 重复 `chmod` 无害（#804）。
+- A hardlink clone the filesystem refuses with `UNKNOWN` now rebuilds the tree as copies. Windows reports the per-inode link limit under that single code, so the five-code fallback gate never matched and every Bash call failed until the condition cleared on its own; the fallback now also records the payload's highest link count so the ceiling is visible next time (#804).
+- 硬链接克隆遇到 `UNKNOWN` 失败时改为重建为复制副本。Windows 把 inode 链接上限归到这一个错误码下，此前五码白名单永远匹配不到，复制兜底不触发，每次 Bash 调用都会失败，只能等外部条件自行消失；现在回退还会记录 payload 的最高链接数，下次能直接看出是否触顶（#804）。
+- A Bash/Niubash preparation failure now shows the link-count paragraph only when the failure itself carries a link-count signature, and that paragraph no longer tells an installation already on 0.5.2 to upgrade to 0.5.2. Every other unclassified failure keeps its own reason and falls through to the default text (#805).
+- Bash/Niubash 准备失败现在只在错误本身带 link-count 特征时才显示那段说明，且该段不再要求已经运行 0.5.2 的安装去升级到 0.5.2；其余未分类失败保留自身原因、走默认文案（#805）。
 - A Bash slot whose executor never resolved now says so in the prompt instead of rendering an empty section: the notice quotes the resolution `source` and `detail` (which already ends with the deployment remedy), points file work at the OPS file tools, and refuses to imply that swapping shells is a repair. Official PowerShell is still never hidden while Bash is unavailable.
 - Bash 执行器未能解析时，提示段落不再留空，而是明确说明不可用：引用解析结果的 `source` 与 `detail`（后者已含部署侧修复办法），指明文件读写应走 OPS 文件工具，并明确不得以换 shell 充当修复；Bash 不可用时官方 PowerShell 仍绝不被隐藏。
 - Load `@deepseek-ai/dsh-scope` from the copy the running host resolves. A bundle that hoists its own copy into the profile tree used to shadow the host's, so scope contexts read as unscoped and creating a session failed with `Publication scope must match its registration context` (#752). The adapter resolves the host entry's copy, then the profile layer, then the bare specifier.
@@ -61,9 +72,7 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 每个合并门禁都成为真正的门禁：`validate-windows`、`validate-macos-intel`、`tools-trial` 去掉 `continue-on-error` 并加入 `CI required` 的 `needs` 与失败判定循环；bench smoke 移到 `benchmark-gates.yml`（手动 + 每月调度），`ci.yml` 不再有非阻塞 job；`node-floor` 覆盖 Linux 与 Windows；新增 `rust-lint`，用 `native/rust-toolchain.toml` 钉住的 1.97.1 门禁 `cargo fmt --check` 与 `clippy -D warnings`。`scripts/check-workflows.mjs` 用 `EXPECTED_BLOCKING` 单一事实源校验“job 已分类 / needs 与循环一致”，并按实测 p99 收紧超时。
 - 发布不可变：release `gate` 拒绝被 force-move 的 tag，要求 tag commit 的 `CI required` 为 success，并改用与 CI 相同的 `verify-gate.mjs`（恢复“skip 不是通过”的断言，Niubash 载荷套件真跑）；`publish` 只补缺失资产，不再 `--clobber`。规则集模板带上 merge queue，由幂等的 `scripts/apply-ruleset.mjs` 下发。
 
-
 ## [0.5.0] — 2026-11-06 — Stable release
-
 
 - This stable release summarizes the user- and developer-facing changes since v0.4.0, including the 0.4.1-0.4.4 patch releases and the 0.5.0 previews. **Breaking:** the 0.5 series targets DSH 0.2.2-rc.1 and later 0.2.2 releases only; older hosts are no longer supported.
 - 本正式版汇总自 v0.4.0 起（含 0.4.1-0.4.4 补丁版与 0.5.0 预览版）的用户与开发者相关变更。**破坏性变更**：0.5 系列仅面向 DSH 0.2.2-rc.1 起的 0.2.2 发行线，不再支持旧宿主。
@@ -406,7 +415,6 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   was the visible lag when starting one with many sessions open.
 - 新建会话时只规划新 Agent，不再重读所有存活会话的工具视图；`tools/change` 只核对它实际触达的
   Agent，宿主未标注归属的变更合并为一次处理。新建会话不再随已开会话数线性扫描工具视图。
-
 
 ## [0.5.0] — 2026-10-27 — Preset-mode component roster
 

@@ -20,8 +20,12 @@ export interface PublicationLease {
   ready(): Promise<void>
   dispose(): void
 }
-const denied = (): Outcome<never> => ({ status: 'rejected', error: { code: 'PUBLICATION_DENIED',
-  effectState: 'none', retry: 'never', message: 'Publication authorization is unavailable.' } })
+const denied = (code: 'PUBLICATION_IDENTITY_MISMATCH' | 'PUBLICATION_GRANT_UNAVAILABLE'): Outcome<never> => ({
+  status: 'rejected', error: { code, effectState: 'none', retry: 'never',
+    message: code === 'PUBLICATION_IDENTITY_MISMATCH'
+      ? 'Publication definition is stale or is not admitted for this agent and tool set.'
+      : 'Publication has no eligible grant or has conflicting dispatch grants for this agent.' },
+})
 const cancelled = (started: boolean): Outcome<never> => ({ status: started ? 'unknown' : 'rejected', error: {
   code: started ? 'RESULT_UNKNOWN' : 'ABORTED', effectState: started ? 'unknown' : 'none', retry: 'never',
   message: started ? 'Invocation cancelled after dispatch; background work may continue.' : 'Invocation cancelled before dispatch.',
@@ -35,6 +39,11 @@ interface Entry {
 }
 const roots = new WeakMap<object, Map<object | undefined, Map<string, Entry>>>()
 const published = new WeakMap<ToolDefinition, { root: object; current(): boolean }>()
+const admissions = new WeakMap<ToolDefinition, (activation: ToolActivationContext) => Promise<boolean>>()
+/** Reuse the source registration's exact decision for a conditional official fallback. */
+export function publicationAdmission(tool: ToolDefinition): ((activation: ToolActivationContext) => Promise<boolean>) | undefined {
+  return admissions.get(tool)
+}
 /** Exact live source identity; a matching name or output contract grants nothing. */
 export function ownsPublication(ctx: Context, tool: ToolDefinition): boolean {
   const owner = published.get(tool)
@@ -125,10 +134,10 @@ export async function acquire(ctx: Context, scope: object | undefined, name: str
       if (retired || grants.size === 0 || unregister) return
       const next: ToolDefinition = { ...canonical, name, execute: async (args, exec) => {
         if (definition !== next || !exec.agent || !exec.toolSet || tools.executable(name, exec.agent, exec.toolSet) !== next) {
-          return denied()
+          return denied('PUBLICATION_IDENTITY_MISMATCH')
         }
         const matching = eligible(exec.agent)
-        if (!matching.length || matching.some(grant => grant.dispatch !== matching[0].dispatch)) return denied()
+        if (!matching.length || matching.some(grant => grant.dispatch !== matching[0].dispatch)) return denied('PUBLICATION_GRANT_UNAVAILABLE')
         const controller = new AbortController()
         const caller = exec.signal
         const abort = () => controller.abort(caller?.reason)
@@ -156,12 +165,22 @@ export async function acquire(ctx: Context, scope: object | undefined, name: str
       owned.add(next)
       definition = next
       published.set(next, { root, current: () => definition === next && !closed && !retired })
-      unregister = publicationRegistration(ctx, () => tools.register(next, { when: async activation => {
-        const matching = eligible(activation.agent)
-        if (!matching.length || matching.some(grant => grant.dispatch !== matching[0].dispatch)) return false
-        for (const grant of matching) if (!grant.present || await grant.present(activation)) return true
-        return false
-      } }))
+      const decisions = new WeakMap<ToolActivationContext, Promise<boolean>>()
+      const admission = (activation: ToolActivationContext): Promise<boolean> => {
+        let decision = decisions.get(activation)
+        if (!decision) {
+          decision = (async () => {
+            const matching = eligible(activation.agent)
+            if (!matching.length || matching.some(grant => grant.dispatch !== matching[0].dispatch)) return false
+            for (const grant of matching) if (!grant.present || await grant.present(activation)) return true
+            return false
+          })()
+          decisions.set(activation, decision)
+        }
+        return decision
+      }
+      admissions.set(next, admission)
+      unregister = publicationRegistration(ctx, () => tools.register(next, { when: admission }))
       // Registration emits synchronously; recheck after its guarded notification.
       if (sourceExists()) { retired = true; withdraw() }
     } catch (error) {

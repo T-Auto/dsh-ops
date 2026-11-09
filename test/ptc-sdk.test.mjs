@@ -129,7 +129,7 @@ await test('Native/PTC child scopes preserve projections and same-layer file row
       parent.lift(); await parent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { parent.lift = selectExecutor(inner, 'native') } })
       const assembled = await assembleFor(ctx, parent)
       assert.equal(assembled.tools.some(tool => tool.name === 'ops_load_sdk'), false)
-      assert.equal((await retained.execute({ path: root, pattern: 'x' }, { agent: parent, signal: new AbortController().signal })).error.code, 'PUBLICATION_DENIED')
+      assert.equal((await retained.execute({ path: root, pattern: 'x' }, { agent: parent, signal: new AbortController().signal })).error.code, 'PUBLICATION_IDENTITY_MISMATCH')
       await component.dispose(); await waitFor(async () => (await visible(ctx, parent)).includes('ops_grep'), { timeoutMs: 5000, what: 'Native discovery restoration after PTC unload' }); assert.equal((await visible(ctx, child)).includes('ops_load_sdk'), false)
       await scopedFile.dispose(); assert.equal(Object.hasOwn(ctx.get('tools'), 'register'), false)
     } finally { await shutdown(ctx) }
