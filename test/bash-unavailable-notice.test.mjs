@@ -63,6 +63,8 @@ await test('a slot whose executor never resolved reports the failed resolution',
     assert.match(text, /resolution source: config/, 'the notice names the rung that failed')
     assert.ok(text.includes(bash.detail), 'the resolution detail is quoted verbatim: ' + bash.detail)
     assert.doesNotMatch(text, /foreground includes status, exitCode/, 'the operating guidance is not claimed')
+    // The notice rides on every request of the session, so it stays a short wrapper around the detail.
+    assert.ok(text.length - bash.detail.length < 300, `notice wrapper is ${text.length - bash.detail.length} chars`)
 
     allowed = false
     assert.deepEqual(await bashText(agent), [], 'an agent the gate rejects learns nothing about this slot')
