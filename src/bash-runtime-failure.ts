@@ -144,17 +144,6 @@ export function bashRuntimeFailureCode(error: unknown): BashRuntimeFailureCode |
 }
 
 /**
- * The signature the 0.5.2 concurrency defect leaves behind.
- *
- * The paragraph below was written for exactly this cause, so only a failure that
- * carries this signature may show it. Gating on the word `Niubash` instead sent
- * every unrelated preparation failure — a permission error, a checksum mismatch,
- * a refused execution root — to advice about a concurrency bug this installation
- * had already repaired.
- */
-const LINK_COUNT_MISMATCH = /link[- ]count/i
-
-/**
  * The model-facing `EXECUTOR_UNAVAILABLE` text for one preparation failure.
  *
  * Three shapes are kept apart on purpose:
@@ -174,14 +163,7 @@ export function executorUnavailableMessage(error: unknown): string {
   if (code !== undefined) {
     return `EXECUTOR_UNAVAILABLE: ${code}: ${reason} ${REMEDIES[code].remedy}`
   }
-  if (LINK_COUNT_MISMATCH.test(reason)) {
-    return 'EXECUTOR_UNAVAILABLE: Niubash preparation failed: '
-      + `${reason}. No command was executed. A link-count mismatch is the concurrency defect repaired in 0.5.2: if this `
-      + 'installation is older than 0.5.2, upgrading is the fix, and neither a retry nor cache cleanup helps. '
-      + 'For leftover trees, stop every OPS host and Bash job, preview `dsh-ops cache status --kind exec-tree`, then run '
-      + '`dsh-ops cache reclaim --kind exec-tree --all-hosts-stopped --yes` from the same DSH_HOME and execution-root environment. '
-      + 'Only verified trees are reclaimed. Restore the pinned payload for identity/size/receipt failures; do not bypass confinement.'
-  }
+  if (reason.startsWith('EXECUTOR_UNAVAILABLE:')) return reason
   return 'EXECUTOR_UNAVAILABLE: the restricted Bash runtime could not be prepared: '
     + `${reason}. No command was executed. If this was a transient filesystem refusal, one retry may complete the `
     + 'private copy; do not switch shells to bypass confinement.'

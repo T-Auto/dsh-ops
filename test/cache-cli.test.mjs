@@ -10,8 +10,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { PACKAGE_ROOT, assert, report, test, withTempDir } from './lib/harness.mjs'
 import { cacheInventory, cacheReclaim } from '../lib/cli/cache-reclaim.js'
-import { NIUBASH_PIN, niubashExecutionReceipt } from '../lib/cli/niubash-payload.js'
-import { sealTree, unsealTree } from '../lib/niubash/seal.js'
+import { NIUBASH_PIN } from '../lib/cli/niubash-payload.js'
+import { NIUBASH_FACES } from '../lib/niubash/faces.js'
 import { pendingRoot, recordPendingScratch } from '../lib/cli/pending-scratch.js'
 
 const CLI = path.join(PACKAGE_ROOT, 'bin', 'dsh-ops.mjs')
@@ -149,38 +149,89 @@ await test('cache status on a clean home succeeds and a bad kind is rejected', a
   })
 })
 
-await test('offline execution reclaim removes sealed owned trees, preserves foreign names, and finds configured roots', async () => {
-  await withTempDir('cache-execution', async root => {
+const LEGACY_MEMBER = 'winuxcmd/opt/niugit/etc/gitconfig'
+const LEGACY_BYTES = '[http]\n\tsslBackend = schannel\n'
+
+/** Emulate an old interrupted seal without depending on the removed runtime seal API. */
+function legacyAcl(directory, operation) {
+  if (process.platform !== 'win32') return
+  const result = spawnSync('icacls.exe', [directory, ...operation, '/T', '/C', '/Q'], { encoding: 'utf8' })
+  assert.equal(result.status, 0, `${result.error ?? ''} ${result.stdout} ${result.stderr}`)
+}
+
+await test('offline legacy cleanup reclaims receiptless half-built hardlinks and copies, including deny ACLs', async () => {
+  await withTempDir('cache-execution', root => {
     const home = path.join(root, 'home'), temp = path.join(root, 'temp')
-    const owned = path.join(temp, 'dsh-ops-niu-exec-owned'), foreign = path.join(temp, 'dsh-ops-niu-exec-foreign')
-    fs.mkdirSync(owned, { recursive: true }); fs.mkdirSync(foreign)
-    const [name, size] = Object.entries(NIUBASH_PIN.sizes)[0]
-    const file = path.join(owned, name)
-    fs.mkdirSync(path.dirname(file), { recursive: true })
-    fs.writeFileSync(file, ''); fs.truncateSync(file, size)
-    const receipt = path.join(owned, 'execution-provenance.json')
-    fs.writeFileSync(receipt, JSON.stringify(niubashExecutionReceipt({ mode: 'hardlink', seal: 'readonly+acl' })))
-    fs.writeFileSync(path.join(foreign, 'notes.txt'), 'keep')
+    fs.mkdirSync(temp)
+    const source = path.join(root, 'source')
+    fs.writeFileSync(source, LEGACY_BYTES)
+    const owned = ['hardlink', 'copy', 'partial-receipt', 'empty'].map(mode => path.join(temp, `dsh-ops-niu-exec-${mode}`))
+    const files = []
+    for (const [index, directory] of owned.entries()) {
+      fs.mkdirSync(directory)
+      if (index === 3) continue
+      const file = path.join(directory, LEGACY_MEMBER)
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      if (index === 0) fs.linkSync(source, file)
+      else fs.copyFileSync(source, file)
+      if (index === 2) fs.writeFileSync(path.join(directory, 'execution-provenance.json'), '{')
+      fs.chmodSync(file, 0o444)
+      files.push(file)
+      legacyAcl(directory, ['/deny', '*S-1-1-0:(WD,AD,DE,DC)'])
+    }
     const previous = process.env.DSH_OPS_EXEC_ROOT
     try {
-      await sealTree({ root: owned, files: [file, receipt], writableDirectories: [owned] })
       process.env.DSH_OPS_EXEC_ROOT = temp
       const inventory = cacheInventory({ home })
-      assert.equal(inventory.items.find(item => item.path === owned)?.decision, 'reclaimable')
+      for (const directory of owned) assert.equal(inventory.items.find(item => item.path === directory)?.decision, 'reclaimable')
       const options = { home, tmpRoot: temp, kinds: ['exec-tree'] }
       assert.throws(() => cacheReclaim({ ...options, apply: true }), /all-hosts-stopped/)
       cacheReclaim(options)
-      assert.ok(fs.existsSync(owned), 'preview preserves sealed trees')
+      assert.ok(owned.every(directory => fs.existsSync(directory)), 'preview preserves every tree')
+      assert.equal(fs.statSync(files[0]).mode & 0o222, 0, 'inventory and preview leave the seal intact')
       const result = cacheReclaim({ ...options, apply: true, allHostsStopped: true })
       assert.equal(result.errors, 0, JSON.stringify(result.items))
-      assert.equal(fs.existsSync(owned), false)
-      assert.equal(fs.readFileSync(path.join(foreign, 'notes.txt'), 'utf8'), 'keep')
-      assert.equal(cacheInventory({ home, tmpRoot: temp }).items.some(item => item.decision === 'reclaimable'), false)
+      assert.equal(result.items.filter(item => item.action === 'deleted').length, 4)
+      assert.ok(owned.every(directory => !fs.existsSync(directory)))
+      assert.equal(fs.readFileSync(source, 'utf8'), LEGACY_BYTES, 'the shared source inode survives cleanup')
+      assert.ok(fs.statSync(source).mode & 0o200, 'the shared readonly attribute was cleared')
     } finally {
       if (previous === undefined) delete process.env.DSH_OPS_EXEC_ROOT
       else process.env.DSH_OPS_EXEC_ROOT = previous
-      if (fs.existsSync(owned)) await unsealTree(owned)
+      for (const directory of owned) if (fs.existsSync(directory)) legacyAcl(directory, ['/remove:d', '*S-1-1-0'])
+      for (const file of files) if (fs.existsSync(file)) fs.chmodSync(file, 0o666)
     }
+  })
+})
+
+await test('legacy cleanup preserves unknown members, directories, links and same-size altered payload or faces', async () => {
+  await withTempDir('cache-execution-foreign', root => {
+    const home = path.join(root, 'home'), temp = path.join(root, 'temp')
+    fs.mkdirSync(temp)
+    const cases = [
+      ['unknown-file', 'notes.txt', 'keep'],
+      ['unknown-directory', 'private', undefined],
+      ['altered-payload', LEGACY_MEMBER, 'x'.repeat(NIUBASH_PIN.sizes[LEGACY_MEMBER])],
+      ['altered-face', `winuxcmd/usr/bin/${NIUBASH_FACES[0]}.exe`, ''],
+    ]
+    for (const [label, member, bytes] of cases) {
+      const file = path.join(temp, `dsh-ops-niu-exec-${label}`, member)
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      if (bytes === undefined) fs.mkdirSync(file)
+      else fs.writeFileSync(file, bytes)
+      if (label === 'altered-face') fs.truncateSync(file, NIUBASH_PIN.sizes['winuxcmd/usr/bin/winuxcmd.exe'])
+    }
+    const linked = path.join(temp, 'dsh-ops-niu-exec-linked')
+    fs.mkdirSync(linked)
+    fs.symlinkSync(root, path.join(linked, 'winuxcmd'), process.platform === 'win32' ? 'junction' : 'dir')
+    const options = { home, tmpRoot: temp, kinds: ['exec-tree'] }
+    const result = cacheReclaim({ ...options, apply: true, allHostsStopped: true })
+    assert.equal(result.items.length, 5)
+    assert.ok(result.items.every(item => item.action === 'unverified'), JSON.stringify(result.items))
+    assert.ok(result.items.every(item => fs.existsSync(item.path)))
+    assert.equal(result.deletedBytes, 0)
+    assert.equal(result.errors, 0)
+    for (const item of result.items.filter(item => /altered-/u.test(item.path))) assert.match(item.detail, /checksum mismatch/u)
   })
 })
 

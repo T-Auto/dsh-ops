@@ -175,29 +175,16 @@ await test('a restricted bash that cannot run reports which bash and why, not a 
   })
 })
 
-  await test('Niubash recovery names the fixed version and offline command without promising a retry', async () => {
-    const message = executorUnavailableMessage(new Error('Niubash execution tree link count mismatch: assets/icon.png'))
-    assert.match(message, /0\.5\.2/)
-    assert.match(message, /cache reclaim --kind exec-tree --all-hosts-stopped --yes/)
-    assert.doesNotMatch(message, /one retry may complete/)
-    assert.match(message, /No command was executed/)
-  })
+await test('Niubash selection failures preserve their actionable reason without legacy execution-tree remedies', () => {
+  const reason = 'EXECUTOR_UNAVAILABLE: Niubash payload verification failed: checksum mismatch. Restore the complete pinned payload; do not bypass confinement.'
+  assert.equal(executorUnavailableMessage(new Error(reason)), reason)
+  assert.doesNotMatch(reason, /link.count|exec-tree|private copy/)
+})
 
-await test('only a link-count failure gets the 0.5.2 paragraph; other Niubash failures keep their own reason', () => {
-  // The one cause the paragraph was written for still gets it.
-  const linkCount = executorUnavailableMessage(new Error('Niubash execution tree link count mismatch: assets/icon.png'))
-  assert.match(linkCount, /0\.5\.2/)
-  assert.match(linkCount, /cache reclaim --kind exec-tree --all-hosts-stopped --yes/)
-  // ...but a 0.5.2 installation must not be told to upgrade to 0.5.2 (#804).
-  assert.doesNotMatch(linkCount, /upgrade dsh-ops to 0\.5\.2/)
-
-  // Everything else that merely mentions Niubash keeps its own reason and makes no
-  // claim about a concurrency defect. Before #804 all five of these got the upgrade
-  // paragraph, purely because the word Niubash appeared somewhere in the text.
+await test('unclassified failures keep their reason without obsolete concurrency remedies', () => {
   for (const reason of [
     "UNKNOWN: unknown error, link 'C:\\\\p\\\\runtime\\\\win32-x64\\\\niubash\\\\winuxcmd\\\\usr\\\\bin\\\\awk.exe' -> 'C:\\\\t\\\\awk.exe'",
     'niubash 目录权限不足: EACCES',
-    'EXECUTOR_UNAVAILABLE: Niubash payload verification failed: expected an absolute niu.exe path',
     'Niubash execution tree checksum mismatch: assets/icon.png',
     'the exec root must not be inside the Niubash payload: C:\\\\payload',
   ]) {

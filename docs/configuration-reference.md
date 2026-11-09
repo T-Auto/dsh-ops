@@ -147,14 +147,15 @@ report `CREDENTIAL_DENIED`, no effect and no retry, and do not disclose denied p
 `DSH_OPS_DENY_READ` can widen the fence; disabling the Native override is an explicit operator
 choice for that consumer, not an authorization grant.
 
-`DSH_OPS_EXEC_ROOT` names the parent directory of the per-call Windows Niubash execution tree
-(default: the OS temporary directory). Point it at an antivirus allow-list location or a specific
-volume to keep hardlink cloning on the payload's volume; a cross-volume root still works through the
-copy fallback recorded in the execution receipt. The root must not be inside the payload.
-`NIUBASH_VERIFY=deep` restores the full per-call payload re-hash; the default per-call check is
-stat-only (path set, sizes, directories, read-only seal, stable file identities and private-file link counts).
+Windows Niubash selection verifies the frozen source and prepares one copied runtime at
+`<DSH_HOME>/dsh-ops/shells/niubash-prepared/<manifest hash>`, including command faces and six
+startup directories. Source files are never hardlinked into it. Calls reuse that runtime without
+per-call cloning, hashing, seals or execution receipts, while every call follows the current host policy (`confine` in restricted modes).
+`DSH_HOME` must place the prepared runtime outside the session workspace; each call enforces this.
+`DSH_OPS_EXEC_ROOT` and `NIUBASH_VERIFY=deep` are deprecated and ignored by runtime execution.
+Only offline legacy execution-tree reclamation still reads `DSH_OPS_EXEC_ROOT` to discover old roots.
 
-On Windows restricted Bash requires the pinned MSYS and verified private IPC proxies. Unsupported
+Custom MSYS Bash in Windows restricted modes requires the pinned build and verified private IPC proxies. Unsupported
 custom Bash returns `EXECUTOR_UNAVAILABLE`; never bypass confinement or change shells as a repair.
 POSIX Bash uses the host executable and host sandbox. Worker and Shell explicit selections never
 silently substitute a different executable. PowerShell installation is a separate host action;

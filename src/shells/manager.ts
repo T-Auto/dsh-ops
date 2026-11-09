@@ -137,7 +137,7 @@ export function selectBashRuntime(source: BashSelectionSource, options: BashSele
     // Clearing `bashPath` is the choice: the ladder then prefers the provisioned
     // copy and falls back to the payload shipped inside the package.
     const resolved = niubashCandidates(PACKAGE_ROOT, env).map(candidate => {
-      try { return verifiedNiubash(candidate.file) } catch { return undefined }
+      try { return verifiedNiubash(candidate.file, env.PATH ?? env.Path, env) } catch { return undefined }
     }).find(runtime => runtime !== undefined)
     return { source, clear: true, engine: 'niubash',
       ...(resolved === undefined ? {} : { file: resolved.file }),
@@ -153,7 +153,7 @@ export function selectBashRuntime(source: BashSelectionSource, options: BashSele
   const absolute = path.resolve(candidate)
   if (!isSpawnableFile(absolute)) throw new Error('The Bash executable does not exist: ' + absolute)
   const engine = isNiubashExecutable(absolute) ? 'niubash' : 'msys'
-  if (engine === 'niubash') verifiedNiubash(absolute)
+  if (engine === 'niubash') verifiedNiubash(absolute, env.PATH ?? env.Path, env)
   const check = restrictedCompatibility(absolute, options)
   return { source, file: absolute, clear: false, engine,
     detail: engine === 'niubash' ? 'Explicit Niubash payload selected.' : 'Explicit Git Bash (MSYS) executable selected.',
