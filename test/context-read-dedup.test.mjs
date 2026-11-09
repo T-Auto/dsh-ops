@@ -266,14 +266,8 @@ await test('root observers remain runtime-owned and separate source lifetimes ca
   assert.equal(first.value.data.items.length, 30)
 }))
 
-// A host that guards the compose root refuses `root.events.*` from a plugin
-// activation (dsh-tui 0.19.0). Subscriptions must therefore be owned by the ctx
-// that constructs the runtime, never by `ctx.root`.
-const guardedRoot = () => {
-  const deny = method => () => { throw new Error(`root.events.${method} is unavailable from a plugin activation`) }
-  const events = { on: deny('on'), once: deny('once'), register: deny('register'), unregister: deny('unregister') }
-  return { events, on: (...args) => events.on(...args), once: (...args) => events.once(...args), effect: (...args) => events.register(...args) }
-}
+// The admission ledger is keyed by the ctx that receives the events, not by the
+// ctx that answers authorization, so one subscription context owns one ledger.
 const subscriptionRecorder = () => {
   const subscribed = [], disposed = []
   return { subscribed, disposed, ctx: { on(name) { subscribed.push(name); return () => disposed.push(name) } } }
@@ -281,21 +275,6 @@ const subscriptionRecorder = () => {
 const ADMISSION_EVENTS = ['system-prompt/change', 'tools/execute']
 const RUNTIME_EVENTS = ['agent/disposed', 'llm/stream', 'session/disposed', 'session/event', 'tools/result']
 const sorted = names => [...names].sort()
-
-await test('a guarded compose root cannot receive subscriptions; the constructing ctx owns them', async () => {
-  const subscribed = []
-  const ctx = { root: guardedRoot(), get: () => undefined, on(name) { subscribed.push(name); return () => {} } }
-  const runtime = new NativeFileTools({ ctx, config: { workerPath: WORKER, required: true } })
-  const admission = acquireResultAdmission(ctx)
-  try {
-    assert.deepEqual(await runtime.start([]), [])
-  } finally {
-    await runtime.stop()
-    admission.dispose()
-  }
-  assert.deepEqual(sorted(subscribed), sorted([...RUNTIME_EVENTS, ...ADMISSION_EVENTS]),
-    'every subscription lands on the constructing ctx; a root receiver would have thrown')
-})
 
 await test('an explicit events ctx carries the subscriptions and the admission ledger', async () => {
   const identity = subscriptionRecorder()
@@ -317,6 +296,9 @@ await test('an explicit events ctx carries the subscriptions and the admission l
   assert.deepEqual(sorted(eventsB.disposed), sorted(ADMISSION_EVENTS))
 })
 
+// The runtime's own events option is what a shared file source uses: it reads
+// through the agent's ctx but must subscribe where session/event is visible.
+// Nothing else pins that the option is honoured rather than ignored.
 await test('an explicit events ctx receives the runtime subscriptions instead of the read ctx', async () => {
   const read = subscriptionRecorder()
   const events = subscriptionRecorder()

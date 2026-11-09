@@ -10,7 +10,9 @@
  * one unattributed change over 198 sessions.
  *
  * The view already holds every answer the scan needs, so these tests pin both
- * halves: the answer stays the same, and one scan costs one view.
+ * halves: the answer stays the same, and one scan costs one view. The provider
+ * notification's effect ownership is pinned by root-ownership AC-2, against a
+ * real Cordis row and a guarded root.
  */
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { nativeProviders, registerNativeProviderAtScope } from '../lib/publication/providers.js'
@@ -75,47 +77,5 @@ await test('a shadowed provider is still excluded when the view is read once', (
     assert.equal(nativeProviders(ctx, parent).length, 3, 'the parent scope itself is unshadowed')
   } finally { await shutdown(ctx) }
 }))
-
-/**
- * A host that guards its composition root (dsh-tui 0.19.0) refuses `root.effect`
- * and `root.on` from a plugin activation; plain reads of `ctx.root` stay legal,
- * so the state key above is unaffected. The metadata notification is one more
- * registration, and it must be owned by the row context that unloads with it —
- * a root-owned listener is both refused by a guarded host and, on an unguarded
- * one, never released at all.
- * @returns {{row: object, attempts: string[]}} the row context and every
- *   capability call that wrongly landed on its root.
- */
-const guardedRow = () => {
-  const attempts = []
-  const deny = method => () => {
-    attempts.push(method)
-    throw new Error(`root.${method} is unavailable from a plugin activation`)
-  }
-  const row = {
-    // A real root carries a fiber and a logger; only its capabilities are refused.
-    root: { effect: deny('effect'), on: deny('on'), fiber: {}, logger: { warn() {} } },
-    fiber: {},
-    emitted: 0,
-    effect(execute) {
-      const dispose = execute()
-      return () => dispose?.()
-    },
-    emit() { row.emitted += 1 },
-    logger: { warn() {} },
-  }
-  return { row, attempts }
-}
-
-await test('a guarded composition root never receives the provider notification', () => {
-  const { row, attempts } = guardedRow()
-  let registrations = 0
-  const stop = registerNativeProviderAtScope(row, {}, [tool('guarded_provider')], () => { registrations += 1; return () => {} })
-  try {
-    assert.equal(registrations, 1, 'the definition is still registered into its layer')
-    assert.equal(row.emitted, 1, 'the metadata notification still reaches the context that made it')
-    assert.deepEqual(attempts, [], 'no capability call may land on the composition root')
-  } finally { stop() }
-})
 
 report()
