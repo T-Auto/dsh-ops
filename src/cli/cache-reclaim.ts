@@ -2,13 +2,12 @@
  * Offline inspection and reclamation of the temporary resources OPS itself can
  * reproduce: kept provision downloads, Niubash staging siblings, quarantined
  * Bash IPC generations, an interrupted audit-store writer, and per-call Niubash
- * execution trees.
+ * execution trees and obsolete prepared versions.
  *
- * Every item carries an ownership evidence string, and nothing is deleted on the
- * strength of its name alone. Being under the right root with the right name only
- * makes an entry a candidate; the decision also needs its record or verified
- * payload members. Legacy execution trees are touched only after explicit
- * offline confirmation, including clones interrupted before their receipt.
+ * Every item carries an ownership evidence string: a record, verified payload
+ * members, or a prepared-cache directory in its reserved namespace. Legacy
+ * execution trees are touched only after explicit offline confirmation,
+ * including clones interrupted before their receipt.
  *
  * @module dsh-ops/cli/cache-reclaim
  */
@@ -23,6 +22,8 @@ import { spawnSync } from 'node:child_process'
 import { provisionedShellStore } from '../shells.js'
 import { errorMessage } from '../shells/types.js'
 import { reclaimNiubashSiblings, verifyNiubashTree, niubashFileHash, NIUBASH_EXECUTION_DIRECTORIES, NIUBASH_HOME_PATH, NIUBASH_PACKAGE_PATH, NIUBASH_PIN, NIUBASH_RECEIPT } from './niubash-payload.js'
+import { NIUBASH_MANIFEST_SHA256 } from './niubash-payload.js'
+import { preparedNiubashEntries, retirePreparedNiubash } from '../niubash/prepared-cache.js'
 import { NIUBASH_FACES } from '../niubash/faces.js'
 import { pendingRoot, planPendingSweep, sweepPendingScratch } from './pending-scratch.js'
 
@@ -217,6 +218,16 @@ function verifyExecutionTreeForReclaim(target: string): void {
   walk('')
 }
 
+/** The reserved prepared namespace owns partial trees as well as obsolete versions. */
+function preparedItems(home: string): CacheItem[] {
+  const current = path.resolve(home, 'dsh-ops/shells/niubash-prepared', NIUBASH_MANIFEST_SHA256)
+  return preparedNiubashEntries(current).map(target => ({
+    kind: 'exec-tree', path: target, ...treeUsage(target),
+    evidence: 'prepared-cache-namespace', decision: 'reclaimable',
+    detail: 'offline confirmation required; non-current prepared cache directory',
+  }))
+}
+
 /** Leftover per-call trees from older releases; no new execution tree is created. */
 function execItems(tmpRoot: string): CacheItem[] {
   let entries
@@ -291,6 +302,7 @@ export function cacheInventory({ home = dshHome(), roots = [], tmpRoot, now = Da
     }
   }
   for (const root of executionRoots) items.push(...execItems(root))
+  items.push(...preparedItems(home))
   const totals = { reclaimableBytes: 0, keptBytes: 0, unverifiedBytes: 0, files: 0 }
   for (const item of items) {
     totals.files += item.files
@@ -384,6 +396,14 @@ export function cacheReclaim({
             : decision.action === 'restored' ? 'restored'
               : decision.action === 'removed' ? 'deleted' : 'kept'
         if (item.action === 'deleted' || item.action === 'reused' || item.action === 'restored') result.deletedBytes += item.bytes
+      } else if (item.kind === 'exec-tree' && item.evidence === 'prepared-cache-namespace') {
+        const removed = retirePreparedNiubash(item.path)
+        item.action = removed ? 'deleted' : 'kept'
+        if (removed) result.deletedBytes += item.bytes
+        else {
+          item.detail = 'could not retire or remove the prepared cache directory'
+          result.errors += 1
+        }
       } else {
         const outcome = removeAsAside(item.path, now, item.kind === 'exec-tree')
         item.action = outcome.ok ? 'deleted' : 'kept'

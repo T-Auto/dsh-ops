@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { NIUBASH_FACES } from './faces.js'
+import { reclaimPreparedNiubash, retirePreparedNiubash } from './prepared-cache.js'
 import {
   NIUBASH_EXECUTION_DIRECTORIES, NIUBASH_HOME_PATH, NIUBASH_PACKAGE_PATH,
   NIUBASH_MANIFEST_SHA256, NIUBASH_PIN, NIUBASH_RECEIPT, verifyNiubashTree,
@@ -49,13 +50,15 @@ export function publishNiubashVersion(from: string, to: string, {
 /** Build a version once, without sharing any inode with the package or workspace.
  * Independent processes publish by directory rename: the loser uses the winner's complete tree.
  */
-export function prepareNiubashVersion(source: string, target = niubashPreparedRoot()): string {
+export function prepareNiubashVersion(source: string, target = niubashPreparedRoot(), { retireOthers = true }: { retireOthers?: boolean } = {}): string {
   verifyNiubashTree(source)
   let previousFailure: Error | undefined
   let broken: string | undefined
+  let scratch: string | undefined
+  let selected = false
   try {
     if (fs.existsSync(target)) {
-      try { return verifyNiubashTree(target, true) }
+      try { const file = verifyNiubashTree(target, true); selected = true; return file }
       catch (error) {
         previousFailure = error instanceof Error ? error : new Error(String(error))
         const aside = `${target}.broken-${randomUUID()}`
@@ -68,21 +71,24 @@ export function prepareNiubashVersion(source: string, target = niubashPreparedRo
         }
       }
     }
-    return buildNiubashVersion(source, target)
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    scratch = fs.mkdtempSync(`${target}.stage-`)
+    const file = buildNiubashVersion(source, target, scratch)
+    selected = true
+    return file
   } catch (error) {
     if (previousFailure) throw new Error(`EXECUTOR_UNAVAILABLE: Niubash prepared runtime repair failed: existing version: ${previousFailure.message}; fresh preparation: ${error instanceof Error ? error.message : String(error)}`)
     throw error
   } finally {
-    if (broken) {
-      try { fs.rmSync(broken, { recursive: true, force: true }) }
-      catch (error) { console.error(`dsh-ops: could not remove damaged Niubash prepared version ${broken}: ${error}`) }
+    if (selected && retireOthers) reclaimPreparedNiubash(target)
+    else {
+      if (scratch && fs.existsSync(scratch) && !retirePreparedNiubash(scratch)) console.error(`dsh-ops: could not retire Niubash preparation scratch ${scratch}`)
+      if (broken && !retirePreparedNiubash(broken)) console.error(`dsh-ops: could not retire damaged Niubash prepared version ${broken}`)
     }
   }
 }
 
-function buildNiubashVersion(source: string, target: string): string {
-  fs.mkdirSync(path.dirname(target), { recursive: true })
-  const scratch = fs.mkdtempSync(`${target}.stage-`)
+function buildNiubashVersion(source: string, target: string, scratch: string): string {
   try {
     for (const name of [...NIUBASH_PIN.directories, ...NIUBASH_EXECUTION_DIRECTORIES]) {
       fs.mkdirSync(path.join(scratch, name), { recursive: true })
@@ -99,9 +105,10 @@ function buildNiubashVersion(source: string, target: string): string {
     }
     if (!publishNiubashVersion(scratch, target)) return verifyNiubashTree(target, true)
     return path.join(target, NIUBASH_PIN.executable)
-  } finally {
-    try { fs.rmSync(scratch, { recursive: true, force: true }) }
-    catch (error) { console.error(`dsh-ops: could not remove Niubash preparation scratch ${scratch}: ${error}`) }
+  } catch (error) {
+    // A winning selector can retire our unfinished scratch after publishing the same version.
+    if (fs.existsSync(target)) return verifyNiubashTree(target, true)
+    throw error
   }
 }
 
@@ -119,6 +126,7 @@ export function verifiedNiubash(file: string, inheritedPath = process.env.PATH ?
     const root = path.dirname(file)
     const target = niubashPreparedRoot(env)
     const selected = path.resolve(root) === target ? verifyNiubashTree(root, true) : prepareNiubashVersion(root, target)
+    if (path.resolve(root) === target) reclaimPreparedNiubash(target)
     return runtime(selected, inheritedPath)
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('EXECUTOR_UNAVAILABLE:')) throw error
@@ -131,16 +139,31 @@ function inside(candidate: string, base: string): boolean {
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
 }
 
+/** Resolve missing prepared roots through their existing parent for the workspace boundary. */
+async function physicalPath(file: string): Promise<string> {
+  try { return await fs.promises.realpath(file) }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    const parent = path.dirname(file)
+    return parent === file ? file : path.join(await physicalPath(parent), path.basename(file))
+  }
+}
+
 /** Host workspace labeling must never label an executable payload Low via a junction. */
 export async function prepareNiubash(file: string, inheritedPath = process.env.PATH ?? process.env.Path ?? '', signal: AbortSignal,
-  options: { workspaceRoot?: string } = {}): Promise<NativeShellRuntime> {
+  options: { workspaceRoot?: string; sourceFile?: string } = {}): Promise<NativeShellRuntime> {
   signal.throwIfAborted()
   if (!path.isAbsolute(file) || !isNiubashExecutable(file)) throw unavailable('expected an absolute niu.exe path')
   if (options.workspaceRoot) {
     const root = path.dirname(file), workspace = options.workspaceRoot
-    if (inside(path.resolve(root), path.resolve(workspace)) || inside(await fs.promises.realpath(root), await fs.promises.realpath(workspace))) {
+    if (inside(path.resolve(root), path.resolve(workspace)) || inside(await physicalPath(root), await physicalPath(workspace))) {
       throw unavailable('the prepared payload must be outside the session workspace; move DSH_HOME outside the workspace')
     }
+  }
+  if (!fs.existsSync(file)) {
+    if (!options.sourceFile) throw unavailable('the selected prepared version is missing and its source is unavailable; select the shell again')
+    // Profiles with different pins share DSH_HOME. Recover our pin once, without evicting theirs.
+    prepareNiubashVersion(path.dirname(options.sourceFile), path.dirname(file), { retireOthers: false })
   }
   signal.throwIfAborted()
   return runtime(file, inheritedPath)

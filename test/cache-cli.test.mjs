@@ -10,7 +10,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { PACKAGE_ROOT, assert, report, test, withTempDir } from './lib/harness.mjs'
 import { cacheInventory, cacheReclaim } from '../lib/cli/cache-reclaim.js'
-import { NIUBASH_PIN } from '../lib/cli/niubash-payload.js'
+import { NIUBASH_MANIFEST_SHA256, NIUBASH_PIN } from '../lib/cli/niubash-payload.js'
 import { NIUBASH_FACES } from '../lib/niubash/faces.js'
 import { pendingRoot, recordPendingScratch } from '../lib/cli/pending-scratch.js'
 
@@ -243,6 +243,101 @@ await test('legacy cleanup preserves unknown members, directories, links and sam
     assert.equal(result.deletedBytes, 0)
     assert.equal(result.errors, 0)
     for (const item of result.items.filter(item => /altered-/u.test(item.path))) assert.match(item.detail, /checksum mismatch/u)
+  })
+})
+
+/** Seed namespace-owned partial prepared trees without a payload or receipt. */
+function preparedFixture(root) {
+  const home = path.join(root, 'home')
+  const prepared = path.join(home, 'dsh-ops', 'shells', 'niubash-prepared')
+  const oldHash = (NIUBASH_MANIFEST_SHA256 === 'a'.repeat(64) ? 'b' : 'a').repeat(64)
+  const names = [oldHash, `${oldHash}.broken-one`, `${NIUBASH_MANIFEST_SHA256}.stage-two`,
+    `${oldHash}.retired-three`, `${oldHash}.broken-one.retired-four`]
+  fs.mkdirSync(prepared, { recursive: true })
+  const directories = names.map(name => {
+    const directory = path.join(prepared, name)
+    fs.mkdirSync(directory)
+    fs.writeFileSync(path.join(directory, 'partial.bin'), 'partial')
+    return directory
+  })
+  return { home, prepared, directories }
+}
+
+await test('exec-tree status and offline reclaim include obsolete prepared versions and leftovers, never the current tree or links', async () => {
+  await withTempDir('cache-prepared', root => {
+    const { home, prepared, directories } = preparedFixture(root)
+    const user = path.join(root, 'user')
+    const current = path.join(prepared, NIUBASH_MANIFEST_SHA256)
+    const unrelated = ['notes', 'f'.repeat(63), `${'e'.repeat(64)}.stage-`, `${'d'.repeat(64)}.other-one`]
+    fs.mkdirSync(user)
+    fs.mkdirSync(current)
+    fs.writeFileSync(path.join(current, 'keep'), 'current')
+    for (const name of unrelated) fs.mkdirSync(path.join(prepared, name))
+    const outside = path.join(root, 'outside')
+    fs.mkdirSync(outside)
+    fs.writeFileSync(path.join(outside, 'keep'), 'outside')
+    const linked = path.join(prepared, 'c'.repeat(64) + '.broken-link')
+    fs.symlinkSync(outside, linked, process.platform === 'win32' ? 'junction' : 'dir')
+    const originalNames = fs.readdirSync(prepared).sort()
+    const status = runCli(home, user, ['status', '--kind', 'exec-tree', '--json'])
+    assert.equal(status.status, 0, status.stderr)
+    const rows = status.json.items.filter(item => item.evidence === 'prepared-cache-namespace')
+    assert.deepEqual(rows.map(item => item.path).sort(), [...directories].sort())
+    assert.ok(rows.every(item => item.decision === 'reclaimable' && item.bytes === 7 && item.files === 1))
+    assert.equal(status.json.items.some(item => item.path === current || item.path === linked), false)
+    const preview = runCli(home, user, ['reclaim', '--kind', 'exec-tree', '--json'])
+    assert.equal(preview.status, 0, preview.stderr)
+    const refused = runCli(home, user, ['reclaim', '--yes', '--kind', 'exec-tree'])
+    assert.equal(refused.status, 2)
+    assert.deepEqual(fs.readdirSync(prepared).sort(), originalNames, 'status, preview and refusal do not select or prepare a runtime')
+    const temp = path.join(root, 'temp')
+    fs.mkdirSync(temp)
+    const applied = cacheReclaim({ home, tmpRoot: temp, kinds: ['exec-tree'], apply: true, allHostsStopped: true })
+    assert.equal(applied.errors, 0)
+    assert.equal(applied.deletedBytes, directories.length * 7)
+    assert.ok(applied.items.every(item => item.action === 'deleted'))
+    assert.ok(directories.every(directory => !fs.existsSync(directory)))
+    assert.equal(fs.readFileSync(path.join(current, 'keep'), 'utf8'), 'current')
+    assert.equal(fs.readFileSync(path.join(outside, 'keep'), 'utf8'), 'outside')
+    assert.equal(fs.lstatSync(linked).isSymbolicLink(), true)
+    assert.ok(unrelated.every(name => fs.existsSync(path.join(prepared, name))))
+  })
+})
+
+await test('prepared reclaim renames once before deletion, retains a busy sibling and never selects a missing current version', async () => {
+  await withTempDir('cache-prepared-busy', root => {
+    const { home, prepared, directories } = preparedFixture(root)
+    const temp = path.join(root, 'temp')
+    fs.mkdirSync(temp)
+    const busy = directories[0]
+    const rename = fs.renameSync, remove = fs.rmSync
+    const renames = [], removals = []
+    fs.renameSync = (source, destination) => {
+      renames.push([source, destination])
+      assert.match(destination.slice(source.length), /^\.retired-[A-Za-z0-9-]+$/u)
+      if (source === busy) throw Object.assign(new Error('busy'), { code: 'EBUSY' })
+      return rename(source, destination)
+    }
+    fs.rmSync = (target, options) => {
+      removals.push(target)
+      assert.ok(renames.some(([source, destination]) => source !== busy && destination === target), 'delete only a successfully renamed directory')
+      assert.equal(options.maxRetries ?? 0, 0, 'deletion has no retries')
+      return remove(target, options)
+    }
+    let result
+    try {
+      result = cacheReclaim({ home, tmpRoot: temp, kinds: ['exec-tree'], apply: true, allHostsStopped: true })
+    } finally {
+      fs.renameSync = rename
+      fs.rmSync = remove
+    }
+    assert.equal(result.errors, 1)
+    assert.equal(result.items.find(item => item.path === busy)?.action, 'kept')
+    assert.equal(renames.filter(([source]) => source === busy).length, 1, 'busy rename is not retried')
+    assert.equal(removals.length, directories.length - 1)
+    assert.equal(fs.readFileSync(path.join(busy, 'partial.bin'), 'utf8'), 'partial')
+    assert.ok(directories.slice(1).every(directory => !fs.existsSync(directory)), 'one busy sibling does not block other candidates')
+    assert.deepEqual(fs.readdirSync(prepared), [path.basename(busy)], 'cleanup neither selects nor prepares the missing current version')
   })
 })
 

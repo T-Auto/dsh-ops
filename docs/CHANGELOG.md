@@ -9,6 +9,11 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - Run Niubash preparation/security suites in the parallel pool using their private prepared copies; only the prepack consumer remains exclusive. Reduce the cold-payload watchdog and Windows release-gate budget from 600 to 300 seconds, retaining explicit overrides and ample headroom above the measured cold setup.
 - Niubash 准备与安全套件使用各自 prepared 副本进入并行池，仅 prepack consumer 保持独占；完整载荷看门狗与 Windows 发布门禁预算从 600 秒调为 300 秒，保留显式覆盖，并为实测冷启动保留充分余量。
+- If another profile with a different Niubash pin retires the selected runtime, recover it once on the next call from its selected verified source without retiring other pins. Online retirement leaves other hashes' in-progress staging directories for offline cleanup.
+- 同一 DSH_HOME 的另一 profile 使用不同 Niubash pin 并退役所选运行时时，下次调用从原选定的已验证源恢复一次，不退役其他 pin；在线退役保留其他哈希构建中的 stage 目录，交由离线回收。
+
+- Retire obsolete prepared Niubash versions, broken/retired leftovers and same-hash staging leftovers after successful selection: rename each exact namespace directory once before best-effort deletion, leave busy versions for later, and keep unrelated paths untouched. `cache status/reclaim --kind exec-tree` also covers non-current prepared versions, never the current hash.
+- 成功选择 Niubash 后退役旧准备版本及 broken/retired 和同哈希 stage 残留：仅处理精确命名空间目录，先尝试改名一次再尽力删除，保留繁忙版本待后续清理，不碰无关路径；`cache status/reclaim --kind exec-tree` 同样覆盖非当前准备版本，绝不回收当前哈希。
 
 - Prepare Windows Niubash once per frozen manifest hash under `DSH_HOME`, copying the source without hardlinks and publishing command faces plus startup directories atomically. Calls reuse the prepared runtime outside the workspace and retain host confinement, without per-call execution trees, hashing, seals, receipts or disposal. `DSH_OPS_EXEC_ROOT` and `NIUBASH_VERIFY=deep` no longer configure execution; the former remains available only to discover legacy trees for offline reclamation (#817).
 - Windows Niubash 按冻结清单哈希在 `DSH_HOME` 中一次性准备：复制源载荷但不建立源硬链接，预生成命令 face 与启动目录后原子发布。每次调用复用工作区外的准备运行时、保留宿主约束，不再创建执行树、哈希、封印、写收据或释放副本。`DSH_OPS_EXEC_ROOT` 与 `NIUBASH_VERIFY=deep` 不再配置运行行为；前者仅为离线回收发现旧执行树保留（#817）。
