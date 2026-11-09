@@ -14,7 +14,7 @@ These are the current contracts, including deliberate differences between tools.
 
 `write_file` and `edit_file` requests are limited to **2 MiB**, including `content` or `edits` and the protocol envelope. Split larger changes into multiple revision-checked calls; the separate 32 MiB per-file content ceiling is not the effective request budget.
 
-Revision computation for `stat`, `copy`, `move` and `remove` streams SHA-256 instead of loading the whole file, so those operations accept files over 32 MiB. Hex inspection seeks to and reads only its requested window. Whole-content text inspection, `diff` and mutation buffers retain their explicit content budgets.
+Revision computation for `stat`, `copy`, `move` and `remove` streams SHA-256 instead of loading the whole file, so those operations accept files over 32 MiB. Hex inspection streams whole-file facts without buffering them, then seeks to and buffers only its requested window. Whole-content text inspection, `diff` and mutation buffers retain their explicit content budgets.
 
 On Windows volumes without named-stream or ACL support, mutations preserve available basic metadata and return `metadataWarnings` instead of `METADATA_UNSUPPORTED`. Windows source metadata that is present but unsupported, such as NTFS alternate data streams, still fails closed.
 
