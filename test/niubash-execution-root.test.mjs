@@ -401,6 +401,23 @@ await test('a hardlink refusal builds a complete copy tree and records the cause
   } finally { await tidy(base) }
 }))
 
+await test('an UNKNOWN link refusal falls back to copies instead of failing every Bash call', async () => withTempDir('niu-unknown', async base => {
+  try {
+    // Windows reports ERROR_TOO_MANY_LINKS, a filter driver holding the target directory
+    // and a directory still being torn down all as `UNKNOWN`, with no finer code on the
+    // Node error. Rethrowing it took the whole Bash runtime down until something outside
+    // the plugin cleared the condition; the copy fallback exists for exactly this case.
+    const refusal = Object.assign(new Error("UNKNOWN: unknown error, link 'payload' -> 'clone'"), { code: 'UNKNOWN' })
+    const { root, clone } = await cloneTree(base, { ops: { link: async () => { throw refusal } } })
+    assert.equal(clone.mode, 'copy')
+    assert.equal(clone.fallback?.code, 'UNKNOWN')
+    assert.match(clone.fallback?.detail ?? '', /unknown error/u)
+    for (const [name, content] of Object.entries(CONTENT)) assert.equal(fs.readFileSync(path.join(root, name), 'utf8'), content, name)
+    const receipt = niubashExecutionReceipt({ mode: clone.mode, seal: 'readonly', cloneFallback: clone.fallback })
+    assert.equal(receipt.cloneFallbackCode, 'UNKNOWN')
+  } finally { await tidy(base) }
+}))
+
 await test('a clone that must not share payload inodes copies without a fallback', async () => withTempDir('niu-copy', async base => {
   try {
     const { source, root, clone } = await cloneTree(base, { hardlink: false })
@@ -495,5 +512,4 @@ await test('a preparing tree retains the shared seal until its own cleanup', asy
     assert.equal(fs.statSync(path.join(source, 'LICENSE.txt')).nlink, 1)
   } finally { await tidy(base) }
 }))
-
 report('niubash-execution-root')
