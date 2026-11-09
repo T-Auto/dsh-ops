@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer'
+import { publicToolName } from '../../policy.js'
 import { FILE_MUTATIONS } from '../../capabilities/registry.js'
 import { compactRanges } from './ranges.js'
 import { encodeSourceLine } from './line-encoding.js'
@@ -178,7 +179,7 @@ export function renderNative(tool: string, args: unknown, result: unknown): stri
   else lines = listing(tool, input, result)
   // Keep the locator ahead of potentially clipped model text so its omitted suffix stays recoverable.
   if (record(result.reference)) lines.unshift('[Stored reference: ' + facts(result.reference, ['refId', 'producerTool', 'totalItems', 'totalBytes'])
-    + '; referenceRoot=' + field(result.referenceRoot) + '. Page with ops_result; inspect source capture/coverage facts before claiming completeness.]')
+    + '; referenceRoot=' + field(result.referenceRoot) + `. Page via ${publicToolName('result')} (discover with query "select:${publicToolName('result')}" if absent); inspect source capture/coverage facts before claiming completeness.]`)
   if (record(result.storageError)) lines.unshift('[Storage: ' + facts(result.storageError, ['code', 'message', 'effectState']) + '. Cache effects are separate from business effects.]')
   if (typeof result.resolvedFrom === 'string') lines.unshift('[cwd: ' + facts(result, ['resolvedFrom', 'cwdSource']) + '.]')
   return capNativeText(lines.join('\n'), NATIVE_OUTPUT_BYTES, mutations.has(tool)

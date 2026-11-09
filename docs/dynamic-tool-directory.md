@@ -4,10 +4,12 @@
 
 ## Native discovery
 
-The discovery controller contributes one OPS-owned, scope-aware prompt section. Before a tool is
-loaded, a compact task directory points to the actual visible `ops_discover_tools` entry. It derives
-its names, built-in search terms and contracts from the existing capability catalog, and external
-entries from the existing registered Native providers. There is no additional tool registry.
+The discovery controller contributes one OPS-owned, scope-aware prompt section with a one-line
+pointer to the actual visible `ops_discover_tools` entry, not an always-resident directory of
+unloaded capabilities. Search results derive built-in names, search terms and contracts from the
+existing capability catalog, and external entries from registered Native providers. There is no
+additional tool registry. Standard and Cordis initially publish `ops_inspect_local_file`, `ops_glob`
+and `ops_grep`; `ops_read_files` and `ops_result` use discovery when needed.
 
 - **Callable** means a tool schema is currently visible in this agent. Prefer a resident/callable
   tool if it already handles the task; do not load a duplicate.
@@ -20,9 +22,9 @@ entries from the existing registered Native providers. There is no additional to
 - A no-match result covers only the current eligible pool. Do not repeat an unchanged query, guess
   tools/formats, or use another executor to bypass a permission denial.
 
-The directory shows at most 20 unloaded entries, with bounded, quoted task hints; queries still
-search the full eligible pool. Hints are data, never permissions or instructions. Provider-owned
-prompt sections are not overwritten, and literal braces are not interpolated by OPS.
+Queries search the full eligible pool and return bounded results on demand; the prompt no longer
+lists up to 20 unloaded entries on every request. Hints are data, never permissions or instructions.
+Provider-owned prompt sections are not overwritten, and literal braces are not interpolated by OPS.
 
 The pool excludes disallowed built-ins, tools already resident in the current mode, mutating
 built-ins in read-only mode, inactive/uninstalled providers, providers outside the operator's
@@ -64,8 +66,9 @@ must enforce revocation in `authorize` even when a tool is already loaded.
 candidates, and the view never registers or authorizes tools. They are **not** PTC SDK APIs.
 External Native providers must not be advertised as SDK functions. PTC-only agents use their actual
 `ops_load_sdk` contract and typed APIs, not `ops_discover_tools`; the Native directory is suppressed
-for those agents. PTC directory integration must use the existing PTC catalog and loader's real
-allowed pool, independently of Native provider registrations.
+for those agents. PTC likewise keeps only a one-line loader pointer. Its loader description lists configured raw
+names (including on-demand `result`), independently of Native providers; selection and commit
+recheck current authority rather than treating that configured list as authorization.
 
 ## Focused verification
 
@@ -75,7 +78,7 @@ node test/run.mjs discovery-catalog
 ```
 
 The suite uses real Cordis scopes, system-prompt assembly and tool dispatch, with no native worker
-execution. It checks pre-load hints, next-step activation, no matches, provider visibility and
+execution. It checks pre-load loader pointers, next-step activation, no matches, provider visibility and
 readiness, permission downgrade, execution authorization/revocation, two agents, provider reload,
 PTC-only suppression, cancellation, unload and stable repeated assembly. Native execution and the
 full cross-platform release gate remain separate checks.

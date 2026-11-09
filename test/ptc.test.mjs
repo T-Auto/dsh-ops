@@ -234,7 +234,7 @@ try {
       } })
     })
     const live = []; ctx.provide('agents', { list: () => live })
-    const component = await ctx.plugin(ptc, { binaryPath: file, required: true, alwaysLoaded: ['batch'] })
+    const component = await ctx.plugin(ptc, { binaryPath: file, required: true, alwaysLoaded: ['batch', 'result'] })
     const makeAgent = async (id, presentation, parent) => {
       const agent = { id, session: { id, mode: 'workspace-write', header: { cwd: dir } } }
       const scope = createScope(parent?.ctx ?? ctx, agent); agent.ctx = scope.ctx
@@ -446,7 +446,7 @@ try {
     await real.plugin(NodePtc, {})
     await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, 'ptc') } })
     real.provide('agents', { list: () => [agent] })
-    const sdkComponent = await real.plugin(ptc, { binaryPath: file, required: true, alwaysLoaded: ['batch'] })
+    const sdkComponent = await real.plugin(ptc, { binaryPath: file, required: true, alwaysLoaded: ['batch', 'result'] })
     await real.serial('agent/created', { agent })
     await waitFor(() => real.get('tools').get('ops_result', agent) !== undefined, { what: 'the real PTC SDK result source' })
     assert.ok(real.get('tools').get('ops_result', agent), JSON.stringify(await real.get('systemPrompt').assemble({ scope: agent })))

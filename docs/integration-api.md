@@ -37,7 +37,7 @@ integration({
 
 `files`, `residentTools`, `shell`, discovery, prompt guidance, official file replacement and host
 PowerShell hiding are independent choices. `residentNames` selects exact Native resident raw names
-(default `inspect_local_file`, `glob`, `grep`, `read_files`, `result`); it can be empty. Turn off
+(default `inspect_local_file`, `glob`, `grep`); it can be empty. Turn off
 `residentTools` to use on-demand file tools only. PTC uses its baseline plus `alwaysLoaded` instead
 of `residentNames`. `enabled: false` records an explicit disabled binding, withdraws capabilities
 and prevents the built-in default for the same id from taking over; diagnostics remain available.
@@ -60,8 +60,8 @@ Explicit keys override the selected profile; `profile` defaults to `native`. Pro
 `required` false, `denyCredentialReads` true, and `allowSystemShellFallback` false.
 `binaryPath` and `bashPath` default to managed resolution and affect only the corresponding runtime.
 `allowedTools` defaults to all loadable APIs when discovery is on, otherwise `[]`;
-`alwaysLoaded` defaults `[]` and must be a subset of the allow-list. Native files publish the five
-resident read/search/pager tools independently of this advanced list. External arrays all default
+`alwaysLoaded` defaults `[]` and must be a subset of the allow-list. Native files publish the three
+resident inspect/glob/grep tools independently of this advanced list; read_files/result use discovery. External arrays all default
 `[]`; disabled wins over allowed, and startup names must be allowed and not disabled.
 `extraGuidance` is Native-only and is rejected in PTC, rather than silently ignored.
 PTC also rejects `denyCredentialReads` overrides (its credential boundary remains enforced).

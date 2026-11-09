@@ -207,7 +207,7 @@ await test('Native children of PTC parents share one result schema with Native p
     try {
       await ctx.plugin(FileSystem); await ctx.plugin(NodePtc)
       inventory(ctx)
-      const component = await ctx.plugin(ptc, { binaryPath: WORKER, required: true })
+      const component = await ctx.plugin(ptc, { binaryPath: WORKER, required: true, alwaysLoaded: ['result'] })
       const parent = await agent(ctx, root, 'ptc'), child = await agent(ctx, root, 'native', parent)
       const resultFor = scope => admittedDefinition(ctx, 'ops_result', scope)
       await waitAdmission(async () => (await resultFor(parent))?.parameters.properties.action.enum.includes('put')
@@ -240,7 +240,7 @@ await test('agent-scoped file rows isolate sibling pagers and yield only their e
       })
       await ctx.plugin(FileSystem); await ctx.plugin(NodePtc)
       inventory(ctx)
-      const component = await ctx.plugin(ptc, { binaryPath: WORKER, required: true })
+      const component = await ctx.plugin(ptc, { binaryPath: WORKER, required: true, alwaysLoaded: ['result'] })
       const parent = await agent(ctx, root, 'ptc'), left = await agent(ctx, root, 'native', parent), right = await agent(ctx, root, 'native', parent)
       const current = value => admittedDefinition(ctx, 'ops_result', value)
       const mount = value => mountNativeCatalogue(value.ctx, { binaryPath: WORKER, required: true })
@@ -336,7 +336,7 @@ for (const mode of ['changed', 'failed', 'cwd-changed', 'confine-changed']) awai
     ctx.provide('sandboxPolicy', { resolve: ({ session } = {}) => ({ mode: 'workspace-write', workspaceRoot: root, sessionId: session?.id }) })
     inventory(ctx)
     await mountNativeCatalogue(ctx, { binaryPath: WORKER, required: true })
-    await ctx.plugin(ptc, { binaryPath: WORKER, required: true })
+    await ctx.plugin(ptc, { binaryPath: WORKER, required: true, alwaysLoaded: ['result'] })
     await new Promise(resolve => setImmediate(resolve))
     const owner = await agent(ctx, root, 'ptc')
     step = await prepareStep(ctx, owner)
@@ -349,12 +349,12 @@ for (const mode of ['changed', 'failed', 'cwd-changed', 'confine-changed']) awai
       }
       return result
     })
-    const work = executeCall(ctx, { name: 'run_code', callId: 'put-presentation', agent: owner, toolSet: step.toolSet,
+    const work = executeCall(ctx, { name: 'run_code', callId: 'put-presentation-' + mode, agent: owner, toolSet: step.toolSet,
       arguments: { description: 'Attempt storage across a presentation change', code: `return await tools.${publicToolName('result')}({action:'put',items:[{unsafe:true}]});` } })
     let timer
     try { await Promise.race([entered,
       work.then(result => { throw new Error('result operation settled before its controlled preflight: ' + JSON.stringify(result)) }),
-      new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error('result admission inspection was not reached')), 5000) }),
+      new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error(`result admission inspection was not reached (admissionSeen=${admissionSeen}, armed=${armed}, workerCalls=${workerCalls})`)), 5000) }),
     ]) }
     finally { clearTimeout(timer) }
     if (mode !== 'failed') {
@@ -388,5 +388,12 @@ await test('Native page rendering preserves source/capture facts, complete chunk
   assert.match(big[0].text, /Do not advance/)
   const failed = render({}, { status: 'error', error: { code: 'REFERENCE_EXPIRED', effectState: 'none', message: 'expired' } })[0].text
   assert.match(failed, /REFERENCE_EXPIRED/); assert.doesNotMatch(failed, /pageComplete=true/)
+})
+await test('Native stored-reference output names the deferred pager selection route', async () => {
+  const { renderNative } = await import('../lib/projections/native/render.js')
+  const text = renderNative('grep', {}, { status: 'completed', items: [], reference: { refId: 'ref://s/grep/id' }, referenceRoot: '/work' })
+  assert.match(text, /Page via ops_result/)
+  assert.match(text, /discover with query \"select:ops_result\"/)
+  assert.match(text, /source capture\/coverage/)
 })
 report('native-result')

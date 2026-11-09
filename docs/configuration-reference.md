@@ -12,7 +12,7 @@ Plugin authors can also mount the [public integration API](integration-api.md) i
 | --- | --- |
 | `global` | `bash`, `hidePwsh`, `hideOfficialTools`, `dynamicTools` all true; each gates the corresponding row-managed consumer choice |
 | `minimal` | Enabled; no resident file surface; optional Bash and dynamic selection |
-| `standard`, `cordis` | Enabled; resident Native reader/search/pager profile, optional Bash, replacement and discovery |
+| `standard`, `cordis` | Enabled; resident Native inspect/glob/grep profile, optional Bash, replacement and discovery |
 | `ptc` | Enabled; typed resident APIs and progressive SDK loading under actual host PTC presentation |
 | `presets` | Empty by default; map of exact preset ids to explicit consumer options |
 | `discovery` | Enabled; default built-in Native pool, maxResults 3, no always-loaded selections |
@@ -78,7 +78,7 @@ falling back to the built-in surface; scoped diagnostics remain accessible.
 | `profile` | `native`; shortcuts are `native`, `ptc`, `discovery`, `shell` |
 | `files` | true for native/PTC, false for discovery/shell; controls resident built-in file surface |
 | `residentTools` | true; false removes baseline residency, not explicit discovery selections |
-| `residentNames` | Native raw names: `inspect_local_file`, `glob`, `grep`, `read_files`, `result`; exact list may be empty |
+| `residentNames` | Native raw names: `inspect_local_file`, `glob`, `grep`; exact list may be empty. `read_files`/`result` use discovery by default |
 | `shell` | false except shell profile; authorized resident Bash, never a discovery choice |
 | `hidePwsh` | defaults to `replaceOfficial && shell`; independent Windows shell hiding |
 | `presentation` | native except PTC profile; selects projection, never changes host presentation |

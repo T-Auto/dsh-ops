@@ -180,7 +180,7 @@ await test('control separators in source text cannot break a numbered physical l
 
 await test('routing and native guide distinguish aggregate totals and errors-as-values', () => {
   const policy = renderToolingPolicy({ published: FILE_TOOLS.map(publicToolName) })
-  assert.match(policy, /summary for aggregate file\/match totals; count for per-file counts/)
+  assert.doesNotMatch(policy, /summary for aggregate file\/match totals/, 'aggregate semantics live in the grep description')
   assert.doesNotMatch(policy, /use count for totals/)
   assert.equal(renderToolingPolicy({ published: ['ops_stat'] }).includes('ops_grep:'), false)
   assert.match(DESCRIPTIONS.grep, /summary for aggregate file\/match totals, count for per-file counts/)

@@ -49,8 +49,8 @@ The shared catalogue has 20 entries. The generated PTC SDK contains 18 APIs: 15 
 
 ## Preset modes — file tools
 
-Standard and Cordis publish the resident OPS file surface: `ops_read_files`,
-`ops_inspect_local_file`, `ops_glob`, `ops_grep` and `ops_result`. The Minimal preset publishes
+Standard and Cordis publish the resident OPS file surface: `ops_inspect_local_file`, `ops_glob`
+and `ops_grep`. Load `ops_read_files` and `ops_result` through discovery when needed. The Minimal preset publishes
 no resident file tool; its sessions receive the dynamic-loading entry and activate advanced contracts
 through [tool discovery](discovery.md). PTC mode exposes the same capabilities through the typed SDK.
 Routing lists only the tools currently published in that scope.
@@ -264,7 +264,7 @@ current state. When a request was assembled before its replacement became visibl
 name it still carries is not refused, so a session is never told to call a tool that request was
 never given (#578).
 
-The resident `ops_read_files` is not the counterpart for `read`; Standard and Cordis publish
+The on-demand `ops_read_files` is not the counterpart for `read`; Standard and Cordis publish
 `ops_inspect_local_file`, `ops_glob` and `ops_grep` as the reviewed counterparts.
 
 The single row exports StandardSchemaV1 validation and public JSON schema descriptors. Its browser
