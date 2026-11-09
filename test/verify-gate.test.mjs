@@ -20,7 +20,10 @@ cp.spawn = (command, args, options) => {
   const joined = args.join(' ');
   let output = '', code = 0;
   if (joined === 'run validate:manifest') output = 'validate-manifest: all 89 checks passed';
-  if (joined === 'test/run.mjs') output = 'dsh-ops test: ${count} suite(s) passed';
+  if (joined === 'test/run.mjs') {
+    output = 'dsh-ops test: ${count} suite(s) passed';
+    if (options.env.DSH_OPS_SUITE_TIMEOUT_MS !== '300000') code = 31;
+  }
   if (args[0] === 'pack') fs.writeFileSync(path.join(args[args.indexOf('--pack-destination') + 1], 'fixture.tgz'), 'orchestration fixture');
   if (process.env.GATE_ARTIFACT_FAILURE === 'unpack' && args[0] === '-xzf') code = 23;
   if (process.env.GATE_ARTIFACT_FAILURE === 'closure' && args.includes('--root')) code = 29;
@@ -45,7 +48,7 @@ export async function load(url, context, next) {
         '--import', pathToFileURL(preload).href,
         path.join(PACKAGE_ROOT, 'scripts/verify-gate.mjs'), '--skip-install', '--keep-going', '--json'], {
         cwd: PACKAGE_ROOT, encoding: 'utf8', timeout: 30000,
-        env: { ...process.env, DSH_OPS_TEST_BASH: '', GATE_ARTIFACT_FAILURE: failure },
+        env: { ...process.env, DSH_OPS_TEST_BASH: '', DSH_OPS_SUITE_TIMEOUT_MS: undefined, GATE_ARTIFACT_FAILURE: failure },
       })
       assert.equal(child.error, undefined, String(child.error))
       assert.equal(child.status, failure === 'none' ? 0 : 1, child.stdout + child.stderr)

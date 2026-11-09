@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Run Niubash preparation/security suites in the parallel pool using their private prepared copies; only the prepack consumer remains exclusive. Reduce the cold-payload watchdog and Windows release-gate budget from 600 to 300 seconds, retaining explicit overrides and ample headroom above the measured cold setup.
+- Niubash 准备与安全套件使用各自 prepared 副本进入并行池，仅 prepack consumer 保持独占；完整载荷看门狗与 Windows 发布门禁预算从 600 秒调为 300 秒，保留显式覆盖，并为实测冷启动保留充分余量。
+
 - Windows publication now distinguishes genuine sharing/lock conflicts from unsupported exFAT locks and preserves unrelated IO errors instead of fabricating `REVISION_CONFLICT`. Volumes without named-stream/ACL support preserve available basic metadata with `metadataWarnings`; source metadata that is present but unsupported still fails closed (#800).
 - Windows 发布错误现在区分真实的共享/锁冲突、exFAT 不支持的锁及其他 IO 错误，不再伪造 `REVISION_CONFLICT`。不支持命名流/ACL 的卷会保留可用基本元数据并返回 `metadataWarnings`；源文件确有不受支持的元数据时仍闭锁拒绝（#800）。
 - `stat`, `copy`, `move` and `remove` compute SHA-256 revisions by streaming, so revision checks no longer impose the 32 MiB whole-content buffer limit. Hex inspection seeks for its requested window instead of materializing the file; content-holding operations retain explicit size errors, and an unsupported inspect `encoding` is an `INVALID_ARGUMENT` naming that field.
@@ -17,6 +20,7 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 只读文件/结果 worker 的真实截止、调用方取消、输出丢失与非零退出现在报告 `effectState: none`，分别使用 `TIMEOUT`、`ABORTED`、`OUTPUT_LIMIT` 或 `EXECUTOR_UNAVAILABLE`；信号死亡仍为 `RESULT_UNKNOWN`，但不暗示发生写入。写入调用仍保留不确定性。Bash 准备在返回进程句柄前失败时同样报告无效果，并保留按失败类别给出的重试建议。
 - `write_file`/`edit_file` descriptions and bilingual contracts now state the effective 2 MiB request budget, and oversized writes name `content` and advise splitting. Bash guidance requires background jobs for long-running/daemon starts and notes that `job_kill` terminates the job's process tree.
 - `write_file`/`edit_file` 说明及双语契约现在标明实际的 2 MiB 请求预算，超大写入错误会指明 `content` 并建议拆分。Bash 指引要求长时间运行进程/守护进程使用后台任务，并说明 `job_kill` 会终止该任务的进程树。
+
 - If another profile with a different Niubash pin retires the selected runtime, recover it once on the next call from its selected verified source without retiring other pins. Online retirement leaves other hashes' in-progress staging directories for offline cleanup.
 - 同一 DSH_HOME 的另一 profile 使用不同 Niubash pin 并退役所选运行时时，下次调用从原选定的已验证源恢复一次，不退役其他 pin；在线退役保留其他哈希构建中的 stage 目录，交由离线回收。
 
@@ -44,8 +48,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Give CPU-bound test compilers, packers and fixture checks a shared 120-second subprocess budget so parallel-load contention is not mistaken for a hang; the CI suite watchdog remains in force and no failure is retried.
 - 测试中的编译器、打包器和 fixture 检查统一使用 120 秒子进程预算，避免把并行负载争用误判为挂死；保留 CI 套件 watchdog，失败不重试。
 
-- Run test suites in a bounded worker pool with isolated processes/homes, buffered output, per-suite timings and a slowest-ten summary; `DSH_OPS_TEST_JOBS=1` restores serial execution. Checkout rebuilds and shared Niubash payload mutations remain exclusive; cache CLI fixtures use unique scratch directories across runs. Remove timeout retries and avoid repeating the plugin build and manifest validation inside the release gate.
-- 测试套件改为有界并行，保留独立进程与临时 home，整块输出每套结果、耗时和最慢十套；`DSH_OPS_TEST_JOBS=1` 可恢复串行。重建 checkout 或修改共享 Niubash payload 的套件保持独占，缓存 CLI fixture 使用跨运行唯一的 scratch 目录；删除超时重试，并去掉发布门禁内重复的插件构建与 manifest 校验。
+- Run test suites in a bounded worker pool with isolated processes/homes, buffered output, per-suite timings and a slowest-ten summary; `DSH_OPS_TEST_JOBS=1` restores serial execution. Only the Niubash consumer stays exclusive because prepack rebuilds shared `lib/`; preparation and security suites use private prepared copies and run with the pool. Cache CLI fixtures use unique scratch directories across runs. Remove timeout retries and avoid repeating the plugin build and manifest validation inside the release gate.
+- 测试套件改为有界并行，保留独立进程与临时 home，整块输出每套结果、耗时和最慢十套；`DSH_OPS_TEST_JOBS=1` 可恢复串行。仅 Niubash consumer 因 prepack 重建共享 `lib/` 保持独占；准备与安全套件改用各自 prepared 副本，可进入并行池。缓存 CLI fixture 使用跨运行唯一的 scratch 目录；删除超时重试，并去掉发布门禁内重复的插件构建与 manifest 校验。
 
 - Unsealing an execution tree no longer skips a file whose Windows `dev:ino` matches another member's. That key is not unique on Windows, so a skipped file stayed read-only, could not be removed, and left the whole tree behind in the temp directory; a repeated `chmod` on a genuinely shared inode is harmless (#804).
 - 解封执行树时不再按 `dev:ino` 跳过文件：该键在 Windows 上并不唯一，被跳过的成员会一直只读、删不掉，进而把整棵树留在临时目录里。对真正共享的 inode 重复 `chmod` 无害（#804）。

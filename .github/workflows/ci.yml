@@ -168,7 +168,7 @@ jobs:
       CARGO_BUILD_JOBS: '3'
       # The clean consumer includes cold artifact setup and frozen payload preparation.
       # Match the full-payload suite watchdog; production command limits remain unchanged.
-      DSH_OPS_SUITE_TIMEOUT_MS: '600000'
+      DSH_OPS_SUITE_TIMEOUT_MS: '300000'
     steps:
       - uses: actions/checkout@v7
         with:

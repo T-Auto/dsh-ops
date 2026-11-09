@@ -75,7 +75,8 @@ const allowedSkips = new Set((process.env.DSH_OPS_ALLOW_SKIPS ?? '')
 const isAllowedSkip = (label) => allowedSkips.has(label) || allowedSkips.has(label.replace(/\.test\.mjs$/, ''))
 /**
  * Full-payload Niubash suites include cold artifact setup and payload preparation.
- * Keep a 600s setup watchdog; other suites retain 120s. An explicit positive budget wins.
+ * Cold setup measured below 60s locally; allow 300s for CI, versus 120s for other suites.
+ * An explicit positive environment budget wins.
  */
 const SUITE_TIMEOUT_MS = (() => {
   const raw = process.env.DSH_OPS_SUITE_TIMEOUT_MS
@@ -97,18 +98,16 @@ try { jobs = testJobs() } catch (error) {
 const COLD_PAYLOAD_SUITES = new Set(['niubash-consumer.test.mjs', 'niubash-payload-integration.test.mjs',
   'niubash-preparation.test.mjs', 'niubash-security-host.test.mjs'])
 // Measured Windows long tail: start expensive independent suites before the short tail.
-const HEAVY = ['permissions', 'bash-ipc', 'wsl-readonly', 'bin',
-  'niubash-payload-integration', 'release-tar-modes', 'prepack', 'ptc', 'file-operations']
+const HEAVY = ['permissions', 'bash-ipc', 'niubash-preparation', 'niubash-security-host',
+  'wsl-readonly', 'bin', 'niubash-payload-integration', 'release-tar-modes', 'prepack', 'ptc', 'file-operations']
 const weight = suite => {
   const index = HEAVY.indexOf(path.basename(suite).replace(/\.test\.mjs$/, ''))
   return index === -1 ? HEAVY.length : index
 }
 selected.sort((a, b) => weight(a) - weight(b) || a.localeCompare(b))
 const EXCLUSIVE = new Set([
-  // npm pack runs prepack, which deletes and rebuilds this checkout's lib/.
+  // Only prepack rebuilds shared lib/; other Niubash suites copy into their own DSH_HOME.
   'niubash-consumer.test.mjs',
-  // Execution trees hardlink one staged payload; seal/unseal reference counts are process-local.
-  'niubash-preparation.test.mjs', 'niubash-security-host.test.mjs',
 ])
 const started = Date.now()
 const durations = []
@@ -118,7 +117,7 @@ await runPool(selected, { jobs, exclusive: EXCLUSIVE, run: async suite => {
   const label = path.basename(suite)
   const result = await runSuite(suite, { cwd: root,
     env: bashFixture ? { DSH_OPS_TEST_BASH: bashFixture } : {},
-    timeoutMs: SUITE_TIMEOUT_MS ?? (COLD_PAYLOAD_SUITES.has(label) ? 600_000 : 120_000) })
+    timeoutMs: SUITE_TIMEOUT_MS ?? (COLD_PAYLOAD_SUITES.has(label) ? 300_000 : 120_000) })
   const { status, timedOut, durationMs, output } = result
   durations.push({ label, durationMs })
   process.stdout.write(`\n=== ${label} (${(durationMs / 1000).toFixed(2)}s)\n${output}${output.endsWith('\n') || !output ? '' : '\n'}`)

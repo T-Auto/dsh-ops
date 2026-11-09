@@ -318,7 +318,7 @@ DSH_HOME=$(mktemp -d) node scripts/verify-gate.mjs --skip-install   # 完整门�
 node scripts/apply-ruleset.mjs                            # admin：规则集 dry run（永不在 CI 跑）
 ```
 
-Windows 上 `DSH_OPS_TEST_BASH` 指向校验过的固定 `bash.exe`（门禁会 provision），`DSH_OPS_TEST_NIUBASH` 指向 staged 的 `niu.exe`。CI 会设 `DSH_OPS_SUITE_TIMEOUT_MS`（300 s；Windows 600 s）；`DSH_HOME` 必须是临时目录。`DSH_OPS_TEST_JOBS` 可覆盖有界工作池的并发数（默认宿主可用并行度，`1` 为串行）。每套完成后整块打印输出与耗时，末尾列出最慢的十套；修改共享 payload 属性或重建 checkout 的套件在并行池结束后独占运行。
+Windows 上 `DSH_OPS_TEST_BASH` 指向校验过的固定 `bash.exe`（门禁会 provision），`DSH_OPS_TEST_NIUBASH` 指向 staged 的 `niu.exe`。CI 会设 `DSH_OPS_SUITE_TIMEOUT_MS`（各平台均为 300 s）；`DSH_HOME` 必须是临时目录。`DSH_OPS_TEST_JOBS` 可覆盖有界工作池的并发数（默认宿主可用并行度，`1` 为串行）。每套完成后整块打印输出与耗时，末尾列出最慢的十套；仅 `niubash-consumer` 因 prepack 重建共享 `lib/` 而在并行池结束后独占运行；其他 Niubash 套件在各自临时 home 中准备独立副本，不再修改共享源 inode，可安全并行。
 
 ## 7. 不要做
 

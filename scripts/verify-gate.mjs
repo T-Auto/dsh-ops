@@ -192,7 +192,7 @@ async function main() {
   await run('stage complete frozen Niubash payload', 'npm', stageArgs)
   const { NIUBASH_PIN } = await import('../lib/cli/niubash-payload.js')
   const runtimeEnv = { DSH_OPS_NIUBASH_ARCHIVE: archive ?? path.join(PACKAGE_ROOT, 'dist/downloads', NIUBASH_PIN.archive),
-    DSH_OPS_SUITE_TIMEOUT_MS: process.env.DSH_OPS_SUITE_TIMEOUT_MS ?? '600000' }
+    DSH_OPS_SUITE_TIMEOUT_MS: process.env.DSH_OPS_SUITE_TIMEOUT_MS ?? '300000' }
   if (TARGET === 'win32-x64') {
     const { verifyNiubashTree, NIUBASH_PACKAGE_PATH } = await import('../lib/cli/niubash-payload.js')
     runtimeEnv.DSH_OPS_TEST_NIUBASH = verifyNiubashTree(path.join(PACKAGE_ROOT, NIUBASH_PACKAGE_PATH))
