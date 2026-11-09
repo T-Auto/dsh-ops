@@ -82,7 +82,7 @@ await test('real CLI preserves skip policy, blocks output, durations and one-sho
 const fs = require('node:fs'), cp = require('node:child_process'), path = require('node:path');
 const originalRead = fs.readdirSync, originalSpawn = cp.spawn;
 fs.readdirSync = (directory, ...args) => path.resolve(String(directory)) === ${JSON.stringify(testDir)}
-  ? ['pass.test.mjs', 'skip.test.mjs', 'hang.test.mjs'] : originalRead(directory, ...args);
+  ? ['pass.test.mjs', 'skip.test.mjs', 'hang.test.mjs', 'permissions.test.mjs', 'niubash-consumer.test.mjs'] : originalRead(directory, ...args);
 cp.spawn = (command, args, options) => {
   const label = path.basename(args[0]);
   fs.appendFileSync(${JSON.stringify(calls)}, label + '\\n');
@@ -104,6 +104,13 @@ require('node:module').syncBuiltinESMExports();
     const invalid = invoke(['pass'], { DSH_OPS_TEST_JOBS: '0' })
     assert.equal(invalid.status, 2)
     assert.match(invalid.stderr, /invalid DSH_OPS_TEST_JOBS/)
+    const heavy = invoke(['pass', 'permissions'], { DSH_OPS_TEST_JOBS: '1' })
+    assert.equal(heavy.status, 0, heavy.stdout + heavy.stderr)
+    assert.deepEqual(fs.readFileSync(calls, 'utf8').trim().split('\n'), ['permissions.test.mjs', 'pass.test.mjs'])
+    fs.writeFileSync(calls, '')
+    const exclusive = invoke(['pass', 'niubash-consumer'])
+    assert.equal(exclusive.status, 0, exclusive.stdout + exclusive.stderr)
+    assert.deepEqual(fs.readFileSync(calls, 'utf8').trim().split('\n'), ['pass.test.mjs', 'niubash-consumer.test.mjs'])
     const normal = invoke(['pass', 'skip'])
     assert.equal(normal.status, 0, normal.stdout + normal.stderr)
     assert.match(normal.stdout, /1 suite\(s\) passed, 1 skipped/)
