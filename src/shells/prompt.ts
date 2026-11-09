@@ -27,3 +27,18 @@ export function renderBashGuidance(background: boolean, platform: string = proce
       : 'Host jobs are unavailable: run_in_background is not accepted, and the foreground timeout stops the command.',
   ].join('\n\n')
 }
+
+/**
+ * Explain a Bash slot whose executor never resolved, instead of rendering nothing.
+ * Quotes the resolution `source` and `detail` verbatim; `detail` already ends with the remedy.
+ * Kept short on purpose: this text rides on every request of the session.
+ * @param source - the resolution rung that failed (`missing`, `disabled`, `config`, `host`, ...).
+ * @param detail - the resolution explanation, which already carries the remedy.
+ * @returns the model-facing section text.
+ */
+export function renderBashUnavailable(source: string, detail: string): string {
+  return [
+    `# ${BASH_TOOL}: unavailable in this session`,
+    `The Bash executor did not resolve (resolution source: ${source}): ${detail} Use the OPS file tools for file work and do not run Bash syntax in another shell.`,
+  ].join('\n\n')
+}
