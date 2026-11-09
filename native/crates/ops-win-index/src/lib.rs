@@ -48,8 +48,6 @@
 //! - No journal creation and no silent completeness: a volume without an active
 //!   journal is Unsupported, and a replay whose parent cannot be resolved marks
 //!   the set as not complete (truncated) or counts the record as skipped.
-//! own unsafe in its own crate; `winfs` is the single, documented island here.
-//! What this crate does NOT claim:
 //! - No caught-up snapshot. state never answers Ready yet; callers keep
 //!   falling back to their own traversal until W2 can replay the journal.
 //! - No file size or modification time. FSCTL_ENUM_USN_DATA carries names,

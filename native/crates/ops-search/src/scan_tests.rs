@@ -177,6 +177,7 @@ fn file_entry_time_and_io_limits_never_claim_a_complete_scan() {
     assert_eq!(scan.scanned, 2);
     assert!(!scan.complete());
     assert_eq!(scan.stopped, Some(TruncatedBy::ScanBudget));
+    assert_eq!(scan.reasons["file-limit"], 1);
     let report = finish(
         scan,
         Cursor::new(&request, 0, None).unwrap(),
@@ -189,8 +190,16 @@ fn file_entry_time_and_io_limits_never_claim_a_complete_scan() {
     assert_eq!(report["scanComplete"], false);
     assert!(report.get("matchedTotal").is_none());
     assert_eq!(report["truncatedBy"], "scan-budget");
+    assert_eq!(report["skipReasons"]["file-limit"], 1);
     assert!(report.get("continuation").is_none());
     assert!(report["nextAction"].as_str().unwrap().contains("Narrow"));
+    let indexed_source = source(&root, &["a", "b", "c"]);
+    let mut indexed = Scan::new();
+    indexed.max_files = 2;
+    indexed
+        .walk_indexed(&root, &indexed_source, &[], &request, |_, _, _| Ok(()))
+        .unwrap();
+    assert_eq!(indexed.reasons["file-limit"], 1);
     let mut scan = Scan::new();
     scan.entries = MAX_WALK_ENTRIES;
     scan.walk(&root, &[], &request, |_, _, _| {
@@ -199,6 +208,7 @@ fn file_entry_time_and_io_limits_never_claim_a_complete_scan() {
     .unwrap();
     assert!(!scan.complete());
     assert_eq!(scan.stopped, Some(TruncatedBy::ScanBudget));
+    assert_eq!(scan.reasons["entry-limit"], 1);
     let mut scan = Scan::new();
     scan.timeout = Duration::ZERO;
     scan.walk(&root, &[], &request, |_, _, _| {
@@ -212,6 +222,43 @@ fn file_entry_time_and_io_limits_never_claim_a_complete_scan() {
     assert!(scan.read(&root.join("a")).is_none());
     assert!(!scan.complete());
     assert_eq!(scan.stopped, Some(TruncatedBy::ScanBudget));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn depth_limit_skips_only_the_subtree_and_preserves_later_siblings() {
+    let (root, request) = fixture();
+    fs::create_dir_all(root.join("a-deep/child")).unwrap();
+    fs::write(root.join("a-deep/child/leaf"), "must not appear").unwrap();
+    fs::create_dir(root.join("z-sibling")).unwrap();
+    fs::write(root.join("z-sibling/after"), "hit").unwrap();
+    fs::write(root.join("zz-later"), "hit").unwrap();
+    let mut scan = Scan::new();
+    scan.max_depth = 1;
+    let mut paths = Vec::new();
+    scan.walk(&root, &[], &request, |path, _, _| {
+        paths.push(path.to_path_buf());
+        Ok(())
+    })
+    .unwrap();
+    let relative: Vec<String> = paths
+        .iter()
+        .map(|path| {
+            path.strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect();
+    assert!(relative.contains(&"z-sibling/after".into()));
+    assert!(relative.contains(&"zz-later".into()));
+    assert!(!relative.iter().any(|path| path.ends_with("leaf")));
+    assert_eq!(scan.reasons["depth-limit"], 1);
+    assert_eq!(scan.stopped, None);
+    assert!(!scan.complete());
+    let output = report(&paths, scan, &request, 0, 100);
+    assert_eq!(output["scanComplete"], false);
+    assert_eq!(output["skipReasons"]["depth-limit"], 1);
     fs::remove_dir_all(root).unwrap();
 }
 
