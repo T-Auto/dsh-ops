@@ -61,11 +61,64 @@ await test('revocation and new token cannot empower an old captured handle', asy
     assert.equal(tools.executable(name, a, captured.toolSet), undefined)
     assert.equal((await call(ctx, a, captured)).isError, true)
     const direct = await oldDefinition.execute({}, { agent: a, toolSet: captured.toolSet })
-    assert.equal(direct.error.code, 'PUBLICATION_DENIED')
+    assert.equal(direct.error.code, 'PUBLICATION_IDENTITY_MISMATCH')
+    assert.equal(direct.error.message, 'Publication definition is stale or is not admitted for this agent and tool set.')
+    assert.equal(direct.error.effectState, 'none')
     const fresh = await prepareStep(ctx, a); steps.push(fresh)
     assert.deepEqual((await call(ctx, a, fresh)).value, { source: 'new' })
     lease.dispose()
   } finally { steps.forEach(s => s.dispose()); await shutdown(ctx) }
+})
+
+await test('identity diagnostics reject missing context and unadmitted agents without dispatch', async () => {
+  const { ctx, tools } = await bootHost()
+  const steps = []
+  try {
+    const a = agentScope(ctx, 'admitted'), b = agentScope(ctx, 'unadmitted')
+    const lease = await acquire(ctx, undefined, name, canonical)
+    let calls = 0
+    lease.grant(grant(a, 'a', { dispatch: async () => { ++calls; return {} } }))
+    const step = await prepareStep(ctx, a); steps.push(step)
+    const definition = tools.get(name)
+    for (const exec of [{ toolSet: step.toolSet }, { agent: a }, { agent: b, toolSet: step.toolSet }]) {
+      const result = await definition.execute({}, exec)
+      assert.equal(result.status, 'rejected')
+      assert.equal(result.error.code, 'PUBLICATION_IDENTITY_MISMATCH')
+      assert.equal(result.error.message, 'Publication definition is stale or is not admitted for this agent and tool set.')
+      assert.equal(result.error.effectState, 'none')
+      assert.equal(result.error.retry, 'never')
+    }
+    assert.equal(calls, 0)
+    lease.dispose()
+  } finally { steps.forEach(step => step.dispose()); await shutdown(ctx) }
+})
+
+await test('grant diagnostics distinguish missing or conflicting dispatch from identity rejection', async () => {
+  const { ctx, tools } = await bootHost()
+  try {
+    const a = agentScope(ctx, 'owner'), b = agentScope(ctx, 'no-grant')
+    const lease = await acquire(ctx, undefined, name, canonical)
+    let calls = 0
+    lease.grant(grant(a, 'a', { dispatch: async () => { ++calls; return {} } }))
+    const check = async agent => {
+      const definition = tools.get(name)
+      // Isolate the grant boundary: real step resolution excludes these agents.
+      const toolSet = { view: () => new Map([[name, definition]]) }
+      const result = await definition.execute({}, { agent, toolSet })
+      assert.equal(result.status, 'rejected')
+      assert.equal(result.error.code, 'PUBLICATION_GRANT_UNAVAILABLE')
+      assert.equal(result.error.message, 'Publication has no eligible grant or has conflicting dispatch grants for this agent.')
+      assert.equal(result.error.effectState, 'none')
+      assert.equal(result.error.retry, 'never')
+    }
+    await check(b)
+    lease.grant(grant(b, 'not-entitled', { entitled: false }))
+    await check(b)
+    lease.grant(grant(a, 'conflict', { dispatch: async () => { ++calls; return {} } }))
+    await check(a)
+    assert.equal(calls, 0)
+    lease.dispose()
+  } finally { await shutdown(ctx) }
 })
 
 await test('late ancestor source withdraws fallback synchronously and unload stays conservative', async () => {

@@ -147,7 +147,7 @@ await test('PTC batch/result mount only in pure PTC scopes and withdraw on prese
     lift(); selectExecutor(pure.ctx, 'native')
     const restored = await prepareStep(ctx, pure)
     try { assert.equal(Boolean(ctx.tools.executable('ops_result', pure, restored.toolSet)), false) } finally { restored.dispose() }
-    assert.equal((await stale.execute({ action: 'page', id: 'unused' }, { agent: pure, signal: new AbortController().signal })).error.code, 'PUBLICATION_DENIED')
+    assert.equal((await stale.execute({ action: 'page', id: 'unused' }, { agent: pure, signal: new AbortController().signal })).error.code, 'PUBLICATION_IDENTITY_MISMATCH')
     await component.dispose()
     assert.equal((await sections(ctx, pure)).has('tools:ptc-only'), false)
     assert.equal(registryHasOwnRegister(ctx), false)

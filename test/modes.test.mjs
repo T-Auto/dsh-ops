@@ -194,7 +194,11 @@ await test('creating a session does not re-plan every live session', () => withT
     // shows up here as thirteen, which is the regression.
     assert.ok(views <= baseline, `creating a session read ${views} tool views with twelve sessions open; it must not re-plan them`)
     // The saving must not be a mask that was never applied.
-    await waitFor(() => OFFICIAL.filter(name => name !== 'write').every(name => !scopedToolNames(ctx, another).includes(name)), { what: 'the new session hides the replaced official tools' })
+    const step = await prepareStep(ctx, another)
+    try {
+      const declared = step.assembly.tools.map(tool => tool.name)
+      assert.ok(OFFICIAL.filter(name => name !== 'write').every(name => !declared.includes(name)), 'the new session omits replaced official declarations')
+    } finally { step.dispose() }
     tools.definitions = original
   } finally { await shutdown(ctx) }
 }))

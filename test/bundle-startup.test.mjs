@@ -80,9 +80,10 @@ for (const mode of ['read-only', 'workspace-write', 'danger-full-access']) {
         await waitFor(() => names(standard).includes('ops_read_files') && names(standard).includes('ops_discover_tools'), { what: `${mode} standard publication` })
         for (const resident of ['ops_inspect_local_file', 'ops_glob', 'ops_grep', 'ops_read_files', 'ops_result']) assert.ok(names(standard).includes(resident), `${resident}: ${names(standard).join(', ')}`)
         const standardNames = await admitted(standard)
-        assert.ok(['read', 'glob', 'grep'].every(name => standardNames.includes(name)), 'conditional replacements retain official schemas')
-        const denied = await executeCall(ctx, { agent: standard, name: 'read', arguments: { path: path.join(root, 'absent') } })
-        assert.equal(denied.isError, true); assert.match(JSON.stringify(denied), /MODE_REPLACEMENT|replaced the official/)
+        assert.ok(['read', 'glob', 'grep'].every(name => !standardNames.includes(name)), 'admitted replacements exclude official schemas')
+        for (const name of ['ops_inspect_local_file', 'ops_glob', 'ops_grep']) assert.ok(standardNames.includes(name))
+        const absent = await executeCall(ctx, { agent: standard, name: 'read', arguments: { path: path.join(root, 'absent') } })
+        assert.equal(absent.isError, true); assert.equal(absent.error.info.code, 'UNKNOWN_TOOL')
         assert.ok(names(standard).includes('write'), 'defaults must not mask standard-preset mutation tools')
         assert.equal(names(standard).includes('ops_bash'), process.platform === 'win32', 'POSIX keeps the host bash; Windows replaces pwsh')
         const standardPrompt = await assembled(standard)
@@ -94,7 +95,7 @@ for (const mode of ['read-only', 'workspace-write', 'danger-full-access']) {
         // A Cordis-preset agent is served by its own row, with its own section.
         const cordis = await mintAgent(ctx, presets, { id: `${mode}-cordis`, mode, root, preset: 'cordis', presentation: 'native' })
         await waitFor(() => names(cordis).includes('ops_read_files'), { what: `${mode} cordis publication` })
-        assert.equal((await admitted(cordis)).includes('read'), true)
+        assert.equal((await admitted(cordis)).includes('read'), false)
         const cordisPrompt = await assembled(cordis)
         assert.ok(cordisPrompt.sections.some(section => section.name === modeSectionName('mode-cordis') && String(section.text).length > 0), 'cordis routing section')
 

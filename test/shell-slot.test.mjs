@@ -177,10 +177,10 @@ for (const [label, config, hidden] of [
   try {
     await ctx.plugin(Bundle, { ...minimalOnly, ...config })
     const agent = await mint('hide')
-    await assemble(agent)
-    if (config.minimal?.bashPath) assert.equal(names(agent).includes(BASH_TOOL), false)
-    assert.equal(names(agent).includes('pwsh'), !(hidden && process.platform === 'win32'))
-    assert.equal(names(agent).includes('pwsh_persistent'), !(hidden && process.platform === 'win32'))
+    const stepNames = (await assemble(agent)).tools.map(tool => tool.name)
+    if (config.minimal?.bashPath) assert.equal(stepNames.includes(BASH_TOOL), false)
+    assert.equal(stepNames.includes('pwsh'), !(hidden && process.platform === 'win32'))
+    assert.equal(stepNames.includes('pwsh_persistent'), !(hidden && process.platform === 'win32'))
   } finally { await shutdown(ctx) }
 }))
 
