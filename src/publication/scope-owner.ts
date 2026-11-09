@@ -100,10 +100,27 @@ export async function acquireSharedFile(agent: Agent, api: SharedApi, config: Na
   }
   if (!source) {
     const runtime = new NativeFileTools({ ctx: agent.ctx, events, config: normalized })
-    source = { runtime, refs: 0, closed: false, identity, definitions: new Map(), ready: runtime.start([]) }
-    runtimes.set(agent, source)
-    const created = source
-    agent.ctx.effect(() => () => stop(created))
+    const created: Source = { runtime, refs: 0, closed: false, identity, definitions: new Map(), ready: runtime.start([]) }
+    // The source dies with the feed it was built with, not with the agent.
+    // `runtimes` is keyed by Agent (:46) and every source is built on the first
+    // caller's `events` while reading through `agent.ctx` (:102). The three
+    // consumers each inject their own row fiber — `consumer/mount.ts:51/53/57`
+    // for `mountNative` / `mountDiscovery` / `mountPtc` — so those rows hand over
+    // three different contexts: the first one builds the source and the rest are
+    // ignored. Teardown used to sit on `agent.ctx` (:106), which outlives every
+    // row, so unloading the building row (a /plugin disable or hot reload) left a
+    // source that keeps serving through the agent while its seven feed
+    // subscriptions — read-dedup and result admission — died with that row:
+    // `ops_result put` then answers PUBLICATION_DENIED for good and read-dedup
+    // silently stops invalidating. Owning the teardown by the fiber behind
+    // `events` closes the source together with its feed. The next caller rebuilds
+    // from its own row context and restarts the worker.
+    // Registered before the map insert on purpose: when that row is already gone
+    // the effect refuses here, before a later caller can pick up a source whose
+    // feed is dead on arrival.
+    events.effect(() => () => stop(created))
+    runtimes.set(agent, created)
+    source = created
   }
   const owned = source
   ++owned.refs

@@ -1,5 +1,6 @@
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { acquirePtcFile, acquireSharedFile } from '../lib/publication/scope-owner.js'
+import { NativeFileTools } from '../lib/projections/native/runtime.js'
 import { publicToolName } from '../lib/policy.js'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { prepareStep } from './lib/executor.mjs'
@@ -112,6 +113,58 @@ await test('omitting, reusing or extending the reading ctx is refused instead of
     const lease = await acquireSharedFile(agent, 'stat', config, (await rowOf(ctx, rows)).row)
     lease.dispose()
   } finally { rows.forEach(row => row.dispose()); await shutdown(ctx) }
+})
+
+// The source is built on the first caller's row context and subscribes its feed
+// there, so it must not outlive that row. Agent-keyed reuse plus agent-owned
+// teardown left a deaf source behind: the row unloaded, the seven feed
+// subscriptions died with it, and every later call kept using the source that
+// could no longer see `session/event` or `session/disposed`. The replacement is
+// a whole new source, restarted from the next caller's own row.
+await test('unloading the building row closes the source, and the next caller rebuilds it', async () => {
+  const { ctx } = await bootHost()
+  const rows = []
+  const original = { start: NativeFileTools.prototype.start, stop: NativeFileTools.prototype.stop }
+  const started = [], stopped = []
+  NativeFileTools.prototype.start = async function (...args) {
+    started.push(this)
+    // No names: the real start returns before it would spawn a worker.
+    return original.start.apply(this, args)
+  }
+  NativeFileTools.prototype.stop = async function (...args) {
+    stopped.push(this)
+    return original.stop.apply(this, args)
+  }
+  try {
+    const agent = { id: 'shared-row-lifetime', session: { id: 'shared-row-lifetime' } }
+    agent.ctx = createScope(ctx, agent).ctx
+    const first = await rowOf(ctx, rows)
+    const lease = await acquireSharedFile(agent, 'stat', { workerPath: process.execPath }, first.row)
+    assert.equal(started.length, 1, 'one source is built for the agent')
+    const [runtime] = started
+    assert.equal(runtime.events, first.row, 'the source subscribes through the row that built it')
+    assert.equal(stopped.length, 0, 'the source is running while its row is alive')
+    await first.fiber.dispose()
+    // Unloading the row closes its source instead of leaving it serving through
+    // the still-live agent scope with a feed that died with the row.
+    assert.equal(stopped.length, 1, 'the building row\'s unload must stop the source it created')
+    assert.equal(stopped[0], runtime, 'the stopped runtime is exactly the one this row built')
+    lease.dispose()
+    // The next caller rebuilds from its own row: agent-keyed reuse must not hand
+    // back the closed source.
+    const second = await rowOf(ctx, rows)
+    const rebuilt = await acquireSharedFile(agent, 'stat', { workerPath: process.execPath }, second.row)
+    try {
+      assert.equal(started.length, 2, 'the source is rebuilt rather than reused')
+      assert.notEqual(started[1], runtime, 'the rebuilt source is a new runtime')
+      assert.equal(started[1].events, second.row, 'the rebuilt source subscribes through the rebuilding row')
+      await rebuilt.ready()
+    } finally { rebuilt.dispose() }
+  } finally {
+    NativeFileTools.prototype.start = original.start
+    NativeFileTools.prototype.stop = original.stop
+    rows.forEach(row => row.dispose()); await shutdown(ctx)
+  }
 })
 
 await test('asynchronous acquisition cannot revive a disposed source owner', async () => {
