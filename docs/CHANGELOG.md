@@ -7,6 +7,17 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Windows publication now distinguishes genuine sharing/lock conflicts from unsupported exFAT locks and preserves unrelated IO errors instead of fabricating `REVISION_CONFLICT`. Volumes without named-stream/ACL support preserve available basic metadata with `metadataWarnings`; source metadata that is present but unsupported still fails closed (#800).
+- Windows 发布错误现在区分真实的共享/锁冲突、exFAT 不支持的锁及其他 IO 错误，不再伪造 `REVISION_CONFLICT`。不支持命名流/ACL 的卷会保留可用基本元数据并返回 `metadataWarnings`；源文件确有不受支持的元数据时仍闭锁拒绝（#800）。
+- `stat`, `copy`, `move` and `remove` compute SHA-256 revisions by streaming, so revision checks no longer impose the 32 MiB whole-content buffer limit. Hex inspection seeks for its requested window instead of materializing the file; content-holding operations retain explicit size errors, and an unsupported inspect `encoding` is an `INVALID_ARGUMENT` naming that field.
+- `stat`、`copy`、`move` 与 `remove` 改为流式计算 SHA-256 revision，不再受 32 MiB 完整内容缓冲限制。hex 检查按请求窗口定位读取，不再物化整个文件；必须持有内容的操作保留明确的大小错误，不支持的 inspect `encoding` 改为指明该字段的 `INVALID_ARGUMENT`。
+- Search depth overflow now skips only the affected subtree and records `skipReasons`, while entry/file budget stops also record their cause. Blank glob entries name their index, grep pattern/limit errors are distinct, and directory replace records permission-denied paths and continues eligible neighbors without hiding sharing violations or other IO errors (#796, #797).
+- 搜索深度超限现在只跳过对应子树并记录 `skipReasons`，目录项/文件预算停止也会记录原因。空白 glob 条目会指明索引，grep 的 pattern 与 limit 错误分别报告；目录 replace 会记录权限拒绝的路径并继续处理其他合格文件，不再静默报完整或中止整次调用，同时保留共享冲突及其他 IO 错误（#796、#797）。
+- Read-only file/result worker interruption, lossy output and nonzero exits now report `effectState: none` with timeout/output/executor classifications; mutating calls retain uncertainty. Bash preparation that never returned a process handle likewise reports no effects and keeps its failure-specific retry advice.
+- 只读文件/结果 worker 的中断、输出丢失与非零退出现在报告 `effectState: none`，并分别使用超时/输出/执行器分类；写入调用仍保留不确定性。Bash 准备在返回进程句柄前失败时同样报告无效果，并保留按失败类别给出的重试建议。
+- `write_file`/`edit_file` descriptions and bilingual contracts now state the effective 2 MiB request budget, and oversized writes name `content` and advise splitting. Bash guidance requires background jobs for long-running/daemon starts and notes that `job_kill` terminates the job's process tree.
+- `write_file`/`edit_file` 说明及双语契约现在标明实际的 2 MiB 请求预算，超大写入错误会指明 `content` 并建议拆分。Bash 指引要求长时间运行进程/守护进程使用后台任务，并说明 `job_kill` 会终止该任务的进程树。
+
 - Unsealing an execution tree no longer skips a file whose Windows `dev:ino` matches another member's. That key is not unique on Windows, so a skipped file stayed read-only, could not be removed, and left the whole tree behind in the temp directory; a repeated `chmod` on a genuinely shared inode is harmless (#804).
 - 解封执行树时不再按 `dev:ino` 跳过文件：该键在 Windows 上并不唯一，被跳过的成员会一直只读、删不掉，进而把整棵树留在临时目录里。对真正共享的 inode 重复 `chmod` 无害（#804）。
 - A hardlink clone the filesystem refuses with `UNKNOWN` now rebuilds the tree as copies. Windows reports the per-inode link limit under that single code, so the five-code fallback gate never matched and every Bash call failed until the condition cleared on its own; the fallback now also records the payload's highest link count so the ceiling is visible next time (#804).

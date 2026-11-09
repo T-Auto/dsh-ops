@@ -34,7 +34,7 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
   const projection = createJsonDigestProjection()
   return {
     ...base,
-    description: bashOperationDescription() + 'Execution uses the host sandbox, approvals and jobs. Relative workdir uses the current session workspace. Output is bounded with spill paths. Use command for short commands; script_path is an OPS extension for an existing Bash script file. description is required. Check kind: foreground includes status and exitCode; background/promoted includes jobId, not a completed exit. Failures return failure.code/effectState/retry; inspect unknown effects before repeating. Verify resolved absolute targets before delete or move. Never bypass a sandbox denial by switching shells.',
+    description: bashOperationDescription() + 'Execution uses the host sandbox, approvals and jobs. Relative workdir uses the current session workspace. Output is bounded with spill paths. Use command for short commands; script_path is an OPS extension for an existing Bash script file. description is required. Check kind: foreground includes status and exitCode; background/promoted includes jobId, not a completed exit. Failures return failure.code/effectState/retry; inspect unknown effects before repeating. Verify resolved absolute targets before delete or move. Never bypass a sandbox denial by switching shells.' + (jobs ? ' Start long-running processes and daemons with run_in_background; job_kill terminates the job\'s entire process tree.' : ''),
     parameters: { ...parameters },
     projectContent: projection.projectContent,
     // The host validates this value against the declared schema before invoking its renderer.
@@ -47,7 +47,6 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
       const complete = async (value: HostBashResult) => { value = stamp(value); await projection.prepare(value, exec); return value }
       let timeoutMs = 120_000
       let policy: ShellPolicy | undefined
-      let attempted = false
       let process: ShellExecution | undefined
       try {
         if (!input || typeof input !== 'object' || Array.isArray(input)) throw new BashArgumentError('invalid arguments: expected an object', 'arguments')
@@ -75,7 +74,6 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
         const dshEnv = ctx.get('shellEnv')?.collect(exec) ?? {}
         const approvedPolicy = policy
         const start: StartShell = async (execution, options) => {
-          attempted = true
           process = await createExecution(local, execution, standing, approvedPolicy, dshEnv, options)
           return process
         }
@@ -83,7 +81,7 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
           let attached
           try { attached = startBashJob(jobs, args as { description: string; command?: string; script_path?: string }, exec, start) }
           catch (error) {
-            if (run_in_background || attempted || error instanceof BashJobAdmissionError && error.runInvoked) throw error
+            if (run_in_background || error instanceof BashJobAdmissionError && error.runInvoked) throw error
             ctx.logger?.warn?.(`Bash job admission refused; using the foreground deadline: ${errorMessage(error)}`)
           }
           if (attached) return run_in_background ? stamp({ kind: 'background', jobId: attached.id, label: attached.label }) : await complete(await waitOnBashJob(jobs, attached, exec, timeoutMs))
@@ -93,7 +91,7 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
         return await complete(hostForeground(result, execution.started ? 'unknown' : 'none'))
       } catch (error) {
         const message = isBashArgumentError(error) ? `INVALID_BASH_ARGUMENT: ${errorMessage(error)}` : errorMessage(error)
-        return stamp({ ...hostFailure(message, timeoutMs, process ? (process.started ? 'unknown' : 'none') : attempted ? 'unknown' : 'none', exec.signal?.aborted === true), ...(policy ? { sandbox: { mode: policy.mode, denied: false } } : {}) })
+        return stamp({ ...hostFailure(message, timeoutMs, process?.started ? 'unknown' : 'none', exec.signal?.aborted === true), ...(policy ? { sandbox: { mode: policy.mode, denied: false } } : {}) })
       }
     },
   } satisfies ToolDefinition

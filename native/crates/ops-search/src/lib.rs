@@ -13,8 +13,8 @@ use cap_fs_ext::DirExt;
 use cap_fs_ext::MetadataExt;
 use ops_files as publication;
 use ops_files::{
-    MAX_FILE_BYTES, MAX_OUTPUT_BYTES, atomic_write, file_path, lock_and_read_for_update,
-    read_bytes, relative_display, result, target,
+    MAX_FILE_BYTES, MAX_OUTPUT_BYTES, UpdateLock, atomic_write, file_path,
+    lock_and_read_for_update, read_bytes, relative_display, result, target,
 };
 use ops_protocol::{Failure, Request, Result};
 use regex::RegexBuilder;
@@ -75,9 +75,26 @@ fn hidden(path: &Path, root: &Path) -> bool {
         .flat_map(|p| p.components())
         .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
 }
-fn host_link_or_reparse(path: &Path) -> bool {
-    let Ok(metadata) = std::fs::symlink_metadata(path) else {
-        return true;
+fn host_link_or_reparse(path: &Path, skipped: &mut Vec<PathBuf>, truncated: &mut bool) -> bool {
+    host_link_or_reparse_with(path, |path| fs::symlink_metadata(path), skipped, truncated)
+}
+fn host_link_or_reparse_with<F>(
+    path: &Path,
+    metadata: F,
+    skipped: &mut Vec<PathBuf>,
+    truncated: &mut bool,
+) -> bool
+where
+    F: FnOnce(&Path) -> std::io::Result<fs::Metadata>,
+{
+    let metadata = match metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return true,
+        Err(_) => {
+            skipped.push(path.to_path_buf());
+            *truncated = true;
+            return true;
+        }
     };
     if metadata.file_type().is_symlink() {
         return true;
@@ -90,6 +107,7 @@ fn host_link_or_reparse(path: &Path) -> bool {
 }
 struct WalkResult {
     files: Vec<PathBuf>,
+    skipped: Vec<PathBuf>,
     truncated: bool,
 }
 
@@ -101,6 +119,7 @@ fn walk(root: &Path, request: &Request) -> Result<WalkResult> {
     )?;
     let directory = target.parent.open_dir_nofollow(&target.name)?;
     let mut files = Vec::new();
+    let mut skipped = Vec::new();
     let mut truncated = false;
     visit_dir(
         root,
@@ -109,9 +128,14 @@ fn walk(root: &Path, request: &Request) -> Result<WalkResult> {
         0,
         request,
         &mut files,
+        &mut skipped,
         &mut truncated,
     )?;
-    Ok(WalkResult { files, truncated })
+    Ok(WalkResult {
+        files,
+        skipped,
+        truncated,
+    })
 }
 fn visit_dir(
     root: &Path,
@@ -120,6 +144,7 @@ fn visit_dir(
     depth: usize,
     request: &Request,
     output: &mut Vec<PathBuf>,
+    skipped: &mut Vec<PathBuf>,
     truncated: &mut bool,
 ) -> Result<()> {
     if depth > MAX_DEPTH || output.len() >= MAX_ENTRIES {
@@ -156,7 +181,7 @@ fn visit_dir(
             continue;
         }
         let child = display.join(&name);
-        if host_link_or_reparse(&child) {
+        if host_link_or_reparse(&child, skipped, truncated) {
             continue;
         }
         // A denied root is skipped by identity, not by name: the host names the
@@ -192,6 +217,7 @@ fn visit_dir(
                 depth + 1,
                 request,
                 output,
+                skipped,
                 truncated,
             )?;
             if *truncated && output.len() >= MAX_ENTRIES {
@@ -284,6 +310,7 @@ fn files_for(path: &str, patterns: &[String], request: &Request) -> Result<WalkR
     if root.is_file() {
         return Ok(WalkResult {
             files: vec![root.clone()],
+            skipped: Vec::new(),
             truncated: false,
         });
     }
@@ -295,6 +322,7 @@ fn files_for(path: &str, patterns: &[String], request: &Request) -> Result<WalkR
             .into_iter()
             .filter(|f| patterns.matches(&root, f))
             .collect(),
+        skipped: walked.skipped,
         truncated: walked.truncated,
     })
 }
@@ -356,6 +384,18 @@ fn replacement_size(
     }
 }
 fn replace(request: &Request) -> Result<Value> {
+    replace_with(request, |file, dry_run| {
+        if dry_run {
+            read_bytes(file).map(|bytes| (None, bytes))
+        } else {
+            lock_and_read_for_update(file).map(|(guard, bytes)| (Some(guard), bytes))
+        }
+    })
+}
+fn replace_with<F>(request: &Request, mut observe: F) -> Result<Value>
+where
+    F: FnMut(&Path, bool) -> Result<(Option<UpdateLock>, Vec<u8>)>,
+{
     if request.read_only {
         return Err(Failure::policy(
             "read-only",
@@ -369,25 +409,33 @@ fn replace(request: &Request) -> Result<Value> {
             "pattern and maxReplacements are required",
         ));
     }
-    let walked = files_for(&args.path, &args.glob, request)?;
+    let WalkResult {
+        files,
+        mut skipped,
+        mut truncated,
+    } = files_for(&args.path, &args.glob, request)?;
     let mut plans = Vec::new();
     let mut total = 0usize;
-    let mut binary: Vec<PathBuf> = Vec::new();
     // A directory that holds one binary file (an icon, an archive) is a normal repository, not a
     // malformed request: the binary is reported as skipped and the text files around it are still
     // edited. Failing the whole call on the first non-UTF-8 byte made a routine directory edit
     // impossible, and the error named no file, so the caller could not even narrow the request.
     let mut update_guards = Vec::new();
-    for file in walked.files {
+    for file in files {
         // Serialize observation as well as publication. On APFS an open racing
         // an unlink/rename can fail ENOENT on the superseded vnode even though
         // the directory name always has a complete version. Do not retry or
         // relabel ENOENT: avoid the race between cooperating writers instead.
-        let (guard, bytes) = if args.dry_run {
-            (None, read_bytes(&file)?)
-        } else {
-            let (guard, bytes) = lock_and_read_for_update(&file)?;
-            (Some(guard), bytes)
+        let (guard, bytes) = match observe(&file, args.dry_run) {
+            Ok(observed) => observed,
+            Err(error) if error.code == "ACCESS_DENIED" => {
+                skipped.push(file);
+                truncated = true;
+                continue;
+            }
+            // Sharing violations and other IO failures keep their original error;
+            // only a permission-denied read is an ordinary per-file coverage gap.
+            Err(error) => return Err(error),
         };
         match String::from_utf8(bytes.clone()) {
             Ok(text) => {
@@ -409,15 +457,15 @@ fn replace(request: &Request) -> Result<Value> {
                     update_guards.push(guard);
                 }
             }
-            Err(_) => binary.push(file),
+            Err(_) => skipped.push(file),
         }
     }
-    let skipped = binary.len();
-    let skipped_paths: Vec<Value> = binary
+    let skipped_paths: Vec<Value> = skipped
         .iter()
         .take(8)
         .map(|file| json!(relative_display(&request.root_path(), file)))
         .collect();
+    let skipped = skipped.len();
     if total > args.max_replacements {
         return Err(Failure::new(
             "OUTPUT_LIMIT",
@@ -441,7 +489,7 @@ fn replace(request: &Request) -> Result<Value> {
     }
     if args.dry_run {
         return Ok(
-            json!({"status":"completed","phase":"observe","changed":0,"matched":total,"skipped":skipped,"failed":0,"complete":true,"omitted":0,"dryRun":true,"items":items,"skippedPaths":skipped_paths}),
+            json!({"status":"completed","phase":"observe","changed":0,"matched":total,"skipped":skipped,"failed":0,"complete":!truncated,"truncated":truncated,"omitted":0,"dryRun":true,"items":items,"skippedPaths":skipped_paths}),
         );
     }
     for item in &items {
@@ -496,7 +544,7 @@ fn replace(request: &Request) -> Result<Value> {
         changed += item["replacements"].as_u64().unwrap_or(0) as usize;
     }
     let count = items.len();
-    let mut output = result(request, items, count, 0, 0, total, walked.truncated);
+    let mut output = result(request, items, count, 0, 0, total, truncated);
     output["changed"] = json!(changed);
     output["skipped"] = json!(skipped);
     // Do not let optional skipped path names defeat the serialized receipt budget.
@@ -606,6 +654,94 @@ mod tests {
         assert_eq!(replace["status"], "completed", "{replace}");
         assert_eq!(replace["dryRun"], true, "{replace}");
         assert_eq!(replace["matched"], 2, "{replace}");
+    }
+
+    #[test]
+    fn host_metadata_errors_are_not_all_links() {
+        let path = PathBuf::from("entry.txt");
+        let mut skipped = Vec::new();
+        let mut truncated = false;
+        assert!(host_link_or_reparse_with(
+            &path,
+            |_| Err(std::io::ErrorKind::NotFound.into()),
+            &mut skipped,
+            &mut truncated,
+        ));
+        assert!(skipped.is_empty());
+        assert!(!truncated);
+
+        assert!(host_link_or_reparse_with(
+            &path,
+            |_| Err(std::io::ErrorKind::PermissionDenied.into()),
+            &mut skipped,
+            &mut truncated,
+        ));
+        assert_eq!(skipped, vec![path]);
+        assert!(truncated);
+    }
+
+    #[test]
+    fn replace_skips_an_unreadable_file_and_finishes_the_other_files() {
+        let fixture = Fixture::new("replace-unreadable");
+        fs::write(fixture.root.join("a-good.txt"), "old").unwrap();
+        fs::write(fixture.root.join("b-unreadable.txt"), "old").unwrap();
+        fs::write(fixture.root.join("c-binary.bin"), [0xff, 0xfe]).unwrap();
+        fs::write(fixture.root.join("d-good.txt"), "old").unwrap();
+        let request = serde_json::from_value(
+            json!({"root":fixture.root,"scope":"replace-test","tool":"replace",
+                "args":{"path":fixture.root,"pattern":"old","replacement":"new","glob":["*"]}}),
+        )
+        .unwrap();
+        let output = replace_with(&request, |file, dry_run| {
+            assert!(!dry_run);
+            if file
+                .file_name()
+                .is_some_and(|name| name == "b-unreadable.txt")
+            {
+                return Err(Failure::new("ACCESS_DENIED", "injected unreadable file"));
+            }
+            lock_and_read_for_update(file).map(|(guard, bytes)| (Some(guard), bytes))
+        })
+        .unwrap();
+        assert_eq!(output["matched"], 2, "{output}");
+        assert_eq!(output["changed"], 2, "{output}");
+        assert_eq!(output["skipped"], 2, "{output}");
+        assert_eq!(output["complete"], false, "{output}");
+        assert_eq!(output["truncated"], true, "{output}");
+        assert_eq!(
+            output["skippedPaths"],
+            json!(["b-unreadable.txt", "c-binary.bin"]),
+            "{output}"
+        );
+        let items = output["items"].as_array().unwrap();
+        assert_eq!(items.len(), 2, "{output}");
+        assert!(items[0]["path"].as_str().unwrap().ends_with("a-good.txt"));
+        assert!(items[1]["path"].as_str().unwrap().ends_with("d-good.txt"));
+        assert_eq!(fs::read(fixture.root.join("a-good.txt")).unwrap(), b"new");
+        assert_eq!(
+            fs::read(fixture.root.join("b-unreadable.txt")).unwrap(),
+            b"old"
+        );
+        assert_eq!(fs::read(fixture.root.join("d-good.txt")).unwrap(), b"new");
+    }
+
+    #[test]
+    fn replace_does_not_hide_io_errors_as_skips() {
+        let fixture = Fixture::new("replace-io-error");
+        let target = fixture.root.join("target.txt");
+        fs::write(&target, "old").unwrap();
+        let request = serde_json::from_value(
+            json!({"root":fixture.root,"scope":"replace-test","tool":"replace",
+                "args":{"path":target,"pattern":"old","replacement":"new"}}),
+        )
+        .unwrap();
+        let error = replace_with(&request, |_, _| {
+            Err(Failure::new("IO_ERROR", "sharing violation (os error 32)"))
+        })
+        .unwrap_err();
+        assert_eq!(error.code, "IO_ERROR");
+        assert!(error.message.contains("os error 32"));
+        assert_eq!(fs::read(&target).unwrap(), b"old");
     }
 
     #[test]

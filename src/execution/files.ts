@@ -179,7 +179,9 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
     (config?.denyCredentialReads ?? true) !== false, signal).catch(() => undefined)
   const envelope = workerEnvelope('file', { root: trustedPath(cwd), scope: String(session.id), tool, args: workerArgs, read_only: policy.mode === 'read-only', deny_roots: denyRoots, deny_credential_names: (config?.denyCredentialReads ?? true) !== false, ...(policy.mode === 'workspace-write' ? { write_roots: writeRoots } : {}), ...indexCacheRequest({ enabled: config?.indexCache === true }) }, config?.toolCallTimeoutMs, storage)
   const input = JSON.stringify(envelope)
-  if (Buffer.byteLength(input) > 2 * 1024 * 1024) return failure('OUTPUT_LIMIT', 'Request exceeds the 2 MiB byte budget.')
+  if (Buffer.byteLength(input) > 2 * 1024 * 1024) return failure('OUTPUT_LIMIT', tool === 'write_file'
+    ? 'write_file content makes the request exceed the 2 MiB byte budget; split it into smaller writes.'
+    : 'Request exceeds the 2 MiB byte budget.')
   let spawned = false
   try {
     // Trusted, fixed file operations follow DSH fs-sandbox's policy fence,
@@ -218,12 +220,12 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
     }
     const result = delegated.handled ? { readers: true, interrupted: false, lossy: false, exitCode: 0, stderr: '', value: delegated.value, invalid: undefined }
       : await exchange(subprocess, { argv, cwd, stdio: { stdin: { data: transportInput }, stdout: { maxBytes: envelope.budget.maxBytes }, stderr: { maxBytes: 16 * 1024 } }, graceMs: 1000, signal }, () => { spawned = true })
-    if (!result.readers) return failure('RESULT_UNKNOWN', 'Worker output readers are unavailable; inspect postconditions.', 'verify', 'unknown')
-    if (result.interrupted) return failure('RESULT_UNKNOWN', 'Worker interrupted; inspect postconditions.', 'execute', 'unknown')
-    if (result.lossy) return failure('OUTPUT_LIMIT', 'Worker output exceeded the byte budget; operation facts may have changed.', 'verify', 'unknown')
-    if (result.exitCode !== 0) return failure('RESULT_UNKNOWN', `Worker did not return a settled result: ${result.stderr.slice(0, 500)}`, 'execute', 'unknown')
-    if (result.invalid === 'json') return failure('RESULT_UNKNOWN', 'Worker returned invalid JSON; inspect postconditions.', 'verify', 'unknown')
-    if (!result.value) return failure('RESULT_UNKNOWN', 'Worker returned a non-object result; inspect postconditions.', 'verify', 'unknown')
+    if (!result.readers) return failure('RESULT_UNKNOWN', mutates ? 'Worker output readers are unavailable; inspect postconditions.' : 'Read-only worker output readers are unavailable; no files were changed.', 'verify', mutates ? 'unknown' : 'none')
+    if (result.interrupted) return failure(mutates ? 'RESULT_UNKNOWN' : 'TIMEOUT', mutates ? 'Worker interrupted; inspect postconditions.' : 'Read-only worker was interrupted; no files were changed.', 'execute', mutates ? 'unknown' : 'none')
+    if (result.lossy) return failure('OUTPUT_LIMIT', mutates ? 'Worker output exceeded the byte budget; operation facts may have changed.' : 'Read-only worker output exceeded the byte budget; no files were changed.', 'verify', mutates ? 'unknown' : 'none')
+    if (result.exitCode !== 0) return failure(mutates ? 'RESULT_UNKNOWN' : 'EXECUTOR_UNAVAILABLE', `Worker did not return a settled result: ${result.stderr.slice(0, 500)}${mutates ? '' : '; no files were changed.'}`, 'execute', mutates ? 'unknown' : 'none')
+    if (result.invalid === 'json') return failure('RESULT_UNKNOWN', mutates ? 'Worker returned invalid JSON; inspect postconditions.' : 'Read-only worker returned invalid JSON; no files were changed.', 'verify', mutates ? 'unknown' : 'none')
+    if (!result.value) return failure('RESULT_UNKNOWN', mutates ? 'Worker returned a non-object result; inspect postconditions.' : 'Read-only worker returned a non-object result; no files were changed.', 'verify', mutates ? 'unknown' : 'none')
     const value = result.value
     // Report reads/writes to the host's read-before-edit table, exactly like host read/edit. (#17)
     if (['inspect_local_file', 'stat'].includes(tool) && value?.status === 'completed') emitObserved(ctx, readObservation, exec)
@@ -236,6 +238,6 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
     const normalized = normalizeNativeDenial(value, policy, tool, mutates ? requiredMode(policy) : 'workspace-write')
     return { ...normalized, sandbox: { mode: policy.mode, enforcement: 'policy', boundary: 'trusted-native-file-operations' } }
   } catch (error) {
-    return failure(spawned ? 'RESULT_UNKNOWN' : 'EXECUTOR_UNAVAILABLE', `DSH trusted file executor failed; this is not a user authorization denial. ${errorText(error)}`, 'execute', spawned ? 'unknown' : 'none')
+    return failure(spawned && mutates ? 'RESULT_UNKNOWN' : 'EXECUTOR_UNAVAILABLE', `DSH trusted file executor failed; this is not a user authorization denial. ${errorText(error)}`, 'execute', spawned && mutates ? 'unknown' : 'none')
   }
 }

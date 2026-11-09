@@ -71,4 +71,11 @@ await test('current component routing does not advertise removed inspect capabil
   }
 })
 
+await test('write and edit descriptions state the effective request budget once', () => {
+  for (const tool of ['write_file', 'edit_file']) {
+    assert.match(DESCRIPTIONS[tool], /Requests are limited to 2 MiB; split larger changes\./)
+    assert.equal(DESCRIPTIONS[tool].match(/2 MiB/g)?.length, 1)
+  }
+})
+
 report('file-contract')
