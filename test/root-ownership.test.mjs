@@ -33,6 +33,7 @@
 
 import path from 'node:path'
 import ts from 'typescript'
+import SessionStore from '@deepseek-ai/dsh-session'
 import { createScope, scopeOf } from '@deepseek-ai/dsh-scope'
 import { assert, report, test, PACKAGE_ROOT } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
@@ -43,7 +44,6 @@ import { nativeProviderReady, registerNativeProviderAtScope } from '../lib/publi
 
 const REFUSAL = 'session append cannot reenter while another append is being published'
 const refusal = () => new Error(REFUSAL)
-const QUEUE_EFFECT = 'dsh-ops: registry refusal queue'
 const SUBSCRIPTIONS = new Set(['on', 'once', 'register', 'unregister'])
 
 /** Race one waiting publication against a deadline so a stalled queue fails instead of hanging the gate. */
@@ -478,11 +478,26 @@ await test('AC-1: runtime evidence and result admission subscribe on the row ctx
   const { ctx: root } = await bootHost()
   const touched = []
   const guardedRoot = guardedCompositionRoot(root, touched)
+  await root.plugin(SessionStore)
   const scope = createScope(root, { id: 'root-ownership-ac1' })
   const subscriptions = []
-  const row = scope.ctx.extend({
-    root: guardedRoot,
-    on: (...args) => { subscriptions.push(String(args[0])); return scope.ctx.on(...args) },
+  const delivered = []
+  let row
+  // The receiver has to be a row ctx, not any ctx that merely answers `on`: only
+  // a ctx without a scope tag receives `session/event` and `session/disposed`,
+  // because the store dispatches them through a scope carrier. So the fixture is a
+  // real plugin row (untagged, like every consumer row) and the recorder forwards
+  // through it, which makes the listener that fires the runtime's own.
+  await root.plugin({
+    apply(inner) {
+      const base = inner.extend({ root: guardedRoot })
+      row = base.extend({
+        on: (name, listener, ...rest) => {
+          subscriptions.push(String(name))
+          return base.on(name, (...args) => { delivered.push(String(name)); return listener(...args) }, ...rest)
+        },
+      })
+    },
   })
   try {
     assert.equal(row.root, guardedRoot, 'the fixture must present the guarded root through ctx.root')
@@ -492,7 +507,6 @@ await test('AC-1: runtime evidence and result admission subscribe on the row ctx
     } catch (error) {
       assert.fail('NativeFileTools must construct on a row ctx behind a guarded root: ' + error.message)
     }
-    assert.equal(runtime.events, row, 'the runtime must keep the constructing ctx as its subscription receiver')
     let admission
     try {
       admission = acquireResultAdmission(row)
@@ -500,13 +514,37 @@ await test('AC-1: runtime evidence and result admission subscribe on the row ctx
       assert.fail('acquireResultAdmission must not reach for the composition root: ' + error.message)
     }
     assert.equal(typeof admission.authorize, 'function')
-    admission.dispose()
-    await runtime.stop()
 
-    const names = [...new Set(subscriptions)]
+    // Behaviour, not the field that stores it: the two events a scope tag filters
+    // out are dispatched at a live session and must reach these listeners. Reading
+    // `runtime.events` only proved which object was kept; an implementation that
+    // subscribed elsewhere and stored the row anyway would have passed.
+    const events = [...new Set(subscriptions)]
     for (const name of ['tools/result', 'llm/stream', 'session/event', 'agent/disposed', 'session/disposed', 'system-prompt/change', 'tools/execute']) {
-      assert.ok(names.includes(name), 'the row ctx must receive the ' + name + ' subscription; saw ' + JSON.stringify(names))
+      assert.ok(events.includes(name), 'the row ctx must receive the ' + name + ' subscription; saw ' + JSON.stringify(events))
     }
+    // The control that makes the delivery assertion mean something: the same two
+    // listeners on a scope-tagged ctx (the shape an agent's ctx has) must receive
+    // neither event, because the store dispatches through a scope carrier. Without
+    // it "delivered" could hold for every ctx and prove nothing.
+    const agentScoped = []
+    for (const name of ['session/event', 'session/disposed']) scope.ctx.on(name, () => { agentScoped.push(name) })
+    const store = root.get('sessions')
+    assert.ok(store, 'the fixture needs the real session store to dispatch session events')
+    const session = store.prepare('root-ownership-ac1', { meta: { cwd: PACKAGE_ROOT } })
+    const detach = store.enter(session)
+    store.announce(session)
+    try {
+      session.append('step/end', { turn: 1, step: 1 })
+      detach()
+    } finally {
+      await runtime.stop()
+      admission.dispose()
+    }
+    assert.deepEqual(delivered.sort(), ['session/disposed', 'session/event'],
+      'both session events must be delivered to the listeners the row ctx owns. Delivered: ' + JSON.stringify(delivered))
+    assert.deepEqual(agentScoped, [],
+      'a scope-tagged ctx must receive neither session event, so the delivery above really discriminates. Received: ' + JSON.stringify(agentScoped))
     assert.deepEqual(touched, [], 'no capability may be taken from the composition root')
   } finally {
     await scope.dispose()
@@ -756,22 +794,33 @@ await test('AC-4b: references count owner fibers, so two extended contexts share
   assert.equal(first.fiber, second.fiber, 'both extended contexts must share the row fiber')
   assert.equal(first.root, root, 'both extended contexts still read the shared root')
 
-  const labels = []
+  // Count the teardown registrations the shared fiber takes — never their labels.
+  // A reference to the queue is one more thing this fiber has to tear down, so the
+  // count is the reference count; the label is a diagnostic string the source may
+  // rename at will.
+  let registered = 0
   const original = row.fiber.effect
   row.fiber.effect = function (execute, label) {
-    labels.push(label ?? 'anonymous')
+    registered += 1
     return original.call(row.fiber, execute, label)
   }
   try {
     const applied = []
+    const before = registered
     const disposeFirst = publicationRegistration(first, () => { applied.push('first'); return () => {} })
+    const afterFirst = registered
     const disposeSecond = publicationRegistration(second, () => { applied.push('second'); return () => {} })
+    const afterSecond = registered
     await settleWithin(Promise.all([publicationReady(disposeFirst), publicationReady(disposeSecond)]), 4000, 'both extended registrations')
     assert.deepEqual(applied.sort(), ['first', 'second'], 'both registrations must run, so both really retained the queue')
-    const retained = labels.filter((label) => label === QUEUE_EFFECT)
-    assert.equal(retained.length, 1, 'one fiber owns one reference; two extended contexts registered ' + retained.length + ' queue effects')
-    const leases = labels.filter((label) => label === 'dsh-ops: registry publication lease')
-    assert.equal(leases.length, 2, 'each registration still has its own lease')
+    // The first registration takes the queue's own reference plus its lease. The
+    // second context shares that fiber's single unload, so it may only buy its own
+    // lease: a per-context count would take a second queue reference here, and the
+    // fiber would owe two teardowns for one reference it can only release once.
+    assert.equal(afterFirst - before, 2, 'the first registration takes the queue reference and its lease')
+    assert.equal(afterSecond - afterFirst, 1,
+      'a second context on the same fiber buys only its lease, not another queue reference; it took '
+      + (afterSecond - afterFirst))
 
     // A sibling row keeps the queue alive: the row fiber unload must release
     // exactly the one reference it took, never two.
