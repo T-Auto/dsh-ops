@@ -123,16 +123,17 @@ const CAPABILITIES = new Set(['on', 'once', 'register', 'unregister', 'effect', 
  * A capability call is a hit when its receiver resolves to the composition root:
  * the root expression itself (`ctx.root`, `ctx.root.fiber`, `ctx.root.reflect`),
  * a local bound to it (`const root = ctx.root ?? ctx`, `const { root } = ctx`,
- * `const target = root`, `let r; r = ctx.root`), or a helper parameter whose
- * call site passes one. A root value that is only an argument — a WeakMap key,
+ * `const [root] = [ctx]`, `const target = root`, `let r; r = ctx.root`), or a
+ * parameter a call site fills with one (a named helper, or an inline function
+ * called on the spot). A root value that is only an argument — a WeakMap key,
  * `ctx.get`, a call-budget owner — never has this receiver shape, which is what
  * keeps those reads legal.
  *
  * The compiler does the reading because the spellings that reach the root are
- * unbounded: a parenthesized `??`, an optional chain, a bracket key, a
- * destructuring pattern, an `as` cast, an alias hop and a helper parameter are
- * all one receiver once the syntax tree says so. The text regex this replaced
- * caught one of the ten spellings the fixtures in AC-3 now pin.
+ * unbounded: a parenthesized `??`, an optional chain, a bracket key, an object
+ * or array destructuring pattern, an `as` cast, an alias hop, a comma spelling
+ * and a helper parameter are all one receiver once the syntax tree says so. The
+ * text regex this replaced caught one of the spellings the fixtures in AC-3 pin.
  *
  * @param sourceFile - a file from the program, or a fixture parsed on its own.
  * @returns capability calls whose receiver is the composition root.
@@ -192,10 +193,29 @@ function bindingScope(node) {
 }
 
 /**
+ * The position an array-destructuring binding reads, when it destructures a
+ * declaration's own initializer.
+ *
+ * `const [r] = ...` binds element 0 and `const [, r] = ...` element 1, so the
+ * index is part of what the name means. A pattern on a parameter has no
+ * initializer to index here and stays on the parameter path.
+ * @param node - a binding element.
+ * @returns the declaration's initializer and the element index, or undefined.
+ */
+function arrayPosition(node) {
+  const pattern = node.parent
+  if (!ts.isArrayBindingPattern(pattern)) return undefined
+  const declaration = pattern.parent
+  if (!ts.isVariableDeclaration(declaration) || !declaration.initializer) return undefined
+  return { container: declaration.initializer, index: pattern.elements.indexOf(node) }
+}
+
+/**
  * Every local binding in one file, by the identifier the code refers to them by.
  *
  * A destructured binding remembers the key it came from, so `const { root } = ctx`
- * and `const { root: alias } = ctx` both read as "this name is the root". A name
+ * and `const { root: alias } = ctx` both read as "this name is the root"; an array
+ * pattern records the position instead (`const [r] = [ctx.root]`). A name
  * declared without a value and assigned later (`let r; r = ctx.root`) is indexed
  * once per assignment, so the use resolves to the value that is actually there
  * instead of to an empty declaration.
@@ -213,11 +233,19 @@ function bindingsOf(sourceFile) {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
       add(node.name.text, { scope: bindingScope(node), pos: node.getStart(sourceFile), initializer: node.initializer })
     } else if (ts.isBindingElement(node) && ts.isIdentifier(node.name)) {
-      // `const { root } = ctx` names the key with an identifier; a computed key
-      // (`const { [name]: bound } = ctx`) is not a name this analysis can read.
-      const written = node.propertyName ?? node.name
-      const key = ts.isIdentifier(written) ? written.text : literalKey(written)
-      add(node.name.text, { scope: bindingScope(node), pos: node.getStart(sourceFile), key })
+      const binding = { scope: bindingScope(node), pos: node.getStart(sourceFile) }
+      const position = arrayPosition(node)
+      if (position) {
+        // `const [r] = [ctx.root]` binds by position, not by key: the value is the
+        // element of the initializer at that index.
+        binding.position = position
+      } else {
+        // `const { root } = ctx` names the key with an identifier; a computed key
+        // (`const { [name]: bound } = ctx`) is not a name this analysis can read.
+        const written = node.propertyName ?? node.name
+        binding.key = ts.isIdentifier(written) ? written.text : literalKey(written)
+      }
+      add(node.name.text, binding)
     } else if (ts.isParameter(node) && ts.isIdentifier(node.name)) {
       add(node.name.text, { scope: node.parent, pos: node.getStart(sourceFile), initializer: node.initializer, parameter: node })
     }
@@ -267,7 +295,8 @@ function bindingFor(context, identifier) {
  *
  * Property and element access stay derived (`ctx.root.fiber`), so a receiver
  * chain is judged by the hop that names the root; `??`, `||` and a conditional
- * stay derived on either side, because both branches denote the same receiver.
+ * stay derived on either side, because both branches denote the same receiver;
+ * a comma expression takes its right operand.
  * @param context - the analysis context.
  * @param node - the expression to judge.
  * @param seen - guards against an alias cycle.
@@ -280,6 +309,14 @@ function fromRoot(context, node, seen = new Set()) {
   if (ts.isIdentifier(expression)) {
     const binding = bindingFor(context, expression)
     if (!binding) return false
+    if (binding.position !== undefined) {
+      // A destructured element is the element of the initializer: a literal array
+      // answers by position, and any other initializer is a value not seen here.
+      const container = unwrap(binding.position.container)
+      if (!ts.isArrayLiteralExpression(container)) return false
+      const element = container.elements[binding.position.index]
+      return element !== undefined && fromRoot(context, element, seen)
+    }
     if (binding.key !== undefined) return binding.key === 'root'
     if (binding.parameter !== undefined && context.rootParameters.has(binding.parameter)) return true
     return binding.initializer !== undefined && fromRoot(context, binding.initializer, seen)
@@ -288,6 +325,7 @@ function fromRoot(context, node, seen = new Set()) {
   if (ts.isElementAccessExpression(expression)) return literalKey(expression.argumentExpression) === 'root' || fromRoot(context, expression.expression, seen)
   if (ts.isBinaryExpression(expression)) {
     const operator = expression.operatorToken.kind
+    if (operator === ts.SyntaxKind.CommaToken) return fromRoot(context, expression.right, seen)
     if (operator !== ts.SyntaxKind.QuestionQuestionToken && operator !== ts.SyntaxKind.BarBarToken
       && operator !== ts.SyntaxKind.AmpersandAmpersandToken) return false
     return fromRoot(context, expression.left, new Set(seen)) || fromRoot(context, expression.right, new Set(seen))
@@ -298,11 +336,18 @@ function fromRoot(context, node, seen = new Set()) {
   return false
 }
 
+/** A function expression or arrow, whose parameters a call fills argument by argument. */
+function isInlineFunction(node) {
+  return ts.isFunctionExpression(node) || ts.isArrowFunction(node)
+}
+
 /**
  * Learn which helper parameters receive the root.
  *
  * A helper that subscribes for its caller (`function subscribe(target) { target.on(...) }`)
- * hides the receiver behind a parameter, so the call sites decide. The loop
+ * hides the receiver behind a parameter, so the call sites decide. An inline
+ * function invoked on the spot (`(function (r) { r.on(...) })(ctx.root)`) is
+ * filled by that one call, so its parameters are seeded the same way. The loop
  * repeats because one helper may hand the root on to another.
  * @param context - the analysis context, whose `rootParameters` is extended.
  * @returns void
@@ -319,13 +364,12 @@ function learnRootParameters(context) {
     if (ts.isFunctionDeclaration(node) && node.name) remember(node.name.text, node)
     else if (ts.isMethodDeclaration(node) && ts.isIdentifier(node.name)) remember(node.name.text, node)
     else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer
-      && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))) remember(node.name.text, node.initializer)
+      && isInlineFunction(node.initializer)) remember(node.name.text, node.initializer)
     else if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name)
-      && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))) remember(node.name.text, node.initializer)
+      && isInlineFunction(node.initializer)) remember(node.name.text, node.initializer)
     ts.forEachChild(node, collect)
   }
   collect(sourceFile)
-  if (!helpers.size) return
   const calls = []
   const gather = (node) => {
     if (ts.isCallExpression(node)) calls.push(node)
@@ -350,13 +394,17 @@ function seedParameters(context, helpers, calls) {
   for (const call of calls) {
     const callee = unwrap(call.expression)
     const targets = ts.isIdentifier(callee) ? helpers.get(callee.text)
-      : ts.isPropertyAccessExpression(callee) ? helpers.get(callee.name.text) : undefined
+      : ts.isPropertyAccessExpression(callee) ? helpers.get(callee.name.text)
+      : isInlineFunction(callee) ? [callee]
+      : undefined
     if (!targets) continue
     for (const target of targets) {
       const shared = Math.min(call.arguments.length, target.parameters.length)
       for (let index = 0; index < shared; index += 1) {
         const parameter = target.parameters[index]
-        if (!ts.isIdentifier(parameter.name) || context.rootParameters.has(parameter)) continue
+        // A rest parameter collects the arguments into an array, so it holds the
+        // root the way `[ctx.root]` does — not the root itself.
+        if (!ts.isIdentifier(parameter.name) || parameter.dotDotDotToken || context.rootParameters.has(parameter)) continue
         if (!fromRoot(context, call.arguments[index])) continue
         context.rootParameters.add(parameter)
         learned = true
@@ -377,16 +425,20 @@ function seedParameters(context, helpers, calls) {
  * @returns the receiver and method, or undefined for an ordinary call.
  */
 function capabilityCall(context, callee) {
-  if (ts.isPropertyAccessExpression(callee)) return capabilityFromRoot(context, callee.expression, callee.name.text)
-  if (ts.isElementAccessExpression(callee)) {
-    const method = literalKey(callee.argumentExpression)
-    return method === undefined ? undefined : capabilityFromRoot(context, callee.expression, method)
+  const node = unwrap(callee)
+  // `(0, x.on)(...)` is how compiled output spells a call that must not borrow a
+  // receiver from the left operand; the method is the right operand's.
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.CommaToken) return capabilityCall(context, node.right)
+  if (ts.isPropertyAccessExpression(node)) return capabilityFromRoot(context, node.expression, node.name.text)
+  if (ts.isElementAccessExpression(node)) {
+    const method = literalKey(node.argumentExpression)
+    return method === undefined ? undefined : capabilityFromRoot(context, node.expression, method)
   }
-  if (ts.isCallExpression(callee) && ts.isPropertyAccessExpression(callee.expression)
-    && ts.isIdentifier(callee.expression.expression) && callee.expression.expression.text === 'Reflect'
-    && callee.expression.name.text === 'get' && callee.arguments.length >= 2) {
-    const method = literalKey(callee.arguments[1])
-    return method === undefined ? undefined : capabilityFromRoot(context, callee.arguments[0], method)
+  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+    && ts.isIdentifier(node.expression.expression) && node.expression.expression.text === 'Reflect'
+    && node.expression.name.text === 'get' && node.arguments.length >= 2) {
+    const method = literalKey(node.arguments[1])
+    return method === undefined ? undefined : capabilityFromRoot(context, node.arguments[0], method)
   }
   return undefined
 }
@@ -540,10 +592,11 @@ await test('AC-3: receiver analysis finds zero root-owned capabilities in src/',
 
 await test('AC-3b: the analyser catches every spelling of a root receiver, and leaves the legal reads alone', async () => {
   // Every spelling the review used to break the old text regex, each parsed on
-  // its own, plus the ones a later attack surface found (the deferred
-  // assignment). A receiver analysis that misses any one of them is the same
-  // promise-without-a-proof this check exists to replace, so the list is a gate,
-  // not a sample: the assertion names the spelling that escaped.
+  // its own, plus the ones later attack surfaces found (the deferred assignment,
+  // array destructuring, an inline function's parameter, the comma operator). A
+  // receiver analysis that misses any one of them is the same promise-without-a-
+  // proof this check exists to replace, so the list is a gate, not a sample: the
+  // assertion names the spelling that escaped.
   const bypasses = {
     'historical baseline (ctx.root.on)': 'ctx.root.on("tools/change", () => {})',
     'parenthesized receiver ((ctx.root ?? ctx).on)': '(ctx.root ?? ctx).on("tools/change", () => {})',
@@ -563,6 +616,11 @@ await test('AC-3b: the analyser catches every spelling of a root receiver, and l
     'reflect.set (ctx.root.reflect.set)': 'ctx.root.reflect.set("tools", service)',
     'reflect.set through the root alias': 'const root = ctx.root ?? ctx\nroot.reflect.set("tools", service)',
     'inject/plugin on the root': 'ctx.root.inject(["tools"])\nctx.root.plugin(plugin)',
+    'array destructuring (const [r] = [ctx.root])': 'const [r] = [ctx.root]\nr.on("tools/change", () => {})',
+    'array destructuring past a hole (const [, r] = [ctx, ctx.root])': 'const [, r] = [ctx, ctx.root]\nr.on("tools/change", () => {})',
+    'inline function argument ((function (r) {})(ctx.root))': '(function (r) { r.on("tools/change", () => {}) })(ctx.root)',
+    'comma operator callee ((0, ctx.root.on))': '(0, ctx.root.on)("tools/change", () => {})',
+    'comma operator receiver ((0, ctx.root).on)': '(0, ctx.root).on("tools/change", () => {})',
   }
   for (const [name, snippet] of Object.entries(bypasses)) {
     assert.ok(hitsFor(snippet).length > 0, 'the analyser must catch ' + name + ', but it reported no receiver')
@@ -572,7 +630,8 @@ await test('AC-3b: the analyser catches every spelling of a root receiver, and l
   }
 
   // The legal shapes, each named: the analysis must not answer "root used as a
-  // receiver" for a root that is only a key, a service read or an owner key.
+  // receiver" for a root that is only a key, a service read, an owner key, or one
+  // element of a value that the receiver is not.
   const legal = {
     'owners.get(key)': 'const key = ctx.root ?? ctx\nowners.get(key)',
     'roots.get(ctx.root ?? ctx)': 'const state = roots.get(ctx.root ?? ctx)',
@@ -582,6 +641,8 @@ await test('AC-3b: the analyser catches every spelling of a root receiver, and l
     'ctx.root.get (a service read)': 'const tools = ctx.root.get("tools")',
     'root.tools.set (the tools service, not the root)': 'ctx.root.tools.set("name", definition)',
     'r.logger.warn, for a name assigned the root': 'let r\nr = ctx.root ?? ctx\nr.logger.warn("a property read is allowed")',
+    'rest parameter ((...r) => r.on)': '((...r) => r.on("tools/change", () => {}))(ctx.root)',
+    'inner shadow (the r redeclared in h is not the root)': 'const r = ctx.root\nfunction h() { const r = other\n r.on("tools/change", () => {}) }',
   }
   for (const [name, snippet] of Object.entries(legal)) {
     assert.equal(hitsFor(snippet).length, 0, name + ' is a legal root read, but the analyser called it a capability receiver')
@@ -600,10 +661,10 @@ await test('AC-3b: the analyser catches every spelling of a root receiver, and l
   // analysis deliberately does not follow, and the pin is an `assert.equal(0)`:
   // the moment the analyser starts catching one, this fails and the declaration
   // has to be corrected — the limit list rots quietly otherwise. The list was
-  // completed from an independent attack surface that reported eight shapes as
-  // missed; two of them were the deferred assignment, which the analyser now
-  // catches (see `bypasses` above), so the eight became two caught plus six
-  // still limited. The two entries this list already carried stay as they were.
+  // completed from independent attack surfaces: every shape they reported that
+  // this analysis now follows moved into `bypasses` above (the deferred
+  // assignment, array destructuring, an inline function's parameter, the comma
+  // operator), and only the shapes still not followed are pinned here.
   const limits = {
     // The method name is a value that only exists at run time, so there is no
     // string to compare against a capability name.
@@ -633,6 +694,26 @@ await test('AC-3b: the analyser catches every spelling of a root receiver, and l
     // A `for...of` binding is a loop variable: its value comes from the iterable
     // per iteration, which the analysis would have to simulate.
     'for-of binding (for (const r of [ctx.root]))': 'for (const r of [ctx.root]) { r.on("tools/change", () => {}) }',
+    // A catch clause binds whatever the try block threw. Reading that value is a
+    // control-flow fact — any statement in the block, or any callee it calls, can
+    // throw — and "every catch parameter is the root" would be a predicate
+    // widened until an ordinary error handler reads as a hit.
+    'catch binding (try { throw ctx.root } catch (e))': 'try { throw ctx.root } catch (e) { e.on("tools/change", () => {}) }',
+    // A pattern position reads what the declaration's initializer holds there; a
+    // default value is taken only when that position is `undefined` at run time,
+    // which is a fact no local value decides — so neither the object nor the
+    // array pattern follows `= ctx.root`.
+    'destructuring default (const [r = ctx.root] = [])': 'const { target = ctx.root } = plugins\nconst [r = ctx.root] = []\ntarget.on("tools/change", () => {})\nr.on("tools/change", () => {})',
+    // A destructured parameter is filled by its call site, and taking the element
+    // the argument holds is a second step: the position would have to be carried
+    // from the parameter pattern through the call's argument to a literal array.
+    'destructured parameter (function sub([r]) { r.on(...) })': 'function sub([r]) { r.on("tools/change", () => {}) }\nsub([ctx.root])',
+    // A callback parameter is filled by the method it is passed to, not by the
+    // call site this file can read: `[ctx.root].forEach((r) => r.on(...))` needs
+    // both the element identity of the receiver and the callback contract of
+    // `forEach`. Treating every callback parameter as "whatever is around it"
+    // would make `list.map((item) => item.on(...))` a hit on any list near the root.
+    'callback element ([ctx.root].forEach((r) => r.on(...)))': '[ctx.root].forEach((r) => r.on("tools/change", () => {}))',
   }
   for (const [name, snippet] of Object.entries(limits)) {
     assert.equal(hitsFor(snippet).length, 0, 'the analyser is documented not to resolve ' + name + '; it now does, so update the limit list')
