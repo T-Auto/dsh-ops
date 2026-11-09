@@ -369,6 +369,14 @@ fn replace(request: &Request) -> Result<Value> {
             "pattern and maxReplacements are required",
         ));
     }
+    // The glob filter shares Patterns with glob and grep; an impossible entry
+    // would silently match no file and report a completed dry run (#797).
+    if let Some((index, fault)) = patterns::first_invalid(&args.glob) {
+        return Err(Failure::new(
+            "INVALID_ARGUMENT",
+            patterns::invalid_message("glob", index, fault),
+        ));
+    }
     let walked = files_for(&args.path, &args.glob, request)?;
     let mut plans = Vec::new();
     let mut total = 0usize;

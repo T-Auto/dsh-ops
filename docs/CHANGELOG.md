@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- `ops_glob`, `ops_grep` and `ops_replace` refuse glob entries that cannot name a relative path segment: empty, whitespace-only, or carrying an empty, `.` or `..` segment. The request returns `INVALID_ARGUMENT` naming the entry and its field (`pattern[i]`/`glob[i]`) instead of accepting a literal that matches no file and reporting a complete scan with zero results (#797).
+- `ops_glob`、`ops_grep` 与 `ops_replace` 拒绝无法命名相对路径段的 glob 条目：空串、纯空白，或含空段/`.`/`..` 段。请求返回 `INVALID_ARGUMENT` 并指明字段与下标（`pattern[i]`/`glob[i]`），不再把它当作匹配不到任何文件的字面量并报告“完整扫描、0 结果”（#797）。
+
 ## [0.5.1] — 2026-11-08 — Patch release
 
 - Bound temporary-resource growth through ownership ledgers, deferred result-cache cleanup and explicit cache reclamation; preserve data-bearing snapshots and user content. Host output spills now have bounded retention rather than accumulating indefinitely.

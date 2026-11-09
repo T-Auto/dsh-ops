@@ -6,8 +6,10 @@
  *
  * - Declared argument bounds hold at the exact edge: `offset: 0` is accepted and
  *   silently means line 1, negatives and non-integers are `INVALID_ARGUMENT`,
- *   `beforeContext: 33` is refused by name, and an empty glob pattern list is
- *   `INVALID_ARGUMENT`.
+ *   `beforeContext: 33` is refused by name, an empty glob pattern list is
+ *   `INVALID_ARGUMENT`, and so is any entry that cannot match a walked path —
+ *   empty, whitespace-only, or carrying an empty/`.`/`..` segment — for
+ *   ops_glob's pattern and the glob filters of ops_grep/ops_replace (#797).
  * - Paging tells the truth. 500 matches with `limit: 10` report `total: 500`,
  *   `complete: false`, `omitted: 490` and a usable `nextOffset`, and following
  *   `nextOffset` reaches every match. The `skipped` field is the paging offset,
@@ -105,6 +107,75 @@ await test('glob pattern lists are validated: empty is refused, 200 patterns sta
     assert.equal(many.status, 'completed')
     assert.equal(many.matched, 25, 'only the patterns with a real file may match')
     assert.ok(Date.now() - started < 15_000, 'no quadratic blowup')
+  })
+})
+
+// #797: an entry that can never match a walked relative path used to be
+// accepted as a literal, so a populated directory came back as a complete scan
+// with zero files — indistinguishable from an empty tree. The refusal must name
+// the entry, and a valid entry beside it must still list.
+const emptyEntry = index => 'pattern[' + index + '] must be a non-empty glob'
+const impossibleSegment = index => 'pattern[' + index + '] must not contain an empty, "." or ".." path segment'
+
+await test('glob refuses entries that can never match instead of completing with zero files', async () => {
+  await withTempDir('linux-args-glob-invalid', async workspace => {
+    fs.writeFileSync(path.join(workspace, 'readme.md'), '# demo\n')
+    fs.mkdirSync(path.join(workspace, 'vendor'))
+    fs.writeFileSync(path.join(workspace, 'vendor', 'lib.js'), 'x\n')
+
+    for (const [patterns, message] of [
+      [[''], emptyEntry(0)],
+      [['', '!vendor/**'], emptyEntry(0)],
+      [['**/*.md', '   '], emptyEntry(1)],
+      [['\u3000'], emptyEntry(0)],
+      [['./'], emptyEntry(0)],
+      [['/'], impossibleSegment(0)],
+      [['src/'], impossibleSegment(0)],
+      [['a//b'], impossibleSegment(0)],
+      [['..'], impossibleSegment(0)],
+      [['../**/*.md'], impossibleSegment(0)],
+      [['!src/'], impossibleSegment(0)],
+    ]) {
+      const refused = envelopeOf(await callTool('glob', { path: workspace, pattern: patterns }, { root: workspace }), assert)
+      assert.equal(refused.status, 'error', JSON.stringify(patterns) + ' was accepted')
+      assert.equal(refused.error.code, 'INVALID_ARGUMENT')
+      assert.equal(refused.error.message, 'glob: ' + message)
+    }
+
+    const listed = envelopeOf(await callTool('glob', { path: workspace, pattern: ['**/*.md'] }, { root: workspace }), assert)
+    assert.equal(listed.status, 'completed')
+    assert.equal(listed.matched, 1, 'the refusal is about the entry, not the directory')
+  })
+})
+
+// #797: grep and replace filter through the same compiler, so an impossible
+// filter entry silently selected no file. It must fail loudly with its own field
+// name, while a real filter keeps working.
+await test('grep and replace refuse impossible glob filter entries instead of matching nothing', async () => {
+  await withTempDir('linux-args-filter-invalid', async workspace => {
+    fs.writeFileSync(path.join(workspace, 'readme.md'), 'needle\n')
+    fs.mkdirSync(path.join(workspace, 'src'))
+    fs.writeFileSync(path.join(workspace, 'src', 'app.js'), 'needle\n')
+
+    for (const [tool, args, message] of [
+      ['grep', { path: workspace, pattern: 'needle', glob: [''] }, 'glob[0] must be a non-empty glob'],
+      ['grep', { path: workspace, pattern: 'needle', glob: ['src/'] }, 'glob[0] must not contain an empty, "." or ".." path segment'],
+      ['replace', { path: workspace, pattern: 'needle', replacement: 'x', glob: ['  '], dryRun: true }, 'glob[0] must be a non-empty glob'],
+      ['replace', { path: workspace, pattern: 'needle', replacement: 'x', glob: ['..'], dryRun: true }, 'glob[0] must not contain an empty, "." or ".." path segment'],
+    ]) {
+      const refused = envelopeOf(await callTool(tool, args, { root: workspace }), assert)
+      assert.equal(refused.status, 'error', tool + ' accepted ' + JSON.stringify(args.glob))
+      assert.equal(refused.error.code, 'INVALID_ARGUMENT')
+      assert.equal(refused.error.message, tool + ': ' + message)
+    }
+
+    const grep = envelopeOf(await callTool('grep', { path: workspace, pattern: 'needle', glob: ['*.md'], outputMode: 'files_with_matches' }, { root: workspace }), assert)
+    assert.equal(grep.status, 'completed')
+    assert.equal(grep.matched, 1, 'a real filter still selects the matching file')
+
+    const replace = envelopeOf(await callTool('replace', { path: workspace, pattern: 'needle', replacement: 'x', glob: ['*.md'], dryRun: true }, { root: workspace }), assert)
+    assert.equal(replace.status, 'completed')
+    assert.equal(replace.matched, 1, 'a real filter still selects the matching file')
   })
 })
 
