@@ -13,8 +13,8 @@ use cap_fs_ext::DirExt;
 use cap_fs_ext::MetadataExt;
 use ops_files as publication;
 use ops_files::{
-    MAX_FILE_BYTES, MAX_OUTPUT_BYTES, UpdateLock, atomic_write, file_path,
-    lock_and_read_for_update, read_bytes, relative_display, result, target,
+    MAX_FILE_BYTES, MAX_OUTPUT_BYTES, UpdateLock, atomic_write, file_path, lock_for_update,
+    read_bytes, relative_display, result, target,
 };
 use ops_protocol::{Failure, Request, Result};
 use regex::RegexBuilder;
@@ -118,24 +118,13 @@ fn walk(root: &Path, request: &Request) -> Result<WalkResult> {
             .ok_or_else(|| Failure::new("INVALID_ARGUMENT", "Non-UTF8 path"))?,
     )?;
     let directory = target.parent.open_dir_nofollow(&target.name)?;
-    let mut files = Vec::new();
-    let mut skipped = Vec::new();
-    let mut truncated = false;
-    visit_dir(
-        root,
-        root,
-        directory,
-        0,
-        request,
-        &mut files,
-        &mut skipped,
-        &mut truncated,
-    )?;
-    Ok(WalkResult {
-        files,
-        skipped,
-        truncated,
-    })
+    let mut walked = WalkResult {
+        files: Vec::new(),
+        skipped: Vec::new(),
+        truncated: false,
+    };
+    visit_dir(root, root, directory, 0, request, &mut walked)?;
+    Ok(walked)
 }
 fn visit_dir(
     root: &Path,
@@ -143,12 +132,10 @@ fn visit_dir(
     directory: cap_std::fs::Dir,
     depth: usize,
     request: &Request,
-    output: &mut Vec<PathBuf>,
-    skipped: &mut Vec<PathBuf>,
-    truncated: &mut bool,
+    walked: &mut WalkResult,
 ) -> Result<()> {
-    if depth > MAX_DEPTH || output.len() >= MAX_ENTRIES {
-        *truncated = true;
+    if depth > MAX_DEPTH || walked.files.len() >= MAX_ENTRIES {
+        walked.truncated = true;
         return Ok(());
     }
     // A directory can change while it is being read. A broken child directory
@@ -181,7 +168,7 @@ fn visit_dir(
             continue;
         }
         let child = display.join(&name);
-        if host_link_or_reparse(&child, skipped, truncated) {
+        if host_link_or_reparse(&child, &mut walked.skipped, &mut walked.truncated) {
             continue;
         }
         // A denied root is skipped by identity, not by name: the host names the
@@ -199,28 +186,19 @@ fn visit_dir(
             continue;
         }
         if metadata.is_file() {
-            if output.len() >= MAX_ENTRIES {
-                *truncated = true;
+            if walked.files.len() >= MAX_ENTRIES {
+                walked.truncated = true;
                 return Ok(());
             }
-            output.push(child);
+            walked.files.push(child);
             continue;
         }
         if metadata.is_dir() {
             let Ok(child_dir) = directory.open_dir_nofollow(&name) else {
                 continue;
             };
-            visit_dir(
-                root,
-                &child,
-                child_dir,
-                depth + 1,
-                request,
-                output,
-                skipped,
-                truncated,
-            )?;
-            if *truncated && output.len() >= MAX_ENTRIES {
+            visit_dir(root, &child, child_dir, depth + 1, request, walked)?;
+            if walked.truncated && walked.files.len() >= MAX_ENTRIES {
                 return Ok(());
             }
         }
@@ -384,17 +362,22 @@ fn replacement_size(
     }
 }
 fn replace(request: &Request) -> Result<Value> {
-    replace_with(request, |file, dry_run| {
-        if dry_run {
-            read_bytes(file).map(|bytes| (None, bytes))
-        } else {
-            lock_and_read_for_update(file).map(|(guard, bytes)| (Some(guard), bytes))
-        }
-    })
+    replace_with(
+        request,
+        |file, dry_run| {
+            if dry_run {
+                Ok(None)
+            } else {
+                lock_for_update(file).map(Some)
+            }
+        },
+        read_bytes,
+    )
 }
-fn replace_with<F>(request: &Request, mut observe: F) -> Result<Value>
+fn replace_with<L, R>(request: &Request, mut lock: L, mut read: R) -> Result<Value>
 where
-    F: FnMut(&Path, bool) -> Result<(Option<UpdateLock>, Vec<u8>)>,
+    L: FnMut(&Path, bool) -> Result<Option<UpdateLock>>,
+    R: FnMut(&Path) -> Result<Vec<u8>>,
 {
     if request.read_only {
         return Err(Failure::policy(
@@ -426,8 +409,9 @@ where
         // an unlink/rename can fail ENOENT on the superseded vnode even though
         // the directory name always has a complete version. Do not retry or
         // relabel ENOENT: avoid the race between cooperating writers instead.
-        let (guard, bytes) = match observe(&file, args.dry_run) {
-            Ok(observed) => observed,
+        let guard = lock(&file, args.dry_run)?;
+        let bytes = match read(&file) {
+            Ok(bytes) => bytes,
             Err(error) if error.code == "ACCESS_DENIED" => {
                 skipped.push(file);
                 truncated = true;
@@ -692,16 +676,22 @@ mod tests {
                 "args":{"path":fixture.root,"pattern":"old","replacement":"new","glob":["*"]}}),
         )
         .unwrap();
-        let output = replace_with(&request, |file, dry_run| {
-            assert!(!dry_run);
-            if file
-                .file_name()
-                .is_some_and(|name| name == "b-unreadable.txt")
-            {
-                return Err(Failure::new("ACCESS_DENIED", "injected unreadable file"));
-            }
-            lock_and_read_for_update(file).map(|(guard, bytes)| (Some(guard), bytes))
-        })
+        let output = replace_with(
+            &request,
+            |file, dry_run| {
+                assert!(!dry_run);
+                lock_for_update(file).map(Some)
+            },
+            |file| {
+                if file
+                    .file_name()
+                    .is_some_and(|name| name == "b-unreadable.txt")
+                {
+                    return Err(Failure::new("ACCESS_DENIED", "injected unreadable file"));
+                }
+                read_bytes(file)
+            },
+        )
         .unwrap();
         assert_eq!(output["matched"], 2, "{output}");
         assert_eq!(output["changed"], 2, "{output}");
@@ -735,12 +725,35 @@ mod tests {
                 "args":{"path":target,"pattern":"old","replacement":"new"}}),
         )
         .unwrap();
-        let error = replace_with(&request, |_, _| {
-            Err(Failure::new("IO_ERROR", "sharing violation (os error 32)"))
-        })
+        let error = replace_with(
+            &request,
+            |_, _| Ok(None),
+            |_| Err(Failure::new("IO_ERROR", "sharing violation (os error 32)")),
+        )
         .unwrap_err();
         assert_eq!(error.code, "IO_ERROR");
         assert!(error.message.contains("os error 32"));
+        assert_eq!(fs::read(&target).unwrap(), b"old");
+    }
+
+    #[test]
+    fn replace_does_not_skip_update_lock_denial() {
+        let fixture = Fixture::new("replace-lock-denied");
+        let target = fixture.root.join("target.txt");
+        fs::write(&target, "old").unwrap();
+        let request = serde_json::from_value(
+            json!({"root":fixture.root,"scope":"replace-test","tool":"replace",
+                "args":{"path":target,"pattern":"old","replacement":"new"}}),
+        )
+        .unwrap();
+        let error = replace_with(
+            &request,
+            |_, _| Err(Failure::new("ACCESS_DENIED", "update lock denied")),
+            |_| panic!("a denied update lock must not fall through to a file read"),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "ACCESS_DENIED");
+        assert_eq!(error.message, "update lock denied");
         assert_eq!(fs::read(&target).unwrap(), b"old");
     }
 
@@ -876,7 +889,7 @@ mod tests {
             "no sidecar before the first update attempt"
         );
         {
-            let (guard, bytes) = lock_and_read_for_update(&target).unwrap();
+            let (guard, bytes) = publication::lock_and_read_for_update(&target).unwrap();
             assert_eq!(bytes, b"one", "the lock is taken before the target is read");
             assert!(sidecar.is_file(), "the lock exists while it is held");
             assert_eq!(
@@ -890,7 +903,9 @@ mod tests {
         // A refusal decided from the bytes happens under the lock and leaves no trace.
         let missing = fixture.root.join("missing.txt");
         assert_eq!(
-            lock_and_read_for_update(&missing).unwrap_err().code,
+            publication::lock_and_read_for_update(&missing)
+                .unwrap_err()
+                .code,
             "NOT_FOUND"
         );
         assert!(
@@ -904,7 +919,7 @@ mod tests {
         );
         // A sidecar a killed writer left behind is reused and then removed.
         fs::write(&sidecar, b"").unwrap();
-        drop(lock_and_read_for_update(&target).unwrap());
+        drop(publication::lock_and_read_for_update(&target).unwrap());
         assert!(
             !sidecar.exists(),
             "a later write cleans up the leftover it reused"

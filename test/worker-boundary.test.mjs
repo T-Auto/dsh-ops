@@ -3,15 +3,17 @@ import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { invoke as fileCall } from '../lib/file/worker.js'
 import { invoke as ptcCall } from '../lib/ptc/worker.js'
+import { InvocationDeadlineError } from '../lib/lifecycle/invocations.js'
 
 async function fixture(body) {
   await withTempDir('worker-boundary', async root => {
     const { ctx } = await bootHost()
-    const state = { text: '{"status":"completed"}', spawns: 0, observed: 0, missing: new Set(), exitCode: 0, signal: null, lossy: false }
+    const state = { text: '{"status":"completed"}', spawns: 0, observed: 0, missing: new Set(), exitCode: 0, signal: null, lossy: false, onSpawn: undefined }
     try {
       await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: root }) }))
       await ctx.plugin(inner => inner.provide('subprocess', { spawn: () => {
         state.spawns++
+        state.onSpawn?.()
         return { done: Promise.resolve({ exitCode: state.exitCode, signal: state.signal }), collected: {
           stdout: state.missing.has('stdout') ? undefined : { readFrom: () => ({ text: state.text, lossy: state.lossy }) },
           stderr: state.missing.has('stderr') ? undefined : { readFrom: () => ({ text: '', lossy: false }) },
@@ -22,7 +24,8 @@ async function fixture(body) {
       }))
       ctx.on('fs/observed', () => state.observed++)
       const exec = { agent: { session: { id: 'worker-boundary', header: { cwd: root } } } }
-      await body({ ctx, exec, state, signal: new AbortController().signal })
+      const controller = new AbortController()
+      await body({ ctx, exec, state, signal: controller.signal, controller })
     } finally { await shutdown(ctx) }
   })
 }
@@ -118,7 +121,7 @@ await test('Missing PTC collected readers preserve unknown effects and audit ide
 await test('Read-only worker interruption, lossy output and nonzero exit report no effects', async () => {
   await fixture(async ({ ctx, exec, state, signal }) => {
     const cases = [
-      { outcome: { exitCode: null, signal: 'SIGTERM' }, code: 'TIMEOUT', mutatingCode: 'RESULT_UNKNOWN' },
+      { outcome: { exitCode: null, signal: 'SIGTERM' }, code: 'RESULT_UNKNOWN', mutatingCode: 'RESULT_UNKNOWN' },
       { outcome: { lossy: true }, code: 'OUTPUT_LIMIT', mutatingCode: 'OUTPUT_LIMIT' },
       { outcome: { exitCode: 1 }, code: 'EXECUTOR_UNAVAILABLE', mutatingCode: 'RESULT_UNKNOWN' },
     ]
@@ -138,7 +141,7 @@ await test('Read-only worker interruption, lossy output and nonzero exit report 
 await test('Read-only result paging does not inherit batch effect uncertainty', async () => {
   await fixture(async ({ ctx, exec, state, signal }) => {
     for (const item of [
-      { outcome: { exitCode: null, signal: 'SIGTERM' }, code: 'TIMEOUT' },
+      { outcome: { exitCode: null, signal: 'SIGTERM' }, code: 'RESULT_UNKNOWN' },
       { outcome: { lossy: true }, code: 'OUTPUT_LIMIT' },
       { outcome: { exitCode: 1 }, code: 'EXECUTOR_UNAVAILABLE' },
     ]) {
@@ -150,6 +153,22 @@ await test('Read-only result paging does not inherit batch effect uncertainty', 
       assert.match(value.error.message, /no data was changed/i)
     }
   })
+})
+
+await test('Read-only interruptions distinguish real deadlines from caller cancellation', async () => {
+  for (const [reason, code] of [[new InvocationDeadlineError(), 'TIMEOUT'], [new Error('caller cancelled'), 'ABORTED']]) {
+    for (const kind of ['file', 'result']) {
+      await fixture(async ({ ctx, exec, state, signal, controller }) => {
+        Object.assign(state, { exitCode: null, signal: 'SIGTERM', onSpawn: () => controller.abort(reason) })
+        const value = kind === 'file'
+          ? await fileCall(ctx, 'unused', 'stat', { path: 'safe.txt' }, exec, signal)
+          : await ptcCall(ctx, 'unused', 'result', { action: 'page', id: 'result-1' }, exec, signal)
+        assert.equal(value.error.code, code, `${kind}: ${JSON.stringify(value)}`)
+        assert.equal(value.error.effectState, 'none', `${kind}: ${JSON.stringify(value)}`)
+        assert.match(value.error.message, kind === 'file' ? /no files were changed/i : /no data was changed/i)
+      })
+    }
+  }
 })
 
 await test('Oversized write requests name content, the effective limit and splitting', async () => {

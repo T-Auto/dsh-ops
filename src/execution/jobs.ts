@@ -10,6 +10,7 @@ import { record, errorText } from './boundary.js'
 import { exchange } from './transport.js'
 import { indexCacheRequest, workerEnvelope } from './protocol.js'
 import { withCallBudget, CallBudgetError } from '../kernel/call-budget.js'
+import { InvocationDeadlineError } from '../lifecycle/invocations.js'
 import { withResultSession } from '../kernel/result-lifecycle.js'
 import { exposePosixCache, resultStorage } from '../kernel/result-storage.js'
 import { randomUUID } from 'node:crypto'
@@ -138,7 +139,13 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
       stdio: { stdin: { data: input }, stdout: { maxBytes: envelope.budget.maxBytes }, stderr: { maxBytes: 16 * 1024 } },
       graceMs: 1000, signal }, () => { spawned = true })
     if (!result.readers) return errorResult('RESULT_UNKNOWN', mutates ? 'Worker output readers are unavailable; inspect audit records.' : 'Read-only worker output readers are unavailable; no data was changed.', mutates ? 'unknown' : 'none')
-    if (result.interrupted) return errorResult(mutates ? 'RESULT_UNKNOWN' : 'TIMEOUT', mutates ? 'Worker interrupted; durable write-ahead records preserve possible effects.' : 'Read-only worker was interrupted; no data was changed.', mutates ? 'unknown' : 'none')
+    if (result.interrupted) {
+      const code = mutates ? 'RESULT_UNKNOWN' : signal.reason instanceof InvocationDeadlineError ? 'TIMEOUT' : signal.aborted ? 'ABORTED' : 'RESULT_UNKNOWN'
+      const message = mutates ? 'Worker interrupted; durable write-ahead records preserve possible effects.'
+        : code === 'TIMEOUT' ? 'Read-only worker deadline expired; no data was changed.'
+          : code === 'ABORTED' ? 'Read-only worker was cancelled; no data was changed.' : 'Read-only worker was interrupted; no data was changed.'
+      return errorResult(code, message, mutates ? 'unknown' : 'none')
+    }
     if (confined && runnerFailure(result.exitCode, result.stderr, confined.runnerFailureRules ?? [])) {
       return failure('EXECUTOR_UNAVAILABLE', 'DSH confinement runner failed before executing the worker.')
     }

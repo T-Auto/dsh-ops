@@ -61,7 +61,7 @@ pub(super) fn lock_error(error: std::io::Error, conflict: &str) -> Failure {
         if matches!(error.raw_os_error(), Some(32 | 33)) {
             return Failure::new("REVISION_CONFLICT", conflict);
         }
-        return Failure::from(error);
+        Failure::from(error)
     }
     #[cfg(not(windows))]
     {

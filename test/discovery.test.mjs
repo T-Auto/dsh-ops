@@ -57,7 +57,9 @@ await test('scoped file cancellation aborts active workers and disposal waits fo
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(stopped, false, 'dispose must await worker completion, not AbortController values')
   complete({ exitCode: 1, signal: 'SIGTERM' })
-  assert.equal((await call).error.code, 'RESULT_UNKNOWN')
+  const cancelled = await call
+  assert.equal(cancelled.error.code, 'ABORTED')
+  assert.equal(cancelled.error.effectState, 'none')
   await stopping
   assert.equal(stopped, true)
   assert.equal(runtime.active.size, 0)

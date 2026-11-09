@@ -575,7 +575,7 @@ impl PreservedMetadata {
 /// can match it, so `ops_glob`, `ops_grep` and a directory-wide `ops_replace`
 /// never return, count or rewrite one; `ops_batch` resolves its operations from
 /// the request, never from a walk.
-pub fn lock_and_read_for_update(file: &Path) -> Result<(UpdateLock, Vec<u8>)> {
+pub fn lock_for_update(file: &Path) -> Result<UpdateLock> {
     let raw = file
         .to_str()
         .ok_or_else(|| Failure::new("INVALID_ARGUMENT", "Non-UTF8 path"))?;
@@ -586,11 +586,14 @@ pub fn lock_and_read_for_update(file: &Path) -> Result<(UpdateLock, Vec<u8>)> {
         "{:x}",
         Sha256::digest(checked.name.to_lowercase().as_bytes())
     );
-    let lock = UpdateLock::acquire(
+    UpdateLock::acquire(
         &checked.parent,
         &format!(".dsh-ops-update-{key}.lock"),
         "another writer is updating this path; nothing was changed, retry",
-    )?;
+    )
+}
+pub fn lock_and_read_for_update(file: &Path) -> Result<(UpdateLock, Vec<u8>)> {
+    let lock = lock_for_update(file)?;
     let bytes = read_bytes(file)?;
     Ok((lock, bytes))
 }

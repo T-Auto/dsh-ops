@@ -20,6 +20,7 @@ import { FILE_MUTATIONS } from '../policy.js'
 import { normalizeArguments } from '../capabilities/arguments.js'
 import { resolveReadFiles } from './read-files.js'
 import { withCallBudget, CallBudgetError } from '../kernel/call-budget.js'
+import { InvocationDeadlineError } from '../lifecycle/invocations.js'
 import { withResultSession } from '../kernel/result-lifecycle.js'
 import { resultStorage } from '../kernel/result-storage.js'
 import { resolveSessionDirectory } from '../adapter/dsh/working-directory.js'
@@ -221,7 +222,12 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
     const result = delegated.handled ? { readers: true, interrupted: false, lossy: false, exitCode: 0, stderr: '', value: delegated.value, invalid: undefined }
       : await exchange(subprocess, { argv, cwd, stdio: { stdin: { data: transportInput }, stdout: { maxBytes: envelope.budget.maxBytes }, stderr: { maxBytes: 16 * 1024 } }, graceMs: 1000, signal }, () => { spawned = true })
     if (!result.readers) return failure('RESULT_UNKNOWN', mutates ? 'Worker output readers are unavailable; inspect postconditions.' : 'Read-only worker output readers are unavailable; no files were changed.', 'verify', mutates ? 'unknown' : 'none')
-    if (result.interrupted) return failure(mutates ? 'RESULT_UNKNOWN' : 'TIMEOUT', mutates ? 'Worker interrupted; inspect postconditions.' : 'Read-only worker was interrupted; no files were changed.', 'execute', mutates ? 'unknown' : 'none')
+    if (result.interrupted) {
+      const code = mutates ? 'RESULT_UNKNOWN' : signal.reason instanceof InvocationDeadlineError ? 'TIMEOUT' : signal.aborted ? 'ABORTED' : 'RESULT_UNKNOWN'
+      const message = mutates ? 'Worker interrupted; inspect postconditions.' : code === 'TIMEOUT' ? 'Read-only worker deadline expired; no files were changed.'
+        : code === 'ABORTED' ? 'Read-only worker was cancelled; no files were changed.' : 'Read-only worker was interrupted; no files were changed.'
+      return failure(code, message, 'execute', mutates ? 'unknown' : 'none')
+    }
     if (result.lossy) return failure('OUTPUT_LIMIT', mutates ? 'Worker output exceeded the byte budget; operation facts may have changed.' : 'Read-only worker output exceeded the byte budget; no files were changed.', 'verify', mutates ? 'unknown' : 'none')
     if (result.exitCode !== 0) return failure(mutates ? 'RESULT_UNKNOWN' : 'EXECUTOR_UNAVAILABLE', `Worker did not return a settled result: ${result.stderr.slice(0, 500)}${mutates ? '' : '; no files were changed.'}`, 'execute', mutates ? 'unknown' : 'none')
     if (result.invalid === 'json') return failure('RESULT_UNKNOWN', mutates ? 'Worker returned invalid JSON; inspect postconditions.' : 'Read-only worker returned invalid JSON; no files were changed.', 'verify', mutates ? 'unknown' : 'none')

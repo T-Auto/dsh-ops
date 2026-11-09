@@ -60,7 +60,7 @@ const snapshot = (names, definition) => names.map(name => {
 await test('business file and batch definitions retain their original serialized contracts', () => {
   // Structural contracts stay pinned below; #419 clarifies the create-only literal in write_file help.
   const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
-  assert.equal(hash(snapshot(FILE_TOOLS.filter(name => !['glob', 'grep', 'read_files', 'edit_file', 'read_table', 'read_docx', 'read_pdf'].includes(name)), fileDefinition)), '7fa3aa6a22f54cf65f4ce0d243197a8ffef12949d4d6c4591ad996d853a39cdc')
+  assert.equal(hash(snapshot(FILE_TOOLS.filter(name => !['glob', 'grep', 'read_files', 'edit_file', 'read_table', 'read_docx', 'read_pdf'].includes(name)), fileDefinition)), '67e013378320b969487f53e22eb48789ac48dd1329b8f2915bbfae4b3c6785d4')
   const batch = ptcDefinition('batch', async () => null)
   assert.equal(batch.parameters, ptcParameters.batch); assert.ok(batch.description.startsWith(ptcDescriptions.batch)); assert.match(batch.description, /PTC returns Outcome/)
   assert.ok(batch.output.schema.oneOf.every(branch => branch.properties.status))
