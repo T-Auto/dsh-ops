@@ -9,6 +9,7 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - Run Niubash preparation/security suites in the parallel pool using their private prepared copies; only the prepack consumer remains exclusive. Reduce the cold-payload watchdog and Windows release-gate budget from 600 to 300 seconds, retaining explicit overrides and ample headroom above the measured cold setup.
 - Niubash 准备与安全套件使用各自 prepared 副本进入并行池，仅 prepack consumer 保持独占；完整载荷看门狗与 Windows 发布门禁预算从 600 秒调为 300 秒，保留显式覆盖，并为实测冷启动保留充分余量。
+
 - If another profile with a different Niubash pin retires the selected runtime, recover it once on the next call from its selected verified source without retiring other pins. Online retirement leaves other hashes' in-progress staging directories for offline cleanup.
 - 同一 DSH_HOME 的另一 profile 使用不同 Niubash pin 并退役所选运行时时，下次调用从原选定的已验证源恢复一次，不退役其他 pin；在线退役保留其他哈希构建中的 stage 目录，交由离线回收。
 
