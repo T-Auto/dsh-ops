@@ -11,7 +11,8 @@ export function parsePtcConfig(raw: unknown = {}): PtcConfig {
   for (const key of Object.keys(input)) if (!['binaryPath', 'required', 'allowedTools', 'alwaysLoaded', 'batchingGuidance'].includes(key)) throw new Error('Unknown PTC config key: ' + key)
   if (input.binaryPath !== undefined && typeof input.binaryPath !== 'string') throw new Error('binaryPath must be a string')
   if (input.required !== undefined && typeof input.required !== 'boolean') throw new Error('required must be boolean')
-  // The batching guidance is a measured behaviour, so it has to be switchable for A/B runs.
+  // The batching playbook is opt-in: a preset must ask for it. The default off keeps every
+  // other PTC row as the control arm, so the effect can be measured against a clean baseline.
   if (input.batchingGuidance !== undefined && typeof input.batchingGuidance !== 'boolean') throw new Error('batchingGuidance must be boolean')
   const names = (key: string, fallback: readonly ApiName[]): ApiName[] => {
     const value = input[key] ?? fallback
@@ -22,5 +23,5 @@ export function parsePtcConfig(raw: unknown = {}): PtcConfig {
   }
   return { binaryPath: input.binaryPath, required: input.required ?? false,
     allowedTools: names('allowedTools', PTC_LOADABLE_TOOLS), alwaysLoaded: names('alwaysLoaded', []),
-    batchingGuidance: input.batchingGuidance !== false }
+    batchingGuidance: input.batchingGuidance === true }
 }

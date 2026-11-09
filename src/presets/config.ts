@@ -27,6 +27,15 @@ export interface ModeConfig extends ResolvedConfig {
   residentTools: boolean
   /** Render the PTC batching guidance while an agent keeps spending steps on single operations. */
   batchingGuidance: boolean
+  /**
+   * Replace the official file tools even when this mode publishes no native file surface.
+   *
+   * The shared replacement controller hides a name only while its counterpart is visible and
+   * executable in the same scope, so this switch must be paired with publishing those
+   * counterparts (for PTC: `alwaysLoaded`). It exists because the PTC plan replaces nothing by
+   * default, and a preset that wants an OPS-only surface cannot get there with prompt text.
+   */
+  replaceHostTools: boolean
 }
 
 /** Every key a mode row accepts: the settings each enhanced preset really reads. */
@@ -36,12 +45,12 @@ export const MODE_CONFIG_KEYS: readonly string[] = Object.freeze([
   'bashPath', 'publishBashTool', 'allowSystemShellFallback', 'configUpdateVersion',
   'spillRetentionDays', 'spillTotalBudgetMiB', 'spillSweepEnabled',
   'allowedTools', 'alwaysLoaded', 'batchingGuidance',
-  'bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools', 'residentTools',
+  'bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools', 'residentTools', 'replaceHostTools',
 ])
 
 const PTC_KEYS = new Set(['allowedTools', 'alwaysLoaded', 'batchingGuidance'])
 /** Mode publication switches; enhanced presets default to on. */
-const SWITCH_KEYS = new Set(['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools', 'residentTools'])
+const SWITCH_KEYS = new Set(['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools', 'residentTools', 'replaceHostTools'])
 
 /**
  * Validate one mode row's config.
@@ -75,6 +84,7 @@ export function resolveModeConfig(rawConfig?: unknown, mode?: ModeId): ModeConfi
   return { ...resolved, allowedTools: api.allowedTools, alwaysLoaded: api.alwaysLoaded, batchingGuidance: api.batchingGuidance,
     bash, hidePwsh: sw('hidePwsh', true),
     hideOfficialTools: sw('hideOfficialTools', true), dynamicTools: sw('dynamicTools', true),
+    replaceHostTools: sw('replaceHostTools', false),
     residentTools: mode !== 'minimal' && sw('residentTools', true) }
 }
 

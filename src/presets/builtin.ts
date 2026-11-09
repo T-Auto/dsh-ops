@@ -34,8 +34,12 @@ export function applyResolvedMode(root: Context, config: ModeConfig, mode: ModeI
     presentation: plan.ptc ? 'ptc' : 'native', residentTools: enabled && config.residentTools,
     discovery: plan.ptc ? config.dynamicTools : options.discovery !== undefined && options.dynamic !== false && discovery.enabled,
     native: discovery, ptc: { binaryPath: config.binaryPath, required: config.required, allowedTools: config.allowedTools, alwaysLoaded: config.alwaysLoaded, batchingGuidance: config.batchingGuidance },
-    replaceOfficial: enabled && (config.hideOfficialTools || config.hidePwsh),
-    replacementTargets: consumerTargets(config.hideOfficialTools && plan.nativeFiles, config.hidePwsh && config.bash && plan.shell),
+    replaceOfficial: enabled && (config.hideOfficialTools || config.hidePwsh || config.replaceHostTools),
+    // A mode that publishes no native file surface can still want the host names gone: the
+    // counterparts live in the PTC SDK then, and the shared controller hides a name only while
+    // its counterpart is visible and executable in the same scope, so the preset must publish
+    // those first (`ptc.alwaysLoaded`) or this target list would hide nothing.
+    replacementTargets: consumerTargets(config.replaceHostTools || (config.hideOfficialTools && plan.nativeFiles), config.hidePwsh && config.bash && plan.shell),
     section: plan.section === null ? null : `mode-${plan.section}`,
     external: { allowed: [], alwaysLoaded: [], disabled: [] },
   })

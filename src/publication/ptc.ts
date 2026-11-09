@@ -259,8 +259,11 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       const directory = callable.has(publicToolName('load_sdk')) ? renderSdkDirectory(allowedApis(agent), callable) : ''
       // Rendered only while the agent keeps spending steps on single operations, and only when
       // this row allows it: the switch is the A/B variable, so it must stay observable.
+      // The playbook teaches the shape; the notice names the contradiction in the step just
+      // taken, which is the only part of this that is specific to this agent.
+      const batchingNotice = batching.active(agent) ? batching.notice(agent) : ''
       const batchingText = config.batchingGuidance && (batching.primed(agent) || batching.active(agent))
-        ? '\n\n' + BATCHING_GUIDANCE : ''
+        ? '\n\n' + BATCHING_GUIDANCE + (batchingNotice ? '\n\n' + batchingNotice : '') : ''
       return guidance + batchingText + (directory ? '\n\n' + directory : '')
     }
     ctx.effect(() => prompt.section({ name: ownership!.sectionName(PTC_SECTION), order: 3252, interpolate: false, text: '' }), 'dsh-ops: progressive PTC guidance')

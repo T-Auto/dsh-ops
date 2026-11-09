@@ -149,3 +149,11 @@
                 enabled: true
                 residentTools: true
                 batchingGuidance: true
+                # Publish the two OPS counterparts the replacement controller must see before it
+                # hides `glob` and `grep`. `read` already maps to the resident
+                # ops_inspect_local_file. Without these the host names stay visible and the model
+                # keeps choosing the closer surface.
+                alwaysLoaded: [glob, grep]
+                # The PTC plan replaces nothing by default; this preset is OPS-only, so the host
+                # file tools are replaced even though the mode publishes no native file surface.
+                replaceHostTools: true

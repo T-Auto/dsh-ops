@@ -30,8 +30,8 @@
         ptc:
           enabled: true
           residentTools: true
-          # Measured behaviour: the batching guidance is an A/B variable, so it stays explicit.
-          batchingGuidance: true
+          # Opt-in: only a preset that sets it (presets/ops.patch.yml) renders the playbook.
+          # Omitting it here keeps this row as the control arm of the A/B comparison.
           spillRetentionDays: 30
           spillTotalBudgetMiB: 256
           spillSweepEnabled: true
