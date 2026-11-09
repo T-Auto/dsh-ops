@@ -150,10 +150,10 @@ security boundary against the account or an administrator.
   `DSH_OPS_EXEC_ROOT` remains relevant only for discovering those legacy trees. Reclamation clears
   legacy seals before deletion and does not reinstall a corrupt source. Do not recursively delete
   trees by wildcard or remove them while jobs are running.
-- If a prepared version fails its selection-time integrity check, stop all hosts/jobs and remove
-  only the affected `<DSH_HOME>/dsh-ops/shells/niubash-prepared/<manifest hash>` directory. The
-  next selection rebuilds it from the verified source; provisioning only the source does not
-  replace an existing prepared version.
+- If a prepared version fails its selection-time integrity check, selection moves it to a
+  `.broken-<random>` sibling and makes one fresh preparation from the verified source. Removal
+  of the broken sibling is best-effort. If repair fails, the error reports both the old integrity
+  failure and the fresh preparation failure; there is no rebuild loop.
 - A missing or corrupt source needs the complete pinned payload restored. Repeated calls or
   switching sessions do not repair it. Selecting an arbitrary Git Bash is not a restricted-mode
   workaround: only a compatible pinned MSYS build may run restricted, never an unconfined fallback.

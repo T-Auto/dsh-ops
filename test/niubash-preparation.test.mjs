@@ -102,9 +102,39 @@ await test('version preparation is idempotent, complete and does not hardlink th
   assert.equal(verifyNiubashTree(target, true), selected)
   const face = path.join(target, 'winuxcmd/usr/bin/cat.exe')
   fs.unlinkSync(face)
-  assert.throws(() => prepareNiubashVersion(source, target), /Incomplete Niubash argv0 faces/)
-  fs.writeFileSync(face, 'untrusted')
-  assert.throws(() => prepareNiubashVersion(source, target), /checksum mismatch/)
+  assert.equal(prepareNiubashVersion(source, target), selected, 'a missing face is repaired once at selection')
+  fs.appendFileSync(selected, 'corrupt one prepared file')
+  assert.equal(verifiedNiubash(file, '', { DSH_HOME: root }).file, selected, 'the next selection rebuilds a corrupt prepared version')
+  fs.appendFileSync(selected, 'corrupt again')
+  const rename = fs.renameSync
+  let retiredBySibling = false
+  fs.renameSync = (from, to) => {
+    if (from === target) {
+      fs.rmSync(target, { recursive: true, force: true }); retiredBySibling = true
+      throw Object.assign(Error('a sibling already retired the damaged version'), { code: 'ENOENT' })
+    }
+    return rename(from, to)
+  }
+  try { assert.equal(prepareNiubashVersion(source, target), selected) } finally { fs.renameSync = rename }
+  assert.equal(retiredBySibling, true, 'a sibling retiring the old version does not strand this preparer')
+  assert.equal(verifyNiubashTree(target, true), selected)
+  assert.deepEqual(snapshot(source), before, 'repair never changes the frozen source')
+  assert.deepEqual(fs.readdirSync(path.dirname(target)), [path.basename(target)], 'damaged versions and scratch are removed')
+  const invalidSource = path.join(root, 'invalid-source'); fs.mkdirSync(invalidSource)
+  fs.writeFileSync(path.join(invalidSource, 'niu.exe'), 'untrusted')
+  assert.throws(() => prepareNiubashVersion(invalidSource, target), /checksum mismatch/, 'a good prepared target cannot authorize an invalid source')
+}))
+await test('one failed fresh repair reports both causes without another preparation attempt', async () => withTempDir('niu-repair-fail', async root => {
+  const target = path.join(root, 'prepared'), copy = fs.copyFileSync
+  prepareNiubashVersion(source, target)
+  fs.appendFileSync(path.join(target, 'niu.exe'), 'corrupt')
+  let copies = 0
+  fs.copyFileSync = () => { copies++; throw Object.assign(Error('fresh copy refused'), { code: 'EIO' }) }
+  try {
+    assert.throws(() => prepareNiubashVersion(source, target), /EXECUTOR_UNAVAILABLE:.*repair failed: existing version:.*checksum mismatch.*fresh preparation:.*fresh copy refused/)
+  } finally { fs.copyFileSync = copy }
+  assert.equal(copies, 1, 'repair makes exactly one fresh attempt')
+  assert.deepEqual(fs.readdirSync(root), [], 'failed preparation and damaged version are cleaned')
 }))
 await test('scratch cleanup failure cannot replace the publication rename diagnostic', async () => withTempDir('niu-cleanup-diagnostic', async root => {
   const rename = fs.renameSync, remove = fs.rmSync, warn = console.error, warnings = []

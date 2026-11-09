@@ -154,6 +154,8 @@ per-call cloning, hashing, seals or execution receipts, while every call follows
 `DSH_HOME` must place the prepared runtime outside the session workspace; each call enforces this.
 `DSH_OPS_EXEC_ROOT` and `NIUBASH_VERIFY=deep` are deprecated and ignored by runtime execution.
 Only offline legacy execution-tree reclamation still reads `DSH_OPS_EXEC_ROOT` to discover old roots.
+A damaged prepared version is moved aside and rebuilt once at selection from the verified source;
+failed repair reports both causes instead of looping.
 
 Custom MSYS Bash in Windows restricted modes requires the pinned build and verified private IPC proxies. Unsupported
 custom Bash returns `EXECUTOR_UNAVAILABLE`; never bypass confinement or change shells as a repair.

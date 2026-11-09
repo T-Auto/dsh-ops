@@ -2,6 +2,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { NIUBASH_FACES } from './faces.js'
 import {
   NIUBASH_EXECUTION_DIRECTORIES, NIUBASH_HOME_PATH, NIUBASH_PACKAGE_PATH,
@@ -21,6 +22,7 @@ export function niubashPreparedRoot(env: NodeJS.ProcessEnv = process.env): strin
 }
 
 /** Windows scanners can temporarily hold new executable files without delete sharing.
+ * Atomics.wait blocks the thread only on this one-time Windows rename path.
  * Retry only that publication rename, never preparation, verification or execution.
  * False means a racing preparer published a target that the caller must verify.
  */
@@ -49,7 +51,36 @@ export function publishNiubashVersion(from: string, to: string, {
  */
 export function prepareNiubashVersion(source: string, target = niubashPreparedRoot()): string {
   verifyNiubashTree(source)
-  if (fs.existsSync(target)) return verifyNiubashTree(target, true)
+  let previousFailure: Error | undefined
+  let broken: string | undefined
+  try {
+    if (fs.existsSync(target)) {
+      try { return verifyNiubashTree(target, true) }
+      catch (error) {
+        previousFailure = error instanceof Error ? error : new Error(String(error))
+        const aside = `${target}.broken-${randomUUID()}`
+        try {
+          if (!publishNiubashVersion(target, aside)) throw Error(`Could not move damaged prepared version aside: ${target}`)
+          broken = aside
+        } catch (renameError) {
+          // Another repair can retire the same bad version before this preparer gets here.
+          if (fs.existsSync(target)) throw renameError
+        }
+      }
+    }
+    return buildNiubashVersion(source, target)
+  } catch (error) {
+    if (previousFailure) throw new Error(`EXECUTOR_UNAVAILABLE: Niubash prepared runtime repair failed: existing version: ${previousFailure.message}; fresh preparation: ${error instanceof Error ? error.message : String(error)}`)
+    throw error
+  } finally {
+    if (broken) {
+      try { fs.rmSync(broken, { recursive: true, force: true }) }
+      catch (error) { console.error(`dsh-ops: could not remove damaged Niubash prepared version ${broken}: ${error}`) }
+    }
+  }
+}
+
+function buildNiubashVersion(source: string, target: string): string {
   fs.mkdirSync(path.dirname(target), { recursive: true })
   const scratch = fs.mkdtempSync(`${target}.stage-`)
   try {

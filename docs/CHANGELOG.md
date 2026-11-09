@@ -12,6 +12,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - Bound Windows first-preparation publication rename backoff to 10 seconds for temporary scanner sharing refusals only; preserve explicit publication diagnostics and never retry commands.
 - Windows 首次准备发布时，仅对扫描器临时共享拒绝的目录 rename 退避最多 10 秒，保留明确发布诊断，绝不重试命令。
+- Repair a damaged prepared Niubash version once at selection: move it aside, rebuild from the verified source, clean the old version best-effort, and report both causes if fresh preparation fails.
+- 准备后的 Niubash 版本损坏时，在选择阶段移走旧目录并从已验证源载荷重建一次，尽力清理旧版本；新准备仍失败时同时报告两次错误。
 - Reclaim incomplete legacy Niubash execution trees without requiring a completed execution receipt; verify every existing payload member, clear legacy deny ACEs/read-only attributes, and retain unknown contents. Offline confirmation is still required (#808).
 - 回收不完整的旧 Niubash 执行树时不再要求完整执行收据；核验每个现存载荷成员，解除旧 deny ACE/只读属性，保留未知内容，仍要求明确离线确认（#808）。
 - A Bash slot whose executor never resolved now says so in the prompt instead of rendering an empty section: the notice quotes the resolution `source` and `detail` (which already ends with the deployment remedy), points file work at the OPS file tools, and refuses to imply that swapping shells is a repair. Official PowerShell is still never hidden while Bash is unavailable.

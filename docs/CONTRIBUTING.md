@@ -138,8 +138,8 @@ for its real host checks. Bash commands retain their production 120-second defau
 descendant timeout/cancellation test uses an explicit 5-second command deadline. Version-level
 Niubash preparation happens at selection, not on each call; the suite watchdog is a separate outer
 limit. The descendant test proves that a child starts before its deadline and cannot write afterward.
-Reference Windows validation after removing per-call staging measured 71–88 seconds for
-`niubash-security-host` and 124–128 seconds for the clean `niubash-consumer`; these observations are
+Reference Windows validation after removing per-call staging measured 37 seconds for
+`niubash-security-host` and 69 seconds for the clean `niubash-consumer`; these observations are
 not command timeout settings. On a loaded host, provide a larger explicit outer budget without
 changing command deadlines:
 
