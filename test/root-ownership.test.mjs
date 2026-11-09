@@ -123,9 +123,10 @@ const CAPABILITIES = new Set(['on', 'once', 'register', 'unregister', 'effect', 
  * A capability call is a hit when its receiver resolves to the composition root:
  * the root expression itself (`ctx.root`, `ctx.root.fiber`, `ctx.root.reflect`),
  * a local bound to it (`const root = ctx.root ?? ctx`, `const { root } = ctx`,
- * `const target = root`), or a helper parameter whose call site passes one. A
- * root value that is only an argument — a WeakMap key, `ctx.get`, a call-budget
- * owner — never has this receiver shape, which is what keeps those reads legal.
+ * `const target = root`, `let r; r = ctx.root`), or a helper parameter whose
+ * call site passes one. A root value that is only an argument — a WeakMap key,
+ * `ctx.get`, a call-budget owner — never has this receiver shape, which is what
+ * keeps those reads legal.
  *
  * The compiler does the reading because the spellings that reach the root are
  * unbounded: a parenthesized `??`, an optional chain, a bracket key, a
@@ -194,7 +195,10 @@ function bindingScope(node) {
  * Every local binding in one file, by the identifier the code refers to them by.
  *
  * A destructured binding remembers the key it came from, so `const { root } = ctx`
- * and `const { root: alias } = ctx` both read as "this name is the root".
+ * and `const { root: alias } = ctx` both read as "this name is the root". A name
+ * declared without a value and assigned later (`let r; r = ctx.root`) is indexed
+ * once per assignment, so the use resolves to the value that is actually there
+ * instead of to an empty declaration.
  * @param sourceFile - the file to index.
  * @returns bindings grouped by the name they are read by.
  */
@@ -220,12 +224,26 @@ function bindingsOf(sourceFile) {
     ts.forEachChild(node, visit)
   }
   visit(sourceFile)
+  // A plain assignment points the name at a value too, so it is indexed the same
+  // way a declaration is: `let r; r = ctx.root` then resolves the use that
+  // follows it to the assignment rather than to the empty declaration.
+  const visitAssignments = (node) => {
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(node.left)) {
+      add(node.left.text, { scope: bindingScope(node), pos: node.getStart(sourceFile), initializer: node.right })
+    }
+    ts.forEachChild(node, visitAssignments)
+  }
+  visitAssignments(sourceFile)
   return bindings
 }
 
 /**
  * The binding an identifier refers to: the innermost scope that encloses the use
- * and declares the name no later than the use.
+ * and declares or assigns the name no later than the use. When a name is declared
+ * and then assigned again, the latest binding before the use wins, so a use sees
+ * the value that is actually there at that point. Branches are not simulated: a
+ * name assigned the root inside one branch still reads as root after it, which is
+ * the may-have-been shape this check wants to report.
  * @param context - the analysis context.
  * @param identifier - the identifier being read.
  * @returns the binding, or undefined when the name is not a local.
@@ -522,7 +540,8 @@ await test('AC-3: receiver analysis finds zero root-owned capabilities in src/',
 
 await test('AC-3b: the analyser catches every spelling of a root receiver, and leaves the legal reads alone', async () => {
   // Every spelling the review used to break the old text regex, each parsed on
-  // its own. A receiver analysis that misses any one of them is the same
+  // its own, plus the ones a later attack surface found (the deferred
+  // assignment). A receiver analysis that misses any one of them is the same
   // promise-without-a-proof this check exists to replace, so the list is a gate,
   // not a sample: the assertion names the spelling that escaped.
   const bypasses = {
@@ -534,6 +553,8 @@ await test('AC-3b: the analyser catches every spelling of a root receiver, and l
     'as-cast alias (const r = ctx.root as Context)': 'const r = ctx.root as Context\nr.on("tools/change", () => {})',
     'non-null assertion (ctx.root!.on)': 'ctx.root!.on("tools/change", () => {})',
     'second alias hop (const b = a)': 'const a = ctx.root ?? ctx\nconst b = a\nb.on("tools/change", () => {})',
+    'deferred assignment (let r; r = ctx.root)': 'let r\nr = ctx.root\nr.on("tools/change", () => {})',
+    'deferred assignment of a parenthesized root (let r; r = (ctx.root ?? ctx))': 'let r\nr = (ctx.root ?? ctx)\nr.on("tools/change", () => {})',
     'helper parameter (target.on)': 'function subscribe(target: Context) { target.on("tools/change", () => {}) }\nsubscribe(ctx.root ?? ctx)',
     'Reflect.get (Reflect.get(ctx.root, "on"))': 'Reflect.get(ctx.root, "on")("tools/change", () => {})',
     'bracket method (ctx.root["on"])': 'ctx.root["on"]("tools/change", () => {})',
@@ -560,18 +581,58 @@ await test('AC-3b: the analyser catches every spelling of a root receiver, and l
     'ctx.set (the row ctx, not the root)': 'ctx.set("tools", service)',
     'ctx.root.get (a service read)': 'const tools = ctx.root.get("tools")',
     'root.tools.set (the tools service, not the root)': 'ctx.root.tools.set("name", definition)',
+    'r.logger.warn, for a name assigned the root': 'let r\nr = ctx.root ?? ctx\nr.logger.warn("a property read is allowed")',
   }
   for (const [name, snippet] of Object.entries(legal)) {
     assert.equal(hitsFor(snippet).length, 0, name + ' is a legal root read, but the analyser called it a capability receiver')
   }
 
-  // Known limits, pinned rather than pretended away. Both need a value the
-  // analysis does not follow: a method name computed at run time, and a helper
-  // that returns the root instead of taking it. If either starts being caught
-  // this fails, so the limit list has to be updated rather than quietly rot.
+  // A later assignment does not reach back: a use sees the value the name holds
+  // at that point. Without this, an analysis that indexed the last assignment of
+  // a name would count both subscriptions below as root receivers.
+  assert.equal(
+    hitsFor('let r = ctx.root\nr.on("tools/change", () => {})\nr = ctx\nr.on("tools/second", () => {})').length,
+    1,
+    'the binding a use reads is the one before it, not the last assignment in the file',
+  )
+
+  // Known limits, pinned rather than pretended away. Each one is a shape the
+  // analysis deliberately does not follow, and the pin is an `assert.equal(0)`:
+  // the moment the analyser starts catching one, this fails and the declaration
+  // has to be corrected — the limit list rots quietly otherwise. The list was
+  // completed from an independent attack surface that reported eight shapes as
+  // missed; two of them were the deferred assignment, which the analyser now
+  // catches (see `bypasses` above), so the eight became two caught plus six
+  // still limited. The two entries this list already carried stay as they were.
   const limits = {
+    // The method name is a value that only exists at run time, so there is no
+    // string to compare against a capability name.
     'dynamic method key (root[method])': 'function subscribe(root: Context, method: string) { root[method]("tools/change", () => {}) }',
+    // The analysis follows what a name is *initialized or assigned* with, never
+    // what a function returns. Giving every function a "does it return the root"
+    // verdict is a call graph, and AC-1/AC-2 already catch this shape at run time.
     'helper return value (pick(ctx).on)': 'function pick(context: Context) { return context.root ?? context }\npick(ctx).on("tools/change", () => {})',
+    // A container is a different value: `arr` holds the root, it is not the
+    // root. Element identity would have to be indexed (`arr[0]` is the root,
+    // `arr[1]` is not) and a coarse "a container that holds the root makes every
+    // element the root" rule would call `const pair = { root, api }; pair.api.on(...)`
+    // a hit — the false red this analysis exists to avoid.
+    'array container (const arr = [ctx.root])': 'const arr = [ctx.root]\narr[0].on("tools/change", () => {})',
+    'object container (const o = { r: ctx.root })': 'const o = { r: ctx.root }\no.r.on("tools/change", () => {})',
+    // `this.r` is a class property, not a local: resolving it needs the class
+    // symbol and `this` typing, and a field can be reassigned from any method, so
+    // one initializer is not a value a use can trust.
+    'class field (this.r = c.root)': 'class C { r: Context\n constructor(c: Context) { this.r = c.root }\n m() { this.r.on("tools/change", () => {}) } }',
+    // `Function.prototype.call` puts the method one hop further out and the
+    // receiver in the argument list; following `apply`/`bind` would mean reading
+    // the prototype, which is a different analysis from "which value is this".
+    'call through Function.prototype.call (r.on.call)': 'const r = ctx.root\nr.on.call(r, "tools/change", () => {})',
+    // A spread rebuilds an argument list, so the call whose result is subscribed
+    // to has no receiver this analysis can name.
+    'spread argument (fn(...[r]).on)': 'const r = ctx.root\nfn(...[r]).on("tools/change", () => {})',
+    // A `for...of` binding is a loop variable: its value comes from the iterable
+    // per iteration, which the analysis would have to simulate.
+    'for-of binding (for (const r of [ctx.root]))': 'for (const r of [ctx.root]) { r.on("tools/change", () => {}) }',
   }
   for (const [name, snippet] of Object.entries(limits)) {
     assert.equal(hitsFor(snippet).length, 0, 'the analyser is documented not to resolve ' + name + '; it now does, so update the limit list')
