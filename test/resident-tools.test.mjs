@@ -18,31 +18,31 @@ import { legacyComponent } from './lib/legacy-component.mjs'
 const file = legacyComponent(fileModule)
 
 const READ = publicToolName('read_files'), DISCOVER = publicToolName('discover_tools')
-const DIRECTORY = '# On-demand Native tool directory'
+const DIRECTORY = 'Find on-demand tools with '
 async function assembled(ctx, agent) { const captured = await prepareStep(ctx, agent); try { return captured.assembly } finally { captured.dispose() } }
 async function admitted(ctx, agent) { const captured = await prepareStep(ctx, agent); try { return ctx.tools.schemas(agent, captured.toolSet).map(tool => tool.name).sort() } finally { captured.dispose() } }
 async function callTool(ctx, name, args, signal, agent) { const result = await executeCall(ctx, { name, arguments: args, signal, agent }); return { ...result, value: result.value?.data ?? result.value, text: result.content?.filter(block => block.type === 'text').map(block => block.text).join('\n') ?? '' } }
 async function assertDeferredDirectory(ctx, agent, assembly, eligible) {
+  const callable = new Set(assembly.tools.map(tool => tool.name))
+  const deferred = eligible.filter(raw => !callable.has(publicToolName(raw)))
   const directories = assembly.sections.filter(section => section.text.includes(DIRECTORY))
-  assert.equal(directories.length, eligible.length ? 1 : 0)
-  const directory = directories[0]?.text.split(DIRECTORY)[1] ?? ''
+  assert.equal(directories.length, deferred.length ? 1 : 0)
+  const pointer = directories[0]?.text.split(DIRECTORY)[1] ?? ''
   const guidance = assembly.sections.map(section => section.text.split(DIRECTORY)[0]).join('\n')
-  const listed = [...directory.matchAll(/^- (ops_\w+): /gm)].map(match => match[1])
-  assert.deepEqual(listed.sort(), eligible.map(publicToolName).sort(), 'only the eligible deferred pool is advertised')
-  for (const raw of DISCOVERABLE_TOOLS) {
+  assert.doesNotMatch(pointer, /^- ops_\w+:/m, 'the resident prompt no longer lists the deferred catalogue')
+  for (const raw of DISCOVERABLE_TOOLS.filter(raw => publicToolName(raw) !== READ)) {
     const name = publicToolName(raw)
-    assert.equal(assembly.tools.some(tool => tool.name === name), false, `${name} is not in the callable schema`)
+    assert.equal(callable.has(name), false, `${name} is not in the callable schema`)
     assert.equal((await admitted(ctx, agent)).includes(name), false, `${name} is not callable`)
     assert.equal(guidance.includes(name), false, `${name} is not action guidance`)
   }
-  if (eligible.length) {
-    assert.match(directory, /resident\/callable tools first/)
-    assert.ok(directory.includes(DISCOVER))
-    assert.match(directory, /select:exact_tool_name/)
-    assert.match(directory, /NOT callable or authorized/)
-    assert.match(directory, /Selection executes no action/)
-    assert.match(directory, /next model step, after their schema appears/)
-    assert.match(directory, /Execution authorization is checked on invocation/)
+  if (deferred.length) {
+    assert.ok(pointer.includes(DISCOVER))
+    assert.match(pointer, /task keywords/)
+    assert.match(pointer, /select:exact_tool_name/)
+    assert.equal(pointer.split('\n').length, 1, 'only a one-line loader pointer remains resident')
+    const loader = assembly.tools.find(tool => tool.name === DISCOVER)
+    assert.match(loader.description, /next model step.*no tool action/)
   }
 }
 const measure = tools => {
@@ -112,6 +112,13 @@ await test('the assembled directory excludes disallowed, unavailable and read-on
     await assertDeferredDirectory(ctx, writer, await assembled(ctx, writer), ['stat', 'write_file'])
     const reader = await mintDiscoveryAgent(ctx, 'directory-reader', dir, undefined, 'read-only')
     await assertDeferredDirectory(ctx, reader, await assembled(ctx, reader), ['stat'])
+    // Eligibility is proved through the actual loader, not names embedded in prompt text.
+    for (const [agent, writes] of [[writer, true], [reader, false]]) {
+      assert.deepEqual((await callTool(ctx, DISCOVER, { query: 'metadata revision hash', max_results: 1 }, undefined, agent)).value.activated, [publicToolName('stat')])
+      assert.deepEqual((await callTool(ctx, DISCOVER, { query: 'select:ops_write_file' }, undefined, agent)).value.activated, writes ? [publicToolName('write_file')] : [])
+      assert.deepEqual((await callTool(ctx, DISCOVER, { query: 'select:ops_glob' }, undefined, agent)).value.activated, [], 'disallowed tools cannot be discovered')
+      assert.equal((await admitted(ctx, agent)).includes(publicToolName('stat')), false, 'selection waits for the next model step')
+    }
     reader.session.mode = 'unavailable'
     await ctx.serial('session/event', reader.session, { type: 'sandbox/mode' })
     const unavailable = await assembled(ctx, reader)
