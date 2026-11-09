@@ -33,11 +33,22 @@ function tryJson(text) {
 
 /** A scratch directory at the temporary root, removed by the caller. */
 function scratchDirectory(name, bytes) {
-  const directory = path.join(fs.realpathSync.native(os.tmpdir()), name)
-  fs.mkdirSync(directory, { recursive: true })
+  const directory = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), name))
   fs.writeFileSync(path.join(directory, 'payload.bin'), Buffer.alloc(bytes))
   return directory
 }
+
+await test('scratch fixtures with the same label do not alias across runs', async () => {
+  const first = scratchDirectory('dsh-ops-pwsh-cache', 8)
+  const second = scratchDirectory('dsh-ops-pwsh-cache', 16)
+  try {
+    assert.notEqual(first, second)
+    fs.rmSync(first, { recursive: true, force: true })
+    assert.equal(fs.statSync(path.join(second, 'payload.bin')).size, 16)
+  } finally {
+    for (const directory of [first, second]) fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
 
 await test('status reports and reclaim previews without deleting, and --yes alone is a refusal', async () => {
   await withTempDir('cache-pending', (root) => {

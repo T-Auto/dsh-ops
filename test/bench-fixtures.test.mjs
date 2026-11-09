@@ -16,7 +16,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 
-import { assert, report, test, withTempDir } from './lib/harness.mjs'
+import { CPU_PROCESS_TIMEOUT_MS, assert, report, test, withTempDir } from './lib/harness.mjs'
 
 import {
   brokenProject, configTree, deepCorpus, deepModule, deriveConfigTree, deriveDeepModule,
@@ -165,7 +165,7 @@ await test('noisySuite fails once, names it uniquely, and exits non-zero', async
     files.forEach((file) => write(dir, file))
     // stdio "ignore": the exit code is the premise the task rests on, and the one
     // failure line is checked structurally above.
-    const outcome = spawnSync(process.execPath, ['runner.js'], { cwd: dir, stdio: 'ignore', timeout: 30000 })
+    const outcome = spawnSync(process.execPath, ['runner.js'], { cwd: dir, stdio: 'ignore', timeout: CPU_PROCESS_TIMEOUT_MS })
     assert.equal(outcome.status, 1, 'the generated suite must exit non-zero')
   })
 })
@@ -242,10 +242,10 @@ await test('brokenProject fails as shipped and passes when repaired', async () =
     files.forEach((file) => write(dir, file))
     // stdio "ignore": the exit code is the whole assertion, and a confined parent
     // (this suite under the DSH sandbox) cannot always open the pipes of a capturing spawn.
-    const broken = spawnSync(process.execPath, ['test.js'], { cwd: dir, stdio: 'ignore', timeout: 30000 })
+    const broken = spawnSync(process.execPath, ['test.js'], { cwd: dir, stdio: 'ignore', timeout: CPU_PROCESS_TIMEOUT_MS })
     assert.equal(broken.status, 1, `the broken project must fail on an assertion, got status ${broken.status}`)
     exports.fixes.forEach((fix) => write(dir, fix))
-    const fixed = spawnSync(process.execPath, ['test.js'], { cwd: dir, stdio: 'ignore', timeout: 30000 })
+    const fixed = spawnSync(process.execPath, ['test.js'], { cwd: dir, stdio: 'ignore', timeout: CPU_PROCESS_TIMEOUT_MS })
     assert.equal(fixed.status, 0, `the repaired project must pass, got status ${fixed.status}`)
     assert.equal(exports.testSource, fs.readFileSync(path.join(dir, 'test.js'), 'utf8'), 'the anti-tamper expectation must be the real test.js')
   })
@@ -266,7 +266,7 @@ await test('gatePipeline breaks exactly one constant per stage and its repairs g
   assert.ok(!exports.probes.includes(7), 'the chain seed must not be one of the probes')
   await withTempDir('bench-gates-', async (dir) => {
     files.forEach((file) => write(dir, file))
-    const runGate = () => spawnSync(process.execPath, ['check.js'], { cwd: dir, encoding: 'utf8', timeout: 30000 })
+    const runGate = () => spawnSync(process.execPath, ['check.js'], { cwd: dir, encoding: 'utf8', timeout: CPU_PROCESS_TIMEOUT_MS })
     const untouched = runGate()
     assert.equal(untouched.status, 1, 'the gate must fail before any repair')
     assert.match(untouched.stdout, /not ok 1 - gate_0/, 'the gate must stop at the first stage')

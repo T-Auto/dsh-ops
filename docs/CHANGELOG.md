@@ -25,6 +25,11 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - Reduce per-request tool overhead: Standard/Cordis keep only inspect/glob/grep resident, with read_files/result discovered on demand; PTC initially keeps inspect and load_sdk, with result loadable on demand even when allowedTools is empty. Replace always-resident capability directories with one-line loader pointers and remove prompt/schema repetition without changing argument defaults, limits, paging completeness or authority checks (#817).
 - 减少每请求固定工具开销：Standard/Cordis 仅常驻 inspect/glob/grep，read_files/result 按需发现；PTC 初始仅保留 inspect 与 load_sdk，即使 allowedTools 为空仍可按需加载 result。常驻能力目录改为一行加载器指引，删除提示词与 schema 的重复说明，不改变参数默认值、限额、分页完整性或权限检查（#817）。
+- Give CPU-bound test compilers, packers and fixture checks a shared 120-second subprocess budget so parallel-load contention is not mistaken for a hang; the CI suite watchdog remains in force and no failure is retried.
+- 测试中的编译器、打包器和 fixture 检查统一使用 120 秒子进程预算，避免把并行负载争用误判为挂死；保留 CI 套件 watchdog，失败不重试。
+
+- Run test suites in a bounded worker pool with isolated processes/homes, buffered output, per-suite timings and a slowest-ten summary; `DSH_OPS_TEST_JOBS=1` restores serial execution. Checkout rebuilds and shared Niubash payload mutations remain exclusive; cache CLI fixtures use unique scratch directories across runs. Remove timeout retries and avoid repeating the plugin build and manifest validation inside the release gate.
+- 测试套件改为有界并行，保留独立进程与临时 home，整块输出每套结果、耗时和最慢十套；`DSH_OPS_TEST_JOBS=1` 可恢复串行。重建 checkout 或修改共享 Niubash payload 的套件保持独占，缓存 CLI fixture 使用跨运行唯一的 scratch 目录；删除超时重试，并去掉发布门禁内重复的插件构建与 manifest 校验。
 
 - Unsealing an execution tree no longer skips a file whose Windows `dev:ino` matches another member's. That key is not unique on Windows, so a skipped file stayed read-only, could not be removed, and left the whole tree behind in the temp directory; a repeated `chmod` on a genuinely shared inode is harmless (#804).
 - 解封执行树时不再按 `dev:ino` 跳过文件：该键在 Windows 上并不唯一，被跳过的成员会一直只读、删不掉，进而把整棵树留在临时目录里。对真正共享的 inode 重复 `chmod` 无害（#804）。

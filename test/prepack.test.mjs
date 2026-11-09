@@ -8,7 +8,7 @@
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { assert, test, report, PACKAGE_ROOT, withTempDir } from './lib/harness.mjs'
+import { CPU_PROCESS_TIMEOUT_MS, assert, test, report, PACKAGE_ROOT, withTempDir } from './lib/harness.mjs'
 
 const manifest = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'package.json'), 'utf8'))
 /** The package-relative entry point `prepack` runs, or `undefined` when it is not a plain node script. */
@@ -36,8 +36,8 @@ function packEntry() {
 function pack(root) {
   const args = ['pack', '--dry-run', '--foreground-scripts']
   return process.platform === 'win32'
-    ? spawnSync('cmd.exe', ['/d', '/s', '/c', `npm.cmd ${args.join(' ')}`], { cwd: root, encoding: 'utf8', timeout: 60_000 })
-    : spawnSync('npm', args, { cwd: root, encoding: 'utf8', timeout: 60_000 })
+    ? spawnSync('cmd.exe', ['/d', '/s', '/c', `npm.cmd ${args.join(' ')}`], { cwd: root, encoding: 'utf8', timeout: CPU_PROCESS_TIMEOUT_MS })
+    : spawnSync('npm', args, { cwd: root, encoding: 'utf8', timeout: CPU_PROCESS_TIMEOUT_MS })
 }
 
 await test('the prepack entry point is published, not repository-only', () => {
@@ -68,7 +68,7 @@ await test('a checkout still builds and checks the payload before packing', () =
       `import fs from 'node:fs'\nfs.appendFileSync(${JSON.stringify(trace)}, 'build\\n')\n`)
     write(root, 'scripts/lib/build/niubash.mjs',
       `import fs from 'node:fs'\nfs.appendFileSync(${JSON.stringify(trace)}, 'check ' + process.argv.slice(2).join(' ') + '\\n')\n`)
-    const result = spawnSync(process.execPath, [path.join(root, entry)], { cwd: root, encoding: 'utf8', timeout: 30_000 })
+    const result = spawnSync(process.execPath, [path.join(root, entry)], { cwd: root, encoding: 'utf8', timeout: CPU_PROCESS_TIMEOUT_MS })
     assert.equal(result.status, 0, result.stderr)
     assert.equal(fs.readFileSync(trace, 'utf8'), 'build\ncheck --check\n')
   }))
