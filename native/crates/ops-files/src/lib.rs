@@ -12,7 +12,8 @@ use cap_std::fs::Dir;
 use contract::Result;
 pub use file::{
     MAX_FILE_BYTES, MAX_OUTPUT_BYTES, UpdateLock, atomic_write, authorize_write, check_revision,
-    dispatch, lock_and_read_for_update, read_bytes, relative_display, result, target,
+    dispatch, lock_and_read_for_update, lock_for_update, read_bytes, relative_display, result,
+    target,
 };
 
 /// Persist a directory's entries after an atomic publish.

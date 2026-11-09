@@ -139,6 +139,7 @@ await test('escalation argument failures precede approval and execution', async 
 
 await test('completed foreground jobs leave the registry with their result', async () => {
   const jobs = jobRegistry(), f = fixture({ jobs })
+  assert.match(f.definition.description, /long-running processes and daemons with run_in_background; job_kill terminates the job's entire process tree/)
   const value = await f.definition.execute({ command: 'true', description: 'Run a foreground host job' }, f.exec)
   assert.equal(value.kind, 'foreground'); assert.equal(jobs.removed, true)
   assert.equal(jobs.outcome.detail, 'exit code: 0')
@@ -328,13 +329,34 @@ await test('starter/result errors distinguish pre-execution evidence from uncert
     }, sessionWorkdir)
     const value = await custom.execute(args, f.exec)
     assert.equal(starts, 1); assert.equal(value.status, 'failed')
-    assert.equal(value.failure.effectState, started === false ? 'none' : 'unknown')
+    assert.equal(value.failure.effectState, started === true ? 'unknown' : 'none')
     assert.equal(value.failure.retry, 'never')
     assert.deepEqual(validateJsonSchemaValue(custom.output.schema, value, 'value'), [])
   }
+  const invalidStarter = hostBashDefinition({ get: name => f.services[name] }, base, () => {
+    throw new Error('INVALID_BASH_ARGUMENT: invalid staging input')
+  }, sessionWorkdir)
+  const invalid = await invalidStarter.execute(args, f.exec)
+  assert.equal(invalid.failure.code, 'INVALID_BASH_ARGUMENT')
+  assert.equal(invalid.failure.effectState, 'none')
+  assert.equal(invalid.failure.retry, 'after-input-change')
   f.services.shellEnv.collect = () => { throw new Error('environment collection failed') }
   const value = await f.definition.execute(args, f.exec)
   assert.equal(value.failure.effectState, 'none'); assert.equal(f.calls.length, 0)
+})
+
+await test('job preparation failure has no command effects and keeps its failure classification', async () => {
+  const jobs = jobRegistry(), f = fixture({ jobs })
+  const base = bashToolDefinition({ file: process.execPath, source: 'config', subprocess: f.services.subprocess })
+  const custom = hostBashDefinition({ get: name => f.services[name] }, base, () => {
+    throw new Error('STAGING_FAILED: preparation stopped before spawn')
+  }, sessionWorkdir, jobs)
+  const value = await custom.execute({ command: 'true', description: 'Fail before starting the process' }, f.exec)
+  assert.equal(value.failure.code, 'STAGING_FAILED')
+  assert.equal(value.failure.effectState, 'none')
+  assert.equal(value.failure.retry, 'never')
+  assert.equal(f.calls.length, 0)
+  assert.equal(jobs.removed, true)
 })
 
 await test('timeout cannot claim no effects while an invoked asynchronous starter has no handle', async () => {

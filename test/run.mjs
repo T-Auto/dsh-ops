@@ -18,9 +18,8 @@
  * @module dsh-ops/test/run
  */
 
-import { spawn, spawnSync } from 'node:child_process'
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readdirSync } from 'node:fs'
+import { runPool, runSuite, testJobs } from './lib/suite-runner.mjs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -75,8 +74,9 @@ const allowedSkips = new Set((process.env.DSH_OPS_ALLOW_SKIPS ?? '')
   .split(',').map((name) => name.trim()).filter(Boolean))
 const isAllowedSkip = (label) => allowedSkips.has(label) || allowedSkips.has(label.replace(/\.test\.mjs$/, ''))
 /**
- * Full-payload Niubash suites include verified cold copies and a real 120s descendant deadline.
- * They need a 600s watchdog; other suites retain 120s. An explicit positive environment budget wins.
+ * Full-payload Niubash suites include cold artifact setup and payload preparation.
+ * Cold setup measured below 60s locally; allow 300s for CI, versus 120s for other suites.
+ * An explicit positive environment budget wins.
  */
 const SUITE_TIMEOUT_MS = (() => {
   const raw = process.env.DSH_OPS_SUITE_TIMEOUT_MS
@@ -89,52 +89,38 @@ const SUITE_TIMEOUT_MS = (() => {
   return value
 })()
 
-/**
- * A deadline is the environment's answer, not the suite's. Retrying a timeout once, when asked,
- * separates a loaded runner from a real regression; a logic failure is never retried, and every
- * retry prints, so a green summary still shows that it happened. Unset means "do not retry".
- */
-const RETRY_TIMEOUTS = process.env.DSH_OPS_RETRY_TIMEOUTS === '1'
+let jobs
+try { jobs = testJobs() } catch (error) {
+  console.error(`dsh-ops test: ${error.message}`)
+  process.exit(2)
+}
 
 const COLD_PAYLOAD_SUITES = new Set(['niubash-consumer.test.mjs', 'niubash-payload-integration.test.mjs',
   'niubash-preparation.test.mjs', 'niubash-security-host.test.mjs'])
-const started = Date.now()
-
-/** Run one suite in its own process, with a throwaway DSH_HOME and a bounded deadline. */
-async function runSuite(suite) {
-  const home = mkdtempSync(path.join(tmpdir(), 'dsh-ops-test-home-'))
-  const label = path.basename(suite)
-  const timeoutMs = SUITE_TIMEOUT_MS ?? (COLD_PAYLOAD_SUITES.has(label) ? 600_000 : 120_000)
-  console.log(`\n=== ${label}`)
-  const child = spawn(process.execPath, [suite], {
-    cwd: root,
-    env: { ...process.env, DSH_HOME: home, ...(bashFixture ? { DSH_OPS_TEST_BASH: bashFixture } : {}) },
-    stdio: 'inherit',
-  })
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    console.error(`--- ${label} exceeded the ${Math.round(timeoutMs / 1000)}s suite deadline; stopping its owned process tree`)
-    if (process.platform === 'win32') {
-      spawnSync('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', timeout: 10000 })
-    } else child.kill('SIGKILL')
-  }, timeoutMs)
-  const status = await new Promise(resolve => {
-    child.once('error', error => { console.error(String(error)); resolve(null) })
-    child.once('close', code => resolve(code))
-  })
-  clearTimeout(timer)
-  rmSync(home, { recursive: true, force: true })
-  return { label, status, timedOut }
+// Measured Windows long tail: start expensive independent suites before the short tail.
+const HEAVY = ['permissions', 'bash-ipc', 'niubash-preparation', 'niubash-security-host',
+  'wsl-readonly', 'bin', 'niubash-payload-integration', 'release-tar-modes', 'prepack', 'ptc', 'file-operations']
+const weight = suite => {
+  const index = HEAVY.indexOf(path.basename(suite).replace(/\.test\.mjs$/, ''))
+  return index === -1 ? HEAVY.length : index
 }
+selected.sort((a, b) => weight(a) - weight(b) || a.localeCompare(b))
+const EXCLUSIVE = new Set([
+  // Only prepack rebuilds shared lib/; other Niubash suites copy into their own DSH_HOME.
+  'niubash-consumer.test.mjs',
+])
+const started = Date.now()
+const durations = []
+console.log(`dsh-ops test: ${selected.length} suites, ${jobs} worker(s); exclusive suites run afterwards`)
 
-for (const suite of selected) {
-  let { label, status, timedOut } = await runSuite(suite)
-  if (timedOut && RETRY_TIMEOUTS) {
-    console.error(`--- ${label} retrying once: that deadline was about the runner, not the suite`)
-    ;({ label, status, timedOut } = await runSuite(suite))
-    console.log(`--- ${label} ${timedOut ? 'timed out again' : `passed on the retry (exit ${status})`}`)
-  }
+await runPool(selected, { jobs, exclusive: EXCLUSIVE, run: async suite => {
+  const label = path.basename(suite)
+  const result = await runSuite(suite, { cwd: root,
+    env: bashFixture ? { DSH_OPS_TEST_BASH: bashFixture } : {},
+    timeoutMs: SUITE_TIMEOUT_MS ?? (COLD_PAYLOAD_SUITES.has(label) ? 300_000 : 120_000) })
+  const { status, timedOut, durationMs, output } = result
+  durations.push({ label, durationMs })
+  process.stdout.write(`\n=== ${label} (${(durationMs / 1000).toFixed(2)}s)\n${output}${output.endsWith('\n') || !output ? '' : '\n'}`)
   if (status === SKIPPED_EXIT && !timedOut) {
     if (requireRuntime && !isAllowedSkip(label)) {
       // A skip is the suite's way of saying "this environment cannot answer".
@@ -142,16 +128,21 @@ for (const suite of selected) {
       // at both layers, so neither one alone can turn it back into a pass.
       failed += 1
       console.error(`--- ${label} skipped while DSH_OPS_REQUIRE_RUNTIME=1`)
-      continue
+      return
     }
     skipped += 1
     console.log(`--- ${label} skipped`)
-    continue
+    return
   }
   if (status !== 0 || timedOut) {
     failed += 1
     console.error(`--- ${label} exited ${status}${timedOut ? ' (timeout)' : ''}`)
   }
+} })
+
+console.log('\n10 slowest suites:')
+for (const { label, durationMs } of durations.sort((a, b) => b.durationMs - a.durationMs).slice(0, 10)) {
+  console.log(`  ${(durationMs / 1000).toFixed(2)}s ${label}`)
 }
 
 const seconds = Math.round((Date.now() - started) / 1000)

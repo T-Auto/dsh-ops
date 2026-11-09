@@ -24,6 +24,9 @@ import { fileURLToPath } from 'node:url'
 /** The repository root, resolved from this file (`test/lib/`). */
 export const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 
+// Compilers/packers need parallel-load headroom, still below CI's 300s suite watchdog.
+export const CPU_PROCESS_TIMEOUT_MS = 120_000
+
 const home = process.env.DSH_HOME ?? ''
 if (home === '' || !path.resolve(home).startsWith(path.resolve(tmpdir()))) {
   console.error(

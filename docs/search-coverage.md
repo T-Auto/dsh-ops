@@ -42,6 +42,9 @@ of read bytes per call. Its cooperative deadline is 30 seconds, checked between 
 in force. Directory sorting and glob candidates are bounded; grep streams one bounded file and
 materializes only its output page. Later shared-budget work will centralize these limits.
 
+Exceeding depth 128 skips only that subtree, records `skipReasons`, and leaves later siblings eligible.
+Entry/file budget exhaustion also records its reason. Every such gap keeps `scanComplete: false`.
+
 Pass a returned `continuation` with the same query options and omit `offset` (or pass the cursor's
 `nextOffset`). The token binds the tool, normalized host-resolved path arguments, session, current
 authority fields, workspace identity and observed search state. Candidate order is deterministic;

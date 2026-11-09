@@ -88,11 +88,16 @@ await test('invalid UTF-8 and unsupported encoding report an actionable refusal 
     ]) {
       const args = { path: target, ...extra }
       const value = await call(tool, args, root)
+      const unsupportedArgument = tool === 'inspect_local_file' && extra.encoding !== undefined
+      const code = unsupportedArgument ? 'INVALID_ARGUMENT' : 'ERR_INVALID_ENCODING'
       assert.equal(value.status, 'error', JSON.stringify(value))
-      assert.equal(value.error.code, 'ERR_INVALID_ENCODING')
+      assert.equal(value.error.code, code)
       assert.equal(value.error.effectState, 'none')
-      assert.match(value.error.nextAction, /document\/binary.*view=hex/)
-      assert.match(render(tool, args, value), /error: ERR_INVALID_ENCODING/)
+      if (unsupportedArgument) {
+        assert.match(value.error.message, /`encoding`/)
+        assert.doesNotMatch(value.error.nextAction, /document\/binary.*view=hex/)
+      } else assert.match(value.error.nextAction, /document\/binary.*view=hex/)
+      assert.match(render(tool, args, value), new RegExp(`error: ${code}`))
       assert.match(render(tool, args, value), /retry=after-input-change/)
       assert.deepEqual(fs.readFileSync(target), bytes)
     }

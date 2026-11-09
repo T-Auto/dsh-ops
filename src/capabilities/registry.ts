@@ -28,7 +28,7 @@ export const PTC_CAPABILITIES = Object.freeze((Object.keys(ptcParameters) as Ptc
   rawName, component: 'ptc' as const, presentations: rawName === 'result' ? allPresentations : Object.freeze(['ptc'] as const),
   ...(rawName === 'result' ? { nativeProjection: { component: 'file' as const, availability: 'discoverable' as const, parameters: NATIVE_RESULT_PARAMETERS, description: NATIVE_RESULT_DESCRIPTION } } : {}),
   availability: 'resident' as const, mutates: true, concurrencySafe: false,
-  ptcAvailability: rawName === 'result' ? 'resident' as const : 'discoverable' as const,
+  ptcAvailability: 'discoverable' as const,
   supportsContinuation: rawName === 'result',
   parameters: ptcParameters[rawName], description: ptcDescriptions[rawName], output: ptcOutput,
 } satisfies SchemaCapability)))

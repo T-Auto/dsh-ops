@@ -134,6 +134,17 @@ fn glob_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
     if args.limit == 0 || args.limit > 10_000 {
         return Err(Failure::new("INVALID_ARGUMENT", "glob limit is 1-10000"));
     }
+    if let Some((index, _)) = args
+        .pattern
+        .iter()
+        .enumerate()
+        .find(|(_, pattern)| pattern.trim().is_empty())
+    {
+        return Err(Failure::new(
+            "INVALID_ARGUMENT",
+            format!("pattern[{index}] must be a non-empty glob"),
+        ));
+    }
     if args.pattern.is_empty() || args.pattern.iter().all(|pattern| pattern.starts_with('!')) {
         return Err(Failure::new(
             "INVALID_ARGUMENT",
@@ -255,11 +266,11 @@ pub(crate) fn grep_with_source(request: &Request, source: &dyn FsDataSource) -> 
 
 fn grep_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Value> {
     let args: GrepArgs = serde_json::from_value(request.args.clone())?;
-    if args.pattern.is_empty() || args.limit == 0 || args.limit > 10_000 {
-        return Err(Failure::new(
-            "INVALID_ARGUMENT",
-            "pattern and bounded limit are required",
-        ));
+    if args.pattern.is_empty() {
+        return Err(Failure::new("INVALID_ARGUMENT", "grep pattern is required"));
+    }
+    if args.limit == 0 || args.limit > 10_000 {
+        return Err(Failure::new("INVALID_ARGUMENT", "grep limit is 1-10000"));
     }
     if args.before_context > 32 || args.after_context > 32 {
         return Err(Failure::new(
@@ -477,3 +488,7 @@ fn grep_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
 #[cfg(test)]
 #[path = "index_source_tests.rs"]
 mod index_source_tests;
+
+#[cfg(test)]
+#[path = "search_tests.rs"]
+mod search_tests;

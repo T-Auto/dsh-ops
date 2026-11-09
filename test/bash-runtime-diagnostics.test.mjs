@@ -175,4 +175,25 @@ await test('a restricted bash that cannot run reports which bash and why, not a 
   })
 })
 
+await test('Niubash selection failures preserve their actionable reason without legacy execution-tree remedies', () => {
+  const reason = 'EXECUTOR_UNAVAILABLE: Niubash payload verification failed: checksum mismatch. Restore the complete pinned payload; do not bypass confinement.'
+  assert.equal(executorUnavailableMessage(new Error(reason)), reason)
+  assert.doesNotMatch(reason, /link.count|exec-tree|private copy/)
+})
+
+await test('unclassified failures keep their reason without obsolete concurrency remedies', () => {
+  for (const reason of [
+    "UNKNOWN: unknown error, link 'C:\\\\p\\\\runtime\\\\win32-x64\\\\niubash\\\\winuxcmd\\\\usr\\\\bin\\\\awk.exe' -> 'C:\\\\t\\\\awk.exe'",
+    'niubash 目录权限不足: EACCES',
+    'Niubash execution tree checksum mismatch: assets/icon.png',
+    'the exec root must not be inside the Niubash payload: C:\\\\payload',
+  ]) {
+    const message = executorUnavailableMessage(new Error(reason))
+    assert.doesNotMatch(message, /upgrade dsh-ops to 0\.5\.2/, reason)
+    assert.doesNotMatch(message, /concurrency/, reason)
+    assert.match(message, /^EXECUTOR_UNAVAILABLE: the restricted Bash runtime could not be prepared: /, reason)
+    assert.match(message, /do not switch shells to bypass confinement/, reason)
+  }
+})
+
 report('bash-runtime-diagnostics')

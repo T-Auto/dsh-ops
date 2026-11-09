@@ -170,7 +170,7 @@ await test('withdrawal revokes captured shared-file authority before yielding to
     assert.equal(tools.executable(STAT_TOOL, agent, step.toolSet), undefined, 'a held step must lose authority synchronously')
     const result = await retained.execute({ path: 'note' }, { agent, toolSet: step.toolSet,
       name: STAT_TOOL, callId: 'withdrawn', arguments: { path: 'note' }, signal: new AbortController().signal })
-    assert.equal(result.error.code, 'PUBLICATION_DENIED')
+    assert.equal(result.error.code, 'PUBLICATION_IDENTITY_MISMATCH')
     assert.equal(result.error.effectState, 'none')
     await settle()
     assert.equal(pendingSelection(ctx, agent), undefined)

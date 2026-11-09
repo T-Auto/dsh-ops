@@ -7,6 +7,73 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- The package no longer ships the duplicate `README.zh.md`; `README.md` is the Chinese readme and `README.en.md` the English one.
+- 发行包不再包含重复的 `README.zh.md`：`README.md` 即中文说明，`README.en.md` 为英文说明。
+
+- Run Niubash preparation/security suites in the parallel pool using their private prepared copies; only the prepack consumer remains exclusive. Reduce the cold-payload watchdog and Windows release-gate budget from 600 to 300 seconds, retaining explicit overrides and ample headroom above the measured cold setup.
+- Niubash 准备与安全套件使用各自 prepared 副本进入并行池，仅 prepack consumer 保持独占；完整载荷看门狗与 Windows 发布门禁预算从 600 秒调为 300 秒，保留显式覆盖，并为实测冷启动保留充分余量。
+
+- Windows publication now distinguishes genuine sharing/lock conflicts from unsupported exFAT locks and preserves unrelated IO errors instead of fabricating `REVISION_CONFLICT`. Volumes without named-stream/ACL support preserve available basic metadata with `metadataWarnings`; source metadata that is present but unsupported still fails closed (#800).
+- Windows 发布错误现在区分真实的共享/锁冲突、exFAT 不支持的锁及其他 IO 错误，不再伪造 `REVISION_CONFLICT`。不支持命名流/ACL 的卷会保留可用基本元数据并返回 `metadataWarnings`；源文件确有不受支持的元数据时仍闭锁拒绝（#800）。
+- `stat`, `copy`, `move` and `remove` compute SHA-256 revisions by streaming, so revision checks no longer impose the 32 MiB whole-content buffer limit. Hex inspection seeks for its requested window instead of materializing the file; content-holding operations retain explicit size errors, and an unsupported inspect `encoding` is an `INVALID_ARGUMENT` naming that field.
+- `stat`、`copy`、`move` 与 `remove` 改为流式计算 SHA-256 revision，不再受 32 MiB 完整内容缓冲限制。hex 检查按请求窗口定位读取，不再物化整个文件；必须持有内容的操作保留明确的大小错误，不支持的 inspect `encoding` 改为指明该字段的 `INVALID_ARGUMENT`。
+- Search depth overflow now skips only the affected subtree and records `skipReasons`, while entry/file budget stops also record their cause. Blank glob entries name their index, grep pattern/limit errors are distinct, and directory replace records permission-denied reads and continues eligible neighbors while lock, staging and publication denials still fail (#796, #797).
+- 搜索深度超限现在只跳过对应子树并记录 `skipReasons`，目录项/文件预算停止也会记录原因。空白 glob 条目会指明索引，grep 的 pattern 与 limit 错误分别报告；目录 replace 会记录读取权限拒绝的路径并继续处理其他合格文件，更新锁、暂存与发布阶段的权限拒绝仍使调用失败（#796、#797）。
+- Read-only file/result worker deadlines, caller cancellation, lossy output and nonzero exits now report `effectState: none` with `TIMEOUT`, `ABORTED`, `OUTPUT_LIMIT` or `EXECUTOR_UNAVAILABLE` as appropriate; signal death remains `RESULT_UNKNOWN` without implying mutation. Mutating calls retain uncertainty. Bash preparation that never returned a process handle likewise reports no effects and keeps its failure-specific retry advice.
+- 只读文件/结果 worker 的真实截止、调用方取消、输出丢失与非零退出现在报告 `effectState: none`，分别使用 `TIMEOUT`、`ABORTED`、`OUTPUT_LIMIT` 或 `EXECUTOR_UNAVAILABLE`；信号死亡仍为 `RESULT_UNKNOWN`，但不暗示发生写入。写入调用仍保留不确定性。Bash 准备在返回进程句柄前失败时同样报告无效果，并保留按失败类别给出的重试建议。
+- `write_file`/`edit_file` descriptions and bilingual contracts now state the effective 2 MiB request budget, and oversized writes name `content` and advise splitting. Bash guidance requires background jobs for long-running/daemon starts and notes that `job_kill` terminates the job's process tree.
+- `write_file`/`edit_file` 说明及双语契约现在标明实际的 2 MiB 请求预算，超大写入错误会指明 `content` 并建议拆分。Bash 指引要求长时间运行进程/守护进程使用后台任务，并说明 `job_kill` 会终止该任务的进程树。
+
+- If another profile with a different Niubash pin retires the selected runtime, recover it once on the next call from its selected verified source without retiring other pins. Online retirement leaves other hashes' in-progress staging directories for offline cleanup.
+- 同一 DSH_HOME 的另一 profile 使用不同 Niubash pin 并退役所选运行时时，下次调用从原选定的已验证源恢复一次，不退役其他 pin；在线退役保留其他哈希构建中的 stage 目录，交由离线回收。
+
+- Retire obsolete prepared Niubash versions, broken/retired leftovers and same-hash staging leftovers after successful selection: rename each exact namespace directory once before best-effort deletion, leave busy versions for later, and keep unrelated paths untouched. `cache status/reclaim --kind exec-tree` also covers non-current prepared versions, never the current hash.
+- 成功选择 Niubash 后退役旧准备版本及 broken/retired 和同哈希 stage 残留：仅处理精确命名空间目录，先尝试改名一次再尽力删除，保留繁忙版本待后续清理，不碰无关路径；`cache status/reclaim --kind exec-tree` 同样覆盖非当前准备版本，绝不回收当前哈希。
+
+- Prepare Windows Niubash once per frozen manifest hash under `DSH_HOME`, copying the source without hardlinks and publishing command faces plus startup directories atomically. Calls reuse the prepared runtime outside the workspace and retain host confinement, without per-call execution trees, hashing, seals, receipts or disposal. `DSH_OPS_EXEC_ROOT` and `NIUBASH_VERIFY=deep` no longer configure execution; the former remains available only to discover legacy trees for offline reclamation (#817).
+- Windows Niubash 按冻结清单哈希在 `DSH_HOME` 中一次性准备：复制源载荷但不建立源硬链接，预生成命令 face 与启动目录后原子发布。每次调用复用工作区外的准备运行时、保留宿主约束，不再创建执行树、哈希、封印、写收据或释放副本。`DSH_OPS_EXEC_ROOT` 与 `NIUBASH_VERIFY=deep` 不再配置运行行为；前者仅为离线回收发现旧执行树保留（#817）。
+
+- Bound Windows first-preparation publication rename backoff to 10 seconds for temporary scanner sharing refusals only; preserve explicit publication diagnostics and never retry commands.
+- Windows 首次准备发布时，仅对扫描器临时共享拒绝的目录 rename 退避最多 10 秒，保留明确发布诊断，绝不重试命令。
+- Repair a damaged prepared Niubash version once at selection: move it aside, rebuild from the verified source, clean the old version best-effort, and report both causes if fresh preparation fails.
+- 准备后的 Niubash 版本损坏时，在选择阶段移走旧目录并从已验证源载荷重建一次，尽力清理旧版本；新准备仍失败时同时报告两次错误。
+- Reclaim incomplete legacy Niubash execution trees without requiring a completed execution receipt; verify every existing payload member, clear legacy deny ACEs/read-only attributes, and retain unknown contents. Offline confirmation is still required (#808).
+- 回收不完整的旧 Niubash 执行树时不再要求完整执行收据；核验每个现存载荷成员，解除旧 deny ACE/只读属性，保留未知内容，仍要求明确离线确认（#808）。
+- Official read/glob/grep declarations now yield to an admitted OPS replacement in the same model step, sharing the source's conditional admission rather than publishing both and refusing official calls with `MODE_REPLACEMENT`. When the counterpart is unavailable, official fallback keeps its schema and execution callbacks and respects existing restrictions; an unlinked host scope leaves the original official definitions untouched (#787).
+- 官方 read/glob/grep 与 OPS 替代工具现在按同一模型步骤的准入结果互斥声明，不再同时发布后以 `MODE_REPLACEMENT` 拒绝官方调用；替代工具不可用时，官方回退保留原 schema 和执行回调，并遵守已有工具限制；宿主作用域关联失效时保留官方原始定义（#787）。
+- Publication diagnostics distinguish stale or unadmitted definitions (`PUBLICATION_IDENTITY_MISMATCH`) from missing or conflicting dispatch grants (`PUBLICATION_GRANT_UNAVAILABLE`), without changing authorization boundaries or claiming a root-cause fix for #784.
+- 发布诊断区分过期或未准入的定义（`PUBLICATION_IDENTITY_MISMATCH`）与缺失或冲突的分派授权（`PUBLICATION_GRANT_UNAVAILABLE`）；不改变授权边界，也不将诊断改进宣称为 #784 根因修复。
+- Retain explicit create-only `expectedRevision: "absent"` guidance in compact tool help and refresh deferred-tool security/regression fixtures (#817).
+- 精简工具说明时保留 create-only 所需的 `expectedRevision: "absent"` 明示，并同步延迟加载工具的安全与回归测试夹具（#817）。
+
+- Reduce per-request tool overhead: Standard/Cordis keep only inspect/glob/grep resident, with read_files/result discovered on demand; PTC initially keeps inspect and load_sdk, with result loadable on demand even when allowedTools is empty. Replace always-resident capability directories with one-line loader pointers and remove prompt/schema repetition without changing argument defaults, limits, paging completeness or authority checks (#817).
+- 减少每请求固定工具开销：Standard/Cordis 仅常驻 inspect/glob/grep，read_files/result 按需发现；PTC 初始仅保留 inspect 与 load_sdk，即使 allowedTools 为空仍可按需加载 result。常驻能力目录改为一行加载器指引，删除提示词与 schema 的重复说明，不改变参数默认值、限额、分页完整性或权限检查（#817）。
+- Give CPU-bound test compilers, packers and fixture checks a shared 120-second subprocess budget so parallel-load contention is not mistaken for a hang; the CI suite watchdog remains in force and no failure is retried.
+- 测试中的编译器、打包器和 fixture 检查统一使用 120 秒子进程预算，避免把并行负载争用误判为挂死；保留 CI 套件 watchdog，失败不重试。
+
+- Run test suites in a bounded worker pool with isolated processes/homes, buffered output, per-suite timings and a slowest-ten summary; `DSH_OPS_TEST_JOBS=1` restores serial execution. Only the Niubash consumer stays exclusive because prepack rebuilds shared `lib/`; preparation and security suites use private prepared copies and run with the pool. Cache CLI fixtures use unique scratch directories across runs. Remove timeout retries and avoid repeating the plugin build and manifest validation inside the release gate.
+- 测试套件改为有界并行，保留独立进程与临时 home，整块输出每套结果、耗时和最慢十套；`DSH_OPS_TEST_JOBS=1` 可恢复串行。仅 Niubash consumer 因 prepack 重建共享 `lib/` 保持独占；准备与安全套件改用各自 prepared 副本，可进入并行池。缓存 CLI fixture 使用跨运行唯一的 scratch 目录；删除超时重试，并去掉发布门禁内重复的插件构建与 manifest 校验。
+
+- Unsealing an execution tree no longer skips a file whose Windows `dev:ino` matches another member's. That key is not unique on Windows, so a skipped file stayed read-only, could not be removed, and left the whole tree behind in the temp directory; a repeated `chmod` on a genuinely shared inode is harmless (#804).
+- 解封执行树时不再按 `dev:ino` 跳过文件：该键在 Windows 上并不唯一，被跳过的成员会一直只读、删不掉，进而把整棵树留在临时目录里。对真正共享的 inode 重复 `chmod` 无害（#804）。
+- A hardlink clone the filesystem refuses with `UNKNOWN` now rebuilds the tree as copies. Windows reports the per-inode link limit under that single code, so the five-code fallback gate never matched and every Bash call failed until the condition cleared on its own; the fallback now also records the payload's highest link count so the ceiling is visible next time (#804).
+- 硬链接克隆遇到 `UNKNOWN` 失败时改为重建为复制副本。Windows 把 inode 链接上限归到这一个错误码下，此前五码白名单永远匹配不到，复制兜底不触发，每次 Bash 调用都会失败，只能等外部条件自行消失；现在回退还会记录 payload 的最高链接数，下次能直接看出是否触顶（#804）。
+- A Bash/Niubash preparation failure now shows the link-count paragraph only when the failure itself carries a link-count signature, and that paragraph no longer tells an installation already on 0.5.2 to upgrade to 0.5.2. Every other unclassified failure keeps its own reason and falls through to the default text (#805).
+- Bash/Niubash 准备失败现在只在错误本身带 link-count 特征时才显示那段说明，且该段不再要求已经运行 0.5.2 的安装去升级到 0.5.2；其余未分类失败保留自身原因、走默认文案（#805）。
+- A Bash slot whose executor never resolved now says so in the prompt instead of rendering an empty section: the notice quotes the resolution `source` and `detail` (which already ends with the deployment remedy), points file work at the OPS file tools, and refuses to imply that swapping shells is a repair. Official PowerShell is still never hidden while Bash is unavailable.
+- Bash 执行器未能解析时，提示段落不再留空，而是明确说明不可用：引用解析结果的 `source` 与 `detail`（后者已含部署侧修复办法），指明文件读写应走 OPS 文件工具，并明确不得以换 shell 充当修复；Bash 不可用时官方 PowerShell 仍绝不被隐藏。
+- Load `@deepseek-ai/dsh-scope` from the copy the running host resolves. A bundle that hoists its own copy into the profile tree used to shadow the host's, so scope contexts read as unscoped and creating a session failed with `Publication scope must match its registration context` (#752). The adapter resolves the host entry's copy, then the profile layer, then the bare specifier.
+- 从宿主实际解析到的那份 `@deepseek-ai/dsh-scope` 加载 scope 助手。某个 bundle 把副本提升进 profile 目录树时会遮蔽宿主那份，作用域上下文读不到标签，新建会话报 `Publication scope must match its registration context`（#752）。adapter 依次从运行入口、profile 层、最后才是裸导入解析。
+
+## [0.5.2] — 2026-11-08 — Patch release
+
+- Fix concurrent Windows Niubash preparation by verifying stable file identities instead of shared hardlink counts; retain preparing trees through disposal without replacing the zero-copy path or reverting 0.5.1's bounded retention.
+- 修复 Windows Niubash 并发准备：以稳定文件身份而非共享硬链接计数校验，准备中的执行树参与释放协调；保留零拷贝路径和 0.5.1 的有界保留修复。
+- Allow the merged settings row to persist and clear the selected Git Bash path in all four built-in modes.
+- 合并设置行可在四种内置模式中保存、清除选定的 Git Bash 路径。
+- Offline execution-cache reclamation discovers configured/same-volume roots and clears the verified tree's read-only/deny-delete seal before removal; Niubash failures give specific recovery commands instead of promising a retry fixes every failure.
+- 离线执行缓存回收覆盖显式及同卷根目录，删除前解除已验证树的只读/拒绝删除封印；Niubash 故障提供具体恢复命令，不再笼统承诺重试可修复。
+
 ## [0.5.1] — 2026-11-08 — Patch release
 
 - Bound temporary-resource growth through ownership ledgers, deferred result-cache cleanup and explicit cache reclamation; preserve data-bearing snapshots and user content. Host output spills now have bounded retention rather than accumulating indefinitely.
@@ -38,9 +105,7 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 每个合并门禁都成为真正的门禁：`validate-windows`、`validate-macos-intel`、`tools-trial` 去掉 `continue-on-error` 并加入 `CI required` 的 `needs` 与失败判定循环；bench smoke 移到 `benchmark-gates.yml`（手动 + 每月调度），`ci.yml` 不再有非阻塞 job；`node-floor` 覆盖 Linux 与 Windows；新增 `rust-lint`，用 `native/rust-toolchain.toml` 钉住的 1.97.1 门禁 `cargo fmt --check` 与 `clippy -D warnings`。`scripts/check-workflows.mjs` 用 `EXPECTED_BLOCKING` 单一事实源校验“job 已分类 / needs 与循环一致”，并按实测 p99 收紧超时。
 - 发布不可变：release `gate` 拒绝被 force-move 的 tag，要求 tag commit 的 `CI required` 为 success，并改用与 CI 相同的 `verify-gate.mjs`（恢复“skip 不是通过”的断言，Niubash 载荷套件真跑）；`publish` 只补缺失资产，不再 `--clobber`。规则集模板带上 merge queue，由幂等的 `scripts/apply-ruleset.mjs` 下发。
 
-
 ## [0.5.0] — 2026-11-06 — Stable release
-
 
 - This stable release summarizes the user- and developer-facing changes since v0.4.0, including the 0.4.1-0.4.4 patch releases and the 0.5.0 previews. **Breaking:** the 0.5 series targets DSH 0.2.2-rc.1 and later 0.2.2 releases only; older hosts are no longer supported.
 - 本正式版汇总自 v0.4.0 起（含 0.4.1-0.4.4 补丁版与 0.5.0 预览版）的用户与开发者相关变更。**破坏性变更**：0.5 系列仅面向 DSH 0.2.2-rc.1 起的 0.2.2 发行线，不再支持旧宿主。
@@ -383,7 +448,6 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   was the visible lag when starting one with many sessions open.
 - 新建会话时只规划新 Agent，不再重读所有存活会话的工具视图；`tools/change` 只核对它实际触达的
   Agent，宿主未标注归属的变更合并为一次处理。新建会话不再随已开会话数线性扫描工具视图。
-
 
 ## [0.5.0] — 2026-10-27 — Preset-mode component roster
 

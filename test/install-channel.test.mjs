@@ -16,7 +16,7 @@ import { assert, PACKAGE_ROOT, report, test, withTempDir } from './lib/harness.m
 
 /** Everything the validator reads: built `lib/`, the gates, payloads and manifests. */
 const PUBLISHED = ['lib', 'scripts', 'locale', 'licenses', 'dsh-plugin.json', 'cordis.patch.yml',
-  'package.json', 'LICENSE', 'NOTICE', 'README.md', 'README.zh.md', 'README.en.md',
+  'package.json', 'LICENSE', 'NOTICE', 'README.md', 'README.en.md',
   'docs/PROVENANCE.md', 'docs/CHANGELOG.md', 'docs/assets/icon.png']
 
 /** Stage a copy of the package the validator can run against, dependencies included. */

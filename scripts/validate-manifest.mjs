@@ -541,7 +541,7 @@ const REQUIRED_ENTRIES = [
   'NOTICE',
   'licenses',
   'README.md',
-  'README.zh.md',
+  'README.en.md',
   'docs/PROVENANCE.md',
   'docs/CHANGELOG.md',
 ]

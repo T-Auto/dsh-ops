@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::fs::{self};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 /// Shared bound for file reads and proposed write/replacement content.
@@ -79,7 +79,7 @@ pub fn relative_display(root: &Path, path: &Path) -> String {
         .to_string_lossy()
         .replace('\\', "/")
 }
-pub fn read_bytes(path: &Path) -> Result<Vec<u8>> {
+fn open_read(path: &Path) -> Result<cap_std::fs::File> {
     let raw = path
         .to_str()
         .ok_or_else(|| Failure::new("INVALID_ARGUMENT", "Non-UTF8 path"))?;
@@ -87,10 +87,14 @@ pub fn read_bytes(path: &Path) -> Result<Vec<u8>> {
         error.message = format!("read path validation: {}", error.message);
         error
     })?;
-    let mut file = crate::file_path::read_file(&target).map_err(|mut error| {
+    crate::file_path::read_file(&target).map_err(|mut error| {
         error.message = format!("read open: {}", error.message);
         error
-    })?;
+    })
+}
+
+pub fn read_bytes(path: &Path) -> Result<Vec<u8>> {
+    let mut file = open_read(path)?;
     let mut bytes = Vec::new();
     std::io::Read::by_ref(&mut file)
         .take(MAX_FILE_BYTES + 1)
@@ -98,10 +102,74 @@ pub fn read_bytes(path: &Path) -> Result<Vec<u8>> {
     if bytes.len() as u64 > MAX_FILE_BYTES {
         return Err(Failure::new(
             "OUTPUT_LIMIT",
-            "File exceeds the bounded read budget",
+            "File exceeds the 32 MiB in-memory content budget for this operation",
         ));
     }
     Ok(bytes)
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FileFacts {
+    pub revision: String,
+    pub bytes: u64,
+    pub line_count: Option<u64>,
+}
+
+/// Hash and count a file without retaining its contents. The small UTF-8 tail
+/// carries only an incomplete code point between reads, never the file itself.
+pub(crate) fn stream_facts(
+    reader: &mut impl Read,
+    mut sink: Option<&mut dyn Write>,
+) -> Result<FileFacts> {
+    let mut hash = Sha256::new();
+    let mut bytes = 0u64;
+    let mut newlines = 0u64;
+    let mut last_byte = None;
+    let mut valid_utf8 = true;
+    let mut utf8_tail = Vec::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        let chunk = &buffer[..read];
+        hash.update(chunk);
+        bytes += read as u64;
+        newlines += chunk.iter().filter(|byte| **byte == b'\n').count() as u64;
+        last_byte = chunk.last().copied();
+        if let Some(writer) = sink.as_deref_mut() {
+            writer.write_all(chunk)?;
+        }
+        if valid_utf8 {
+            utf8_tail.extend_from_slice(chunk);
+            match std::str::from_utf8(&utf8_tail) {
+                Ok(_) => utf8_tail.clear(),
+                Err(error) if error.error_len().is_some() => {
+                    valid_utf8 = false;
+                    utf8_tail.clear();
+                }
+                Err(error) => {
+                    let valid = error.valid_up_to();
+                    utf8_tail.drain(..valid);
+                }
+            }
+        }
+    }
+    if !utf8_tail.is_empty() {
+        valid_utf8 = false;
+    }
+    let line_count =
+        valid_utf8.then(|| newlines + u64::from(bytes != 0 && last_byte != Some(b'\n')));
+    Ok(FileFacts {
+        revision: format!("{:x}", hash.finalize()),
+        bytes,
+        line_count,
+    })
+}
+
+pub(crate) fn read_facts(path: &Path) -> Result<FileFacts> {
+    stream_facts(&mut open_read(path)?, None)
 }
 #[path = "file_many.rs"]
 mod many;
@@ -153,12 +221,51 @@ fn inspect_args(
     }
     if !args.encoding.eq_ignore_ascii_case("utf-8") {
         return Err(Failure::new(
-            "ERR_INVALID_ENCODING",
-            "Text inspection supports UTF-8 only",
+            "INVALID_ARGUMENT",
+            "Invalid argument `encoding`: text inspection supports UTF-8 only",
         ));
+    }
+    if args.view == "hex" {
+        return inspect_hex(args, include_path);
+    }
+    if args.view != "text" {
+        return Err(Failure::new("INVALID_ARGUMENT", "view must be text or hex"));
     }
     let prepared = load_inspection(&args.path)?;
     inspect_prepared(args, prepared, budget, include_path, capture)
+}
+
+fn inspect_hex(args: InspectArgs, include_path: bool) -> Result<Value> {
+    let path = target(&args.path, false)?;
+    if !path.is_file() {
+        return Err(Failure::new(
+            "INVALID_ARGUMENT",
+            "path is a directory; use ops_glob or ops_grep",
+        ));
+    }
+    let mut file = open_read(&path)?;
+    // Revision and lineCount remain whole-file facts, but are streamed. Only the
+    // requested hex window is retained, regardless of the file's total size.
+    let facts = stream_facts(&mut file, None)?;
+    let total = facts.bytes;
+    let start = (args.offset.saturating_sub(1).saturating_mul(16) as u64).min(total);
+    let length = (args.limit.min(1900) * 16) as u64;
+    file.seek(SeekFrom::Start(start))?;
+    let mut window = Vec::with_capacity(length.min(total - start) as usize);
+    std::io::Read::by_ref(&mut file)
+        .take(length.min(total - start))
+        .read_to_end(&mut window)?;
+    let end = start + window.len() as u64;
+    let text = window
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut value = json!({"status":"completed","phase":"verify","changed":0,"matched":1,"skipped":start,"failed":0,"complete":end == total,"truncated":end < total,"nextOffset":end.div_ceil(16)+1,"omitted":total.saturating_sub(end),"bytesTotal":total,"revision":facts.revision,"bytes":facts.bytes,"lineCount":facts.line_count,"items":[{"path":path,"view":"hex","offset":start,"text":text}]});
+    if include_path {
+        value["path"] = json!(path);
+    }
+    Ok(value)
 }
 struct PreparedInspection {
     path: PathBuf,
@@ -190,34 +297,8 @@ fn inspect_prepared(
     if bytes.len() as u64 > MAX_FILE_BYTES {
         return Err(Failure::new(
             "OUTPUT_LIMIT",
-            "file exceeds the inspect size budget",
+            "file exceeds the 32 MiB in-memory content budget for text inspection",
         ));
-    }
-    if args.view == "hex" {
-        // `offset` means the same thing in both views: the 1-based unit to start
-        // from — line N for text, 16-byte row N for hex. It used to count rows
-        // from zero here while the text branch counted lines from one, so the
-        // declared default of 1 skipped the first row, and the declared
-        // `minimum: 1` left no way to ask for it back: any file of at most 16
-        // bytes read back as an empty string. In this view `skipped` and the item
-        // `offset` are byte counts, not row counts.
-        let start = args
-            .offset
-            .saturating_sub(1)
-            .saturating_mul(16)
-            .min(bytes.len());
-        let end = (start + args.limit.min(1900) * 16).min(bytes.len());
-        let text = bytes[start..end]
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        return Ok(
-            json!({"status":"completed","phase":"verify","changed":0,"matched":1,"skipped":start,"failed":0,"complete":end == bytes.len(),"truncated":end < bytes.len(),"nextOffset":end.div_ceil(16)+1,"omitted":bytes.len().saturating_sub(end),"bytesTotal":bytes.len(),"revision":facts["revision"],"bytes":facts["bytes"],"lineCount":facts["lineCount"],"items":[{"path":path,"view":"hex","offset":start,"text":text}]}),
-        );
-    }
-    if args.view != "text" {
-        return Err(Failure::new("INVALID_ARGUMENT", "view must be text or hex"));
     }
     let text = String::from_utf8(bytes)
         .map_err(|_| Failure::new("ERR_INVALID_ENCODING", "File is not valid UTF-8"))?;
@@ -494,7 +575,7 @@ impl PreservedMetadata {
 /// can match it, so `ops_glob`, `ops_grep` and a directory-wide `ops_replace`
 /// never return, count or rewrite one; `ops_batch` resolves its operations from
 /// the request, never from a walk.
-pub fn lock_and_read_for_update(file: &Path) -> Result<(UpdateLock, Vec<u8>)> {
+pub fn lock_for_update(file: &Path) -> Result<UpdateLock> {
     let raw = file
         .to_str()
         .ok_or_else(|| Failure::new("INVALID_ARGUMENT", "Non-UTF8 path"))?;
@@ -505,11 +586,14 @@ pub fn lock_and_read_for_update(file: &Path) -> Result<(UpdateLock, Vec<u8>)> {
         "{:x}",
         Sha256::digest(checked.name.to_lowercase().as_bytes())
     );
-    let lock = UpdateLock::acquire(
+    UpdateLock::acquire(
         &checked.parent,
         &format!(".dsh-ops-update-{key}.lock"),
         "another writer is updating this path; nothing was changed, retry",
-    )?;
+    )
+}
+pub fn lock_and_read_for_update(file: &Path) -> Result<(UpdateLock, Vec<u8>)> {
+    let lock = lock_for_update(file)?;
     let bytes = read_bytes(file)?;
     Ok((lock, bytes))
 }
@@ -636,3 +720,98 @@ mod single;
 use single::content_facts;
 
 pub use publication::{authorize_write, check_revision};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn streaming_facts_match_whole_content_across_utf8_boundaries() {
+        let mut bytes = vec![b'a'; 65_535];
+        bytes.extend_from_slice("α\r\nβ".as_bytes());
+        bytes.extend_from_slice(b"\nlast");
+        let facts = stream_facts(&mut &bytes[..], None).unwrap();
+        assert_eq!(facts.revision, format!("{:x}", Sha256::digest(&bytes)));
+        assert_eq!(facts.bytes, bytes.len() as u64);
+        assert_eq!(
+            facts.line_count.map(|count| count as usize),
+            std::str::from_utf8(&bytes)
+                .ok()
+                .map(|text| text.lines().count())
+        );
+        for bytes in [
+            &b""[..],
+            &b"\n"[..],
+            &b"one\n"[..],
+            &b"one"[..],
+            &b"\xff"[..],
+        ] {
+            let facts = stream_facts(&mut &bytes[..], None).unwrap();
+            assert_eq!(facts.bytes, bytes.len() as u64);
+            assert_eq!(
+                facts.line_count.map(|count| count as usize),
+                std::str::from_utf8(bytes)
+                    .ok()
+                    .map(|text| text.lines().count())
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_inspect_encoding_names_the_argument() {
+        let error = inspect_args(
+            InspectArgs {
+                path: "not-read".into(),
+                offset: 1,
+                limit: 1,
+                encoding: "utf-16".into(),
+                view: "text".into(),
+            },
+            MAX_OUTPUT_BYTES,
+            false,
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "INVALID_ARGUMENT");
+        assert!(error.message.contains("`encoding`"));
+        assert!(!error.next_action.contains("view=hex"));
+    }
+
+    #[test]
+    fn hex_reads_a_bounded_window_beyond_the_content_budget() {
+        let root = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!("dsh-ops-large-hex-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("large.bin");
+        let length = MAX_FILE_BYTES + 17;
+        std::fs::File::create(&path)
+            .unwrap()
+            .set_len(length)
+            .unwrap();
+        let error = read_bytes(&path).unwrap_err();
+        assert_eq!(error.code, "OUTPUT_LIMIT");
+        assert!(error.message.contains("32 MiB in-memory content budget"));
+
+        let offset = (MAX_FILE_BYTES / 16 + 1) as usize;
+        let value = inspect_args(
+            InspectArgs {
+                path: path.to_string_lossy().into_owned(),
+                offset,
+                limit: 2,
+                encoding: utf8(),
+                view: "hex".into(),
+            },
+            MAX_OUTPUT_BYTES,
+            false,
+            None,
+        )
+        .unwrap();
+        assert_eq!(value["bytesTotal"], json!(length));
+        assert_eq!(value["items"][0]["offset"], json!(MAX_FILE_BYTES));
+        assert_eq!(value["items"][0]["text"], json!(vec!["00"; 17].join(" ")));
+        assert_eq!(value["complete"], json!(true));
+        assert_eq!(value["omitted"], json!(0));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

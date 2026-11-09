@@ -22,7 +22,9 @@ await test('the page matches the host descriptor, and the opt-in switches share 
     const group = GROUPS.find(entry => entry.id === section)
     const expected = section === 'minimal' ? SWITCHES : ['bash', 'hidePwsh', 'hideOfficialTools', 'residentTools', 'dynamicTools']
     assert.deepEqual(group.fields.map(spec => spec.path[1]), expected, section)
-    assert.deepEqual([...group.fields.map(spec => spec.path[1]), 'enabled'].sort(), Object.keys(Config.dict[section].dict).sort(), section)
+    // bashPath belongs to the executor card rather than the boolean switch grid.
+    assert.deepEqual([...group.fields.map(spec => spec.path[1]), 'enabled', 'bashPath'].sort(), Object.keys(Config.dict[section].dict).sort(), section)
+    assert.equal(Config.dict[section].dict.bashPath.meta.volatile, true)
   }
   // compat/panel/tui used to be three single-switch cards; they are one card now.
   const other = GROUPS.find(group => group.id === 'other')
