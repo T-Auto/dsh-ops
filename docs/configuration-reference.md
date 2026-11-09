@@ -149,13 +149,20 @@ choice for that consumer, not an authorization grant.
 
 Windows Niubash selection verifies the frozen source and prepares one copied runtime at
 `<DSH_HOME>/dsh-ops/shells/niubash-prepared/<manifest hash>`, including command faces and six
-startup directories. Source files are never hardlinked into it. Calls reuse that runtime without
+startup directories. Source files are never hardlinked into it. Ordinary calls reuse that runtime without
 per-call cloning, hashing, seals or execution receipts, while every call follows the current host policy (`confine` in restricted modes).
 `DSH_HOME` must place the prepared runtime outside the session workspace; each call enforces this.
 `DSH_OPS_EXEC_ROOT` and `NIUBASH_VERIFY=deep` are deprecated and ignored by runtime execution.
 Only offline legacy execution-tree reclamation still reads `DSH_OPS_EXEC_ROOT` to discover old roots.
 A damaged prepared version is moved aside and rebuilt once at selection from the verified source;
-failed repair reports both causes instead of looping.
+failed repair reports both causes instead of looping. After successful selection, other prepared
+versions and broken/retired leftovers, plus staging leftovers of the selected hash only are renamed to `.retired-<uuid>`
+siblings before best-effort deletion. Only exact prepared-version names and real directories are
+touched; a refused rename is not retried until the next selection. `cache status/reclaim --kind
+exec-tree` also lists/reclaims these non-current prepared directories (including other hashes'
+staging leftovers), never the current hash. If another profile with a different Niubash pin retires
+the selected version, its next call prepares that pin once from its selected verified source,
+without retiring other versions.
 
 Custom MSYS Bash in Windows restricted modes requires the pinned build and verified private IPC proxies. Unsupported
 custom Bash returns `EXECUTOR_UNAVAILABLE`; never bypass confinement or change shells as a repair.
