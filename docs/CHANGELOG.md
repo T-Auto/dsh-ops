@@ -7,6 +7,14 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- The batching playbook now states the per-program dispatch ceiling: at most 128 dispatches in one `run_code` program, with a larger fan-out split into batches.
+- 批量范式写明单个程序的并发上限：一次 `run_code` 程序最多 128 个 dispatch，超过则分批。
+- Documented why the `ops` preset's prompt-cache hit rate trails the stock PTC row on short tasks (4.21 pp measured), how that cost is priced by edit position rather than text size, and why the layout is left unchanged. See `docs/ptc-cost.md`.
+- 记录了 `ops` 预设的提示词缓存命中率在短任务上低于原版 PTC 行的原因（实测 4.21 个百分点）、代价由插入位置而非文本大小决定，以及为何不改动提示词布局。见 `docs/ptc-cost.md`。
+- The playbook now teaches the load step: an on-demand `ops_*` name is loaded with `ops_load_sdk` in the previous program, never replaced by the shell, and the `bypass` notice names `ops_glob`/`ops_grep`/`ops_read_files` instead of only reporting the offence.
+- 注入里补上「先加载再调用」：未加载的 `ops_*` 名字要用 `ops_load_sdk` 在上一个程序里载入，不许退回 shell；`bypass` 的提醒也从只说违规改成直接点名该用的工具。
+- The batching playbook is now opt-in: `batchingGuidance` defaults to `false`, so only a preset that asks for it (`presets/ops.patch.yml`) renders the shape and its notice. Every other PTC row keeps the plain section and stays the control arm for measuring the playbook.
+- 批量范式改为按需开启：`batchingGuidance` 默认 `false`，只有显式开启的预设（`presets/ops.patch.yml`）才渲染该范式及其提醒；其余 PTC 行保持原样，作为衡量范式效果的对照组。
 - The PTC prompt section now carries a batching shape, not only an imperative. After two consecutive `run_code` programs shorter than 800 characters the section publishes a short example a model can copy — parallel reads, an anchor checked before the edit, a revision-checked edit, and a summarised print — and withdraws it after one dense program. The decision is latched per turn, so the cached system-prompt prefix is rewritten at most once per turn instead of on every thin step.
 - PTC 提示段落不再只有一句祈使句，而是补上可照抄的批量范式：连续两个短于 800 字符的 `run_code` 程序之后，段落发布一段示例（并行读取、编辑前校验锚点、带版本号编辑、摘要式输出），遇到一次长程序即撤销。该决策按轮锁存，系统提示的缓存前缀每轮最多重写一次，而不是每个薄步骤都重写。
 

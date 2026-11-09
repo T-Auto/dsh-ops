@@ -45,6 +45,61 @@ spawned by this assembly-only probe.
   equal-task, equal-success comparisons with official PTC, including generated
   program length, returned summaries, retries and actual model usage/cache data.
 
+## Prompt-cache hit rate against task length
+
+A two-session A/B on the same task ("read the workspace structure to depth 3 and
+report every folder and file") measured the stock PTC row against the `ops` preset.
+The `ops` run reported 91.12% cache-read-of-input against 95.33% for the control: a
+4.21 pp deficit. Breakdown of that deficit, per step and in tokens:
+
+| Source | Tokens | Share |
+| --- | ---: | ---: |
+| host `TOOLS_SDK` grew after `ops_load_sdk` | 56,726 | 2.18 pp |
+| the batching notice was injected mid-prompt | 29,787 | 1.15 pp |
+| cold start (control had a warm prefix, `ops` had none) | 25,871 | 1.00 pp |
+| an AGENTS.md reload notice appended at the end | -2,345 | -0.09 pp |
+| **total** | **110,039** | **4.23 pp** |
+
+All three real contributors are one-off costs paid in the first three steps; the
+remaining 19 steps ran at **95.95%**, above the control's 95.58% over its steady
+steps. The `ops` run also spent 24.4% fewer input tokens and 9 fewer steps overall.
+
+### Position, not size, prices a prompt edit
+
+The same session contained its own control for this. The AGENTS.md reload notice was
+3,668 characters and cost **zero** cache reads, because it was appended at the end of
+the conversation. The batching notice was 248 characters and cost 29,787, and the SDK
+declaration grew by 12,625 characters and cost 56,726, because both are inserted near
+the middle of the system prompt. Every character after an edit point is re-read; the
+15x larger text was free and the smaller ones were not.
+
+### The deficit washes out as tasks get longer
+
+Fitting each side's steady per-step prompt growth (4,423 characters for the control,
+4,255 for `ops`) and amortising the fixed cost gives:
+
+| Steps | Control | `ops` | Gap |
+| ---: | ---: | ---: | ---: |
+| 22 (measured) | 92.88% | 89.54% | -3.34 pp |
+| 50 | 96.49% | 95.60% | -0.90 pp |
+| 100 | 98.14% | 97.87% | -0.27 pp |
+| 200 | 99.04% | 98.96% | -0.07 pp |
+
+### Decision
+
+The prompt layout is deliberately left as it is. Moving the notice to the tail would
+recover about 1.15 pp; the 2.18 pp from `TOOLS_SDK` belongs to the host and cannot be
+moved by this plugin. Both are rejected against the cost of changing a frozen prompt
+structure for a deficit that disappears on any task longer than roughly 50 steps.
+Making `read_files`/`glob`/`stat` resident instead of load-on-demand was measured as a
+net loss: the declaration would add ~3,500 tokens to every step (~77,000 over the
+measured run) to avoid one 56,726-token repricing.
+
+Reproduce from a session export with two `usage` records per step: cache-read tokens
+are `cacheReadTokens`, uncached input is `inputTokens`, and hit rate is
+`cacheReadTokens / (cacheReadTokens + inputTokens)`. Drop each side's first three steps
+before comparing steady state, and treat the lead-in as the fixed cost it is.
+
 ## Default decision
 
 The operator chose to keep PTC enhancement enabled, shell enabled on all targets,
