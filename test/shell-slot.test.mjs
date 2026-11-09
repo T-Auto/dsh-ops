@@ -319,8 +319,8 @@ await test('a hidden PowerShell fallback returns when Bash authority is withdraw
   try {
     await ctx.plugin(Bundle, { ...minimalOnly, minimal: { hidePwsh: true }, other: { pwsh7Link: false } })
     const agent = await mint('fallback')
-    await assemble(agent)
-    assert.equal(names(agent).includes('pwsh'), process.platform !== 'win32')
+    const initial = await assemble(agent)
+    assert.equal(initial.tools.some(tool => tool.name === 'pwsh'), process.platform !== 'win32')
     agent.session.mode = 'unavailable'
     await ctx.serial('session/event', agent.session, { type: 'sandbox/mode' }); await new Promise(resolve => setImmediate(resolve))
     await assemble(agent)

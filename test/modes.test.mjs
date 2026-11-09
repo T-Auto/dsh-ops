@@ -176,7 +176,7 @@ await test('creating a session does not re-plan every live session', () => withT
     const tools = ctx.get('tools')
     const original = tools.definitions.bind(tools)
     let views = 0
-    tools.definitions = scope => { views += 1; return original(scope) }
+    tools.definitions = (...args) => { views += 1; return original(...args) }
     let baseline
     // Twelve sessions first, so what is measured is the thirteenth.
     for (let index = 0; index < 12; index++) {

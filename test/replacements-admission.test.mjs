@@ -9,12 +9,23 @@ import { prepareStep, executeCall } from './lib/executor.mjs'
 const targets = new Map(Object.entries(OFFICIAL_REPLACEMENTS))
 const tool = name => ({ name, description: `fixture ${name}`, parameters: { type: 'object', properties: {} },
   output: { schema: { type: 'object' }, render: () => [] }, execute: async () => ({ ran: name }) })
-async function fixture(body) {
+async function fixture(body, { unboundProbe = false } = {}) {
   const { ctx, tools } = await bootHost()
   let allowed = true, keep = false
   const agent = { id: 'replacement', session: { id: 'replacement' } }
   agent.ctx = createScope(ctx, agent).ctx
-  ctx.provide('agents', { list: () => [agent] })
+  const warnings = []
+  ctx.logger.exporter({ levels: { default: 4 }, export(message) {
+    if (message.type === 'warn') warnings.push(message.args.join(' '))
+  } })
+  if (unboundProbe) {
+    // A second dsh-scope copy binds a private WeakMap the host cannot see: probes
+    // then read the root view, exactly as if bindScopeParent were a no-op.
+    const get = tools.get.bind(tools)
+    tools.get = (name, scope, toolSet) => get(name, scope && scope !== agent ? undefined : scope, toolSet)
+  }
+  const live = []
+  ctx.provide('agents', { list: () => live })
   const officials = new Map([...targets.keys()].map(name => [name, tool(name)]))
   const removeOfficials = new Map([...officials].map(([name, definition]) => [name, tools.register(definition)]))
   await ctx.plugin({ apply(inner) { mountReplacements(inner, { id: 'fixture', targets,
@@ -31,8 +42,9 @@ async function fixture(body) {
   try {
     // Cordis inject callbacks load scope helpers asynchronously, outside plugin readiness.
     await new Promise(resolve => setImmediate(resolve))
+    live.push(agent)
     await ctx.serial('agent/created', { agent })
-    await body({ ctx, tools, agent, officials, removeOfficials, publish, leases,
+    await body({ ctx, tools, agent, officials, removeOfficials, publish, leases, warnings,
       revokeAuthority: () => { allowed = false }, keepOfficial: () => { keep = true } })
   } finally { leases.forEach(lease => lease.dispose()); await shutdown(ctx) }
 }
@@ -178,6 +190,22 @@ await test('original source unload revokes held callbacks and a new source is se
     } finally { removeNew() }
   } finally { held.dispose() }
 }))
+
+await test('unlinked probe scopes keep official tools visible and callable with one warning', () => fixture(async ({ ctx, tools, agent, officials, publish, warnings }) => {
+  await publish(() => false)
+  tools.register(tool('unrelated-probe'))
+  for (let i = 0; i < 2; ++i) {
+    const step = await prepareStep(ctx, agent)
+    try {
+      for (const name of targets.keys()) {
+        assert.ok(names(step).includes(name))
+        assert.equal(tools.get(name, agent), officials.get(name), 'an unlinked scope must not keep an official shadow')
+        assert.equal((await dispatch(ctx, agent, step, name)).value.ran, name)
+      }
+    } finally { step.dispose() }
+  }
+  assert.equal(warnings.filter(message => message.includes('scope linkage unavailable')).length, 1)
+}, { unboundProbe: true }))
 
 for (const change of ['revokeAuthority', 'keepOfficial']) await test(`${change} leaves official fallback callable without a guard`, () => fixture(async f => {
   await f.publish(() => true)

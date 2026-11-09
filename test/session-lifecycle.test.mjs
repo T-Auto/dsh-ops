@@ -155,9 +155,9 @@ await test('delayed discovery keeps the official available until the replacement
       const first = await prepareStep(ctx, agent)
       try {
         assert.ok(first.assembly.tools.some(tool => tool.name === 'ops_inspect_local_file'))
-        assert.ok(first.assembly.tools.some(tool => tool.name === 'read'), 'conditional replacement retains the official schema')
-        const denied = await executeCall(ctx, { agent, name: 'read', arguments: {}, toolSet: first.toolSet })
-        assert.equal(denied.isError, true, 'same-step OPS admission guards official dispatch')
+        assert.equal(first.assembly.tools.some(tool => tool.name === 'read'), false, 'same-step replacement excludes the official declaration')
+        const absent = await executeCall(ctx, { agent, name: 'read', arguments: {}, toolSet: first.toolSet })
+        assert.equal(absent.error.info.code, 'UNKNOWN_TOOL', 'the official is absent, not refused by a replacement guard')
         assert.equal((await executeCall(ctx, { agent, name: 'read', arguments: {}, toolSet: pending.toolSet })).value,
           'official', 'a held official-only step never gains a retroactive replacement guard')
       } finally { first.dispose() }

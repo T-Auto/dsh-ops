@@ -28,7 +28,8 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
     const { scopeChainOf, bindScopeParent } = await loadScopes()
     const sources = new WeakSet<ToolDefinition>()
     const entries = new Map<Agent, Entry>()
-    const disposed = new WeakSet<Agent>()
+    // Disposed agents and agents with unlinked host scopes must not receive shadows.
+    const inactive = new WeakSet<Agent>()
     let stopped = false, mutating = false
     let scheduled: ReturnType<typeof setImmediate> | undefined
     const defer = (): void => {
@@ -56,6 +57,7 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
     const apply = (agent: Agent, entry: Entry): void => {
       withToolChange([agent], () => {
         for (const [official, counterpart] of targets) {
+          if (inactive.has(agent)) return
           const source = sourceFor(agent, official)
           const old = entry.shadows.get(official)
           const current = tools.get(official, agent)
@@ -67,22 +69,34 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
           if (!source || !canShadow) continue
           const definition = { ...source }
           sources.add(definition)
-          const dispose = publicationRegistration(agent.ctx, () => agent.ctx.get('tools')!.register(definition, { when: async activation => {
-            // Own registrations bypass restrictions in the host view. The empty descendant
-            // probe makes our shadow inherited, so even agent-local restrictions still apply.
-            if (tools.get(official, entry.probe) !== definition || sourceFor(activation.agent, official) !== source) return false
-            if (keepOfficial() || !gate.allows(activation.agent)) return true
-            const replacement = tools.get(counterpart, activation.agent)
-            if (!replacement) return true
-            const admission = publicationAdmission(replacement)
-            return admission ? !await admission(activation) : tools.executable(counterpart, activation.agent) === undefined
-          } }))
+          const dispose = publicationRegistration(agent.ctx, () => {
+            const unregister = agent.ctx.get('tools')!.register(definition, { when: async activation => {
+              // Own registrations bypass restrictions in the host view. The empty descendant
+              // probe makes our shadow inherited, so even agent-local restrictions still apply.
+              if (tools.get(official, entry.probe) !== definition || sourceFor(activation.agent, official) !== source) return false
+              if (keepOfficial() || !gate.allows(activation.agent)) return true
+              const replacement = tools.get(counterpart, activation.agent)
+              if (!replacement) return true
+              const admission = publicationAdmission(replacement)
+              return admission ? !await admission(activation) : tools.executable(counterpart, activation.agent) === undefined
+            } })
+            const probe = tools.get(official, entry.probe)
+            if (probe !== undefined && probe !== definition) {
+              inactive.add(agent)
+              unregister()
+              lift(agent, entry)
+              entries.delete(agent)
+              ctx.logger.warn(`dsh-ops: ${mode} replacement scope linkage unavailable; keeping official tools for this agent`)
+            }
+            return unregister
+          })
+          if (inactive.has(agent)) { dispose(); return }
           entry.shadows.set(official, { source, definition, dispose })
         }
       })
     }
     const reconcileAgent = (agent: Agent): void => {
-      if (stopped || mutating || disposed.has(agent) || !gate.allows(agent)) return
+      if (stopped || mutating || inactive.has(agent) || !gate.allows(agent)) return
       let entry = entries.get(agent)
       if (!entry) {
         const probe = {}
@@ -107,9 +121,9 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
         try { lift(agent, entry); entries.delete(agent) } finally { mutating = false }
       }
     }
-    ctx.on('agent/created', ({ agent }) => { disposed.delete(agent); reconcileAgent(agent) })
+    ctx.on('agent/created', ({ agent }) => { inactive.delete(agent); reconcileAgent(agent) })
     ctx.on('agent/disposed', ({ agent }) => {
-      disposed.add(agent)
+      inactive.add(agent)
       const entry = entries.get(agent)
       if (entry) { entries.delete(agent); lift(agent, entry) }
     })
