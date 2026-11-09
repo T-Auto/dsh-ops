@@ -25,6 +25,11 @@ fn page_complete(failure: Option<&Failure>, observed: usize, offset: usize, limi
 fn ten() -> usize {
     10
 }
+/// Recovery for a failure raised before any output exists; the call site names the step.
+fn fail(mut error: Failure, next_action: &'static str) -> Failure {
+    error.next_action = next_action.into();
+    error
+}
 pub fn read(request: &Request) -> Result<Value> {
     let args: Args = serde_json::from_value(request.args.clone())?;
     if args.offset == 0 || args.offset > MAX_PAGES || args.limit == 0 || args.limit > MAX_PAGES {
@@ -40,7 +45,10 @@ pub fn read(request: &Request) -> Result<Value> {
     let before = file.metadata()?;
     let started = Instant::now();
     if before.len() > MAX_FILE as u64 {
-        return Err(Failure::new("OUTPUT_LIMIT", "PDF input exceeds 16 MiB"));
+        return Err(fail(
+            Failure::new("OUTPUT_LIMIT", "PDF input exceeds 16 MiB"),
+            "This PDF is larger than the 16 MiB input limit, which bounds the whole file: reducing the page limit or offset cannot make it readable. Use a dedicated PDF reader for this file; no page text was read.",
+        ));
     }
     let mut bytes = Vec::new();
     file.by_ref()
