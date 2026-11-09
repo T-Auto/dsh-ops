@@ -1,14 +1,4 @@
-//! A deliberately restricted PDF container: one classic xref table.
-//!
-//! Every structure is bounded before it is trusted: a 16 MiB file, 10 000 objects, 1 MiB per
-//! encoded or decoded stream, 64 nested object reads, and a 20-second container deadline. A
-//! malformed structure is a structured failure, never a recovered guess.
-//!
-//! Exactly one cross-reference section is read, and it must end at the final footer. A trailer
-//! that names `/Prev` or `/XRefStm` describes an incremental update, which this container
-//! refuses (#432): superseded object bytes stay in the file, so following the earlier section
-//! would be a different, unsupported format. Parsed object ranges must stay disjoint from each
-//! other and from the xref section.
+//! Bounded PDF container: classic xref tables and indirect object references.
 use crate::pdf_syntax::{Dict, Lexer, MAX_NODES, Value, bad, limit, unsupported, white};
 use ops_protocol::{Failure, Result};
 use std::collections::{BTreeMap, BTreeSet};
@@ -16,8 +6,7 @@ use std::time::{Duration, Instant};
 pub const MAX_FILE: usize = 16 * 1024 * 1024;
 pub const MAX_OBJECTS: usize = 10_000;
 pub const MAX_STREAM: usize = 1024 * 1024;
-/// Objects one indirect `/Length` chain may hold in flight. Parsing a referenced stream resolves
-/// its own `/Length` first, so each link nests one read.
+/// Objects one indirect `/Length` chain may keep in flight.
 const MAX_NESTED_OBJECT_READS: usize = 64;
 const CONTAINER_DEADLINE: Duration = Duration::from_secs(20);
 pub type ObjectId = (u32, u16);
@@ -209,12 +198,7 @@ struct Section {
     entries: BTreeMap<usize, XrefEntry>,
     trailer: Dict,
 }
-/// Refuse a trailer that names an earlier cross-reference section.
-///
-/// `/Prev` and `/XRefStm` describe an incremental update only as trailer keys; the same names
-/// inside a page or outline dictionary are ordinary data. A file with either key keeps
-/// superseded object bytes, so reading it is a different format than the single-revision
-/// container below resolves.
+/// Refuse a trailer that names `/Prev` or `/XRefStm`; both mark an incremental update.
 fn reject_incremental_trailer(trailer: &Dict) -> Result<()> {
     for key in [b"Prev".as_slice(), b"XRefStm"] {
         if trailer.contains_key(key) {
@@ -406,11 +390,7 @@ impl<'a> Loader<'a> {
         Ok(())
     }
 }
-/// Reject ranges that overlap: an xref offset is an object header, never a byte inside one.
-///
-/// The header region is checked separately: before the first indexed construct a PDF has its
-/// version line and at most a comment line, and anything else there is unindexed data rather
-/// than part of the document. Gaps between indexed constructs are not read.
+/// Reject overlapping ranges; the header region must not contain unindexed data.
 fn verify_ranges(
     data: &[u8],
     mut ranges: Vec<(usize, usize)>,
@@ -528,7 +508,7 @@ pub fn parse(data: &[u8]) -> Result<Document<'_>> {
     root_object.value.dict()?;
     Ok(document)
 }
-// Decode one already bounded stream; verify the actual zlib terminator and complete input consumption.
+// Decode one bounded stream; verify the zlib terminator and complete input consumption.
 pub fn decode(object: &Object<'_>) -> Result<Vec<u8>> {
     let raw = object.stream.ok_or_else(|| bad("Expected a PDF stream"))?;
     if raw.len() > MAX_STREAM {
