@@ -29,7 +29,7 @@ import { bootHost, shutdown, scopedToolNames } from './lib/host.mjs'
 import { assert, test, report, skipSuite, wait, waitFor, withTempDir } from './lib/harness.mjs'
 
 const OFFICIAL = ['read', 'glob', 'grep', 'write']
-const RESIDENT = ['ops_inspect_local_file', 'ops_glob', 'ops_grep', 'ops_read_files', 'ops_result']
+const RESIDENT = ['ops_inspect_local_file', 'ops_glob', 'ops_grep']
 const tool = name => ({ name, description: `fixture ${name}`, parameters: { type: 'object', properties: {} },
   output: { schema: { type: 'object' }, render: () => [] }, execute: async () => ({}) })
 
@@ -111,7 +111,7 @@ await test('mode-standard publishes resident OPS tools only for its preset and h
   try {
     const standard = await ctx.plugin(Standard, { required: true, promptPolicy: true })
     const own = await mint({ preset: 'standard', cwd })
-    await waitFor(() => names(own).includes('ops_read_files'), { what: 'standard resident publication' })
+    await waitFor(() => names(own).includes('ops_inspect_local_file'), { what: 'standard resident publication' })
     for (const name of RESIDENT) assert.ok(names(own).includes(name), `${name} in ${names(own).join(', ')}`)
     assert.ok(names(own).includes('write'), 'unreplaced official mutation tools stay visible')
     for (const name of OFFICIAL) assert.ok(names(own).includes(name), 'conditional counterpart retains official visibility')
@@ -119,7 +119,7 @@ await test('mode-standard publishes resident OPS tools only for its preset and h
     try { for (const name of ['read','glob','grep']) assert.equal((await executeCall(ctx, { agent: own, name, arguments: {}, toolSet: held.toolSet })).isError, true) } finally { held.dispose() }
     assert.equal(names(own).includes('ops_bash'), process.platform === 'win32', 'the Windows shell replacement publishes ops_bash')
     const section = (await assemble(own)).sections.find(entry => entry.name === modeSectionName('mode-standard'))
-    assert.ok(section && String(section.text).includes('ops_read_files'), 'the mode-standard routing section names the surface')
+    assert.ok(section && String(section.text).includes('ops_inspect_local_file'), 'the mode-standard routing section names the surface')
     // A different preset with no mode row mounted sees no OPS surface at all and
     // keeps every official tool.
     const other = await mint({ preset: 'cordis', cwd })
@@ -208,7 +208,7 @@ await test('hideOfficialTools false keeps official tools alongside residents', (
   try {
     await ctx.plugin(Standard, { required: true, promptPolicy: true, hideOfficialTools: false })
     const agent = await mint({ preset: 'standard', cwd })
-    await waitFor(() => names(agent).includes('ops_read_files'))
+    await waitFor(() => names(agent).includes('ops_inspect_local_file'))
     for (const name of OFFICIAL) assert.ok(names(agent).includes(name), name)
     for (const name of RESIDENT) assert.ok(names(agent).includes(name), name)
   } finally { await shutdown(ctx) }
@@ -219,7 +219,7 @@ await test('disposing a mode row withdraws both its OPS surface and its replacem
   try {
     const row = await ctx.plugin(Standard, { required: true, promptPolicy: true })
     const agent = await mint({ preset: 'standard', cwd })
-    await waitFor(() => names(agent).includes('ops_read_files') && names(agent).includes('read'), { what: 'mode applied' })
+    await waitFor(() => names(agent).includes('ops_inspect_local_file') && names(agent).includes('read'), { what: 'mode applied' })
     await row.dispose()
     await waitFor(() => RESIDENT.every(name => !names(agent).includes(name)), { what: 'resident tools withdrawn with the row' })
     await waitFor(() => OFFICIAL.every(name => names(agent).includes(name)), { what: 'official tools restored with the row' })
@@ -232,9 +232,9 @@ await test('mode-cordis serves its own preset with the same resident surface and
   try {
     const row = await ctx.plugin(Cordis, { required: true, promptPolicy: true })
     const agent = await mint({ preset: 'cordis', cwd })
-    await waitFor(() => names(agent).includes('ops_read_files') && names(agent).includes('read'), { what: 'cordis mode applied' })
+    await waitFor(() => names(agent).includes('ops_inspect_local_file') && names(agent).includes('read'), { what: 'cordis mode applied' })
     for (const name of RESIDENT) assert.ok(names(agent).includes(name), name)
-    assert.ok((await sections(agent)).some(section => section.name === modeSectionName('mode-cordis') && String(section.text).includes('ops_read_files')), 'cordis routing section')
+    assert.ok((await sections(agent)).some(section => section.name === modeSectionName('mode-cordis') && String(section.text).includes('ops_inspect_local_file')), 'cordis routing section')
     // The Standard row is not mounted here, so a Standard-preset agent stays untouched.
     const standard = await mint({ preset: 'standard', cwd })
     await wait(300)
@@ -257,7 +257,7 @@ await test('dynamic loading serves Minimal always and enabled modes, and never P
     // resident names are not offered as discovery choices.
     const standardRow = await ctx.plugin(Standard, { required: true, promptPolicy: true })
     const standard = await mint({ preset: 'standard', cwd })
-    await waitFor(() => names(standard).includes('ops_read_files') && names(standard).includes('ops_discover_tools'), { what: 'standard discovery entry' })
+    await waitFor(() => names(standard).includes('ops_inspect_local_file') && names(standard).includes('ops_discover_tools'), { what: 'standard discovery entry' })
     const discover = names(standard).includes('ops_discover_tools') && ctx.get('tools').get('ops_discover_tools', standard)
     const residentChoice = (await executeCall(ctx, { agent: standard, name: 'ops_discover_tools', arguments: { query: 'select:ops_glob' } })).value
     assert.deepEqual(residentChoice.activated, [], 'a resident mode tool is not a discovery choice')
@@ -300,7 +300,7 @@ await test('a preset selection change withdraws the old mode surface and the new
     await ctx.plugin(Standard, { required: true, promptPolicy: true })
     await ctx.plugin(Cordis, { required: true, promptPolicy: true })
     const agent = await mint({ preset: 'standard', cwd })
-    await waitFor(() => names(agent).includes('ops_read_files') && names(agent).includes('read'), { what: 'standard mode applied' })
+    await waitFor(() => names(agent).includes('ops_inspect_local_file') && names(agent).includes('read'), { what: 'standard mode applied' })
     assert.ok((await sections(agent)).some(section => section.name === modeSectionName('mode-standard') && String(section.text).length > 0))
     // A blank session may select another preset before its first turn.
     presets.set(scopeParentOf(scopeOf(agent.ctx)), 'cordis')
@@ -314,7 +314,7 @@ await test('a preset selection change withdraws the old mode surface and the new
     }
     assert.ok(names(agent).includes('read'), 'conditional replacement leaves official schema visible')
     await waitForSection(modeSectionName('mode-cordis'), 'the cordis routing section')
-    assert.ok(names(agent).includes('ops_read_files'), 'the new matching row publishes the resident surface')
+    assert.ok(names(agent).includes('ops_inspect_local_file'), 'the new matching row publishes the resident surface')
     assert.equal(names(agent).includes('read'), true, 'conditional counterpart is guarded, not statically hidden')
     presets.set(scopeParentOf(scopeOf(agent.ctx)), 'standard')
     await ctx.serial('session/event', agent.session, { type: 'agent-preset/selected' })

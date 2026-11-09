@@ -20,6 +20,11 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 官方 read/glob/grep 与 OPS 替代工具现在按同一模型步骤的准入结果互斥声明，不再同时发布后以 `MODE_REPLACEMENT` 拒绝官方调用；替代工具不可用时，官方回退保留原 schema 和执行回调，并遵守已有工具限制；宿主作用域关联失效时保留官方原始定义（#787）。
 - Publication diagnostics distinguish stale or unadmitted definitions (`PUBLICATION_IDENTITY_MISMATCH`) from missing or conflicting dispatch grants (`PUBLICATION_GRANT_UNAVAILABLE`), without changing authorization boundaries or claiming a root-cause fix for #784.
 - 发布诊断区分过期或未准入的定义（`PUBLICATION_IDENTITY_MISMATCH`）与缺失或冲突的分派授权（`PUBLICATION_GRANT_UNAVAILABLE`）；不改变授权边界，也不将诊断改进宣称为 #784 根因修复。
+- Retain explicit create-only `expectedRevision: "absent"` guidance in compact tool help and refresh deferred-tool security/regression fixtures (#817).
+- 精简工具说明时保留 create-only 所需的 `expectedRevision: "absent"` 明示，并同步延迟加载工具的安全与回归测试夹具（#817）。
+
+- Reduce per-request tool overhead: Standard/Cordis keep only inspect/glob/grep resident, with read_files/result discovered on demand; PTC initially keeps inspect and load_sdk, with result loadable on demand even when allowedTools is empty. Replace always-resident capability directories with one-line loader pointers and remove prompt/schema repetition without changing argument defaults, limits, paging completeness or authority checks (#817).
+- 减少每请求固定工具开销：Standard/Cordis 仅常驻 inspect/glob/grep，read_files/result 按需发现；PTC 初始仅保留 inspect 与 load_sdk，即使 allowedTools 为空仍可按需加载 result。常驻能力目录改为一行加载器指引，删除提示词与 schema 的重复说明，不改变参数默认值、限额、分页完整性或权限检查（#817）。
 
 - Unsealing an execution tree no longer skips a file whose Windows `dev:ino` matches another member's. That key is not unique on Windows, so a skipped file stayed read-only, could not be removed, and left the whole tree behind in the temp directory; a repeated `chmod` on a genuinely shared inode is harmless (#804).
 - 解封执行树时不再按 `dev:ino` 跳过文件：该键在 Windows 上并不唯一，被跳过的成员会一直只读、删不掉，进而把整棵树留在临时目录里。对真正共享的 inode 重复 `chmod` 无害（#804）。

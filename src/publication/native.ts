@@ -169,7 +169,7 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
       return renderToolingPolicy({ published, shellComponent: false,
         extraGuidance: publication.extraGuidanceOwner?.(agent) ? '' : config.extraGuidance })
     }
-    ownsGuidance = agent => !publication.extraGuidanceOwner?.(agent) && Boolean(renderGuidance(agent))
+    ownsGuidance = agent => Boolean(config.extraGuidance.trim()) && !publication.extraGuidanceOwner?.(agent) && Boolean(renderGuidance(agent))
     if (section !== null) {
       const suffix = section
       ctx.effect(() => prompt.section({

@@ -19,9 +19,9 @@ requireWorker('catalogue-consistency')
 
 await test('adapter publication and retrieval classes agree with the catalogue', () => {
   assert.equal(actualResidents, PTC_RESIDENT_TOOLS)
-  assert.deepEqual(actualResidents, ['inspect_local_file', 'result'])
+  assert.deepEqual(actualResidents, ['inspect_local_file'])
   assert.deepEqual(PTC_LOADABLE_TOOLS, [...FILE_CAPABILITIES, ...PTC_CAPABILITIES].filter(entry => entry.ptcAvailability === 'discoverable').map(entry => entry.rawName))
-  assert.deepEqual(CAPABILITIES.filter(entry => entry.ptcAvailability === 'resident').map(entry => entry.rawName), ['inspect_local_file', 'result', 'load_sdk'])
+  assert.deepEqual(CAPABILITIES.filter(entry => entry.ptcAvailability === 'resident').map(entry => entry.rawName), ['inspect_local_file', 'load_sdk'])
   assert.deepEqual(OBSERVED_READ_TOOLS, ['inspect_local_file', 'read_files'])
   for (const entry of CAPABILITIES) {
     const token = 'ops-next-v1:' + JSON.stringify({ version: 1, tool: entry.rawName, args: entry.rawName === 'result' ? { action: 'page' } : {} })

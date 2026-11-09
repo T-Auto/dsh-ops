@@ -83,9 +83,10 @@ for (const mode of ['standard', 'cordis']) for (const residentTools of [true, fa
   await test(mode + ': resident=' + residentTools + ', dynamic=' + dynamicTools, () => withTempDir('resident-native', async cwd => {
     const { ctx, agent } = await setup(cwd, mode, { residentTools, dynamicTools })
     try {
-      if (residentTools) await waitFor(() => names(ctx, agent).includes(publicToolName('read_files')))
+      if (residentTools) await waitFor(() => names(ctx, agent).includes(publicToolName('inspect_local_file')))
       if (dynamicTools) await waitFor(() => names(ctx, agent).includes(publicToolName('discover_tools')))
       for (const raw of NATIVE_RESIDENT_RAW) assert.equal(names(ctx, agent).includes(publicToolName(raw)), residentTools, raw)
+      for (const raw of ['read_files', 'result']) assert.equal(names(ctx, agent).includes(publicToolName(raw)), false, raw + ' starts deferred regardless of the resident switch')
       assert.equal(names(ctx, agent).includes(publicToolName('discover_tools')), dynamicTools)
       assert.equal(names(ctx, agent).includes(BASH_TOOL), process.platform === 'win32', 'resident/dynamic never gate Bash')
       if (!residentTools) for (const raw of ['read', 'glob', 'grep']) assert.ok(names(ctx, agent).includes(raw), raw + ' remains official')
