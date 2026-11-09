@@ -5,6 +5,16 @@ import { bootHost, shutdown } from './lib/host.mjs'
 import { prepareStep } from './lib/executor.mjs'
 import { assert, test, report } from './lib/harness.mjs'
 
+// The row ctx a caller hands over: a real plugin row is a sibling fiber, so it
+// owns its own lifetime. ctx.plugin resolves to the row's Fiber (dispose, no
+// event surface), so the ctx itself is captured from apply.
+const rowOf = async (ctx, rows) => {
+  let row
+  const fiber = await ctx.plugin({ apply(inner) { row = inner } })
+  rows.push(fiber)
+  return { row, fiber }
+}
+
 await test('file owner shares static contracts and leases without transferring old step authority', async () => {
   const { ctx, tools } = await bootHost()
   const steps = []
@@ -57,37 +67,51 @@ await test('presentation predicate only narrows a captured consumer', async () =
 // A shared source reads through `agent.ctx` but must subscribe through the row
 // context: the agent's scope tag hides `session/event` / `session/disposed`, and
 // read-dedup would stop noticing source changes. The row context is passed
-// explicitly, so a reverted call path leaves it with no listener at all.
+// explicitly, so a call path that lets it go missing must be refused rather than
+// fall back to the agent scope (the three refusals below).
 await test('a shared source subscribes through the row context it is given', async () => {
   const { ctx } = await bootHost()
+  const rows = []
   try {
     const agent = { id: 'shared-row-events', session: { id: 'shared-row-events' } }
     agent.ctx = createScope(ctx, agent).ctx
-    const subscribed = [], disposed = []
-    const row = { on(name) { subscribed.push(name); return () => disposed.push(name) } }
+    const { row } = await rowOf(ctx, rows)
+    const seen = []
+    const observers = [row.on('session/event', () => seen.push('session/event')),
+      row.on('session/disposed', () => seen.push('session/disposed'))]
     const lease = await acquireSharedFile(agent, 'stat', { workerPath: process.execPath }, row)
     try {
-      assert.ok(subscribed.includes('session/event'), `row context receives session/event: ${subscribed.join(', ')}`)
-      assert.ok(subscribed.includes('session/disposed'), `row context receives session/disposed: ${subscribed.join(', ')}`)
-    } finally { lease.dispose() }
-    assert.ok(disposed.includes('session/event'), 'disposing the lease releases the row subscriptions')
-  } finally { await shutdown(ctx) }
+      await ctx.serial('session/event', agent.session, { type: 'step/end' })
+      await ctx.serial('session/disposed', agent.session)
+      assert.deepEqual([...new Set(seen)].sort(), ['session/disposed', 'session/event'],
+        `row context receives the session events: ${seen.join(', ') || 'none'}`)
+    } finally { observers.forEach(observe => observe()); lease.dispose() }
+  } finally { rows.forEach(row => row.dispose()); await shutdown(ctx) }
 })
 
-await test('subscribing on the reading ctx is refused instead of silently degrading', async () => {
+// Fail closed on the two shapes that silently degraded before: leaving the
+// subscription context out altogether, and deriving one that shares the agent's
+// single fiber. Neither is caught by the type: JS callers, `as any` and every
+// argument shape the compiler never sees go straight through it.
+await test('omitting, reusing or extending the reading ctx is refused instead of silently degrading', async () => {
   const { ctx, tools } = await bootHost()
+  const rows = []
   try {
     const agent = { id: 'shared-scoped-events', session: { id: 'shared-scoped-events' } }
     agent.ctx = createScope(ctx, agent).ctx
-    await assert.rejects(acquireSharedFile(agent, 'stat', { workerPath: process.execPath }, agent.ctx),
-      /must not be the reading ctx/)
+    const config = { workerPath: process.execPath }
+    await assert.rejects(acquireSharedFile(agent, 'stat', config),
+      /subscription context is required/, 'omitting the fourth argument must not fall back to the agent scope')
+    await assert.rejects(acquireSharedFile(agent, 'stat', config, agent.ctx),
+      /must not be the reading ctx/, 'the reading ctx must be refused by identity')
+    await assert.rejects(acquireSharedFile(agent, 'stat', config, agent.ctx.extend({})),
+      /must not be the reading ctx/, 'a context extending the reading ctx shares its fiber and must be refused too')
     assert.deepEqual(tools.definitions(agent), [], 'a refused subscription context creates neither a source nor a registration')
     // The same config succeeds once a row context supplies the subscription: the
-    // refusal leaves no source behind to be reported as a conflicting one.
-    const lease = await acquireSharedFile(agent, 'stat', { workerPath: process.execPath },
-      { on() { return () => {} } })
+    // refusals leave no source behind to be reported as a conflicting one.
+    const lease = await acquireSharedFile(agent, 'stat', config, (await rowOf(ctx, rows)).row)
     lease.dispose()
-  } finally { await shutdown(ctx) }
+  } finally { rows.forEach(row => row.dispose()); await shutdown(ctx) }
 })
 
 await test('asynchronous acquisition cannot revive a disposed source owner', async () => {
@@ -100,7 +124,9 @@ await test('asynchronous acquisition cannot revive a disposed source owner', asy
     const rejection = assert.rejects(acquisition, /inactive context/)
     await scope.dispose()
     await rejection
-    await assert.rejects(acquireSharedFile(agent, 'stat', { workerPath: process.execPath }), /inactive context/)
+    const { fiber } = await rowOf(ctx, [])
+    try { await assert.rejects(acquireSharedFile(agent, 'stat', { workerPath: process.execPath }, fiber), /inactive context/) }
+    finally { fiber.dispose() }
     assert.deepEqual(tools.definitions(agent), [], 'no source or registration survives disposed ownership')
   } finally { await shutdown(ctx) }
 })

@@ -54,23 +54,32 @@ const runtimes = new WeakMap<Agent, Source>()
  *   the only construction point that reads through `agent.ctx`, so every caller
  *   must pass its row-level ctx here: an agent ctx carries a scope tag and misses
  *   `session/event` and `session/disposed`, which is exactly the evidence
- *   read-dedup invalidates on. Handing the reading ctx back as `events` is
- *   therefore refused below instead of quietly degrading.
+ *   read-dedup invalidates on. Omitting it, or deriving a ctx from the reading
+ *   one, is refused below instead of quietly degrading.
  * @returns the publication lease.
  */
-export async function acquireSharedFile(agent: Agent, api: SharedApi, config: NativeRuntimeConfig, events?: Context): Promise<PublicationLease> {
+export async function acquireSharedFile(agent: Agent, api: SharedApi, config: NativeRuntimeConfig, events: Context): Promise<PublicationLease> {
+  // Required at runtime, not only in the type. `NativeFileTools` keeps
+  // `events ?? ctx`, so a forgotten fourth argument lands on the reading ctx and
+  // restores exactly the degradation this source exists to avoid. The signature
+  // stops TypeScript callers only; JavaScript callers, casts and reflection reach
+  // this function regardless, so the check has to live here.
+  if (!events) throw new Error('Shared file subscription context is required: omitting it silently degrades to the agent scope')
   if (!agent.ctx) throw new Error('Shared file source requires an agent scope')
   const { scopeChainOf } = await loadScopes()
   agent.ctx.fiber.assertActive()
   // Fail closed on the documented regression rather than degrade silently: passing
   // the reading ctx back as the subscription ctx is exactly how the agent scope
   // takes over and drops `session/event` / `session/disposed` (DESIGN §5 R1).
-  // The test is identity, not scope tags, and deliberately so: a publisher row
+  // A ctx derived with `extend` is refused by the same rule: it is a distinct
+  // object that inherits the agent's scope tag and shares its single fiber, so it
+  // subscribes exactly where the reading ctx would.
+  // The test is fiber identity, not scope tags, and deliberately so: a publisher row
   // mounted under a scoped ctx receives an injected ctx that inherits that tag
   // while still being a row context that other rows are meant to use, so a
   // tag-based refusal would reject supported compositions. Visibility probing is
   // ruled out too (DESIGN D6): it subscribes to answer, and a wrong verdict is silent.
-  if (events === agent.ctx) throw new Error('Shared file subscription context must not be the reading ctx: the agent scope loses session events')
+  if (events === agent.ctx || events.fiber === agent.ctx.fiber) throw new Error('Shared file subscription context must not be the reading ctx: the agent scope loses session events')
   const owner = scopeChainOf(agent).find(scope => runtimes.has(scope as Agent)) as Agent | undefined
   const runtimeOwner = owner ?? agent
   // Startup policy is not execution identity once a worker has been selected.
