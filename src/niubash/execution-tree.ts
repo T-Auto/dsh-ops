@@ -105,11 +105,22 @@ export interface CloneResult {
   fallback?: CloneFallback
 }
 
-const CROSS_DEVICE_CODES = new Set(['EXDEV', 'ENOTSUP', 'EOPNOTSUPP', 'EMLINK', 'EPERM'])
+/**
+ * Codes that mean "this filesystem, or this pair of paths, will not take a hard
+ * link", where the documented fallback is to rebuild the tree as copies instead.
+ *
+ * `UNKNOWN` belongs here. On Windows `fs.link` reports it for several of these
+ * situations — the per-inode link limit, a filter driver or antivirus holding the
+ * target directory, a directory still being torn down — and the Node error carries
+ * no finer code to tell them apart. While this list omitted it, `cloneExecutionTree`
+ * rethrew the failure and every Bash call failed until something outside the plugin
+ * cleared the condition: the copy fallback that exists for exactly this case never ran.
+ */
+const LINK_FALLBACK_CODES = new Set(['EXDEV', 'ENOTSUP', 'EOPNOTSUPP', 'EMLINK', 'EPERM', 'UNKNOWN'])
 
-function isCrossDeviceLinkFailure(error: unknown): boolean {
+function isLinkFallbackFailure(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error
-    && CROSS_DEVICE_CODES.has(String((error as NodeJS.ErrnoException).code))
+    && LINK_FALLBACK_CODES.has(String((error as NodeJS.ErrnoException).code))
 }
 
 function mergeOps(ops: Partial<TreeOps> | undefined): TreeOps {
@@ -164,8 +175,11 @@ export async function cloneExecutionTree(request: CloneRequest): Promise<CloneRe
     try {
       await materialize('hardlink')
     } catch (error) {
-      if (!isCrossDeviceLinkFailure(error)) throw error
-      fallback = { code: String((error as NodeJS.ErrnoException).code ?? 'unknown'), detail: errorMessage(error) }
+      if (!isLinkFallbackFailure(error)) throw error
+      fallback = {
+        code: String((error as NodeJS.ErrnoException).code ?? 'unknown'),
+        detail: errorMessage(error) + await describeLinkPressure(ops, source, request),
+      }
       signal?.throwIfAborted()
       // A partial hardlink clone cannot be converted in place; rebuild the tree as
       // copies, which is the documented cross-device fallback.
@@ -186,6 +200,25 @@ export async function cloneExecutionTree(request: CloneRequest): Promise<CloneRe
   }
   const dataBytes = mode === 'copy' ? Object.values(sizes).reduce((total, size) => total + size, 0) : 0
   return { mode, sizes, links, identities, dataBytes, ...(fallback === undefined ? {} : { fallback }) }
+}
+
+/**
+ * The link ceiling is invisible in the error itself: Windows reports the
+ * 1024-per-inode limit as `UNKNOWN`, the same code it uses for a locked directory
+ * or a filter driver holding the target, so the receipt alone cannot say which of
+ * them happened. Recording the highest count in the payload turns the next
+ * occurrence into a number instead of a guess.
+ */
+async function describeLinkPressure(ops: TreeOps, source: string, inventory: TreeInventory): Promise<string> {
+  let highest = 0
+  let holder = ''
+  for (const name of Object.keys(inventory.files)) {
+    try {
+      const stat = await ops.lstat(path.join(source, name))
+      if (stat.nlink > highest) { highest = stat.nlink; holder = name }
+    } catch { /* a member that is gone is reported by the copy pass that follows */ }
+  }
+  return highest === 0 ? '' : `; highest source link count ${highest} (${holder})`
 }
 
 /** One error's message, without assuming it is an `Error`. */

@@ -154,13 +154,14 @@ export async function sealReadOnly(files: readonly string[], options: SealOption
 /** Give the write bit back to every named file; a file that is already writable is left alone. */
 export async function unsealFiles(files: readonly string[], options: SealOptions = {}): Promise<void> {
   const ops = mergeOps(options)
-  const seen = new Set<string>()
+  // No inode-keyed deduplication here, unlike the seal path. Windows `stat.ino`
+  // is not unique across distinct files: two unrelated members came back with the
+  // same `dev:ino`, so the second was skipped and stayed read-only, which then made
+  // the tree undeletable and left it behind in the temp directory. A repeated
+  // `chmod` on a shared inode is harmless, so correctness wins over the saving.
   for (const file of files) {
     let stat
     try { stat = await ops.lstat(file) } catch (error) { if (isMissing(error)) continue; throw error }
-    const key = `${stat.dev}:${stat.ino}`
-    if (stat.ino !== 0 && seen.has(key)) continue
-    if (stat.ino !== 0) seen.add(key)
     if (!isSealedMode(stat.mode)) continue
     await ops.chmod(file, stat.mode | 0o200)
   }
