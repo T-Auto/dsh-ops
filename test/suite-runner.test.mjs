@@ -90,8 +90,13 @@ await test('real CLI preserves skip policy, blocks output, durations and one-sho
     fs.writeFileSync(preload, `
 const fs = require('node:fs'), cp = require('node:child_process'), path = require('node:path');
 const originalRead = fs.readdirSync, originalSpawn = cp.spawn;
+if (process.env.FIXTURE_TIMERS === '1') {
+  const schedule = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, ms, ...args) => { console.log('fixture watchdog ' + ms); return schedule(fn, ms, ...args); };
+}
 fs.readdirSync = (directory, ...args) => path.resolve(String(directory)) === ${JSON.stringify(testDir)}
-  ? ['pass.test.mjs', 'skip.test.mjs', 'hang.test.mjs', 'permissions.test.mjs', 'niubash-consumer.test.mjs'] : originalRead(directory, ...args);
+  ? ['pass.test.mjs', 'skip.test.mjs', 'hang.test.mjs', 'permissions.test.mjs',
+    'niubash-consumer.test.mjs', 'niubash-preparation.test.mjs', 'niubash-security-host.test.mjs'] : originalRead(directory, ...args);
 cp.spawn = (command, args, options) => {
   if (process.env.FIXTURE_SPAWN_ERROR === '1') {
     const child = new (require('node:events').EventEmitter)();
@@ -129,9 +134,20 @@ require('node:module').syncBuiltinESMExports();
     assert.equal(heavy.status, 0, heavy.stdout + heavy.stderr)
     assert.deepEqual(fs.readFileSync(calls, 'utf8').trim().split('\n'), ['permissions.test.mjs', 'pass.test.mjs'])
     fs.writeFileSync(calls, '')
-    const exclusive = invoke(['pass', 'niubash-consumer'])
+    const exclusive = invoke(['pass', 'niubash-consumer'], { FIXTURE_TIMERS: '1', DSH_OPS_SUITE_TIMEOUT_MS: '' })
     assert.equal(exclusive.status, 0, exclusive.stdout + exclusive.stderr)
+    assert.match(exclusive.stdout, /fixture watchdog 120000/)
+    assert.match(exclusive.stdout, /fixture watchdog 300000/)
     assert.deepEqual(fs.readFileSync(calls, 'utf8').trim().split('\n'), ['pass.test.mjs', 'niubash-consumer.test.mjs'])
+    const override = invoke(['niubash-consumer'], { FIXTURE_TIMERS: '1', DSH_OPS_SUITE_TIMEOUT_MS: '650000' })
+    assert.equal(override.status, 0, override.stdout + override.stderr)
+    assert.match(override.stdout, /fixture watchdog 650000/)
+    fs.writeFileSync(calls, '')
+    const independent = invoke(['pass', 'niubash-preparation', 'niubash-security-host'])
+    assert.equal(independent.status, 0, independent.stdout + independent.stderr)
+    assert.deepEqual(fs.readFileSync(calls, 'utf8').trim().split('\n'),
+      ['niubash-preparation.test.mjs', 'niubash-security-host.test.mjs', 'pass.test.mjs'],
+      'private prepared runtimes enter the pool before the short tail, not the exclusive phase')
     const normal = invoke(['pass', 'skip'])
     assert.equal(normal.status, 0, normal.stdout + normal.stderr)
     assert.match(normal.stdout, /1 suite\(s\) passed, 1 skipped/)

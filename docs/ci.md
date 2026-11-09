@@ -87,12 +87,13 @@ node test/run.mjs bench
 and `clippy`, and every workflow's `rustup toolchain install` must name the same channel
 (`workflow-lint` asserts that).
 
-`DSH_OPS_SUITE_TIMEOUT_MS` is set in CI (300 s; 600 s on Windows). A deadline is a
+`DSH_OPS_SUITE_TIMEOUT_MS` is set in CI (300 s on every platform). A deadline is a
 failure, never retried. Suites run in a bounded worker pool (host available parallelism by default);
 set `DSH_OPS_TEST_JOBS=1` for serial diagnosis or a positive integer for an explicit concurrency cap.
 Each suite keeps its own process, temporary home and deadline. Output is printed as a completed
-suite block with elapsed time, followed by the ten slowest suites. Suites that rebuild the checkout
-or mutate shared Niubash payload attributes run exclusively after the parallel pool.
+suite block with elapsed time, followed by the ten slowest suites. Only `niubash-consumer` runs
+exclusively after the pool because prepack rebuilds shared `lib/`. Other Niubash suites copy the
+frozen source into their own temporary homes and can run concurrently.
 
 ## The required check and the ruleset
 

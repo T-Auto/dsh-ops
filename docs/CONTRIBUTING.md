@@ -131,10 +131,10 @@ What a skip means locally:
   `node test/run.mjs mount file-operations`.
 
 The four full-payload suites (`niubash-payload-integration`, `niubash-preparation`,
-`niubash-security-host`, `niubash-consumer`) default to a 600-second suite watchdog; other suites
-keep 120 seconds. A positive finite `DSH_OPS_SUITE_TIMEOUT_MS` overrides either default. The clean
-consumer reserves 60 seconds of that budget for packing/installing, leaving 540 seconds by default
-for its real host checks. Bash commands retain their production 120-second default, but the
+`niubash-security-host`, `niubash-consumer`) default to a 300-second suite watchdog; other suites
+keep 120 seconds. A positive finite `DSH_OPS_SUITE_TIMEOUT_MS` overrides either default. The release gate
+passes 300 seconds explicitly; the clean consumer reserves 60 seconds for packing/installing,
+leaving 240 seconds for its real host checks. Bash commands retain their production 120-second default, but the
 descendant timeout/cancellation test uses an explicit 5-second command deadline. Version-level
 Niubash preparation happens at selection, not on each call; the suite watchdog is a separate outer
 limit. The descendant test proves that a child starts before its deadline and cannot write afterward.

@@ -434,11 +434,12 @@ node scripts/apply-ruleset.mjs                            # admin: ruleset dry r
 ```
 
 On Windows, `DSH_OPS_TEST_BASH` points at a verified pinned `bash.exe` (the gate provisions one) and
-`DSH_OPS_TEST_NIUBASH` at the staged `niu.exe`. CI sets `DSH_OPS_SUITE_TIMEOUT_MS` (300 s; 600 s
-on Windows); `DSH_HOME` must be a temp directory. `DSH_OPS_TEST_JOBS` overrides the bounded worker
+`DSH_OPS_TEST_NIUBASH` at the staged `niu.exe`. CI sets `DSH_OPS_SUITE_TIMEOUT_MS` (300 s on every
+platform); `DSH_HOME` must be a temp directory. `DSH_OPS_TEST_JOBS` overrides the bounded worker
 pool size (default: host available parallelism; `1`: serial). Each completed suite prints one output
-block and its duration; the ten slowest suites follow. Shared-payload mutation and checkout rebuild
-suites run exclusively after the pool.
+block and its duration; the ten slowest suites follow. Only `niubash-consumer` runs exclusively after
+the pool: prepack rebuilds shared `lib/`. Other Niubash suites prepare private copies under their own
+homes instead of changing shared source inodes.
 
 ## 7. Do not
 
