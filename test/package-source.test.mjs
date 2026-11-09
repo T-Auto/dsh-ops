@@ -2,14 +2,14 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { assert, test, report, PACKAGE_ROOT } from './lib/harness.mjs'
+import { CPU_PROCESS_TIMEOUT_MS, assert, test, report, PACKAGE_ROOT } from './lib/harness.mjs'
 import { parseNpmPackReport } from '../scripts/lib/build/util.js'
 
 await test('npm pack includes compiled host code and native sources, never host sources or build caches', () => {
   const started = performance.now()
   const result = spawnSync(process.platform === 'win32' ? 'cmd.exe' : 'npm',
     process.platform === 'win32' ? ['/d', '/s', '/c', 'npm.cmd pack --dry-run --json --ignore-scripts'] : ['pack', '--dry-run', '--json', '--ignore-scripts'],
-    { cwd: PACKAGE_ROOT, encoding: 'utf8', timeout: 30000 })
+    { cwd: PACKAGE_ROOT, encoding: 'utf8', timeout: CPU_PROCESS_TIMEOUT_MS })
   assert.equal(result.status, 0, JSON.stringify({ elapsedMs: Math.round(performance.now() - started),
     signal: result.signal, error: result.error && { code: result.error.code, message: result.error.message },
     stderr: result.stderr, stdoutTail: result.stdout?.slice(-2000) }, null, 2))

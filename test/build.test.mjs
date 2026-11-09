@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
-import { assert, test, report, PACKAGE_ROOT, withTempDir } from './lib/harness.mjs'
+import { CPU_PROCESS_TIMEOUT_MS, assert, test, report, PACKAGE_ROOT, withTempDir } from './lib/harness.mjs'
 
 function write(root, name, content) {
   const file = path.join(root, name)
@@ -29,7 +29,7 @@ function fixture(root) {
 function build(root) {
   // The caller's current directory must not determine which package is rebuilt.
   const result = spawnSync(process.execPath, [path.join(root, 'scripts/build.mjs')], {
-    cwd: PACKAGE_ROOT, encoding: 'utf8', timeout: 30_000,
+    cwd: PACKAGE_ROOT, encoding: 'utf8', timeout: CPU_PROCESS_TIMEOUT_MS,
   })
   assert.ifError(result.error)
   return { status: result.status, output: `${result.stdout}${result.stderr}` }

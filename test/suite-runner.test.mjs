@@ -2,8 +2,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
-import { assert, test, report, withTempDir, PACKAGE_ROOT } from './lib/harness.mjs'
+import { assert, test, report, withTempDir, PACKAGE_ROOT, CPU_PROCESS_TIMEOUT_MS } from './lib/harness.mjs'
 import { runPool, runSuite, testJobs } from './lib/suite-runner.mjs'
+
+await test('CPU-bound subprocesses get contention headroom below the CI suite watchdog', () => {
+  assert.equal(CPU_PROCESS_TIMEOUT_MS, 120_000)
+  assert.ok(CPU_PROCESS_TIMEOUT_MS < 300_000)
+})
 
 await test('jobs defaults to host parallelism and rejects invalid budgets', async () => {
   assert.ok(testJobs('') >= 1)
