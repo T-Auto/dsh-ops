@@ -27,3 +27,24 @@ export function renderBashGuidance(background: boolean, platform: string = proce
       : 'Host jobs are unavailable: run_in_background is not accepted, and the foreground timeout stops the command.',
   ].join('\n\n')
 }
+
+/**
+ * Explain a Bash slot whose executor never resolved, instead of rendering nothing.
+ *
+ * Resolution failures and execution failures are separate layers, and conflating them would
+ * invent a second vocabulary for one condition: `resolveShells` reports the former as `source`
+ * plus a `detail` that already ends with the deployment remedy, while `bash-runtime-failure`
+ * classifies the latter once a call is actually attempted. A mount-time notice can only speak
+ * about resolution, so it quotes that layer verbatim and claims nothing about retryability.
+ * @param source - the resolution rung that failed (`missing`, `disabled`, `config`, `host`, ...).
+ * @param detail - the resolution explanation, which already carries the remedy.
+ * @returns the model-facing section text.
+ */
+export function renderBashUnavailable(source: string, detail: string): string {
+  return [
+    `# ${BASH_TOOL}: unavailable in this session`,
+    `The Bash executor did not resolve for this deployment (resolution source: ${source}), so no ${BASH_TOOL} tool is published here. Only the command surfaces the host itself publishes remain. Resolution reported: ${detail}`,
+    'Do not write Bash syntax into another shell, and do not read a PowerShell invocation as a Bash one. Reading, searching and editing files belong to the OPS file tools rather than to any shell.',
+    'A sandbox or approval denial is not permission to switch shells. Restoring the executor is a deployment action: apply the remedy above and restart DSH; this notice disappears only when the executor resolves.',
+  ].join('\n\n')
+}

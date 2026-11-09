@@ -8,7 +8,7 @@
 
 - Built-in presets enable Bash and default `hidePwsh` to true. Custom presets still default `hidePwsh` to false; file-tool `replaceOfficial` does not imply shell hiding.
 - `global.hidePwsh` remains true by default, but is only an allow gate. Hiding `pwsh` and `pwsh_persistent` requires enabled preset hiding, the global gate, a callable Bash tool in that Windows agent, and no active pwsh7 link.
-- Previously saved explicit `hidePwsh: false` or `true` is respected, not silently migrated. An explicit global false vetoes hiding. When Bash is missing or cannot be published under the current authority/services, official PowerShell stays available as fallback.
+- Previously saved explicit `hidePwsh: false` or `true` is respected, not silently migrated. An explicit global false vetoes hiding. When Bash is missing or cannot be published under the current authority/services, official PowerShell stays available as fallback, and the prompt states that the slot is unavailable, quoting the resolution `source` and `detail` (which carries the deployment remedy) instead of leaving an empty section that reads as "this deployment has no Bash".
 - `other.pwsh7Link` keeps official `pwsh` visible for `dsh-win-pwsh7` to manage its version. An unsaved link still follows existing companion detection; explicit on/off wins. Coexistence does not require the companion. OPS does not modify third-party plugins, bundle order or profiles.
 
 ## Prompt and execution contracts

@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- A Bash slot whose executor never resolved now says so in the prompt instead of rendering an empty section: the notice quotes the resolution `source` and `detail` (which already ends with the deployment remedy), points file work at the OPS file tools, and refuses to imply that swapping shells is a repair. Official PowerShell is still never hidden while Bash is unavailable.
+- Bash 执行器未能解析时，提示段落不再留空，而是明确说明不可用：引用解析结果的 `source` 与 `detail`（后者已含部署侧修复办法），指明文件读写应走 OPS 文件工具，并明确不得以换 shell 充当修复；Bash 不可用时官方 PowerShell 仍绝不被隐藏。
 ## [0.5.1] — 2026-11-08 — Patch release
 
 - Bound temporary-resource growth through ownership ledgers, deferred result-cache cleanup and explicit cache reclamation; preserve data-bearing snapshots and user content. Host output spills now have bounded retention rather than accumulating indefinitely.
