@@ -222,7 +222,8 @@ async function main() {
   // Keep the external-checkout suites as skips: `DSH_OPS_REQUIRE_RUNTIME=1` would otherwise
   // count them as failures and make this gate permanently red on a machine without that checkout.
   env.DSH_OPS_ALLOW_SKIPS = [...EXTERNAL_SUITE_DEPS, ...ALLOWED_SKIPS].join(',')
-  const verify = await run('full suite verification', 'npm', ['run', 'verify'], { env })
+  // Plugin and manifest were already built/validated above; do not repeat npm verify's prelude.
+  const verify = await run('full suite verification', 'node', ['test/run.mjs'], { env })
   const summary = parseSummary(verify.output)
 
   await run('staged runtime closure', 'node', ['bin/native-runtime.mjs', 'check', '--platform', TARGET])

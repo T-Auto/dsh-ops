@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Run test suites in a bounded worker pool with isolated processes/homes, buffered output, per-suite timings and a slowest-ten summary; `DSH_OPS_TEST_JOBS=1` restores serial execution. Checkout rebuilds and shared Niubash payload mutations remain exclusive; cache CLI fixtures use unique scratch directories across runs. Remove timeout retries and avoid repeating the plugin build and manifest validation inside the release gate.
+- 测试套件改为有界并行，保留独立进程与临时 home，整块输出每套结果、耗时和最慢十套；`DSH_OPS_TEST_JOBS=1` 可恢复串行。重建 checkout 或修改共享 Niubash payload 的套件保持独占，缓存 CLI fixture 使用跨运行唯一的 scratch 目录；删除超时重试，并去掉发布门禁内重复的插件构建与 manifest 校验。
+
 - Unsealing an execution tree no longer skips a file whose Windows `dev:ino` matches another member's. That key is not unique on Windows, so a skipped file stayed read-only, could not be removed, and left the whole tree behind in the temp directory; a repeated `chmod` on a genuinely shared inode is harmless (#804).
 - 解封执行树时不再按 `dev:ino` 跳过文件：该键在 Windows 上并不唯一，被跳过的成员会一直只读、删不掉，进而把整棵树留在临时目录里。对真正共享的 inode 重复 `chmod` 无害（#804）。
 - A hardlink clone the filesystem refuses with `UNKNOWN` now rebuilds the tree as copies. Windows reports the per-inode link limit under that single code, so the five-code fallback gate never matched and every Bash call failed until the condition cleared on its own; the fallback now also records the payload's highest link count so the ceiling is visible next time (#804).

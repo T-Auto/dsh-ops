@@ -87,10 +87,12 @@ node test/run.mjs bench
 and `clippy`, and every workflow's `rustup toolchain install` must name the same channel
 (`workflow-lint` asserts that).
 
-`DSH_OPS_SUITE_TIMEOUT_MS` and `DSH_OPS_RETRY_TIMEOUTS=1` are set in CI (300 s; 600 s on Windows)
-and one retry of a *deadline only* — a logic failure is never retried. Without them a slow runner can
-turn a passing suite into a red run; with them, a retry prints, so a green summary still shows what
-happened.
+`DSH_OPS_SUITE_TIMEOUT_MS` is set in CI (300 s; 600 s on Windows). A deadline is a
+failure, never retried. Suites run in a bounded worker pool (host available parallelism by default);
+set `DSH_OPS_TEST_JOBS=1` for serial diagnosis or a positive integer for an explicit concurrency cap.
+Each suite keeps its own process, temporary home and deadline. Output is printed as a completed
+suite block with elapsed time, followed by the ten slowest suites. Suites that rebuild the checkout
+or mutate shared Niubash payload attributes run exclusively after the parallel pool.
 
 ## The required check and the ruleset
 
