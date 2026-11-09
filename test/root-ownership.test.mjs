@@ -17,14 +17,21 @@
  *   4. `git show HEAD:src/publication/result-admission.ts > src/publication/result-admission.ts`,
  *      `node scripts/build.mjs`, `node test/run.mjs root-ownership` — all green again.
  *
+ * AC-3 is a receiver analysis, not a text grep. The compiler is already a
+ * devDependency, so the analyser parses the whole `src/` tree with
+ * `ts.createProgram` and resolves every capability call's receiver along its
+ * aliases. Its negative fixtures are source strings parsed with
+ * `ts.createSourceFile`, so proving the bypass spellings are caught writes no
+ * file either.
+ *
  * No temporary directory is created: every check runs against an in-memory host,
  * so the suite answers on a machine where subprocess fixtures cannot.
  *
  * @module dsh-ops/test/root-ownership
  */
 
-import fs from 'node:fs'
 import path from 'node:path'
+import ts from 'typescript'
 import { createScope, scopeOf } from '@deepseek-ai/dsh-scope'
 import { assert, report, test, PACKAGE_ROOT } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
@@ -64,6 +71,9 @@ function refuse(capability, touched) {
  * fiber, exactly as the host guard leaves them. Everything else on the root
  * stays readable, because reading `root` (a WeakMap key, a logger, a service) is
  * allowed and the fix must not be mistaken for "do not touch root at all".
+ * The reflection layer is refused the same way: `root.reflect.set` overwrites
+ * a provided service, which is exactly the host capability a plugin must not
+ * take from the root.
  * @param root - the real composition root context.
  * @param touched - collects the capability names that were actually attempted.
  * @returns a proxy of the root whose capabilities throw instead of running.
@@ -85,10 +95,17 @@ function guardedCompositionRoot(root, touched) {
       return forward(object, property)
     },
   })
+  const reflect = new Proxy(root.reflect, {
+    get(object, property) {
+      if (property === 'set') return refuse('root.reflect.set', touched)
+      return forward(object, property)
+    },
+  })
   return new Proxy(root, {
     get(object, property) {
       if (property === 'events') return events
       if (property === 'fiber') return fiber
+      if (property === 'reflect') return reflect
       if (typeof property === 'string' && SUBSCRIPTIONS.has(property)) return refuse('root.events.' + property, touched)
       if (property === 'effect') return refuse('root.effect', touched)
       if (property === 'inject' || property === 'plugin') return refuse('root.' + property, touched)
@@ -97,60 +114,307 @@ function guardedCompositionRoot(root, touched) {
   })
 }
 
-const CAPABILITIES = 'on|once|register|unregister|effect|inject|plugin'
-const CAPABILITY_CALL = new RegExp('([A-Za-z_$][\\w$]*(?:\\s*\\.\\s*[A-Za-z_$][\\w$]*)*)\\s*\\.\\s*(' + CAPABILITIES + ')\\s*\\(', 'g')
-/** A local name bound to the whole composition-root expression. */
-const ROOT_BINDING = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::\s*[^=\n;]+)?=\s*(?:\(\s*)?ctx\.root(?:\s*(?:\?\?|\|\|)\s*ctx)?(?:\s*\))?\s*(?=[,;\n)]|$)/g
-const ROOT_READ = /ctx\.root\b/g
-
-/** Blank comments without moving a single offset, so reported lines stay exact. */
-function withoutComments(source) {
-  const blank = (match) => match.replace(/[^\n]/g, ' ')
-  return source.replace(/\/\*[\s\S]*?\*\//g, blank).replace(/\/\/[^\n]*/g, blank)
-}
-
-const lineOf = (text, index) => text.slice(0, index).split('\n').length
+/** Capability methods whose receiver must never be the composition root. */
+const CAPABILITIES = new Set(['on', 'once', 'register', 'unregister', 'effect', 'inject', 'plugin'])
 
 /**
  * Receiver analysis, not a text grep.
  *
- * A capability call is a hit when its receiver is the root expression itself
- * (`ctx.root`, `ctx.root.fiber`) or a local bound to that expression
- * (`const root = ctx.root ?? ctx`). A root value passed as an argument — a
- * WeakMap key, `ctx.get`, a call-budget owner — has no receiver of this shape
- * and is therefore never a hit; that is the difference the 18 documented reads
- * depend on.
- * @param source - one file's text.
- * @returns the aliases, the capability receivers and the legitimate root reads.
+ * A capability call is a hit when its receiver resolves to the composition root:
+ * the root expression itself (`ctx.root`, `ctx.root.fiber`, `ctx.root.reflect`),
+ * a local bound to it (`const root = ctx.root ?? ctx`, `const { root } = ctx`,
+ * `const target = root`), or a helper parameter whose call site passes one. A
+ * root value that is only an argument — a WeakMap key, `ctx.get`, a call-budget
+ * owner — never has this receiver shape, which is what keeps those reads legal.
+ *
+ * The compiler does the reading because the spellings that reach the root are
+ * unbounded: a parenthesized `??`, an optional chain, a bracket key, a
+ * destructuring pattern, an `as` cast, an alias hop and a helper parameter are
+ * all one receiver once the syntax tree says so. The text regex this replaced
+ * caught one of the ten spellings the fixtures in AC-3 now pin.
+ *
+ * @param sourceFile - a file from the program, or a fixture parsed on its own.
+ * @returns capability calls whose receiver is the composition root.
  */
-function analyseSource(source) {
-  const text = withoutComments(source)
-  const aliases = new Set([...text.matchAll(ROOT_BINDING)].map((match) => match[1]))
-  const receivers = []
-  for (const match of text.matchAll(CAPABILITY_CALL)) {
-    const receiver = match[1].replace(/\s+/g, '')
-    const head = receiver.split('.')[0]
-    const fromRoot = receiver === 'ctx.root' || receiver.startsWith('ctx.root.') || aliases.has(head)
-    if (!fromRoot) continue
-    receivers.push({ receiver, method: match[2], index: match.index, end: match.index + match[0].length, line: lineOf(text, match.index) })
+function rootReceivers(sourceFile) {
+  const context = { sourceFile, bindings: bindingsOf(sourceFile), rootParameters: new Set() }
+  learnRootParameters(context)
+  const hits = []
+  const visit = (node) => {
+    if (ts.isCallExpression(node)) {
+      const capability = capabilityCall(context, node.expression)
+      if (capability) {
+        hits.push({
+          receiver: capability.receiver.getText(sourceFile).replace(/\s+/g, ''),
+          method: capability.method,
+          line: sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1,
+        })
+      }
+    }
+    ts.forEachChild(node, visit)
   }
-  const reads = [...text.matchAll(ROOT_READ)].map((match) => match.index)
-  const captured = reads.filter((index) => receivers.some((receiver) => index >= receiver.index && index < receiver.end))
-  return { aliases, receivers, reads, captured }
+  visit(sourceFile)
+  return hits
 }
 
-/** Every TypeScript source file in `src/`, relative to the package root. */
-function sourceFiles() {
-  const files = []
-  const walk = (directory) => {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-      const target = path.join(directory, entry.name)
-      if (entry.isDirectory()) walk(target)
-      else if (entry.name.endsWith('.ts')) files.push(target)
+/** A fixture string, parsed in memory: no file is written and no program is built. */
+function hitsFor(text) {
+  return rootReceivers(ts.createSourceFile('fixture.ts', text, ts.ScriptTarget.ES2023, true, ts.ScriptKind.TS))
+}
+
+/** Strip the wrappers that do not change which value an expression denotes. */
+function unwrap(node) {
+  let current = node
+  for (;;) {
+    if (ts.isParenthesizedExpression(current) || ts.isAsExpression(current) || ts.isSatisfiesExpression(current)
+      || ts.isTypeAssertionExpression(current) || ts.isNonNullExpression(current)) {
+      current = current.expression
+      continue
+    }
+    return current
+  }
+}
+
+/** The text of a string-literal key, or undefined when the key is computed. */
+function literalKey(node) {
+  const key = unwrap(node)
+  if (ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key)) return key.text
+  return undefined
+}
+
+/** The node a new binding belongs to: the nearest enclosing block or the file. */
+function bindingScope(node) {
+  for (let current = node.parent; current; current = current.parent) {
+    if (ts.isSourceFile(current) || ts.isBlock(current) || ts.isModuleBlock(current) || ts.isCaseClause(current)) return current
+  }
+  return node.getSourceFile()
+}
+
+/**
+ * Every local binding in one file, by the identifier the code refers to them by.
+ *
+ * A destructured binding remembers the key it came from, so `const { root } = ctx`
+ * and `const { root: alias } = ctx` both read as "this name is the root".
+ * @param sourceFile - the file to index.
+ * @returns bindings grouped by the name they are read by.
+ */
+function bindingsOf(sourceFile) {
+  const bindings = new Map()
+  const add = (name, binding) => {
+    const existing = bindings.get(name)
+    if (existing) existing.push(binding)
+    else bindings.set(name, [binding])
+  }
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      add(node.name.text, { scope: bindingScope(node), pos: node.getStart(sourceFile), initializer: node.initializer })
+    } else if (ts.isBindingElement(node) && ts.isIdentifier(node.name)) {
+      // `const { root } = ctx` names the key with an identifier; a computed key
+      // (`const { [name]: bound } = ctx`) is not a name this analysis can read.
+      const written = node.propertyName ?? node.name
+      const key = ts.isIdentifier(written) ? written.text : literalKey(written)
+      add(node.name.text, { scope: bindingScope(node), pos: node.getStart(sourceFile), key })
+    } else if (ts.isParameter(node) && ts.isIdentifier(node.name)) {
+      add(node.name.text, { scope: node.parent, pos: node.getStart(sourceFile), initializer: node.initializer, parameter: node })
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return bindings
+}
+
+/**
+ * The binding an identifier refers to: the innermost scope that encloses the use
+ * and declares the name no later than the use.
+ * @param context - the analysis context.
+ * @param identifier - the identifier being read.
+ * @returns the binding, or undefined when the name is not a local.
+ */
+function bindingFor(context, identifier) {
+  const candidates = context.bindings.get(identifier.text)
+  if (!candidates) return undefined
+  const enclosing = new Set()
+  for (let current = identifier.parent; current; current = current.parent) enclosing.add(current)
+  const use = identifier.getStart(context.sourceFile)
+  let found
+  for (const candidate of candidates) {
+    if (!enclosing.has(candidate.scope) || candidate.pos > use) continue
+    if (!found || candidate.pos > found.pos) found = candidate
+  }
+  return found
+}
+
+/**
+ * Whether an expression is the composition root, or is derived from it.
+ *
+ * Property and element access stay derived (`ctx.root.fiber`), so a receiver
+ * chain is judged by the hop that names the root; `??`, `||` and a conditional
+ * stay derived on either side, because both branches denote the same receiver.
+ * @param context - the analysis context.
+ * @param node - the expression to judge.
+ * @param seen - guards against an alias cycle.
+ * @returns true when the expression denotes the composition root.
+ */
+function fromRoot(context, node, seen = new Set()) {
+  const expression = unwrap(node)
+  if (seen.has(expression)) return false
+  seen.add(expression)
+  if (ts.isIdentifier(expression)) {
+    const binding = bindingFor(context, expression)
+    if (!binding) return false
+    if (binding.key !== undefined) return binding.key === 'root'
+    if (binding.parameter !== undefined && context.rootParameters.has(binding.parameter)) return true
+    return binding.initializer !== undefined && fromRoot(context, binding.initializer, seen)
+  }
+  if (ts.isPropertyAccessExpression(expression)) return expression.name.text === 'root' || fromRoot(context, expression.expression, seen)
+  if (ts.isElementAccessExpression(expression)) return literalKey(expression.argumentExpression) === 'root' || fromRoot(context, expression.expression, seen)
+  if (ts.isBinaryExpression(expression)) {
+    const operator = expression.operatorToken.kind
+    if (operator !== ts.SyntaxKind.QuestionQuestionToken && operator !== ts.SyntaxKind.BarBarToken
+      && operator !== ts.SyntaxKind.AmpersandAmpersandToken) return false
+    return fromRoot(context, expression.left, new Set(seen)) || fromRoot(context, expression.right, new Set(seen))
+  }
+  if (ts.isConditionalExpression(expression)) {
+    return fromRoot(context, expression.whenTrue, new Set(seen)) || fromRoot(context, expression.whenFalse, new Set(seen))
+  }
+  return false
+}
+
+/**
+ * Learn which helper parameters receive the root.
+ *
+ * A helper that subscribes for its caller (`function subscribe(target) { target.on(...) }`)
+ * hides the receiver behind a parameter, so the call sites decide. The loop
+ * repeats because one helper may hand the root on to another.
+ * @param context - the analysis context, whose `rootParameters` is extended.
+ * @returns void
+ */
+function learnRootParameters(context) {
+  const sourceFile = context.sourceFile
+  const helpers = new Map()
+  const remember = (name, node) => {
+    const existing = helpers.get(name)
+    if (existing) existing.push(node)
+    else helpers.set(name, [node])
+  }
+  const collect = (node) => {
+    if (ts.isFunctionDeclaration(node) && node.name) remember(node.name.text, node)
+    else if (ts.isMethodDeclaration(node) && ts.isIdentifier(node.name)) remember(node.name.text, node)
+    else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer
+      && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))) remember(node.name.text, node.initializer)
+    else if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name)
+      && (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))) remember(node.name.text, node.initializer)
+    ts.forEachChild(node, collect)
+  }
+  collect(sourceFile)
+  if (!helpers.size) return
+  const calls = []
+  const gather = (node) => {
+    if (ts.isCallExpression(node)) calls.push(node)
+    ts.forEachChild(node, gather)
+  }
+  gather(sourceFile)
+  for (let round = 0; round < 8; round += 1) {
+    const learned = seedParameters(context, helpers, calls)
+    if (!learned) return
+  }
+}
+
+/**
+ * Mark one round of helper parameters as root-carrying.
+ * @param context - the analysis context, whose `rootParameters` is extended.
+ * @param helpers - every function-like declaration in the file, by name.
+ * @param calls - every call in the file.
+ * @returns whether this round learned anything new.
+ */
+function seedParameters(context, helpers, calls) {
+  let learned = false
+  for (const call of calls) {
+    const callee = unwrap(call.expression)
+    const targets = ts.isIdentifier(callee) ? helpers.get(callee.text)
+      : ts.isPropertyAccessExpression(callee) ? helpers.get(callee.name.text) : undefined
+    if (!targets) continue
+    for (const target of targets) {
+      const shared = Math.min(call.arguments.length, target.parameters.length)
+      for (let index = 0; index < shared; index += 1) {
+        const parameter = target.parameters[index]
+        if (!ts.isIdentifier(parameter.name) || context.rootParameters.has(parameter)) continue
+        if (!fromRoot(context, call.arguments[index])) continue
+        context.rootParameters.add(parameter)
+        learned = true
+      }
     }
   }
-  walk(path.join(PACKAGE_ROOT, 'src'))
-  return files.sort()
+  return learned
+}
+
+/**
+ * Read a call as a capability call, when it is one.
+ *
+ * Three spellings carry the same method: `x.on(...)`, `x['on'](...)` and
+ * `Reflect.get(x, 'on')(...)`. A computed key is not a name this analysis can
+ * resolve, so those calls are left alone (AC-3 states the limitation).
+ * @param context - the analysis context.
+ * @param callee - the call's callee expression.
+ * @returns the receiver and method, or undefined for an ordinary call.
+ */
+function capabilityCall(context, callee) {
+  if (ts.isPropertyAccessExpression(callee)) return capabilityFromRoot(context, callee.expression, callee.name.text)
+  if (ts.isElementAccessExpression(callee)) {
+    const method = literalKey(callee.argumentExpression)
+    return method === undefined ? undefined : capabilityFromRoot(context, callee.expression, method)
+  }
+  if (ts.isCallExpression(callee) && ts.isPropertyAccessExpression(callee.expression)
+    && ts.isIdentifier(callee.expression.expression) && callee.expression.expression.text === 'Reflect'
+    && callee.expression.name.text === 'get' && callee.arguments.length >= 2) {
+    const method = literalKey(callee.arguments[1])
+    return method === undefined ? undefined : capabilityFromRoot(context, callee.arguments[0], method)
+  }
+  return undefined
+}
+
+/**
+ * Whether one receiver/method pair takes a capability from the root.
+ *
+ * `set` is a capability only through the reflection layer (`root.reflect.set`),
+ * which overwrites a provided service; `ctx.set` and `root.tools.set` are
+ * ordinary service calls and stay legal.
+ * @param context - the analysis context.
+ * @param receiver - the expression the method is read from.
+ * @param method - the method name.
+ * @returns a hit descriptor, or undefined when this is not a root capability.
+ */
+function capabilityFromRoot(context, receiver, method) {
+  if (CAPABILITIES.has(method)) return fromRoot(context, receiver) ? { receiver, method } : undefined
+  if (method !== 'set') return undefined
+  const target = unwrap(receiver)
+  if (!ts.isPropertyAccessExpression(target) || target.name.text !== 'reflect') return undefined
+  return fromRoot(context, target.expression) ? { receiver, method } : undefined
+}
+
+/**
+ * Every non-declaration source file under `src/`, read through the project's own
+ * compiler options so the scan sees what `tsc` sees.
+ * @returns the sources, in path order.
+ */
+function sourceFiles() {
+  const configPath = path.join(PACKAGE_ROOT, 'tsconfig.json')
+  const config = ts.readConfigFile(configPath, ts.sys.readFile)
+  if (config.error) throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, ' '))
+  const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, PACKAGE_ROOT)
+  if (parsed.errors.length) throw new Error(parsed.errors.map((error) => ts.flattenDiagnosticMessageText(error.messageText, ' ')).join('; '))
+  const options = { ...parsed.options, noEmit: true }
+  // Parents are required here (a binding is resolved from the use site outwards)
+  // and the compiler host leaves them unset unless asked.
+  const program = ts.createProgram(parsed.fileNames, options, ts.createCompilerHost(options, true))
+  const sourceRoot = path.join(PACKAGE_ROOT, 'src') + path.sep
+  const files = []
+  for (const sourceFile of program.getSourceFiles()) {
+    const file = path.resolve(sourceFile.fileName)
+    if (sourceFile.isDeclarationFile || !file.startsWith(sourceRoot)) continue
+    files.push({ sourceFile, relative: path.relative(PACKAGE_ROOT, file).replaceAll('\\', '/') })
+  }
+  return files.sort((left, right) => (left.relative < right.relative ? -1 : left.relative > right.relative ? 1 : 0))
 }
 
 await test('AC-1: runtime evidence and result admission subscribe on the row ctx, not on the composition root', async () => {
@@ -246,43 +510,94 @@ await test('AC-2: a first-time queue and a native provider registration own thei
   }
 })
 
-await test('AC-3: receiver analysis finds zero root-owned capabilities in src/, and none of the legal reads are misjudged', async () => {
+await test('AC-3: receiver analysis finds zero root-owned capabilities in src/', async () => {
   const files = sourceFiles()
   assert.ok(files.length > 100, 'the scan must cover the real source tree, not an empty glob: ' + files.length + ' files')
   const hits = []
-  let reads = 0
-  let captured = 0
-  for (const file of files) {
-    const relative = path.relative(PACKAGE_ROOT, file).replaceAll('\\', '/')
-    const { receivers, reads: fileReads, captured: fileCaptured } = analyseSource(fs.readFileSync(file, 'utf8'))
-    reads += fileReads.length
-    captured += fileCaptured.length
-    for (const receiver of receivers) hits.push(relative + ':' + receiver.line + ' ' + receiver.receiver + '.' + receiver.method + '()')
+  for (const { sourceFile, relative } of files) {
+    for (const hit of rootReceivers(sourceFile)) hits.push(relative + ':' + hit.line + ' ' + hit.receiver + '.' + hit.method + '()')
   }
   assert.deepEqual(hits, [], 'the composition root must never be a capability receiver:\n       ' + hits.join('\n       '))
-  assert.equal(captured, 0, 'every ctx.root read must be outside a capability receiver')
-  // 18 root reads are legitimate (WeakMap keys, service reads, withCallBudget
-  // owner keys); the shared queue's root key is the 19th. Removing them is a
-  // different change, so their presence is the fixture this check stands on.
-  assert.ok(reads >= 18, 'the documented legitimate ctx.root reads must still exist; found ' + reads)
+})
 
-  // The analyser must discriminate, or a clean tree would prove nothing.
-  const receiver = analyseSource('const root = ctx.root ?? ctx\nroot.events.on("tools/change", () => {})')
-  assert.equal(receiver.receivers.length, 1, 'a binding of ctx.root used as a capability receiver is a hit')
-  const direct = analyseSource('ctx.root.on("tools/change", () => {})')
-  assert.equal(direct.receivers.length, 1, 'ctx.root as a receiver is a hit')
-  assert.equal(direct.captured.length, 1, 'a ctx.root read inside a receiver is captured')
-  assert.equal(analyseSource('ctx.root.effect(() => () => {})').receivers.length, 1, 'ctx.root.fiber.effect is a hit')
-  assert.equal(analyseSource('ctx.root.inject(["tools"])\nctx.root.plugin(plugin)').receivers.length, 2, 'ctx.root.inject/plugin are hits')
-  const legal = analyseSource([
-    'const key = ctx.root ?? ctx',
-    'owners.get(key)',
-    'const state = roots.get(ctx.root ?? ctx)',
-    'withCallBudget(ctx.root ?? ctx, String(session.id), signal, () => {})',
-    'ctx.root.logger.warn("a property read is allowed")',
-  ].join('\n'))
-  assert.equal(legal.receivers.length, 0, 'keys, service reads and owner keys are not capability receivers')
-  assert.equal(legal.reads.length, 4, 'the four root reads in the fixture are still counted as reads')
+await test('AC-3b: the analyser catches every spelling of a root receiver, and leaves the legal reads alone', async () => {
+  // Every spelling the review used to break the old text regex, each parsed on
+  // its own. A receiver analysis that misses any one of them is the same
+  // promise-without-a-proof this check exists to replace, so the list is a gate,
+  // not a sample: the assertion names the spelling that escaped.
+  const bypasses = {
+    'historical baseline (ctx.root.on)': 'ctx.root.on("tools/change", () => {})',
+    'parenthesized receiver ((ctx.root ?? ctx).on)': '(ctx.root ?? ctx).on("tools/change", () => {})',
+    'optional chain (ctx.root?.on)': 'ctx.root?.on("tools/change", () => {})',
+    'bracket property (ctx["root"].on)': 'ctx["root"].on("tools/change", () => {})',
+    'destructured root (const { root } = ctx)': 'const { root } = ctx\nroot.on("tools/change", () => {})',
+    'as-cast alias (const r = ctx.root as Context)': 'const r = ctx.root as Context\nr.on("tools/change", () => {})',
+    'non-null assertion (ctx.root!.on)': 'ctx.root!.on("tools/change", () => {})',
+    'second alias hop (const b = a)': 'const a = ctx.root ?? ctx\nconst b = a\nb.on("tools/change", () => {})',
+    'helper parameter (target.on)': 'function subscribe(target: Context) { target.on("tools/change", () => {}) }\nsubscribe(ctx.root ?? ctx)',
+    'Reflect.get (Reflect.get(ctx.root, "on"))': 'Reflect.get(ctx.root, "on")("tools/change", () => {})',
+    'bracket method (ctx.root["on"])': 'ctx.root["on"]("tools/change", () => {})',
+    'carrier hop (ctx.root.events.on)': 'ctx.root.events.on("tools/change", () => {})',
+    'carrier hop (ctx.root.fiber.effect)': 'ctx.root.fiber.effect(() => () => {})',
+    'reflect.set (ctx.root.reflect.set)': 'ctx.root.reflect.set("tools", service)',
+    'reflect.set through the root alias': 'const root = ctx.root ?? ctx\nroot.reflect.set("tools", service)',
+    'inject/plugin on the root': 'ctx.root.inject(["tools"])\nctx.root.plugin(plugin)',
+  }
+  for (const [name, snippet] of Object.entries(bypasses)) {
+    assert.ok(hitsFor(snippet).length > 0, 'the analyser must catch ' + name + ', but it reported no receiver')
+  }
+  for (const capability of CAPABILITIES) {
+    assert.equal(hitsFor('ctx.root.' + capability + '(argument)').length, 1, 'ctx.root.' + capability + ' is a capability call')
+  }
+
+  // The legal shapes, each named: the analysis must not answer "root used as a
+  // receiver" for a root that is only a key, a service read or an owner key.
+  const legal = {
+    'owners.get(key)': 'const key = ctx.root ?? ctx\nowners.get(key)',
+    'roots.get(ctx.root ?? ctx)': 'const state = roots.get(ctx.root ?? ctx)',
+    'withCallBudget(ctx.root ?? ctx, ...)': 'withCallBudget(ctx.root ?? ctx, String(session.id), signal, () => {})',
+    'ctx.root.logger.warn': 'ctx.root.logger.warn("a property read is allowed")',
+    'ctx.set (the row ctx, not the root)': 'ctx.set("tools", service)',
+    'ctx.root.get (a service read)': 'const tools = ctx.root.get("tools")',
+    'root.tools.set (the tools service, not the root)': 'ctx.root.tools.set("name", definition)',
+  }
+  for (const [name, snippet] of Object.entries(legal)) {
+    assert.equal(hitsFor(snippet).length, 0, name + ' is a legal root read, but the analyser called it a capability receiver')
+  }
+
+  // Known limits, pinned rather than pretended away. Both need a value the
+  // analysis does not follow: a method name computed at run time, and a helper
+  // that returns the root instead of taking it. If either starts being caught
+  // this fails, so the limit list has to be updated rather than quietly rot.
+  const limits = {
+    'dynamic method key (root[method])': 'function subscribe(root: Context, method: string) { root[method]("tools/change", () => {}) }',
+    'helper return value (pick(ctx).on)': 'function pick(context: Context) { return context.root ?? context }\npick(ctx).on("tools/change", () => {})',
+  }
+  for (const [name, snippet] of Object.entries(limits)) {
+    assert.equal(hitsFor(snippet).length, 0, 'the analyser is documented not to resolve ' + name + '; it now does, so update the limit list')
+  }
+})
+
+await test('AC-3c: the guard fixture refuses root.reflect.set, so the runtime face matches the scan', async () => {
+  const { ctx: root } = await bootHost()
+  const touched = []
+  const guardedRoot = guardedCompositionRoot(root, touched)
+  try {
+    // The reflection layer overwrites a provided service; a host that locks it
+    // refuses a plugin exactly like it refuses root.events.on. Without this
+    // assertion the proxy branch would be untested fixture code.
+    assert.throws(
+      () => guardedRoot.reflect.set('tools', {}),
+      (error) => error.message === 'dsh-tui: root.reflect.set is unavailable from a plugin activation',
+      'root.reflect.set must be refused with the shipped wording',
+    )
+    assert.deepEqual(touched, ['root.reflect.set'], 'the refusal must be the one that was attempted')
+    // Reading the reflection layer is not a capability: only \`set\` writes.
+    assert.equal(typeof guardedRoot.reflect.get, 'function', 'a read through root.reflect stays allowed')
+    assert.equal(typeof guardedRoot.reflect.provide, 'function', 'the rest of root.reflect stays readable')
+  } finally {
+    await shutdown(root)
+  }
 })
 
 await test('AC-4: two rows on one root share a refusal window, and one row unloading does not interrupt the other', async () => {
