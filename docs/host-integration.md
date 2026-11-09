@@ -119,3 +119,17 @@ enabled and the expected scoped tool remains absent, capture a minimal profile,
 exact versions, Native/PTC mode, affected scoped schemas, and a timed lifecycle
 trace showing the pending publication. Restart/new-session results are useful
 comparisons, not proof that an indefinite hot-mount stall cannot recur.
+
+## Host module instances
+
+`scopeOf` and `scopeChainOf` come from `@deepseek-ai/dsh-scope`, which tags a context with
+`Symbol('dsh.scope')` and keeps ancestry in a module-private `WeakMap`. A second copy therefore reads
+nothing: `scopeOf` returns `undefined`, every ancestor lookup collapses to the key itself, and
+creating a session fails with `Publication scope must match its registration context`. Two install
+shapes can resolve such a copy: a `link:`ed development checkout resolves the copy inside that
+checkout, and a profile install can resolve a copy another bundle hoisted into the profile tree
+before the host's interception layer runs. When the bare resolution starts inside either tree, the
+adapter re-points it at the copy the host's own entry (`process.argv[1]`) resolves, falling back to
+the profile layer; every other resolution already is the host's. A re-pointed URL that names the
+same file as the bare one is left alone, so a spelling difference cannot load the file twice. No
+scope check is relaxed by that choice; the wrong copy simply never loads.

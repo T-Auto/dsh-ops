@@ -15,6 +15,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Bash/Niubash 准备失败现在只在错误本身带 link-count 特征时才显示那段说明，且该段不再要求已经运行 0.5.2 的安装去升级到 0.5.2；其余未分类失败保留自身原因、走默认文案（#805）。
 - A Bash slot whose executor never resolved now says so in the prompt instead of rendering an empty section: the notice quotes the resolution `source` and `detail` (which already ends with the deployment remedy), points file work at the OPS file tools, and refuses to imply that swapping shells is a repair. Official PowerShell is still never hidden while Bash is unavailable.
 - Bash 执行器未能解析时，提示段落不再留空，而是明确说明不可用：引用解析结果的 `source` 与 `detail`（后者已含部署侧修复办法），指明文件读写应走 OPS 文件工具，并明确不得以换 shell 充当修复；Bash 不可用时官方 PowerShell 仍绝不被隐藏。
+- Load `@deepseek-ai/dsh-scope` from the copy the running host resolves. A bundle that hoists its own copy into the profile tree used to shadow the host's, so scope contexts read as unscoped and creating a session failed with `Publication scope must match its registration context` (#752). The adapter resolves the host entry's copy, then the profile layer, then the bare specifier.
+- 从宿主实际解析到的那份 `@deepseek-ai/dsh-scope` 加载 scope 助手。某个 bundle 把副本提升进 profile 目录树时会遮蔽宿主那份，作用域上下文读不到标签，新建会话报 `Publication scope must match its registration context`（#752）。adapter 依次从运行入口、profile 层、最后才是裸导入解析。
 
 ## [0.5.2] — 2026-11-08 — Patch release
 
