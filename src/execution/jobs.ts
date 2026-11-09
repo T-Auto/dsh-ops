@@ -10,6 +10,7 @@ import { record, errorText } from './boundary.js'
 import { exchange } from './transport.js'
 import { indexCacheRequest, workerEnvelope } from './protocol.js'
 import { withCallBudget, CallBudgetError } from '../kernel/call-budget.js'
+import { InvocationDeadlineError } from '../lifecycle/invocations.js'
 import { withResultSession } from '../kernel/result-lifecycle.js'
 import { exposePosixCache, resultStorage } from '../kernel/result-storage.js'
 import { randomUUID } from 'node:crypto'
@@ -65,10 +66,14 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
   if (!policyService?.resolve || !subprocess?.spawn) return failure('EXECUTOR_UNAVAILABLE', 'DSH policy and subprocess services are required.')
   if (!record(args)) return failure('INVALID_ARGUMENT', 'Arguments must be an object.')
   const newJob = tool === 'batch' && (args.action === 'run' || args.action === 'plan')
+  const mutates = tool !== 'result' || args.action !== 'page'
   const jobId = tool === 'batch' ? (newJob ? `j-${randomUUID()}` : args.id) : undefined
   let confined: ConfinedArgv | undefined, spawned = false
-  const errorResult = (code: string, message: string, effect: EffectState = 'none') => ({ ...failure(code, message, effect),
-    ...(jobId && (!newJob || spawned) ? { detailsRef: jobId } : {}) })
+  const errorResult = (code: string, message: string, effect: EffectState = 'none') => {
+    const value = failure(code, message, effect)
+    return { ...value, error: { ...value.error, ...(spawned ? { phase: 'execute' } : {}) },
+      ...(jobId && (!newJob || spawned) ? { detailsRef: jobId } : {}) }
+  }
   try {
     const policy: SandboxExecutionPolicy = policyService.resolve({ session })
     if (!['read-only', 'workspace-write', 'danger-full-access'].includes(policy?.mode)
@@ -133,22 +138,28 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
     const result = await exchange(subprocess, { argv, cwd: policy.workspaceRoot,
       stdio: { stdin: { data: input }, stdout: { maxBytes: envelope.budget.maxBytes }, stderr: { maxBytes: 16 * 1024 } },
       graceMs: 1000, signal }, () => { spawned = true })
-    if (!result.readers) return errorResult('RESULT_UNKNOWN', 'Worker output readers are unavailable; inspect audit records.', 'unknown')
-    if (result.interrupted) return errorResult('RESULT_UNKNOWN', 'Worker interrupted; durable write-ahead records preserve possible effects.', 'unknown')
+    if (!result.readers) return errorResult('RESULT_UNKNOWN', mutates ? 'Worker output readers are unavailable; inspect audit records.' : 'Read-only worker output readers are unavailable; no data was changed.', mutates ? 'unknown' : 'none')
+    if (result.interrupted) {
+      const code = mutates ? 'RESULT_UNKNOWN' : signal.reason instanceof InvocationDeadlineError ? 'TIMEOUT' : signal.aborted ? 'ABORTED' : 'RESULT_UNKNOWN'
+      const message = mutates ? 'Worker interrupted; durable write-ahead records preserve possible effects.'
+        : code === 'TIMEOUT' ? 'Read-only worker deadline expired; no data was changed.'
+          : code === 'ABORTED' ? 'Read-only worker was cancelled; no data was changed.' : 'Read-only worker was interrupted; no data was changed.'
+      return errorResult(code, message, mutates ? 'unknown' : 'none')
+    }
     if (confined && runnerFailure(result.exitCode, result.stderr, confined.runnerFailureRules ?? [])) {
       return failure('EXECUTOR_UNAVAILABLE', 'DSH confinement runner failed before executing the worker.')
     }
-    if (result.lossy) return errorResult('OUTPUT_LIMIT', 'Worker output exceeded the byte budget; operation facts remain in the audit store.', 'unknown')
+    if (result.lossy) return errorResult('OUTPUT_LIMIT', mutates ? 'Worker output exceeded the byte budget; operation facts remain in the audit store.' : 'Read-only worker output exceeded the byte budget; no data was changed.', mutates ? 'unknown' : 'none')
     if (result.exitCode !== 0) {
       const denied = confined?.denialSignatures?.some(s => result.stderr.toLowerCase().includes(s.toLowerCase()))
       if (denied) {
         const value = { status: 'error', error: executionRestriction(`${tool} ${args?.action ?? ''} file effects`) }
         return { ...value, ...(jobId ? { detailsRef: jobId } : {}) }
       }
-      return errorResult('RESULT_UNKNOWN', 'Worker did not return a settled result; inspect audit records.', 'unknown')
+      return errorResult(mutates ? 'RESULT_UNKNOWN' : 'EXECUTOR_UNAVAILABLE', mutates ? 'Worker did not return a settled result; inspect audit records.' : 'Read-only worker did not return a settled result; no data was changed.', mutates ? 'unknown' : 'none')
     }
-    if (result.invalid === 'json') return errorResult('RESULT_UNKNOWN', 'Worker returned invalid JSON; inspect audit records.', 'unknown')
-    if (!result.value) return errorResult('RESULT_UNKNOWN', 'Worker returned a non-object result; inspect audit records.', 'unknown')
+    if (result.invalid === 'json') return errorResult('RESULT_UNKNOWN', mutates ? 'Worker returned invalid JSON; inspect audit records.' : 'Read-only worker returned invalid JSON; no data was changed.', mutates ? 'unknown' : 'none')
+    if (!result.value) return errorResult('RESULT_UNKNOWN', mutates ? 'Worker returned a non-object result; inspect audit records.' : 'Read-only worker returned a non-object result; no data was changed.', mutates ? 'unknown' : 'none')
     const value = result.value
     const normalized = normalizeNativeDenial(value, policy, `${tool} ${args?.action ?? ''}`.trim(), 'workspace-write')
     const recoverableId = normalized.status === 'error' && jobId && normalized.detailsRef === undefined
@@ -156,8 +167,8 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
     return { ...normalized, ...(tool === 'batch' ? { root: operationRoot } : {}), ...(recoverableId ? { detailsRef: jobId } : {}), sandbox: { mode: policy.mode, ...(confined ? { enforcement: confined.enforcement } : {}) } }
   } catch (error) {
     if (!spawned && admission && !admission()) return publicationDenied()
-    return errorResult(spawned ? 'RESULT_UNKNOWN' : 'EXECUTOR_UNAVAILABLE',
-      `DSH execution infrastructure failed, not a user authorization denial: ${errorText(error)}`, spawned ? 'unknown' : 'none')
+    return errorResult(spawned && mutates ? 'RESULT_UNKNOWN' : 'EXECUTOR_UNAVAILABLE',
+      `DSH execution infrastructure failed, not a user authorization denial: ${errorText(error)}`, spawned && mutates ? 'unknown' : 'none')
   }
 }
 function runnerFailure(exitCode: number | null, stderr: string, rules: readonly RunnerFailureRule[]): boolean {

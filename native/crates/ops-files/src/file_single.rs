@@ -57,6 +57,9 @@ pub(super) fn content_facts(bytes: &[u8]) -> Value {
     json!({"revision":format!("{:x}", Sha256::digest(bytes)), "bytes":bytes.len(),
         "lineCount":std::str::from_utf8(bytes).ok().map(|s| s.lines().count())})
 }
+fn streamed_facts(facts: &FileFacts) -> Value {
+    json!({"revision":facts.revision,"bytes":facts.bytes,"lineCount":facts.line_count})
+}
 pub(super) fn run(request: &Request) -> Result<Value> {
     match request.tool.as_str() {
         "stat" => stat_file(request),
@@ -156,17 +159,25 @@ fn valid_revision(revision: &str, absent: bool) -> Result<()> {
         "expectedRevision must be an observed lowercase SHA-256 (write create-only also accepts absent)",
     ))
 }
-fn check_revision(bytes: Option<&[u8]>, expected: &str) -> Result<()> {
-    let revision = bytes
-        .map(|bytes| format!("{:x}", Sha256::digest(bytes)))
-        .unwrap_or_else(|| "absent".into());
-    if revision != expected {
+fn check_revision_value(actual: &str, expected: &str) -> Result<()> {
+    if actual != expected {
         return Err(Failure::new(
             "REVISION_CONFLICT",
             "Revision differs from expectedRevision; nothing was changed. Inspect before retrying.",
         ));
     }
     Ok(())
+}
+fn check_revision(bytes: Option<&[u8]>, expected: &str) -> Result<()> {
+    let revision = bytes
+        .map(|bytes| format!("{:x}", Sha256::digest(bytes)))
+        .unwrap_or_else(|| "absent".into());
+    check_revision_value(&revision, expected)
+}
+fn check_file_revision(path: &Path, expected: &str) -> Result<FileFacts> {
+    let facts = read_facts(path)?;
+    check_revision_value(&facts.revision, expected)?;
+    Ok(facts)
 }
 pub(super) fn authorize_write(request: &Request, raw: &str) -> Result<PathBuf> {
     if request.read_only {
@@ -220,16 +231,39 @@ fn optional_bytes(raw: &str) -> Result<Option<Vec<u8>>> {
         Err(error) => Err(error.into()),
     }
 }
+fn optional_facts(raw: &str) -> Result<Option<FileFacts>> {
+    let checked = crate::file_path::checked_leaf(raw, true)?;
+    match checked.parent.symlink_metadata(&checked.name) {
+        Ok(_) => Ok(Some(read_facts(&checked.display)?)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+fn check_optional_file_revision(raw: &str, expected: &str) -> Result<()> {
+    let revision = optional_facts(raw)?
+        .map(|facts| facts.revision)
+        .unwrap_or_else(|| "absent".into());
+    check_revision_value(&revision, expected)
+}
+fn check_applied_file_revision(raw: &str, expected: &str, conflict: &str) -> Result<()> {
+    check_optional_file_revision(raw, expected).map_err(|error| {
+        if error.code == "REVISION_CONFLICT" {
+            applied_failure("RESULT_PARTIAL", conflict)
+        } else {
+            applied_failure("RESULT_PARTIAL", error.message)
+        }
+    })
+}
 fn stat_file(request: &Request) -> Result<Value> {
     let args: StatArgs = serde_json::from_value(request.args.clone())?;
     let checked = crate::file_path::checked_leaf(&args.path, true)?;
-    let Some(bytes) = optional_bytes(&args.path)? else {
+    let Some(facts) = optional_facts(&args.path)? else {
         return Ok(
             json!({"status":"completed","complete":true,"exists":false,"revision":"absent","items":[]}),
         );
     };
     let metadata = crate::file_path::read_file(&checked)?.metadata()?;
-    let mut output = content_facts(&bytes);
+    let mut output = streamed_facts(&facts);
     output["status"] = json!("completed");
     output["complete"] = json!(true);
     output["exists"] = json!(true);
@@ -315,6 +349,21 @@ fn receipt(path: &Path, before: Option<&[u8]>, next: &[u8], dry_run: bool, chang
     output["items"] = json!([item]);
     output
 }
+fn transfer_receipt(path: &Path, next: &FileFacts) -> Value {
+    let mut item = streamed_facts(next);
+    item["path"] = json!(path);
+    item["bytesAfter"] = json!(next.bytes);
+    item["bytesBefore"] = json!(0);
+    item["revisionBefore"] = json!("absent");
+    let mut output = streamed_facts(next);
+    output["status"] = json!("completed");
+    output["phase"] = json!("verify");
+    output["complete"] = json!(true);
+    output["changed"] = json!(1);
+    output["dryRun"] = json!(false);
+    output["items"] = json!([item]);
+    output
+}
 fn write_single(
     request: &Request,
     raw: &str,
@@ -332,7 +381,10 @@ fn write_single(
         check_revision(bytes, expected)?;
         let next = prepare(bytes)?;
         if next.len() as u64 > MAX_FILE_BYTES {
-            return Err(Failure::new("OUTPUT_LIMIT", "Proposed file exceeds 32 MiB"));
+            return Err(Failure::new(
+                "OUTPUT_LIMIT",
+                "Proposed file exceeds the 32 MiB in-memory content budget for edit/write",
+            ));
         }
         Ok(next)
     };
@@ -368,8 +420,11 @@ fn write_single(
             }
         }
     } else {
-        publish_new(&path, &next, None, None)?;
+        let (_, warnings) = publish_new(&path, Some(&next), None, None)?;
         output["items"][0]["metadata"] = json!({"created":true});
+        if !warnings.is_empty() {
+            output["items"][0]["metadataWarnings"] = json!(warnings);
+        }
     }
     Ok(output)
 }
@@ -377,10 +432,10 @@ fn write_single(
 /// rename this publication cannot clobber even a non-cooperating creator.
 fn publish_new(
     path: &Path,
-    bytes: &[u8],
+    bytes: Option<&[u8]>,
     source: Option<&crate::file_path::Target>,
     expected_source: Option<&str>,
-) -> Result<()> {
+) -> Result<(FileFacts, Vec<String>)> {
     let checked = crate::file_path::checked_leaf(
         path.to_str()
             .ok_or_else(|| Failure::new("INVALID_ARGUMENT", "Non-UTF8 path"))?,
@@ -392,45 +447,80 @@ fn publish_new(
         .transpose()?;
     #[cfg(unix)]
     let preserved = source.map(PreservedMetadata::of).transpose()?;
+    #[cfg(windows)]
+    let new_file_volume = if source.is_none() {
+        let parent = checked.parent.try_clone()?.into_std_file();
+        Some(
+            dsh_ops_windows_metadata::VolumeCapabilities::query(&parent)
+                .map_err(|error| Failure::new("METADATA_UNSUPPORTED", error))?,
+        )
+    } else {
+        None
+    };
     let temporary = format!(".{}.dsh-ops-{}", checked.name, uuid::Uuid::new_v4());
     let mut file = publication::create_sibling(&checked.parent, &temporary, source)?;
-    let prepared = (|| -> Result<()> {
-        file.write_all(bytes)?;
-        if let Some(source) = source {
+    let prepared = (|| -> Result<(FileFacts, Vec<String>)> {
+        // Capture timestamps before reading the source for a streamed copy: the
+        // read itself may update its access time.
+        let times = if let Some(source) = source {
             let metadata = crate::file_path::read_file(source)?.metadata()?;
-            let times = std::fs::FileTimes::new()
-                .set_accessed(metadata.accessed()?.into_std())
-                .set_modified(metadata.modified()?.into_std());
+            Some(
+                std::fs::FileTimes::new()
+                    .set_accessed(metadata.accessed()?.into_std())
+                    .set_modified(metadata.modified()?.into_std()),
+            )
+        } else {
+            None
+        };
+        let facts = if let Some(bytes) = bytes {
+            file.write_all(bytes)?;
+            stream_facts(&mut &bytes[..], None)?
+        } else {
+            let source = source
+                .ok_or_else(|| Failure::new("INVALID_ARGUMENT", "Copy requires a source file"))?;
+            stream_facts(&mut crate::file_path::read_file(source)?, Some(&mut file))?
+        };
+        if let Some(times) = times {
             file.try_clone()?.into_std().set_times(times)?;
         }
+        let mut warnings = Vec::new();
         #[cfg(any(unix, windows))]
         if let Some(preserved) = &preserved {
-            let (_, warnings) = preserved.restore(&file)?;
-            if !warnings.is_empty() {
-                return Err(Failure::new(
-                    "METADATA_UNSUPPORTED",
-                    "Copy metadata could not be fully restored; nothing published",
-                ));
-            }
+            let (_, restored) = preserved.restore(&file)?;
+            warnings.extend(restored);
+        }
+        #[cfg(unix)]
+        if !warnings.is_empty() {
+            return Err(Failure::new(
+                "METADATA_UNSUPPORTED",
+                "Copy metadata could not be fully restored; nothing published",
+            ));
         }
         #[cfg(windows)]
-        if source.is_none() {
-            dsh_ops_windows_metadata::inherit_new_file_dacl(
-                &checked.parent.try_clone()?.into_std_file(),
-                &file.try_clone()?.into_std(),
-            )
-            .map_err(|error| Failure::new("METADATA_UNSUPPORTED", error))?;
+        if let Some(capabilities) = &new_file_volume {
+            if capabilities.persistent_acls() {
+                dsh_ops_windows_metadata::inherit_new_file_dacl(
+                    &checked.parent.try_clone()?.into_std_file(),
+                    &file.try_clone()?.into_std(),
+                )
+                .map_err(|error| Failure::new("METADATA_UNSUPPORTED", error))?;
+            } else {
+                warnings.extend(capabilities.warnings());
+            }
         }
         file.sync_all()?;
-        Ok(())
+        Ok((facts, warnings))
     })();
-    if let Err(error) = prepared {
-        publication::discard_sibling(&checked.parent, &temporary, file)?;
-        return Err(error);
-    }
+    let (facts, warnings) = match prepared {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            publication::discard_sibling(&checked.parent, &temporary, file)?;
+            return Err(error);
+        }
+    };
     if let (Some(source), Some(expected)) = (source, expected_source)
-        && let Err(error) =
-            read_bytes(&source.display).and_then(|bytes| check_revision(Some(&bytes), expected))
+        && let Err(error) = check_revision_value(&facts.revision, expected)
+            .and_then(|_| check_file_revision(&source.display, expected).map(|_| ()))
     {
         publication::discard_sibling(&checked.parent, &temporary, file)?;
         return Err(error);
@@ -451,7 +541,8 @@ fn publish_new(
             return Err(std::io::Error::from(error).into());
         }
         drop(file);
-        return sync_applied(&checked.parent);
+        sync_applied(&checked.parent)?;
+        return Ok((facts, warnings));
     }
     #[cfg(not(target_os = "macos"))]
     let published = checked
@@ -474,7 +565,8 @@ fn publish_new(
         preserved.verify(&checked.parent, &checked.name)?;
     }
     #[cfg(not(target_os = "macos"))]
-    sync_applied(&checked.parent)
+    sync_applied(&checked.parent)?;
+    Ok((facts, warnings))
 }
 fn sync_applied(parent: &cap_std::fs::Dir) -> Result<()> {
     #[cfg(unix)]
@@ -516,8 +608,7 @@ fn transfer_file(request: &Request) -> Result<Value> {
     // Same reason as write_single: a request that cannot succeed must not create the update
     // sidecar. These are pure snapshots of the source and the destination; the checks below the
     // locks stay the authoritative ones and still decide when a concurrent writer won the race.
-    let snapshot_source = read_bytes(&source.display)?;
-    check_revision(Some(&snapshot_source), &args.expected_revision)?;
+    check_file_revision(&source.display, &args.expected_revision)?;
     let snapshot_target = crate::file_path::checked_leaf(&args.to, true)?;
     match snapshot_target
         .parent
@@ -541,18 +632,14 @@ fn transfer_file(request: &Request) -> Result<Value> {
     } else {
         vec![lock_single(names[0])?, lock_single(names[1])?]
     };
-    let bytes = if request.tool == "copy" {
-        // The pre-lock snapshot already carries the bytes copy publishes and passed the revision
-        // check, and `publish_new` re-reads the source and discards the staging sibling when its
-        // revision no longer matches, so the CAS is still enforced after the lock; re-reading (and
-        // re-hashing) here would only duplicate I/O on every copy.
-        snapshot_source
+    let moved_facts = if request.tool == "move" {
+        Some(check_file_revision(
+            &source.display,
+            &args.expected_revision,
+        )?)
     } else {
-        read_bytes(&source.display)?
+        None
     };
-    if request.tool != "copy" {
-        check_revision(Some(&bytes), &args.expected_revision)?;
-    }
     let target = crate::file_path::checked_leaf(&args.to, true)?;
     match target.parent.symlink_metadata(&target.name) {
         Ok(_) => {
@@ -564,10 +651,19 @@ fn transfer_file(request: &Request) -> Result<Value> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
         Err(error) => return Err(error.into()),
     }
-    let mut output = receipt(&dest, None, &bytes, false, true);
+    let mut output;
     if request.tool == "copy" {
-        publish_new(&dest, &bytes, Some(&source), Some(&args.expected_revision))?;
+        let (facts, warnings) =
+            publish_new(&dest, None, Some(&source), Some(&args.expected_revision))?;
+        output = transfer_receipt(&dest, &facts);
+        if !warnings.is_empty() {
+            output["items"][0]["metadataWarnings"] = json!(warnings);
+        }
     } else {
+        output = transfer_receipt(
+            &dest,
+            moved_facts.as_ref().expect("move revision was observed"),
+        );
         // A hard link is atomic no-clobber and preserves the original security metadata.
         // The OS rejects cross-device links; never degrade into copy/delete.
         source
@@ -584,30 +680,16 @@ fn transfer_file(request: &Request) -> Result<Value> {
                 }
             })?;
         sync_applied(&target.parent)?;
-        check_revision(
-            optional_bytes(&args.to)
-                .map_err(|error| applied_failure("RESULT_PARTIAL", error.message))?
-                .as_deref(),
+        check_applied_file_revision(
+            &args.to,
             &args.expected_revision,
-        )
-        .map_err(|_| {
-            applied_failure(
-                "RESULT_PARTIAL",
-                "Destination published but its revision differs; source was retained",
-            )
-        })?;
-        check_revision(
-            optional_bytes(&args.path)
-                .map_err(|error| applied_failure("RESULT_PARTIAL", error.message))?
-                .as_deref(),
+            "Destination published but its revision differs; source was retained",
+        )?;
+        check_applied_file_revision(
+            &args.path,
             &args.expected_revision,
-        )
-        .map_err(|_| {
-            applied_failure(
-                "RESULT_PARTIAL",
-                "Destination published but source changed; source was retained",
-            )
-        })?;
+            "Destination published but source changed; source was retained",
+        )?;
         source.parent.remove_file(&source.name).map_err(|error| {
             applied_failure(
                 "RESULT_PARTIAL",
@@ -629,15 +711,10 @@ fn remove_file(request: &Request) -> Result<Value> {
     let path = authorize_write(request, &args.path)?;
     // Same reason as write_single: a refused removal must not leave the update sidecar. The check
     // before the lock is a pure snapshot; the one below it stays authoritative.
-    let snapshot = read_bytes(&path)?;
-    check_revision(Some(&snapshot), &args.expected_revision)?;
+    check_file_revision(&path, &args.expected_revision)?;
     let _lock = lock_single(&args.path)?;
-    let bytes = read_bytes(&path)?;
-    // The locked read is authoritative; when it stayed identical the validated snapshot still
-    // decides, so no second hash of the same bytes is needed.
-    if bytes != snapshot {
-        check_revision(Some(&bytes), &args.expected_revision)?;
-    }
+    // The locked observation is authoritative and never buffers the file.
+    check_file_revision(&path, &args.expected_revision)?;
     let checked = crate::file_path::checked(&args.path)?;
     checked.parent.remove_file(&checked.name)?;
     sync_applied(&checked.parent)?;
@@ -649,6 +726,89 @@ fn remove_file(request: &Request) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn request(root: &Path, tool: &str, args: Value) -> Request {
+        serde_json::from_value(json!({
+            "root": root,
+            "root_identity": "test",
+            "scope": "test",
+            "tool": tool,
+            "args": args,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn large_file_revision_operations_stream_instead_of_buffering() {
+        let root = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!("dsh-ops-large-stat-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("large.bin");
+        std::fs::File::create(&path)
+            .unwrap()
+            .set_len(MAX_FILE_BYTES + 1)
+            .unwrap();
+        let stat = stat_file(&request(
+            &root,
+            "stat",
+            json!({"path": path.to_string_lossy()}),
+        ))
+        .unwrap();
+        assert_eq!(stat["status"], json!("completed"));
+        assert_eq!(stat["bytes"], json!(MAX_FILE_BYTES + 1));
+        assert_eq!(stat["lineCount"], json!(1));
+        assert_eq!(stat["revision"].as_str().unwrap().len(), 64);
+
+        let copied_path = root.join("copied.bin");
+        let copied = transfer_file(&request(
+            &root,
+            "copy",
+            json!({
+                "path": path.to_string_lossy(),
+                "to": copied_path.to_string_lossy(),
+                "expectedRevision": stat["revision"],
+            }),
+        ))
+        .unwrap();
+        assert_eq!(copied["status"], json!("completed"));
+        assert_eq!(copied["revision"], stat["revision"]);
+        assert_eq!(copied["bytes"], json!(MAX_FILE_BYTES + 1));
+        assert_eq!(copied["lineCount"], json!(1));
+
+        let moved_path = root.join("moved.bin");
+        let moved = transfer_file(&request(
+            &root,
+            "move",
+            json!({
+                "path": copied_path.to_string_lossy(),
+                "to": moved_path.to_string_lossy(),
+                "expectedRevision": stat["revision"],
+            }),
+        ))
+        .unwrap();
+        assert_eq!(moved["status"], json!("completed"));
+        assert!(!copied_path.exists());
+        let removed_copy = remove_file(&request(
+            &root,
+            "remove",
+            json!({"path": moved_path.to_string_lossy(), "expectedRevision": stat["revision"]}),
+        ))
+        .unwrap();
+        assert_eq!(removed_copy["changed"], json!(1));
+
+        let removed = remove_file(&request(
+            &root,
+            "remove",
+            json!({"path": path.to_string_lossy(), "expectedRevision": stat["revision"]}),
+        ))
+        .unwrap();
+        assert_eq!(removed["status"], json!("completed"));
+        assert_eq!(removed["changed"], json!(1));
+        assert!(!path.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn copy_changed_source_is_not_published() {
         // Darwin's `TMPDIR` sits under `/var`, itself a symlink to `/private/var`, and the
@@ -663,7 +823,8 @@ mod tests {
         let expected = format!("{:x}", Sha256::digest(original));
         std::fs::write(&source, b"concurrent writer").unwrap();
         let checked = crate::file_path::checked(source.to_str().unwrap()).unwrap();
-        let error = publish_new(&dest, original, Some(&checked), Some(&expected)).unwrap_err();
+        let error =
+            publish_new(&dest, Some(original), Some(&checked), Some(&expected)).unwrap_err();
         assert_eq!(error.code, "REVISION_CONFLICT");
         assert_eq!(&*error.effect_state, "none");
         assert!(!dest.exists());

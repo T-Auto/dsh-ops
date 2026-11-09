@@ -43,7 +43,8 @@ await test('mutation parameter contracts and Windows preservation remain after t
   assert.match(PARAMETERS.write_file.properties.expectedRevision.description, /SHA-256.*absent.*Never omit or pass null\/empty/)
   assert.match(PARAMETERS.move.properties.to.description, /Absent destination file on the same filesystem; relative to session cwd/)
   for (const name of ['write_file', 'edit_file', 'copy', 'replace']) {
-    assert.match(DESCRIPTIONS[name], /Windows preserves owner\/group\/ordered DACL/)
+    assert.match(DESCRIPTIONS[name], /Windows preserves available owner\/group\/ordered DACL/)
+    assert.match(DESCRIPTIONS[name], /volumes without stream\/ACL support report metadataWarnings/)
     assert.match(DESCRIPTIONS[name], /readonly overwrite is refused/)
     assert.match(DESCRIPTIONS[name], /SACL\/audit labels are not preserved/)
   }
@@ -104,6 +105,13 @@ await test('current component routing does not advertise removed inspect capabil
     const doc = fs.readFileSync(new URL(`../docs/${name}`, import.meta.url), 'utf8')
     assert.match(doc, /Bounded UTF-8 text \/ hex \| ops_inspect_local_file/)
     assert.doesNotMatch(doc, /Text \/ multiple ranges \/ encoding \/ PDF text/)
+  }
+})
+
+await test('write and edit descriptions state the effective request budget once', () => {
+  for (const tool of ['write_file', 'edit_file']) {
+    assert.match(DESCRIPTIONS[tool], /Requests are limited to 2 MiB; split larger changes\./)
+    assert.equal(DESCRIPTIONS[tool].match(/2 MiB/g)?.length, 1)
   }
 })
 

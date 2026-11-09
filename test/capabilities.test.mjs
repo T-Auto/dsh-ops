@@ -60,7 +60,7 @@ const snapshot = (names, definition) => names.map(name => {
 await test('business file and batch definitions retain their reviewed serialized contracts', () => {
   // Structural contracts stay pinned separately below; #817 deliberately compacts help while retaining the create-only literal.
   const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
-  assert.equal(hash(snapshot(FILE_TOOLS.filter(name => !['glob', 'grep', 'read_files', 'edit_file', 'read_table', 'read_docx', 'read_pdf'].includes(name)), fileDefinition)), 'f3fb33cb75b29350e4aa100de557e325cae974a4c17bcafb09c7b9c62b86ca8a')
+  assert.equal(hash(snapshot(FILE_TOOLS.filter(name => !['glob', 'grep', 'read_files', 'edit_file', 'read_table', 'read_docx', 'read_pdf'].includes(name)), fileDefinition)), '222b2295891d541112e87ebfa155bac48ed48ea089b3cd9c5cbb497a9a7780e7')
   const batch = ptcDefinition('batch', async () => null)
   assert.equal(batch.parameters, ptcParameters.batch); assert.ok(batch.description.startsWith(ptcDescriptions.batch)); assert.match(batch.description, /PTC returns Outcome/)
   assert.ok(batch.output.schema.oneOf.every(branch => branch.properties.status))

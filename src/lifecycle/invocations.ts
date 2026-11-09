@@ -3,6 +3,11 @@ export class InvocationNotStarted extends Error {
   constructor() { super('Invocation cancelled before execution'); this.name = 'InvocationNotStarted' }
 }
 
+/** Distinguishes an owned deadline from caller cancellation and worker signal death. */
+export class InvocationDeadlineError extends Error {
+  constructor() { super('Invocation deadline exceeded'); this.name = 'InvocationDeadlineError' }
+}
+
 /** Provider-neutral in-flight invocation ownership. Cancellation is cooperative, never a sandbox. */
 export class InvocationLifetime {
   readonly active = new Map<AbortController, Promise<unknown>>()
@@ -15,7 +20,7 @@ export class InvocationLifetime {
     if (signal?.aborted) abort()
     else signal?.addEventListener('abort', abort, { once: true })
     provider?.add(controller)
-    const timer = timeoutMs === undefined ? undefined : setTimeout(() => controller.abort(new Error('Invocation deadline exceeded')), timeoutMs)
+    const timer = timeoutMs === undefined ? undefined : setTimeout(() => controller.abort(new InvocationDeadlineError()), timeoutMs)
     timer?.unref?.()
     // Register before scheduling user code: synchronous disposal cannot miss this call.
     const work = Promise.resolve().then(() => {

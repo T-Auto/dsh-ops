@@ -51,21 +51,31 @@ pub(super) fn open_update_lock(parent: &Dir, name: &str, conflict: &str) -> Resu
 
 pub(super) fn lock_error(error: std::io::Error, conflict: &str) -> Failure {
     #[cfg(windows)]
-    if lock_unsupported(&error) {
-        return Failure::new(
-            "LOCK_UNSUPPORTED",
-            "This filesystem does not support exclusive file locks; nothing was changed. Use a local drive or the shell for this filesystem.",
-        );
+    {
+        if lock_unsupported(&error) {
+            return Failure::new(
+                "LOCK_UNSUPPORTED",
+                "This filesystem does not support exclusive file locks; nothing was changed. Use a local drive or the shell for this filesystem.",
+            );
+        }
+        if matches!(error.raw_os_error(), Some(32 | 33)) {
+            return Failure::new("REVISION_CONFLICT", conflict);
+        }
+        Failure::from(error)
     }
-    let _ = error;
-    Failure::new("REVISION_CONFLICT", conflict)
+    #[cfg(not(windows))]
+    {
+        let _ = error;
+        Failure::new("REVISION_CONFLICT", conflict)
+    }
 }
 
 /// A filesystem without byte-range locks reports `ERROR_INVALID_FUNCTION`
-/// (WSL 9p), `ERROR_NOT_SUPPORTED`, or `ERROR_CALL_NOT_IMPLEMENTED`.
+/// (WSL 9p), `ERROR_NOT_SUPPORTED`, `ERROR_CALL_NOT_IMPLEMENTED`, or
+/// `ERROR_INVALID_PARAMETER` (exFAT).
 #[cfg(windows)]
 fn lock_unsupported(error: &std::io::Error) -> bool {
-    matches!(error.raw_os_error(), Some(1 | 50 | 120))
+    matches!(error.raw_os_error(), Some(1 | 50 | 87 | 120))
 }
 
 /// Another handle already holds the sidecar, or its byte-range lock.
@@ -233,9 +243,10 @@ impl Preserved {
         self.0
             .restore(&file.try_clone()?.into_std())
             .map_err(metadata_error)?;
+        let acls = self.0.has_persistent_acls();
         Ok((
-            json!({"owner":true,"group":true,"dacl":true,"attributes":true}),
-            vec![],
+            json!({"owner":acls,"group":acls,"dacl":acls,"attributes":true}),
+            self.0.warnings().to_vec(),
         ))
     }
     pub fn verify(&self, parent: &Dir, name: &str) -> Result<()> {
@@ -345,7 +356,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn unsupported_lock_errors_are_classified_apart_from_contention() {
-        for code in [1, 50, 120] {
+        for code in [1, 50, 87, 120] {
             assert!(
                 lock_unsupported(&std::io::Error::from_raw_os_error(code)),
                 "raw {code} means the filesystem cannot lock"
@@ -365,5 +376,11 @@ mod tests {
                 "REVISION_CONFLICT"
             );
         }
+        let denied = lock_error(std::io::Error::from_raw_os_error(5), "held");
+        assert_eq!(denied.code, "ACCESS_DENIED");
+        assert!(denied.message.contains("os error 5"));
+        let other = lock_error(std::io::Error::from_raw_os_error(6), "held");
+        assert_ne!(other.code, "REVISION_CONFLICT");
+        assert!(other.message.contains("os error 6"));
     }
 }
