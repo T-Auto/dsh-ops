@@ -11,6 +11,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 解封执行树时不再按 `dev:ino` 跳过文件：该键在 Windows 上并不唯一，被跳过的成员会一直只读、删不掉，进而把整棵树留在临时目录里。对真正共享的 inode 重复 `chmod` 无害（#804）。
 - A hardlink clone the filesystem refuses with `UNKNOWN` now rebuilds the tree as copies. Windows reports the per-inode link limit under that single code, so the five-code fallback gate never matched and every Bash call failed until the condition cleared on its own; the fallback now also records the payload's highest link count so the ceiling is visible next time (#804).
 - 硬链接克隆遇到 `UNKNOWN` 失败时改为重建为复制副本。Windows 把 inode 链接上限归到这一个错误码下，此前五码白名单永远匹配不到，复制兜底不触发，每次 Bash 调用都会失败，只能等外部条件自行消失；现在回退还会记录 payload 的最高链接数，下次能直接看出是否触顶（#804）。
+- A Bash/Niubash preparation failure now shows the link-count paragraph only when the failure itself carries a link-count signature, and that paragraph no longer tells an installation already on 0.5.2 to upgrade to 0.5.2. Every other unclassified failure keeps its own reason and falls through to the default text (#805).
+- Bash/Niubash 准备失败现在只在错误本身带 link-count 特征时才显示那段说明，且该段不再要求已经运行 0.5.2 的安装去升级到 0.5.2；其余未分类失败保留自身原因、走默认文案（#805）。
 
 ## [0.5.2] — 2026-11-08 — Patch release
 

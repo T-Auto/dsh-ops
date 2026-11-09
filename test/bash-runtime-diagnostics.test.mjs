@@ -183,4 +183,30 @@ await test('a restricted bash that cannot run reports which bash and why, not a 
     assert.match(message, /No command was executed/)
   })
 
+await test('only a link-count failure gets the 0.5.2 paragraph; other Niubash failures keep their own reason', () => {
+  // The one cause the paragraph was written for still gets it.
+  const linkCount = executorUnavailableMessage(new Error('Niubash execution tree link count mismatch: assets/icon.png'))
+  assert.match(linkCount, /0\.5\.2/)
+  assert.match(linkCount, /cache reclaim --kind exec-tree --all-hosts-stopped --yes/)
+  // ...but a 0.5.2 installation must not be told to upgrade to 0.5.2 (#804).
+  assert.doesNotMatch(linkCount, /upgrade dsh-ops to 0\.5\.2/)
+
+  // Everything else that merely mentions Niubash keeps its own reason and makes no
+  // claim about a concurrency defect. Before #804 all five of these got the upgrade
+  // paragraph, purely because the word Niubash appeared somewhere in the text.
+  for (const reason of [
+    "UNKNOWN: unknown error, link 'C:\\\\p\\\\runtime\\\\win32-x64\\\\niubash\\\\winuxcmd\\\\usr\\\\bin\\\\awk.exe' -> 'C:\\\\t\\\\awk.exe'",
+    'niubash 目录权限不足: EACCES',
+    'EXECUTOR_UNAVAILABLE: Niubash payload verification failed: expected an absolute niu.exe path',
+    'Niubash execution tree checksum mismatch: assets/icon.png',
+    'the exec root must not be inside the Niubash payload: C:\\\\payload',
+  ]) {
+    const message = executorUnavailableMessage(new Error(reason))
+    assert.doesNotMatch(message, /upgrade dsh-ops to 0\.5\.2/, reason)
+    assert.doesNotMatch(message, /concurrency/, reason)
+    assert.match(message, /^EXECUTOR_UNAVAILABLE: the restricted Bash runtime could not be prepared: /, reason)
+    assert.match(message, /do not switch shells to bypass confinement/, reason)
+  }
+})
+
 report('bash-runtime-diagnostics')
