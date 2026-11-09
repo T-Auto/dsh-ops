@@ -30,6 +30,10 @@ node_modules/
 # Local cross-session handoff, project context and architecture notes
 memorybank/
 
+# Pre-change snapshots (source + build + hashes). Machine-local recovery data, never
+# source; a checkpoint can be over 100MB and is not part of any PR.
+.checkpoints/
+
 # Editor and OS noise
 .DS_Store
 Thumbs.db
