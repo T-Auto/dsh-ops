@@ -9,8 +9,9 @@ import { NIUBASH_PIN, NIUBASH_EXECUTION_DIRECTORIES, verifyNiubashTree } from '.
 import { assert, test, report, withTempDir, skipSuite } from './lib/harness.mjs'
 
 const file = process.env.DSH_OPS_TEST_NIUBASH
-if (!file) skipSuite('niubash-preparation', 'requires frozen DSH_OPS_TEST_NIUBASH')
-const source = path.dirname(file)
+// Publication and workspace checks are payload-independent and run everywhere; the rest needs the frozen payload.
+if (process.platform === 'win32' && !file) skipSuite('niubash-preparation', 'requires frozen DSH_OPS_TEST_NIUBASH')
+const source = file ? path.dirname(file) : ''
 const snapshot = root => {
   const result = {}
   const walk = relative => {
@@ -79,6 +80,7 @@ await test('persistent publication failure is bounded and names the failed renam
     assert.equal(calls, 1)
   }
 }))
+if (file) {
 await test('version preparation is idempotent, complete and does not hardlink the source', async () => withTempDir('niu-version', async root => {
   const target = niubashPreparedRoot({ DSH_HOME: root })
   const before = snapshot(source), read = fs.readFileSync
@@ -181,6 +183,7 @@ await test('consecutive and concurrent invocation preparation is read-only and c
   assert.deepEqual(snapshot(root), before)
   assert.deepEqual(snapshot(source), original)
 })
+}
 await test('workspace-contained and junction-hidden payloads are refused before host workspace labeling', async () => withTempDir('niu-workspace', async root => {
   const payload = path.join(root, 'payload'); fs.mkdirSync(payload)
   const signal = new AbortController().signal
