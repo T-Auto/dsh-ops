@@ -11,7 +11,7 @@ import { resolveIntegrationConfig } from '../lib/consumer/options.js'
 import { gateConsumer } from '../lib/consumer/gates.js'
 import { mountIntegration } from '../lib/integration/index.js'
 import { BASH_TOOL, modeSectionName } from '../lib/policy.js'
-import { BASH_PROMPT_SECTION, renderBashGuidance } from '../lib/shells/prompt.js'
+import { BASH_PROMPT_SECTION, bashOperationDescription, renderBashGuidance } from '../lib/shells/prompt.js'
 import { readRowValues, changedFields } from '../lib/client/row-schema.js'
 import { mountDshOpsBridge } from './fixtures/shell-slot-pwsh7/dsh-ops-bridge.mjs'
 import { bootHost, shutdown, scopedToolNames } from './lib/host.mjs'
@@ -80,7 +80,8 @@ for (const bash of [false, true]) for (const pwsh of [false, true]) {
         assert.equal(schema.parameters.properties.run_in_background, undefined)
         const text = bashSections(assembly)[0].text
         assert.match(text, /D:\/repo or \/d\/repo/)
-        assert.match(text, /foreground includes status, exitCode/)
+        assert.doesNotMatch(text, /foreground includes status, exitCode/, 'result fields are in the tool contract')
+        assert.match(text, /missing exitCode or failed status is not success/)
         assert.match(text, /Host jobs are unavailable/)
         assert.doesNotMatch(text, /Check the \[exit code: N\] marker|→ host PowerShell/)
         assert.equal(bashSections(await assemble(agent)).length, 1)
@@ -109,7 +110,7 @@ for (const preset of ['standard', 'cordis']) {
       const agent = await mint('resident-' + preset, { preset, pwsh: false })
       const peer = await mint('peer-' + preset, { preset, pwsh: false })
       const assembly = await assemble(agent)
-      for (const name of ['ops_read_files', 'ops_glob', 'ops_grep', 'ops_inspect_local_file', 'ops_result', 'ops_discover_tools']) {
+      for (const name of ['ops_glob', 'ops_grep', 'ops_inspect_local_file', 'ops_discover_tools']) {
         assert.ok(assembly.tools.some(tool => tool.name === name), `${name} is resident or the discovery entry`)
       }
       const fileText = assembly.sections.find(section => section.name === modeSectionName('mode-' + preset))?.text ?? ''
@@ -141,7 +142,7 @@ for (const preset of ['standard', 'cordis']) {
         const discoveryOwnsGuidance = current.tools.some(tool => tool.name === 'ops_discover_tools') && !shellOwnsGuidance && !nativeOwnsGuidance
         const expectedOwners = Number(shellOwnsGuidance || nativeOwnsGuidance || discoveryOwnsGuidance)
         assert.equal(count(current, guidance), expectedOwners, `${owner} keeps the platform-eligible owner after reload: ${textOf(current)}`)
-        assert.equal(current.tools.some(tool => tool.name === 'ops_read_files'), residentTools)
+        assert.equal(current.tools.some(tool => tool.name === 'ops_inspect_local_file'), residentTools)
         assert.equal(current.tools.some(tool => tool.name === BASH_TOOL), shellOwnsGuidance)
         assert.equal(bashSections(current).length, shellOwnsGuidance ? 1 : 0)
         const nativeSection = current.sections.find(section => section.name === modeSectionName('mode-' + preset))
@@ -177,10 +178,10 @@ for (const [label, config, hidden] of [
   try {
     await ctx.plugin(Bundle, { ...minimalOnly, ...config })
     const agent = await mint('hide')
-    await assemble(agent)
-    if (config.minimal?.bashPath) assert.equal(names(agent).includes(BASH_TOOL), false)
-    assert.equal(names(agent).includes('pwsh'), !(hidden && process.platform === 'win32'))
-    assert.equal(names(agent).includes('pwsh_persistent'), !(hidden && process.platform === 'win32'))
+    const stepNames = (await assemble(agent)).tools.map(tool => tool.name)
+    if (config.minimal?.bashPath) assert.equal(stepNames.includes(BASH_TOOL), false)
+    assert.equal(stepNames.includes('pwsh'), !(hidden && process.platform === 'win32'))
+    assert.equal(stepNames.includes('pwsh_persistent'), !(hidden && process.platform === 'win32'))
   } finally { await shutdown(ctx) }
 }))
 
@@ -269,7 +270,7 @@ await test('job schema and guidance change together on mount and disposal', () =
     await new Promise(resolve => setImmediate(resolve))
     const assembly = await assemble(agent)
     assert.equal(assembly.tools.find(tool => tool.name === BASH_TOOL).parameters.properties.run_in_background.type, 'boolean')
-    assert.match(bashSections(assembly)[0].text, /kind promoted with jobId/)
+    assert.match(bashSections(assembly)[0].text, /Promotion is not command completion/)
     await jobs.dispose(); await new Promise(resolve => setImmediate(resolve))
     const after = await assemble(agent)
     assert.equal(after.tools.find(tool => tool.name === BASH_TOOL).parameters.properties.run_in_background, undefined)
@@ -319,8 +320,8 @@ await test('a hidden PowerShell fallback returns when Bash authority is withdraw
   try {
     await ctx.plugin(Bundle, { ...minimalOnly, minimal: { hidePwsh: true }, other: { pwsh7Link: false } })
     const agent = await mint('fallback')
-    await assemble(agent)
-    assert.equal(names(agent).includes('pwsh'), process.platform !== 'win32')
+    const initial = await assemble(agent)
+    assert.equal(initial.tools.some(tool => tool.name === 'pwsh'), process.platform !== 'win32')
     agent.session.mode = 'unavailable'
     await ctx.serial('session/event', agent.session, { type: 'sandbox/mode' }); await new Promise(resolve => setImmediate(resolve))
     await assemble(agent)
@@ -330,8 +331,19 @@ await test('a hidden PowerShell fallback returns when Bash authority is withdraw
   } finally { await shutdown(ctx) }
 }))
 
-await test('POSIX guidance never claims MSYS or Windows path translation', () => {
-  assert.match(renderBashGuidance(false, 'linux'), /local host Bash/)
-  assert.doesNotMatch(renderBashGuidance(false, 'linux'), /MSYS|D:\/repo|not Linux/)
+await test('Bash guidance keeps path and safety rules without repeating the tool contract', () => {
+  assert.match(bashOperationDescription('linux'), /local host Bash/)
+  const posix = renderBashGuidance(false, 'linux')
+  assert.doesNotMatch(posix, /MSYS|D:\/repo|not Linux|fresh non-login|description is required|failure\.code/)
+  const windows = renderBashGuidance(true, 'win32')
+  assert.match(windows, /D:\/repo or \/d\/repo/)
+  assert.match(windows, /drive-less \/tmp or \/ is not a Windows workdir/)
+  assert.match(windows, /MSYS paths such as \/d\/repo/)
+  assert.match(windows, /longer than about 1 KB.*script_path/)
+  assert.match(windows, /exactly one of command or script_path/)
+  assert.match(windows, /sandbox remains authoritative.*must not be bypassed/)
+  assert.match(windows, /spill paths describe retained output, not completeness/)
+  assert.match(windows, /Promotion is not command completion.*job_output.*job_kill/)
+  assert.doesNotMatch(windows, /fresh non-login|foreground includes status|description is required|run_in_background returns/)
 })
 report('shell-slot')

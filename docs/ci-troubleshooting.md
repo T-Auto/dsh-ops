@@ -244,8 +244,8 @@ prints nothing.
 
 The suite runner died (OOM, a panic outside a test, a dead child). Look at the end of the
 `full suite verification` output. If it is a deadline, the runner prints
-`--- <suite> exceeded the <N>s suite deadline` and (when `DSH_OPS_RETRY_TIMEOUTS=1`) retries once;
-a retry that also fails is a real problem — do not raise the timeout to hide it.
+`--- <suite> exceeded the <N>s suite deadline` and fails without retrying. Diagnose the hang or
+resource contention; do not raise the timeout to hide it.
 
 #### 3.4.7 `--- <suite> exited 1`
 
@@ -434,8 +434,11 @@ node scripts/apply-ruleset.mjs                            # admin: ruleset dry r
 ```
 
 On Windows, `DSH_OPS_TEST_BASH` points at a verified pinned `bash.exe` (the gate provisions one) and
-`DSH_OPS_TEST_NIUBASH` at the staged `niu.exe`. `DSH_OPS_SUITE_TIMEOUT_MS` (300 s; 600 s on Windows)
-and `DSH_OPS_RETRY_TIMEOUTS=1` are what CI sets; `DSH_HOME` must be a temp directory.
+`DSH_OPS_TEST_NIUBASH` at the staged `niu.exe`. CI sets `DSH_OPS_SUITE_TIMEOUT_MS` (300 s; 600 s
+on Windows); `DSH_HOME` must be a temp directory. `DSH_OPS_TEST_JOBS` overrides the bounded worker
+pool size (default: host available parallelism; `1`: serial). Each completed suite prints one output
+block and its duration; the ten slowest suites follow. Shared-payload mutation and checkout rebuild
+suites run exclusively after the pool.
 
 ## 7. Do not
 
@@ -445,7 +448,7 @@ and `DSH_OPS_RETRY_TIMEOUTS=1` are what CI sets; `DSH_HOME` must be a temp direc
   fix the suite.
 - **Do not** widen `ALLOWED_SKIPS` or `EXPECTED_NON_BLOCKING` without a documented reason and a test.
 - **Do not** raise a job timeout to hide a hang, or a suite deadline to hide a slow test.
-- **Do not** use a retry to pass a deterministic failure; retries are for deadlines only.
+- **Do not** use a retry to pass a deterministic failure; deadline failures are not retried either.
 - **Do not** push a fix straight to `main`; the `CI required` guard is what a release gate checks.
 
 ## 8. Known issues register

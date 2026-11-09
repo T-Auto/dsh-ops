@@ -2,13 +2,12 @@
  * Offline inspection and reclamation of the temporary resources OPS itself can
  * reproduce: kept provision downloads, Niubash staging siblings, quarantined
  * Bash IPC generations, an interrupted audit-store writer, and per-call Niubash
- * execution trees.
+ * execution trees and obsolete prepared versions.
  *
- * Every item carries an ownership evidence string, and nothing is deleted on the
- * strength of its name alone. Being under the right root with the right name only
- * makes an entry a candidate; the decision also needs its record, receipt or
- * provenance, and a deletion outside an explicit offline confirmation never
- * touches a mutable execution root.
+ * Every item carries an ownership evidence string: a record, verified payload
+ * members, or a prepared-cache directory in its reserved namespace. Legacy
+ * execution trees are touched only after explicit offline confirmation,
+ * including clones interrupted before their receipt.
  *
  * @module dsh-ops/cli/cache-reclaim
  */
@@ -19,12 +18,13 @@ import { bashIpcInventory, currentBashIpcIdentity, reclaimBashGenerations } from
 import { QUARANTINE_RETAIN } from '../bash-ipc.js'
 import { hasLiveLease, plainTree } from '../bash-ipc-lifecycle.js'
 import { dshHome, PACKAGE_ROOT } from '../paths.js'
-import { niubashCandidates, niubashExecutionRootParent } from '../niubash/runtime.js'
-import { unsealDirectorySync } from '../niubash/seal.js'
+import { spawnSync } from 'node:child_process'
 import { provisionedShellStore } from '../shells.js'
 import { errorMessage } from '../shells/types.js'
-import { reclaimNiubashSiblings, verifyNiubashTree, NIUBASH_EXECUTION_DIRECTORIES, NIUBASH_HOME_PATH, NIUBASH_MANIFEST_SHA256, NIUBASH_PIN, NIUBASH_RECEIPT } from './niubash-payload.js'
-import { NIUBASH_FACE_RULE, NIUBASH_FACES } from '../niubash/faces.js'
+import { reclaimNiubashSiblings, verifyNiubashTree, niubashFileHash, NIUBASH_EXECUTION_DIRECTORIES, NIUBASH_HOME_PATH, NIUBASH_PACKAGE_PATH, NIUBASH_PIN, NIUBASH_RECEIPT } from './niubash-payload.js'
+import { NIUBASH_MANIFEST_SHA256 } from './niubash-payload.js'
+import { preparedNiubashEntries, retirePreparedNiubash } from '../niubash/prepared-cache.js'
+import { NIUBASH_FACES } from '../niubash/faces.js'
 import { pendingRoot, planPendingSweep, sweepPendingScratch } from './pending-scratch.js'
 
 /** The resource classes this command knows, and the only ones it may print or touch. */
@@ -189,7 +189,7 @@ function auditItems(root: string): CacheItem[] {
   return items
 }
 
-/** Offline stat-only verification of one per-call execution tree: path set, sizes and receipt, no payload byte. */
+/** Legacy cleanup accepts incomplete clones, but every payload member must match the frozen bytes. */
 function verifyExecutionTreeForReclaim(target: string): void {
   const executable = 'winuxcmd/usr/bin/winuxcmd.exe'
   const sizes: Readonly<Record<string, number>> = NIUBASH_PIN.sizes
@@ -208,24 +208,27 @@ function verifyExecutionTreeForReclaim(target: string): void {
       }
       if (!stat.isFile()) throw new Error(`Unsafe execution tree member: ${name}`)
       if (name === 'execution-provenance.json' || name === NIUBASH_RECEIPT) continue
-      if (Object.hasOwn(NIUBASH_PIN.files, name)) {
-        if (stat.size !== sizes[name]) throw new Error(`Execution tree size mismatch: ${name}`)
-      } else if (derived.has(name)) {
-        if (stat.size !== sizes[executable]) throw new Error(`Execution tree size mismatch: ${name}`)
-      } else throw new Error(`Unknown execution tree member: ${name}`)
+      const source = Object.hasOwn(NIUBASH_PIN.files, name) ? name : derived.has(name) ? executable : undefined
+      if (source === undefined) throw new Error(`Unknown execution tree member: ${name}`)
+      if (stat.size !== sizes[source] || niubashFileHash(file) !== NIUBASH_PIN.files[source as keyof typeof NIUBASH_PIN.files]) {
+        throw new Error(`Execution tree checksum mismatch: ${name}`)
+      }
     }
   }
   walk('')
-  const receipt: unknown = JSON.parse(fs.readFileSync(path.join(target, 'execution-provenance.json'), 'utf8'))
-  if (typeof receipt !== 'object' || receipt === null) throw new Error('Invalid execution provenance receipt')
-  const value = receipt as Record<string, unknown>
-  if (value.version !== 1 || value.rule !== NIUBASH_FACE_RULE
-    || value.sourceManifestSha256 !== NIUBASH_MANIFEST_SHA256
-    || (value.mode !== 'hardlink' && value.mode !== 'copy')
-    || (value.seal !== 'readonly+acl' && value.seal !== 'readonly')) throw new Error('Invalid execution provenance receipt')
 }
 
-/** Per-call Niubash execution trees: verified against their own execution provenance. */
+/** The reserved prepared namespace owns partial trees as well as obsolete versions. */
+function preparedItems(home: string): CacheItem[] {
+  const current = path.resolve(home, 'dsh-ops/shells/niubash-prepared', NIUBASH_MANIFEST_SHA256)
+  return preparedNiubashEntries(current).map(target => ({
+    kind: 'exec-tree', path: target, ...treeUsage(target),
+    evidence: 'prepared-cache-namespace', decision: 'reclaimable',
+    detail: 'offline confirmation required; non-current prepared cache directory',
+  }))
+}
+
+/** Leftover per-call trees from older releases; no new execution tree is created. */
 function execItems(tmpRoot: string): CacheItem[] {
   let entries
   try { entries = fs.readdirSync(tmpRoot, { withFileTypes: true }) } catch { return [] }
@@ -234,17 +237,17 @@ function execItems(tmpRoot: string): CacheItem[] {
     if (!entry.name.startsWith('dsh-ops-niu-exec-')) continue
     const target = path.join(tmpRoot, entry.name)
     if (!plainDirectory(target)) {
-      items.push({ kind: 'exec-tree', path: target, bytes: 0, files: 0, evidence: 'execution-provenance', decision: 'unverified', detail: 'not a plain directory' })
+      items.push({ kind: 'exec-tree', path: target, bytes: 0, files: 0, evidence: 'legacy-execution-payload', decision: 'unverified', detail: 'not a plain directory' })
       continue
     }
     const usage = treeUsage(target)
-    const item: CacheItem = { kind: 'exec-tree', path: target, bytes: usage.bytes, files: usage.files, evidence: 'execution-provenance', decision: 'unverified' }
+    const item: CacheItem = { kind: 'exec-tree', path: target, bytes: usage.bytes, files: usage.files, evidence: 'legacy-execution-payload', decision: 'unverified' }
     try {
       verifyExecutionTreeForReclaim(target)
       item.decision = 'reclaimable'
-      item.detail = 'offline confirmation required; the tree carries a complete execution provenance'
+      item.detail = 'offline confirmation required; all existing members match the legacy payload layout'
     } catch (error) {
-      item.detail = 'the execution provenance does not verify: ' + errorMessage(error)
+      item.detail = 'the legacy execution payload does not verify: ' + errorMessage(error)
     }
     items.push(item)
   }
@@ -286,14 +289,20 @@ export function cacheInventory({ home = dshHome(), roots = [], tmpRoot, now = Da
   items.push(...quarantineItems(home, ipc))
   for (const root of roots) items.push(...auditItems(root))
   const executionRoots = new Set([canonicalTmp])
-  // Match preparation's same-volume/explicit root policy. An injected tmpRoot
-  // keeps fixtures isolated; no real execution root is inspected by those tests.
+  // Preserve discovery of old explicit and same-volume roots without importing
+  // the removed per-call preparation code. Injected tmpRoot isolates fixtures.
   if (tmpRoot === undefined) {
-    for (const candidate of niubashCandidates(PACKAGE_ROOT, { ...process.env, DSH_HOME: home })) {
-      executionRoots.add(canonical(niubashExecutionRootParent(process.env, path.dirname(candidate.file))))
+    const configured = process.env.DSH_OPS_EXEC_ROOT?.trim()
+    if (configured) executionRoots.add(canonical(path.resolve(configured)))
+    for (const source of [niubashTarget(home), path.join(PACKAGE_ROOT, NIUBASH_PACKAGE_PATH)]) {
+      const volume = path.parse(path.resolve(source)).root
+      if (volume.toLowerCase() !== path.parse(canonicalTmp).root.toLowerCase()) {
+        executionRoots.add(canonical(path.join(volume, 'dsh-ops-exec')))
+      }
     }
   }
   for (const root of executionRoots) items.push(...execItems(root))
+  items.push(...preparedItems(home))
   const totals = { reclaimableBytes: 0, keptBytes: 0, unverifiedBytes: 0, files: 0 }
   for (const item of items) {
     totals.files += item.files
@@ -310,13 +319,34 @@ export interface CacheReclaimResult extends CacheInventory {
   errors: number
 }
 
+/** Undo the read-only/Everyone deny seal used by older execution clones. */
+function clearLegacyExecutionSeal(directory: string): void {
+  if (process.platform === 'win32') {
+    const result = spawnSync('icacls.exe', [directory, '/remove:d', '*S-1-1-0', '/T', '/C', '/Q'], {
+      windowsHide: true, encoding: 'utf8',
+    })
+    if (result.error) throw result.error
+    if (result.status !== 0) throw new Error(`Could not clear legacy execution ACL: ${result.stderr.trim()}`)
+  }
+  const walk = (current: string): void => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const file = path.join(current, entry.name)
+      const stat = fs.lstatSync(file)
+      if (stat.isSymbolicLink()) throw new Error(`Unsafe execution tree member: ${file}`)
+      if (stat.isDirectory()) walk(file)
+      else if (stat.isFile() && (stat.mode & 0o200) === 0) fs.chmodSync(file, stat.mode | 0o200)
+    }
+  }
+  walk(directory)
+}
+
 /** Rename one entry aside, then remove it; a failed removal leaves the aside for the next run. */
 function removeAsAside(target: string, now: number, sealed = false): { ok: boolean, detail?: string } {
   const aside = target + '.reclaim-' + now.toString(36)
   try {
-    // Execution files share the seal's deny-delete ACL/READONLY attribute.
-    // This path is reached only after provenance checks and offline confirmation.
-    if (sealed) unsealDirectorySync(target)
+    // Legacy hardlinks may share these attributes with the source payload.
+    // Only a verified tree and explicit offline confirmation reach this path.
+    if (sealed) clearLegacyExecutionSeal(target)
     fs.renameSync(target, aside)
   } catch (error) {
     return { ok: false, detail: 'could not move it aside: ' + errorMessage(error) }
@@ -366,6 +396,14 @@ export function cacheReclaim({
             : decision.action === 'restored' ? 'restored'
               : decision.action === 'removed' ? 'deleted' : 'kept'
         if (item.action === 'deleted' || item.action === 'reused' || item.action === 'restored') result.deletedBytes += item.bytes
+      } else if (item.kind === 'exec-tree' && item.evidence === 'prepared-cache-namespace') {
+        const removed = retirePreparedNiubash(item.path)
+        item.action = removed ? 'deleted' : 'kept'
+        if (removed) result.deletedBytes += item.bytes
+        else {
+          item.detail = 'could not retire or remove the prepared cache directory'
+          result.errors += 1
+        }
       } else {
         const outcome = removeAsAside(item.path, now, item.kind === 'exec-tree')
         item.action = outcome.ok ? 'deleted' : 'kept'

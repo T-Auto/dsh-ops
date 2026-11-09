@@ -76,37 +76,24 @@ export function renderToolingPolicy({ published, mounted, levels, shellComponent
   row('result', 'Page / release owned result references')
   row('bash', 'General Bash commands / builds / git / pipelines / scripts')
   if (names.has('pwsh')) lines.push(`| Windows-native cmdlets / registry / services only | pwsh (host PowerShell) |`)
-  lines.push('', '- ops_* arguments are strict: pass only declared fields.')
+  lines.push('')
   if (hasFiles) lines.push('- Use published file tools for file operations.')
   if (hasDiscovery) lines.push(
     '- Discover a capability when a task needs a reader for a `.pdf`, `.docx`, `.csv` or `.tsv` file whose reader is absent from the tool table; selection makes it available on the next model step and performs no file action.',
     '- Creating, editing, rendering or exporting Office documents belongs to the host office skill, and a document read that fails falls back to it rather than retrying the reader.',
   )
-  if (names.has(publicToolName('grep'))) lines.push('- ops_grep: summary for aggregate file/match totals; count for per-file counts; content for matching text. Follow nextOffset for remaining pages, but do not loop blindly on truncated/failed scans: they are not exhaustive.')
   if (hasFiles) lines.push(
     '- Single-file tools use `path`, resolved relative to the current DSH session cwd. Use `/` separators; do not pass workspace, cwd, or file_path aliases.',
     '- Native file tools are UTF-8 first and bounded.',
   )
   if (names.has(publicToolName('copy')) || names.has(publicToolName('move'))) lines.push('- The destination `to` uses the same session cwd base as `path`.')
-  if (names.has(publicToolName('glob')) || names.has(publicToolName('grep'))) lines.push('- Published searches exclude symlinks, junctions, reparse points, hidden files and `.git`.')
-  if (names.has(publicToolName('result'))) lines.push(`- ${publicToolName('result')} accepts the original reference root; page completeness describes stored rows only.`)
-  if (names.has(publicToolName('read_files'))) lines.push(`- ${publicToolName('read_files')} takes files with independent ranges and per-file recovery.`)
-  const globbing = ['glob', 'grep', 'replace'].filter(raw => names.has(publicToolName(raw)))
-  if (globbing.length) {
-    const arrays = [names.has(publicToolName('glob')) && 'ops_glob `pattern`', (names.has(publicToolName('grep')) || names.has(publicToolName('replace'))) && 'the `glob` filters'].filter(Boolean).join(' and ')
-    const notes = [names.has(publicToolName('grep')) && 'ops_grep has no `include`', names.has(publicToolName('replace')) && 'ops_replace `pattern` is literal text'].filter(Boolean)
-    lines.push(`- ${arrays} ${arrays.includes(' and ') ? 'are ARRAYS' : 'is an ARRAY'} of globs relative to \`path\`, e.g. \`["**/*.md","!vendor/**"]\`; \`*.md\` matches the top level only.${notes.length ? ` ${notes.join('; ')}.` : ''}`)
-  }
-  if (hasFiles) lines.push('- ops file tools never throw: check `status` and `error.code`/`error.nextAction`; a try/catch alone misses their failures.')
-  if (names.has(publicToolName('write_file')) || names.has(publicToolName('edit_file'))) lines.push('- Read the current file state first; reuse SHA-256 `revision` as `expectedRevision` (write create-only: `absent`). Receipts include new hash, bytes and lineCount; Windows preserves available owner/group/ordered DACL and basic attributes/timestamps; volumes without stream/ACL support report metadataWarnings, while existing unsupported streams/EA/special storage fail with METADATA_UNSUPPORTED; readonly overwrite is refused. SACL/audit labels are not preserved. Unsupported metadata is not a permission escalation. Edit hunks target the same original and must be unique/nonoverlapping; CRLF/BOM are literal.')
+  if (names.has(publicToolName('write_file')) || names.has(publicToolName('edit_file'))) lines.push('- Read the current file state first and reuse its `revision` as `expectedRevision`. Unsupported metadata is not a permission escalation.')
   if (hasFiles) lines.push('- Follow error.nextAction; authorization denials require the user to change mode, not retries. After applied/unknown effects inspect postconditions; do not switch to a shell workaround.')
   if (names.has(BASH_TOOL)) {
     const fallback = hasPwsh
       ? 'Use host pwsh only when Windows-native functionality is necessary.'
       : 'No host pwsh tool is visible in this session; keep command execution in Bash.'
-    lines.push(`- Prefer ${BASH_TOOL} for Bash command execution. ${fallback} Fix ${BASH_TOOL} errors in ${BASH_TOOL}; do not mix shell syntax.`,
-    '- Use command only for short commands and pipelines. For scripts longer than about 1 KB or containing heredocs, quotes, backslashes or non-ASCII text, write the script to a file first and pass script_path.',
-    '- ops_bash requires description and returns kind foreground, background or promoted. Foreground has status (completed/failed), exitCode, stdout/stderr and error; background/promoted has jobId for host job_output/job_kill. Failures, including invalid arguments, return values with failure.code, failure.effectState and failure.retry; inspect unknown effects before repeating.')
+    lines.push(`- Prefer ${BASH_TOOL} for Bash command execution. ${fallback} Fix ${BASH_TOOL} errors in ${BASH_TOOL}; do not mix shell syntax.`)
   }
   if (extraGuidance.trim()) lines.push('', extraGuidance.trim())
   return lines.join('\n')

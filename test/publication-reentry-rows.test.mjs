@@ -11,6 +11,7 @@ import { registerNativeProvider, claimPtcSurface } from '../lib/publication/prov
 import { resolveConfig } from '../lib/config.js'
 import { BASH_TOOL, publicToolName } from '../lib/policy.js'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { prepareStep } from './lib/executor.mjs'
 import { assert, test, report } from './lib/harness.mjs'
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
@@ -83,8 +84,13 @@ for (const [name, row] of Object.entries(rows)) await test(`${name} controller r
     await bounded(creation)
     // Bash/Native/replacement lifecycle completion can precede deferred admission.
     await wait(500)
-    if (row.restricted) assert.equal(tools.get('fixture-official', agent), undefined)
-    else assert.ok(tools.get(row.name, agent), `${name} must recover its exact owed registration`)
+    if (row.restricted) {
+      const step = await prepareStep(ctx, agent)
+      try {
+        assert.equal(step.assembly.tools.some(tool => tool.name === 'fixture-official'), false)
+        assert.ok(step.assembly.tools.some(tool => tool.name === 'fixture-counterpart'))
+      } finally { step.dispose() }
+    } else assert.ok(tools.get(row.name, agent), `${name} must recover its exact owed registration`)
     assert.ok(messages.some(message => message.includes('registry publication recovered')))
     await fiber.dispose()
     await new Promise(resolve => setImmediate(resolve))

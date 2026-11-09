@@ -10,7 +10,7 @@ async function setup() {
   ctx.provide('subprocess', { spawn() { throw new Error('mode admission never executes workers') } })
   ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: TEST_HOME }) })
   ctx.provide('ptcRuntime', { language: 'typescript' })
-  await ctx.plugin({ apply(inner) { mountPtc(inner, { binaryPath: process.execPath, required: true }, { allows: () => true }) } })
+  await ctx.plugin({ apply(inner) { mountPtc(inner, { binaryPath: process.execPath, required: true, alwaysLoaded: ['result'] }, { allows: () => true }) } })
   for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve))
   const agent = { id: 'probe', session: { id: 'probe', header: { cwd: TEST_HOME } } }
   agent.ctx = createScope(ctx, agent).ctx

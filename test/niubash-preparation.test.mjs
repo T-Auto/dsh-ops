@@ -1,188 +1,233 @@
-/** Deterministic lifetime regressions; no developer runtime is needed for cleanup semantics. */
+/** Version preparation is independent of command lifetime and process count. */
 import fs from 'node:fs'
 import path from 'node:path'
-import { setTimeout as delay } from 'node:timers/promises'
-import { disposeNiubash, prepareNiubash } from '../lib/niubash/runtime.js'
-import { nodeTreeOps } from '../lib/niubash/execution-tree.js'
-import { removeSealedTree } from '../lib/niubash/seal.js'
-import { startSessionBash } from '../lib/shells/session-execution.js'
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+import { niubashPreparedRoot, prepareNiubash, prepareNiubashVersion, publishNiubashVersion, verifiedNiubash } from '../lib/niubash/runtime.js'
+import { NIUBASH_FACES } from '../lib/niubash/faces.js'
+import { NIUBASH_PIN, NIUBASH_EXECUTION_DIRECTORIES, NIUBASH_MANIFEST_SHA256, verifyNiubashTree } from '../lib/cli/niubash-payload.js'
 import { assert, test, report, withTempDir, skipSuite } from './lib/harness.mjs'
 
-await test('cleanup rejection is diagnostic, never replaces a successful command or leaks rejection', async () => {
-  const warnings = [], unhandled = []
-  const listener = error => unhandled.push(error)
-  process.on('unhandledRejection', listener)
-  try {
-    const value = { exitCode: 0, stdout: 'kept' }
-    const settled = Promise.resolve(value).finally(() => disposeNiubash(async () => { throw Object.assign(new Error('locked'), { code: 'EPERM' }) }, text => warnings.push(text)))
-    const done = settled.then(() => undefined, () => undefined)
-    assert.equal(await settled, value)
-    await done; await delay(10)
-    assert.equal(warnings.length, 1); assert.match(warnings[0], /EPERM|locked/)
-    assert.deepEqual(unhandled, [])
-  } finally { process.off('unhandledRejection', listener) }
+const file = process.env.DSH_OPS_TEST_NIUBASH
+// Publication and workspace checks are payload-independent and run everywhere; the rest needs the frozen payload.
+if (process.platform === 'win32' && !file) skipSuite('niubash-preparation', 'requires frozen DSH_OPS_TEST_NIUBASH')
+const source = file ? path.dirname(file) : ''
+const snapshot = root => {
+  const result = {}
+  const walk = relative => {
+    for (const entry of fs.readdirSync(path.join(root, relative), { withFileTypes: true })) {
+      const name = path.join(relative, entry.name)
+      if (entry.isDirectory()) walk(name)
+      else { const stat = fs.statSync(path.join(root, name)); result[name] = [stat.size, stat.mtimeMs, stat.nlink] }
+    }
+  }
+  walk(''); return result
+}
+const childPrepare = (source, target, barrier) => new Promise((resolve, reject) => {
+  const module = new URL('../lib/niubash/runtime.js', import.meta.url).href
+  const code = `import fs from 'node:fs'; import path from 'node:path';
+    import {prepareNiubashVersion} from ${JSON.stringify(module)};
+    const [source,target,barrier]=process.argv.slice(1), rename=fs.renameSync;
+    fs.renameSync=(from,to)=>{
+      if(to===target){
+        fs.writeFileSync(path.join(barrier,String(process.pid)),'ready');
+        const deadline=Date.now()+60000, wait=new Int32Array(new SharedArrayBuffer(4));
+        while(fs.readdirSync(barrier).length<2){
+          if(Date.now()>deadline)throw Error('second preparer did not reach publication');
+          Atomics.wait(wait,0,0,10);
+        }
+      }
+      return rename(from,to);
+    };
+    prepareNiubashVersion(source,target);`
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code, source, target, barrier],
+  { cwd: path.dirname(fileURLToPath(import.meta.url)), stdio: ['ignore', 'pipe', 'pipe'] })
+  let stderr = ''
+  child.stderr.on('data', data => { stderr += data })
+  child.once('error', reject)
+  child.once('close', code => code === 0 ? resolve() : reject(Error(stderr || `preparer exited ${code}`)))
 })
 
-if (process.platform === 'win32' && !process.env.DSH_OPS_TEST_NIUBASH) skipSuite('niubash-preparation', 'requires frozen DSH_OPS_TEST_NIUBASH for production preparation checks')
-if (process.platform === 'win32') {
-  await test('preparation deadline and cancellation stop staging before spawn, then dispose after writes stop', async () => {
-    await withTempDir('niu-preparation', async root => {
-      const file = process.env.DSH_OPS_TEST_NIUBASH
-      const policy = { mode: 'read-only', workspaceRoot: root }
-      const agent = { session: { id: 'preparation' } }
-      let spawns = 0, cloning = false, clonedRoot
-      const original = nodeTreeOps.link
-      // The clone is one link per payload member; pin the first one so the
-      // deadline/cancellation races the real production clone instead of a mock tree.
-      nodeTreeOps.link = async (source, target) => {
-        if (cloning) return original(source, target)
-        let current = path.dirname(target)
-        while (!path.basename(current).startsWith('dsh-ops-niu-exec-')) current = path.dirname(current)
-        clonedRoot = current
-        cloning = true
-        try { for (let n = 0; n < 1000; n++) await delay(5) } finally { cloning = false }
-        return original(source, target)
-      }
-      const ctx = { get(name) {
-        if (name === 'sandboxPolicy') return { resolve: () => policy }
-        if (name === 'subprocess') return { spawn() { spawns++; throw Error('must not spawn') } }
-      } }
-      try {
-        for (const cancel of [false, true]) {
-          clonedRoot = undefined
-          const controller = new AbortController()
-          const execution = startSessionBash({ ctx, bash: { file, source: 'bundled' }, active: () => true },
-            { command: 'printf never', workdir: root, timeoutMs: cancel ? 10000 : 500, includeDiagnostics: true }, { agent, signal: controller.signal }, policy, policy, {}, {})
-          assert.equal(execution.started, false, 'handle exists before staging completes')
-          if (cancel) {
-            while (!cloning) await delay(5)
-            controller.abort(new Error('cancel staging'))
-          }
-          const value = await execution.result()
-          assert.equal(cancel ? value.cancelled : value.timedOut, true, JSON.stringify(value))
-          assert.equal(spawns, 0); assert.equal(cloning, false)
-          assert.ok(clonedRoot, 'injected slow cloning was reached')
-          assert.equal(fs.existsSync(clonedRoot), false, 'no asynchronous staging survives cleanup')
-          assert.ok(value.diagnostics.durationMs >= (cancel ? 1 : 450))
-        }
-      } finally { nodeTreeOps.link = original }
-    })
-  })
-  await test('production session cleanup failure preserves success and leaves no unhandled done rejection', async () => {
-    await withTempDir('niu-cleanup', async root => {
-      const warnings = [], unhandled = []
-      const listener = error => unhandled.push(error)
-      const policy = { mode: 'danger-full-access', workspaceRoot: root }
-      let spawned = 0
-      const ctx = { logger: { warn: text => warnings.push(text) }, get(name) {
-        if (name === 'sandboxPolicy') return { resolve: () => policy }
-        if (name === 'subprocess') return { spawn() { spawned += 1; return { done: Promise.resolve({ exitCode: 0 }), collected: {
-          stdout: { readFrom: () => ({ text: 'preserved', nextOffset: 9, lossy: false }) },
-          stderr: { readFrom: () => ({ text: '', nextOffset: 0, lossy: false }) },
-        } } } }
-      } }
-      const original = fs.promises.rm
-      let executionRoot
-      fs.promises.rm = async (target, options) => {
-        // Only the post-command disposal is failed here; the cross-volume clone
-        // fallback also removes its scratch root before the command is spawned.
-        if (spawned > 0 && path.basename(target).startsWith('dsh-ops-niu-exec-')) {
-          executionRoot = target
-          throw Object.assign(new Error('deterministic locked execution tree'), { code: 'EPERM' })
-        }
-        return original(target, options)
-      }
-      process.on('unhandledRejection', listener)
-      try {
-        const execution = startSessionBash({ ctx, bash: { file: process.env.DSH_OPS_TEST_NIUBASH, source: 'bundled' }, active: () => true },
-          { command: 'printf preserved', workdir: root }, { agent: { session: { id: 'cleanup' } } }, policy, policy, {}, {})
-        const value = await execution.result()
-        assert.equal(value.exitCode, 0, JSON.stringify(value)); assert.equal(value.stdout.text, 'preserved')
-        await execution.done; await delay(10)
-        assert.equal(warnings.length, 1); assert.match(warnings[0], /locked execution tree/)
-        assert.deepEqual(unhandled, [])
-      } finally {
-        process.off('unhandledRejection', listener)
-        fs.promises.rm = original
-        // Clear the seal before deleting the tree the failed disposal left behind.
-        if (executionRoot) await removeSealedTree(executionRoot)
-      }
-    })
-  })
-  await test('parallel production trees remain usable across overlapping calls and drain after disposal', async () => {
-    const file = process.env.DSH_OPS_TEST_NIUBASH
-    const baseline = fs.statSync(file).nlink
-    for (let round = 0; round < 2; round++) {
-      const runtimes = []
-      const roots = []
-      try {
-        // allSettled retains every successful handle even if another preparation
-        // fails, so a failed regression never leaves unowned trees behind.
-        const results = await Promise.allSettled(Array.from({ length: 2 }, () =>
-          prepareNiubash(file, '', new AbortController().signal)))
-        for (const result of results) if (result.status === 'fulfilled') {
-          runtimes.push(result.value); roots.push(path.dirname(result.value.file))
-        }
-        for (const result of results) if (result.status === 'rejected') throw result.reason
-        for (const runtime of runtimes) await runtime.verify()
-        await runtimes[0].dispose()
-        await runtimes[1].verify()
-        const later = await prepareNiubash(file, '', new AbortController().signal)
-        runtimes.push(later); roots.push(path.dirname(later.file))
-        await runtimes[1].verify(); await later.verify()
-      } finally { for (const runtime of runtimes) await runtime.dispose() }
-      for (const root of roots) assert.equal(fs.existsSync(root), false, 'completed trees are reclaimed')
-      assert.equal(fs.statSync(file).nlink, baseline, 'no hardlink accumulation after concurrency')
+await test('Windows publication tolerates only temporary scanner sharing refusals and recognizes a racing winner', async () => withTempDir('niu-publication', async root => {
+  for (const code of ['EPERM', 'EACCES', 'EBUSY']) {
+    const from = path.join(root, `${code}-scratch`), to = path.join(root, code)
+    fs.mkdirSync(from); fs.writeFileSync(path.join(from, 'payload'), 'complete')
+    let attempts = 0, clock = 0
+    const waits = []
+    assert.equal(publishNiubashVersion(from, to, { platform: 'win32', now: () => clock,
+      wait: ms => { waits.push(ms); clock += ms }, rename: (a, b) => {
+        if (++attempts <= 3) throw Object.assign(Error('temporary scanner handle'), { code })
+        fs.renameSync(a, b)
+      } }), true)
+    assert.deepEqual(waits, [50, 100, 200]); assert.equal(attempts, 4)
+    assert.equal(fs.readFileSync(path.join(to, 'payload'), 'utf8'), 'complete')
+    assert.equal(publishNiubashVersion(from, to, { rename: () => { throw Object.assign(Error('winner'), { code: 'EEXIST' }) },
+      wait: () => { throw Error('must not wait after a winner publishes') } }), false)
+  }
+}))
+await test('persistent publication failure is bounded and names the failed rename; unrelated errors never retry', async () => withTempDir('niu-publication-fail', async root => {
+  const from = path.join(root, 'scratch'), to = path.join(root, 'target')
+  let clock = 0, attempts = 0
+  assert.throws(() => publishNiubashVersion(from, to, { platform: 'win32', now: () => clock,
+    wait: ms => { clock += ms }, rename: () => { attempts++; throw Object.assign(Error('locked'), { code: 'EPERM' }) } }),
+  error => error.message.startsWith('EXECUTOR_UNAVAILABLE: Niubash version publication rename failed') && error.message.includes(from) && error.message.includes(to))
+  assert.equal(clock, 10000); assert.ok(attempts > 3)
+  for (const [platform, code] of [['linux', 'EPERM'], ['win32', 'ENOSPC']]) {
+    let calls = 0
+    assert.throws(() => publishNiubashVersion(from, to, { platform,
+      wait: () => { throw Error('must not retry unrelated errors') },
+      rename: () => { calls++; throw Object.assign(Error(code), { code }) } }), /publication rename failed/)
+    assert.equal(calls, 1)
+  }
+}))
+if (file) {
+await test('version preparation is idempotent, complete and does not hardlink the source', async () => withTempDir('niu-version', async root => {
+  const target = niubashPreparedRoot({ DSH_HOME: root })
+  const parent = path.dirname(target), older = 'f'.repeat(64)
+  const leftovers = [older, `${older}.broken-old`, `${NIUBASH_MANIFEST_SHA256}.stage-old`, `${older}.retired-old`]
+  fs.mkdirSync(parent, { recursive: true })
+  for (const name of [...leftovers, 'unrelated']) fs.mkdirSync(path.join(parent, name))
+  const before = snapshot(source), read = fs.readFileSync
+  let scratchReads = 0, selected
+  fs.readFileSync = (file, ...args) => {
+    if (String(file).startsWith(`${target}.stage-`)) scratchReads++
+    return read(file, ...args)
+  }
+  try { selected = prepareNiubashVersion(source, target) } finally { fs.readFileSync = read }
+  assert.equal(scratchReads, 0, 'cold preparation copies verified source bytes without rehashing all generated faces')
+  const prepared = snapshot(target)
+  for (const name of leftovers) assert.equal(fs.existsSync(path.join(parent, name)), false, 'successful fresh preparation retires older and leftover versions')
+  assert.ok(fs.existsSync(path.join(parent, 'unrelated')))
+  const busy = path.join(parent, older), originalRename = fs.renameSync
+  fs.mkdirSync(busy)
+  let busyAttempts = 0
+  fs.renameSync = (from, to) => {
+    if (from === busy) { busyAttempts++; throw Object.assign(Error('another host is using this version'), { code: 'EBUSY' }) }
+    return originalRename(from, to)
+  }
+  try { assert.equal(prepareNiubashVersion(source, target), selected, 'busy older versions do not fail selection') }
+  finally { fs.renameSync = originalRename }
+  assert.equal(busyAttempts, 1); assert.ok(fs.existsSync(busy))
+  assert.equal(verifiedNiubash(selected, '', { DSH_HOME: root }).file, selected, 'selecting the prepared path also retires unused siblings')
+  assert.equal(fs.existsSync(busy), false)
+  fs.rmdirSync(path.join(parent, 'unrelated'))
+  assert.equal(verifiedNiubash(file, '', { DSH_HOME: root }).file, selected, 'selection honors the supplied home')
+  assert.deepEqual(snapshot(target), prepared)
+  assert.deepEqual(snapshot(source), before)
+  for (const face of NIUBASH_FACES) assert.ok(fs.statSync(path.join(target, `winuxcmd/usr/bin/${face}.exe`)).isFile())
+  for (const name of NIUBASH_EXECUTION_DIRECTORIES) assert.ok(fs.statSync(path.join(target, name)).isDirectory())
+  for (const name of Object.keys(NIUBASH_PIN.files)) {
+    assert.notEqual(fs.statSync(path.join(source, name)).ino, fs.statSync(path.join(target, name)).ino, name)
+  }
+  assert.equal(verifyNiubashTree(target, true), selected)
+  const exists = fs.existsSync, copy = fs.copyFileSync, retirementRename = fs.renameSync
+  let sawTarget = false, interruptedCopies = 0, scratchRetirements = 0
+  fs.existsSync = candidate => {
+    if (candidate === target && !sawTarget) { sawTarget = true; return false }
+    return exists(candidate)
+  }
+  fs.copyFileSync = () => { interruptedCopies++; throw Object.assign(Error('winner retired the unfinished scratch'), { code: 'ENOENT' }) }
+  fs.renameSync = (from, to) => {
+    if (String(from).startsWith(`${target}.stage-`)) { scratchRetirements++; throw Object.assign(Error('scratch still busy'), { code: 'EBUSY' }) }
+    return retirementRename(from, to)
+  }
+  try { assert.equal(prepareNiubashVersion(source, target), selected, 'an interrupted builder uses the verified published winner') }
+  finally { fs.existsSync = exists; fs.copyFileSync = copy; fs.renameSync = retirementRename }
+  assert.equal(interruptedCopies, 1)
+  assert.equal(scratchRetirements, 1, 'a busy losing scratch is not retried by both builder cleanup and selection cleanup')
+  const face = path.join(target, 'winuxcmd/usr/bin/cat.exe')
+  fs.unlinkSync(face)
+  assert.equal(prepareNiubashVersion(source, target), selected, 'a missing face is repaired once at selection')
+  fs.appendFileSync(selected, 'corrupt one prepared file')
+  assert.equal(verifiedNiubash(file, '', { DSH_HOME: root }).file, selected, 'the next selection rebuilds a corrupt prepared version')
+  fs.appendFileSync(selected, 'corrupt again')
+  const rename = fs.renameSync
+  let retiredBySibling = false
+  fs.renameSync = (from, to) => {
+    if (from === target) {
+      fs.rmSync(target, { recursive: true, force: true }); retiredBySibling = true
+      throw Object.assign(Error('a sibling already retired the damaged version'), { code: 'ENOENT' })
     }
-  })
-  await test('derived faces and extra executable members fail closed', async () => withTempDir('niu-tamper-private', async base => {
-    const previousRoot = process.env.DSH_OPS_EXEC_ROOT
-    process.env.DSH_OPS_EXEC_ROOT = path.join(base, 'executions')
-    let runtime
-    try {
-      // Tamper a private copy, never a shared executable inode that an earlier
-      // real-host suite or an image scanner may still have mapped.
-      runtime = await prepareNiubash(process.env.DSH_OPS_TEST_NIUBASH, '', new AbortController().signal, { workspaceRoot: base })
-    } finally {
-      if (previousRoot === undefined) delete process.env.DSH_OPS_EXEC_ROOT
-      else process.env.DSH_OPS_EXEC_ROOT = previousRoot
-    }
-    const root = path.dirname(runtime.file)
-    const face = path.join(root, 'winuxcmd/usr/bin/cat.exe')
-    try {
-      const saved = await fs.promises.readFile(face)
-      // A privileged process can clear the seal; the stat check must still notice
-      // the size change and the missing read-only bit.
-      await runtime.unseal()
-      await fs.promises.appendFile(face, 'tamper')
-      // The unseal covers the whole shared tree, so the stat check may notice the
-      // missing seal before the tampered size; either rejection is the same fail-closed result.
-      await assert.rejects(runtime.verify(), /not sealed|size mismatch/)
-      // verify() re-applies the seal before its stat check, so clear it again
-      // before restoring the tampered bytes.
-      await runtime.unseal()
-      await fs.promises.writeFile(face, saved)
-      await runtime.seal()
-      await runtime.verify()
-
-      await runtime.unseal()
-      const extra = path.join(root, 'winuxcmd/usr/bin/untrusted.exe')
-      await fs.promises.writeFile(extra, 'extra')
-      await assert.rejects(runtime.verify(), /Unsafe Niubash execution tree member/)
-      await fs.promises.unlink(extra)
-
-      // Private copies keep an exact link count, unlike shared payload clones.
-      await runtime.seal()
-      const alias = `${root}-outside-hardlink`
-      await fs.promises.link(face, alias)
-      await assert.rejects(runtime.verify(), /link count mismatch/)
-      // The alias shares the deny ACL/READONLY attribute too; clear them before
-      // unlinking, then restore the live tree's seal.
-      await runtime.unseal()
-      await fs.promises.unlink(alias)
-      await runtime.seal()
-      await runtime.verify()
-    } finally { await runtime.dispose() }
-  }))
+    return rename(from, to)
+  }
+  try { assert.equal(prepareNiubashVersion(source, target), selected) } finally { fs.renameSync = rename }
+  assert.equal(retiredBySibling, true, 'a sibling retiring the old version does not strand this preparer')
+  assert.equal(verifyNiubashTree(target, true), selected)
+  assert.deepEqual(snapshot(source), before, 'repair never changes the frozen source')
+  assert.deepEqual(fs.readdirSync(path.dirname(target)), [path.basename(target)], 'damaged versions and scratch are removed')
+  const invalidSource = path.join(root, 'invalid-source'); fs.mkdirSync(invalidSource)
+  fs.writeFileSync(path.join(invalidSource, 'niu.exe'), 'untrusted')
+  assert.throws(() => prepareNiubashVersion(invalidSource, target), /checksum mismatch/, 'a good prepared target cannot authorize an invalid source')
+}))
+await test('one failed fresh repair reports both causes without another preparation attempt', async () => withTempDir('niu-repair-fail', async root => {
+  const target = path.join(root, NIUBASH_MANIFEST_SHA256), copy = fs.copyFileSync
+  prepareNiubashVersion(source, target)
+  fs.appendFileSync(path.join(target, 'niu.exe'), 'corrupt')
+  let copies = 0
+  fs.copyFileSync = () => { copies++; throw Object.assign(Error('fresh copy refused'), { code: 'EIO' }) }
+  try {
+    assert.throws(() => prepareNiubashVersion(source, target), /EXECUTOR_UNAVAILABLE:.*repair failed: existing version:.*checksum mismatch.*fresh preparation:.*fresh copy refused/)
+  } finally { fs.copyFileSync = copy }
+  assert.equal(copies, 1, 'repair makes exactly one fresh attempt')
+  assert.deepEqual(fs.readdirSync(root), [], 'failed preparation and damaged version are cleaned')
+}))
+await test('scratch cleanup failure cannot replace the publication rename diagnostic', async () => withTempDir('niu-cleanup-diagnostic', async root => {
+  const rename = fs.renameSync, remove = fs.rmSync, warn = console.error, warnings = []
+  const target = path.join(root, NIUBASH_MANIFEST_SHA256)
+  fs.renameSync = (from, to) => {
+    if (to === target) throw Object.assign(Error('publication refused'), { code: 'EINVAL' })
+    return rename(from, to)
+  }
+  fs.rmSync = (file, options) => {
+    if (String(file).startsWith(`${target}.stage-`)) throw Error('cleanup refused')
+    return remove(file, options)
+  }
+  console.error = text => warnings.push(text)
+  try { assert.throws(() => prepareNiubashVersion(source, target), /EXECUTOR_UNAVAILABLE:.*publication rename failed.*publication refused/) }
+  finally { fs.renameSync = rename; fs.rmSync = remove; console.error = warn }
+  assert.equal(warnings.length, 1); assert.match(warnings[0], /could not retire.*preparation scratch/)
+}))
+await test('filesystems without hardlinks prepare command faces by independent copies once', async () => withTempDir('niu-copy-faces', async root => {
+  const target = path.join(root, NIUBASH_MANIFEST_SHA256), link = fs.linkSync
+  fs.linkSync = () => { throw Object.assign(Error('hardlinks unsupported'), { code: 'ENOTSUP' }) }
+  try { prepareNiubashVersion(source, target) } finally { fs.linkSync = link }
+  assert.equal(verifyNiubashTree(target, true), path.join(target, 'niu.exe'))
+  assert.equal(fs.statSync(path.join(target, 'winuxcmd/usr/bin/cat.exe')).nlink, 1)
+  assert.equal(fs.statSync(path.join(target, 'winuxcmd/usr/bin/winuxcmd.exe')).nlink, 1)
+}))
+await test('two independent preparers safely publish the same complete version', async () => withTempDir('niu-race', async root => {
+  const target = path.join(root, NIUBASH_MANIFEST_SHA256), barrier = path.join(root, 'barrier')
+  fs.mkdirSync(barrier)
+  const results = await Promise.allSettled([childPrepare(source, target, barrier), childPrepare(source, target, barrier)])
+  for (const result of results) if (result.status === 'rejected') throw result.reason
+  fs.rmSync(barrier, { recursive: true })
+  assert.equal(verifyNiubashTree(target, true), path.join(target, 'niu.exe'))
+  assert.deepEqual(fs.readdirSync(root), [NIUBASH_MANIFEST_SHA256], 'the losing scratch directory is removed')
+}))
+await test('consecutive and concurrent invocation preparation is read-only and creates no execution trees', async () => {
+  const selected = verifiedNiubash(file)
+  const root = path.dirname(selected.file), before = snapshot(root), original = snapshot(source)
+  const operations = ['mkdtemp', 'copyFile', 'link', 'chmod', 'rm', 'readdir', 'readFile']
+  const saved = Object.fromEntries(operations.map(key => [key, fs.promises[key]]))
+  for (const key of operations) fs.promises[key] = async () => { throw Error(`per-call filesystem mutation/verification: ${key}`) }
+  try {
+    const run = () => prepareNiubash(selected.file, 'inherited', new AbortController().signal)
+    assert.equal((await run()).file, selected.file)
+    assert.equal((await run()).file, selected.file)
+    assert.deepEqual((await Promise.all([run(), run()])).map(value => value.file), [selected.file, selected.file])
+  } finally { Object.assign(fs.promises, saved) }
+  assert.deepEqual(snapshot(root), before)
+  assert.deepEqual(snapshot(source), original)
+})
 }
+await test('workspace-contained and junction-hidden payloads are refused before host workspace labeling', async () => withTempDir('niu-workspace', async root => {
+  const payload = path.join(root, 'payload'); fs.mkdirSync(payload)
+  const signal = new AbortController().signal
+  await assert.rejects(prepareNiubash(path.join(payload, 'niu.exe'), '', signal, { workspaceRoot: root }), /outside the session workspace/)
+  await withTempDir('niu-alias', async aliasRoot => {
+    const alias = path.join(aliasRoot, 'alias')
+    fs.symlinkSync(payload, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    await assert.rejects(prepareNiubash(path.join(alias, 'niu.exe'), '', signal, { workspaceRoot: root }), /outside the session workspace/)
+  })
+}))
 report('niubash-preparation')

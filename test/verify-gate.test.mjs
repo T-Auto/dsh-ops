@@ -20,7 +20,7 @@ cp.spawn = (command, args, options) => {
   const joined = args.join(' ');
   let output = '', code = 0;
   if (joined === 'run validate:manifest') output = 'validate-manifest: all 89 checks passed';
-  if (joined === 'run verify') output = 'dsh-ops test: ${count} suite(s) passed';
+  if (joined === 'test/run.mjs') output = 'dsh-ops test: ${count} suite(s) passed';
   if (args[0] === 'pack') fs.writeFileSync(path.join(args[args.indexOf('--pack-destination') + 1], 'fixture.tgz'), 'orchestration fixture');
   if (process.env.GATE_ARTIFACT_FAILURE === 'unpack' && args[0] === '-xzf') code = 23;
   if (process.env.GATE_ARTIFACT_FAILURE === 'closure' && args.includes('--root')) code = 29;
@@ -52,6 +52,9 @@ export async function load(url, context, next) {
       const match = /\n(\{\n  "host":[\s\S]*?\n\})\n/.exec(child.stdout)
       assert.ok(match, child.stdout + child.stderr)
       const result = JSON.parse(match[1])
+      assert.equal(result.steps.filter(step => /run build$/.test(step.command)).length, 1)
+      assert.equal(result.steps.filter(step => /run validate:manifest$/.test(step.command)).length, 1)
+      assert.equal(result.steps.find(step => step.title === 'full suite verification').command, 'node test/run.mjs')
       const title = failure === 'unpack' ? 'unpack the release artifact' : 'packed runtime closure'
       assert.equal(result.steps.at(-1).title, 'packed runtime closure', 'keep-going must complete the final step')
       if (failure === 'none') {

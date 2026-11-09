@@ -18,7 +18,7 @@ import type { ConsumerPlan } from './types.js'
 export function mountConsumer(ctx: Context, plan: ConsumerPlan): void {
   const { gate, core } = plan
   let renderShellGuidance: (agent: Agent) => string = () => ''
-  const shellOwnsGuidance = (agent: Agent): boolean => Boolean(renderShellGuidance(agent))
+  const shellOwnsGuidance = (agent: Agent): boolean => Boolean(core.extraGuidance.trim()) && Boolean(renderShellGuidance(agent))
   if (plan.shell) {
     // Host subprocess spills outlive the call that produced them upstream, so the
     // row that publishes the shell also owns one bounded retention runtime.

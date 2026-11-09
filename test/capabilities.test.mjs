@@ -36,7 +36,7 @@ await test('metadata separates the Native resident core from discoverable capabi
   for (const entry of PTC_CAPABILITIES) assert.deepEqual(entry.presentations, entry.rawName === 'result' ? ['native', 'ptc'] : ['ptc'])
   assert.deepEqual(NATIVE_RESIDENT_FILE_TOOLS, ['read_files'])
   assert.equal(capability('result').nativeProjection.availability, 'discoverable')
-  assert.deepEqual(FILE_CAPABILITIES.filter(entry => entry.availability === 'discoverable').map(entry => entry.rawName).sort(), DISCOVERABLE_TOOLS.filter(name => name !== 'result').sort())
+  assert.deepEqual(FILE_CAPABILITIES.filter(entry => entry.availability === 'discoverable').map(entry => entry.rawName).sort(), DISCOVERABLE_TOOLS.filter(name => name !== 'result' && !NATIVE_RESIDENT_FILE_TOOLS.includes(name)).sort())
   for (const entry of CAPABILITIES) {
     assert.equal(entry.availability, entry.component === 'file' && entry.rawName !== 'read_files' ? 'discoverable' : 'resident')
     assert.equal(entry.concurrencySafe, entry.component === 'file' && !entry.mutates)
@@ -57,10 +57,10 @@ const snapshot = (names, definition) => names.map(name => {
   return { name: d.name, description: d.description, parameters: withoutDescriptions(d.parameters), output: d.output.schema,
     concurrent: d.isConcurrencySafe?.({}) ?? false, timeoutMs: d.timeoutMs ?? null }
 })
-await test('business file and batch definitions retain their original serialized contracts', () => {
-  // Structural contracts stay pinned below; #419 clarifies the create-only literal in write_file help.
+await test('business file and batch definitions retain their reviewed serialized contracts', () => {
+  // Structural contracts stay pinned separately below; #817 deliberately compacts help while retaining the create-only literal.
   const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
-  assert.equal(hash(snapshot(FILE_TOOLS.filter(name => !['glob', 'grep', 'read_files', 'edit_file', 'read_table', 'read_docx', 'read_pdf'].includes(name)), fileDefinition)), '67e013378320b969487f53e22eb48789ac48dd1329b8f2915bbfae4b3c6785d4')
+  assert.equal(hash(snapshot(FILE_TOOLS.filter(name => !['glob', 'grep', 'read_files', 'edit_file', 'read_table', 'read_docx', 'read_pdf'].includes(name)), fileDefinition)), '222b2295891d541112e87ebfa155bac48ed48ea089b3cd9c5cbb497a9a7780e7')
   const batch = ptcDefinition('batch', async () => null)
   assert.equal(batch.parameters, ptcParameters.batch); assert.ok(batch.description.startsWith(ptcDescriptions.batch)); assert.match(batch.description, /PTC returns Outcome/)
   assert.ok(batch.output.schema.oneOf.every(branch => branch.properties.status))

@@ -70,7 +70,8 @@ try {
     minimal: { enabled: false }, ptc: { enabled: false }, cordis: { enabled: false },
     standard: { residentTools: true, required: false,
       ...(process.env.DSH_OPS_TEST_BASH ? { bashPath: process.env.DSH_OPS_TEST_BASH } : {}) },
-    discovery: { required: true, allowedTools: ['replace'], alwaysLoaded: ['replace'] },
+    // read_files is discoverable, not resident, since 0.5.3; load it explicitly so it is still tried.
+    discovery: { required: true, allowedTools: ['replace', 'read_files'], alwaysLoaded: ['replace', 'read_files'] },
   })
 
   agent = { id: 'trial', session: { id: 'trial', mode: 'danger-full-access', header: { cwd: workspace, agentPreset: 'standard' } } }

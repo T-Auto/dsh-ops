@@ -16,15 +16,13 @@ export function bashOperationDescription(platform: string = process.platform): s
 export function renderBashGuidance(background: boolean, platform: string = process.platform): string {
   return [
     `# ${BASH_TOOL}: Bash command execution`,
-    bashOperationDescription(platform),
-    'Use command for short commands and pipelines. For complex scripts, write an existing Bash script file and pass script_path instead; provide exactly one of command or script_path. PowerShell scripts belong to the host pwsh tool when available.',
-    'workdir defaults to the current session workspace; relative paths use that workspace, never the plugin process cwd.',
+    'Provide exactly one of command or script_path. For scripts longer than about 1 KB or containing heredocs, quotes, backslashes or non-ASCII text, write a script file first and pass script_path.',
     ...(platform === 'win32' ? ['On Windows, workdir accepts D:/repo or /d/repo; drive-less /tmp or / is not a Windows workdir. Within command, use MSYS paths such as /d/repo, quote paths with spaces, and use Bash rather than PowerShell path/variable syntax.'] : []),
-    'The host session sandbox remains authoritative. A denial is not permission to switch shells or bypass confinement. Request wider access only through the declared approval fields after a real denial; rejected approval must not be bypassed.',
-    'description is required. Inspect kind before reading the result: foreground includes status, exitCode, stdout/stderr and optional failure.code/effectState/retry. A missing exitCode or failed status is not success; inspect unknown effects before repeating. Output is bounded; truncation and spill paths describe retained output, not completeness.',
+    'The host session sandbox remains authoritative; a denial or rejected approval must not be bypassed by switching shells.',
+    'A missing exitCode or failed status is not success. Truncation and spill paths describe retained output, not completeness.',
     background
-      ? 'With host jobs, run_in_background returns kind background with jobId; a foreground timeout may return kind promoted with jobId. Collect through job_output and stop through job_kill. Promotion is not command completion.'
-      : 'Host jobs are unavailable: run_in_background is not accepted, and the foreground timeout stops the command.',
+      ? 'Promotion is not command completion; collect through job_output and stop through job_kill.'
+      : 'Host jobs are unavailable; the foreground timeout stops the command.',
   ].join('\n\n')
 }
 

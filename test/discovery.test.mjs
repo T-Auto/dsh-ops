@@ -29,6 +29,13 @@ await test('discovery arguments enforce max_results 1-5 and reject hidden action
   assert.deepEqual(search('metadata revision hash', DISCOVERABLE_TOOLS, 1), ['stat'])
   assert.deepEqual(search('select:ops_read_pdf', DISCOVERABLE_TOOLS, 5), ['read_pdf'])
 })
+await test('every built-in is discoverable by its name keyword and exact selection without a prompt directory', () => {
+  for (const raw of DISCOVERABLE_TOOLS) {
+    assert.ok(search(raw.replaceAll('_', ' '), DISCOVERABLE_TOOLS, 5).includes(raw), raw + ': keyword')
+    assert.deepEqual(search('select:' + publicToolName(raw), DISCOVERABLE_TOOLS, 5), [raw])
+  }
+  assert.deepEqual(search('multiple files independent ranges', DISCOVERABLE_TOOLS, 1), ['read_files'])
+})
 await test('discovery-entry schema has a reproducible pinned token measurement, separate from the full BM-03 gate', () => {
   const wire = JSON.stringify([{ name: publicToolName('discover_tools'), description: DISCOVERY_DESCRIPTION, parameters: DISCOVERY_PARAMETERS }])
   const tokens = getEncoding('cl100k_base').encode(wire).length

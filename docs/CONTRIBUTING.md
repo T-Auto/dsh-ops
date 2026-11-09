@@ -134,10 +134,14 @@ The four full-payload suites (`niubash-payload-integration`, `niubash-preparatio
 `niubash-security-host`, `niubash-consumer`) default to a 600-second suite watchdog; other suites
 keep 120 seconds. A positive finite `DSH_OPS_SUITE_TIMEOUT_MS` overrides either default. The clean
 consumer reserves 60 seconds of that budget for packing/installing, leaving 540 seconds by default
-for its real host checks. Bash commands retain their production 120-second default, including
-verified staging of the complete execution tree; the suite watchdog is a separate outer limit.
-The descendant timeout test proves that a child starts before its deadline and cannot write afterward.
-On a loaded Windows host, provide a larger explicit outer budget without changing command deadlines:
+for its real host checks. Bash commands retain their production 120-second default, but the
+descendant timeout/cancellation test uses an explicit 5-second command deadline. Version-level
+Niubash preparation happens at selection, not on each call; the suite watchdog is a separate outer
+limit. The descendant test proves that a child starts before its deadline and cannot write afterward.
+Reference Windows validation after removing per-call staging measured 37 seconds for
+`niubash-security-host` and 69 seconds for the clean `niubash-consumer`; these observations are
+not command timeout settings. On a loaded host, provide a larger explicit outer budget without
+changing command deadlines:
 
 ```powershell
 $env:DSH_OPS_SUITE_TIMEOUT_MS = '1800000'

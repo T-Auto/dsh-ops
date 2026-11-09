@@ -12,7 +12,7 @@ Plugin authors can also mount the [public integration API](integration-api.md) i
 | --- | --- |
 | `global` | `bash`, `hidePwsh`, `hideOfficialTools`, `dynamicTools` all true; each gates the corresponding row-managed consumer choice |
 | `minimal` | Enabled; no resident file surface; optional Bash and dynamic selection |
-| `standard`, `cordis` | Enabled; resident Native reader/search/pager profile, optional Bash, replacement and discovery |
+| `standard`, `cordis` | Enabled; resident Native inspect/glob/grep profile, optional Bash, replacement and discovery |
 | `ptc` | Enabled; typed resident APIs and progressive SDK loading under actual host PTC presentation |
 | `presets` | Empty by default; map of exact preset ids to explicit consumer options |
 | `discovery` | Enabled; default built-in Native pool, maxResults 3, no always-loaded selections |
@@ -78,7 +78,7 @@ falling back to the built-in surface; scoped diagnostics remain accessible.
 | `profile` | `native`; shortcuts are `native`, `ptc`, `discovery`, `shell` |
 | `files` | true for native/PTC, false for discovery/shell; controls resident built-in file surface |
 | `residentTools` | true; false removes baseline residency, not explicit discovery selections |
-| `residentNames` | Native raw names: `inspect_local_file`, `glob`, `grep`, `read_files`, `result`; exact list may be empty |
+| `residentNames` | Native raw names: `inspect_local_file`, `glob`, `grep`; exact list may be empty. `read_files`/`result` use discovery by default |
 | `shell` | false except shell profile; authorized resident Bash, never a discovery choice |
 | `hidePwsh` | defaults to `replaceOfficial && shell`; independent Windows shell hiding |
 | `presentation` | native except PTC profile; selects projection, never changes host presentation |
@@ -147,14 +147,24 @@ report `CREDENTIAL_DENIED`, no effect and no retry, and do not disclose denied p
 `DSH_OPS_DENY_READ` can widen the fence; disabling the Native override is an explicit operator
 choice for that consumer, not an authorization grant.
 
-`DSH_OPS_EXEC_ROOT` names the parent directory of the per-call Windows Niubash execution tree
-(default: the OS temporary directory). Point it at an antivirus allow-list location or a specific
-volume to keep hardlink cloning on the payload's volume; a cross-volume root still works through the
-copy fallback recorded in the execution receipt. The root must not be inside the payload.
-`NIUBASH_VERIFY=deep` restores the full per-call payload re-hash; the default per-call check is
-stat-only (path set, sizes, directories, read-only seal, stable file identities and private-file link counts).
+Windows Niubash selection verifies the frozen source and prepares one copied runtime at
+`<DSH_HOME>/dsh-ops/shells/niubash-prepared/<manifest hash>`, including command faces and six
+startup directories. Source files are never hardlinked into it. Ordinary calls reuse that runtime without
+per-call cloning, hashing, seals or execution receipts, while every call follows the current host policy (`confine` in restricted modes).
+`DSH_HOME` must place the prepared runtime outside the session workspace; each call enforces this.
+`DSH_OPS_EXEC_ROOT` and `NIUBASH_VERIFY=deep` are deprecated and ignored by runtime execution.
+Only offline legacy execution-tree reclamation still reads `DSH_OPS_EXEC_ROOT` to discover old roots.
+A damaged prepared version is moved aside and rebuilt once at selection from the verified source;
+failed repair reports both causes instead of looping. After successful selection, other prepared
+versions and broken/retired leftovers, plus staging leftovers of the selected hash only are renamed to `.retired-<uuid>`
+siblings before best-effort deletion. Only exact prepared-version names and real directories are
+touched; a refused rename is not retried until the next selection. `cache status/reclaim --kind
+exec-tree` also lists/reclaims these non-current prepared directories (including other hashes'
+staging leftovers), never the current hash. If another profile with a different Niubash pin retires
+the selected version, its next call prepares that pin once from its selected verified source,
+without retiring other versions.
 
-On Windows restricted Bash requires the pinned MSYS and verified private IPC proxies. Unsupported
+Custom MSYS Bash in Windows restricted modes requires the pinned build and verified private IPC proxies. Unsupported
 custom Bash returns `EXECUTOR_UNAVAILABLE`; never bypass confinement or change shells as a repair.
 POSIX Bash uses the host executable and host sandbox. Worker and Shell explicit selections never
 silently substitute a different executable. PowerShell installation is a separate host action;
