@@ -34,7 +34,8 @@ async function host(cwd, services = true) {
   return { ctx, mint, names: agent => scopedToolNames(ctx, agent) }
 }
 const disabledBuiltins = { minimal: { enabled: false, dynamicTools: false }, standard: { enabled: false, dynamicTools: false },
-  ptc: { enabled: false, dynamicTools: false }, cordis: { enabled: false, dynamicTools: false } }
+  ptc: { enabled: false, dynamicTools: false }, 'ops-ptc': { enabled: false, dynamicTools: false },
+  cordis: { enabled: false, dynamicTools: false } }
 
 await test('custom preset settings validate and preserve independent switches through host normalization', () => {
   const raw = { presets: { acme: { files: true, residentTools: true, residentNames: ['stat'], discovery: false, promptPolicy: false } } }

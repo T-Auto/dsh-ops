@@ -13,12 +13,12 @@ const t = key => en[key]
 const SWITCHES = ['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools']
 
 await test('the page matches the host descriptor, and the opt-in switches share one card', () => {
-  assert.deepEqual(Object.keys(Config.dict), ['presets', 'global', 'minimal', 'standard', 'ptc', 'cordis', 'panel', 'tui', 'other'])
+  assert.deepEqual(Object.keys(Config.dict), ['presets', 'global', 'minimal', 'standard', 'ptc', 'ops-ptc', 'cordis', 'panel', 'tui', 'other'])
   const global = GROUPS.find(group => group.id === 'global')
   // The bundle section mirrors the presets' four switches, in the same order.
   assert.deepEqual(global.fields.map(spec => spec.path[1]), SWITCHES)
   assert.deepEqual(Object.keys(Config.dict.global.dict), SWITCHES)
-  for (const section of ['minimal', 'standard', 'ptc', 'cordis']) {
+  for (const section of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis']) {
     const group = GROUPS.find(entry => entry.id === section)
     const expected = section === 'minimal' ? SWITCHES : ['bash', 'hidePwsh', 'hideOfficialTools', 'residentTools', 'dynamicTools']
     assert.deepEqual(group.fields.map(spec => spec.path[1]), expected, section)
@@ -36,7 +36,7 @@ await test('the page matches the host descriptor, and the opt-in switches share 
 await test('built-in presets hide PowerShell by default and preserve explicit opt-out', () => {
   const merged = resolveMergedConfig({})
   assert.deepEqual(merged.global, { bash: true, hidePwsh: true, hideOfficialTools: true, dynamicTools: true })
-  for (const section of ['minimal', 'standard', 'ptc', 'cordis']) {
+  for (const section of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis']) {
     assert.equal(merged[section].config.bash, true, `${section}.bash`)
     assert.equal(merged[section].config.hidePwsh, true, `${section}.hidePwsh`)
     assert.equal(resolveMergedConfig({ [section]: { hidePwsh: false } })[section].config.hidePwsh, false)
@@ -119,6 +119,7 @@ await test('the executor card reads the saved rows and writes exactly one choice
     { op: 'set', path: ['minimal', 'bashPath'], value: 'C:/Git/bin/bash.exe' },
     { op: 'set', path: ['standard', 'bashPath'], value: 'C:/Git/bin/bash.exe' },
     { op: 'set', path: ['ptc', 'bashPath'], value: 'C:/Git/bin/bash.exe' },
+    { op: 'set', path: ['ops-ptc', 'bashPath'], value: 'C:/Git/bin/bash.exe' },
     { op: 'set', path: ['cordis', 'bashPath'], value: 'C:/Git/bin/bash.exe' },
   ])
   // A custom preset that already opted in follows the same choice.

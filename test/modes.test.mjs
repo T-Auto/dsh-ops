@@ -18,6 +18,9 @@ import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import * as Standard from '../lib/components/mode-standard/index.js'
 import * as Cordis from '../lib/components/mode-cordis/index.js'
 import * as Ptc from '../lib/components/mode-ptc/index.js'
+import * as OpsPtc from '../lib/components/mode-ops-ptc/index.js'
+import { MODE_IDS, MODE_PRESET } from '../lib/modes/types.js'
+import { PTC_RESIDENT_TOOLS } from '../lib/ptc/config.js'
 process.env.DSH_OPS_LEGACY_ROWS = '1'
 import * as Discovery from '../lib/components/discovery/index.js'
 import { BASH_TOOL, modeSectionName, publicToolName } from '../lib/policy.js'
@@ -89,8 +92,9 @@ await test('replacement targets map each mode to the tools it hides, platform by
   const linux = replacementTargets('standard', 'linux')
   assert.equal(linux.has('pwsh'), false, 'POSIX keeps the host bash')
   assert.equal(replacementTargets('cordis', 'win32').get('read'), publicToolName('inspect_local_file'))
-  // Minimal and PTC replace only the Windows shell; their file tools stay official.
-  for (const mode of ['minimal', 'ptc']) {
+  // Minimal, PTC and its ops-ptc sibling replace only the Windows shell; their
+  // file tools stay official.
+  for (const mode of ['minimal', 'ptc', 'ops-ptc']) {
     const targets = replacementTargets(mode, 'win32', true)
     assert.deepEqual([...targets.keys()].sort(), ['pwsh', 'pwsh_persistent'].sort(), mode)
     assert.equal([...targets.values()].every(value => value === BASH_TOOL), true, mode)
@@ -102,6 +106,13 @@ await test('replacement targets map each mode to the tools it hides, platform by
   assert.deepEqual(residentTools('ptc'), [])
   assert.equal(MODE_PLANS.minimal.section, null)
   assert.equal(MODE_PLANS.ptc.section, 'ptc')
+  // The fifth mode is the PTC plan plus the batching-guidance gate: it publishes
+  // the same PTC surface, no Native residents and no discovery population.
+  assert.equal(MODE_IDS.includes('ops-ptc'), true)
+  assert.equal(MODE_PRESET['ops-ptc'], 'ops-ptc')
+  assert.deepEqual(residentTools('ops-ptc'), [])
+  assert.deepEqual({ ...MODE_PLANS['ops-ptc'], section: MODE_PLANS.ptc.section }, { ...MODE_PLANS.ptc })
+  assert.equal(MODE_PLANS['ops-ptc'].section, 'ops-ptc')
 })
 
 if (!fs.existsSync(WORKER)) skipSuite('modes', `no native worker at ${path.relative(process.cwd(), WORKER)}; run npm run build:ptc`)
@@ -319,6 +330,71 @@ await test('a preset selection change withdraws the old mode surface and the new
     presets.set(scopeParentOf(scopeOf(agent.ctx)), 'standard')
     await ctx.serial('session/event', agent.session, { type: 'agent-preset/selected' })
     await waitForSection(modeSectionName('mode-standard'), 'the standard routing section to return')
+  } finally { await shutdown(ctx) }
+}))
+
+await test('a mode row keeps one consumer state per Cordis root', async () => {
+  const { Context } = await import('@deepseek-ai/cordis')
+  const { joinMode, enabledModes } = await import('../lib/modes/registry.js')
+  const ctx = new Context(); ctx.logger.level = 0
+  try {
+    const firstConfig = { residentTools: true }, secondConfig = { residentTools: false }
+    const first = joinMode(ctx, 'ops-ptc', firstConfig)
+    const second = joinMode(ctx, 'ops-ptc', secondConfig)
+    assert.equal(enabledModes(ctx).size, 1, 'one row per mode and Cordis root')
+    assert.equal(enabledModes(ctx).get('ops-ptc'), secondConfig)
+    first()
+    assert.equal(enabledModes(ctx).get('ops-ptc'), secondConfig, 'a superseded disposer never removes the newer registration')
+    second()
+    assert.equal(enabledModes(ctx).has('ops-ptc'), false)
+  } finally { await ctx.fiber.dispose() }
+})
+
+await test('mode-ops-ptc serves its own preset with the PTC surface, not the plain PTC one', () => withTempDir('mode-ops-ptc', async cwd => {
+  const { ctx, names, mint } = await boot()
+  try {
+    const NodePtc = (await import('@deepseek-ai/dsh-ptc-runtime-node')).default
+    const FileSystem = (await import('@deepseek-ai/dsh-fs-local')).default
+    await ctx.plugin(FileSystem, {})
+    await ctx.plugin(NodePtc, {})
+    const row = await ctx.plugin(OpsPtc, { required: true })
+    const agent = await mint({ preset: 'ops-ptc', presentation: 'ptc', cwd })
+    await waitFor(() => names(agent).includes('ops_load_sdk'), { what: 'ops-ptc SDK publication' })
+    // dynamicTools defaults on: the loader is published beside the resident API.
+    assert.ok(names(agent).includes('ops_load_sdk'))
+    for (const raw of PTC_RESIDENT_TOOLS) assert.ok(names(agent).includes(publicToolName(raw)), raw)
+    // The scoped PTC file surface is published, not the Native one.
+    for (const raw of ['write_file', 'grep', 'glob']) assert.ok(names(agent).includes(publicToolName(raw)), raw)
+    // The PTC presentation is never a discovery population.
+    assert.equal(names(agent).includes(publicToolName('discover_tools')), false)
+    for (const name of OFFICIAL) assert.ok(names(agent).includes(name), `the PTC file surface keeps official ${name}`)
+    // The row serves its own preset only, so the plain PTC and Standard presets get no SDK.
+    const plain = await mint({ preset: 'ptc', presentation: 'ptc', cwd })
+    const standard = await mint({ preset: 'standard', cwd })
+    await wait(300)
+    assert.equal(names(plain).includes('ops_load_sdk'), false)
+    assert.equal(names(standard).includes('ops_load_sdk'), false)
+    await row.dispose()
+  } finally { await shutdown(ctx) }
+}))
+
+await test('mode-ops-ptc dynamicTools off withdraws the loader but keeps the resident PTC surface', () => withTempDir('mode-ops-ptc-static', async cwd => {
+  const { ctx, names, mint } = await boot()
+  try {
+    const NodePtc = (await import('@deepseek-ai/dsh-ptc-runtime-node')).default
+    const FileSystem = (await import('@deepseek-ai/dsh-fs-local')).default
+    await ctx.plugin(FileSystem, {})
+    await ctx.plugin(NodePtc, {})
+    await ctx.plugin(OpsPtc, { required: true, dynamicTools: false })
+    const agent = await mint({ preset: 'ops-ptc', presentation: 'ptc', cwd })
+    await waitFor(() => names(agent).includes(publicToolName(PTC_RESIDENT_TOOLS[0])), { what: 'resident PTC API' })
+    await wait(300)
+    // The switch gates the loader only: the resident API and the executor hand-off
+    // stay, and the Native discovery face is never part of a PTC presentation.
+    assert.equal(names(agent).includes('ops_load_sdk'), false)
+    for (const raw of PTC_RESIDENT_TOOLS) assert.ok(names(agent).includes(publicToolName(raw)), raw)
+    assert.ok(names(agent).includes(publicToolName('write_file')), 'the loaded file APIs stay published')
+    assert.equal(names(agent).includes(publicToolName('discover_tools')), false)
   } finally { await shutdown(ctx) }
 }))
 

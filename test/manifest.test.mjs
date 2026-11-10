@@ -138,7 +138,14 @@ await test('the manifest license matches the package and is MIT', () => {
 await test('the bundle patch inserts exactly the one row and no removed FastCtx key', async () => {
   const { parse } = await import('yaml')
   const { LEGACY_FASTCTX_KEYS } = await import('../lib/config.js')
-  const patch = parse(fs.readFileSync(path.join(PACKAGE_ROOT, pkg.dsh.bundle.patch), 'utf8'))
+  // `dsh.bundle.patch` is an ordered list: the row bundle first, then the preset
+  // fragment that declares the extra host preset this plugin enhances.
+  assert.ok(Array.isArray(pkg.dsh.bundle.patch), 'the bundle declares its patch files as an ordered list')
+  assert.deepEqual(pkg.dsh.bundle.patch, ['./cordis.patch.yml', './presets/ops-ptc.patch.yml'])
+  assert.ok(pkg.files.includes('presets'), 'the preset fragment ships in the package')
+  const patchFiles = pkg.dsh.bundle.patch.map((file) => path.join(PACKAGE_ROOT, file))
+  for (const file of patchFiles) assert.ok(fs.existsSync(file), file)
+  const patch = parse(fs.readFileSync(patchFiles[0], 'utf8'))
   const rows = patch.flatMap((entry) => entry.insert ?? [])
   assert.deepEqual(rows.map((row) => row.id), ['dsh-ops'])
   assert.deepEqual(rows.map((row) => row.name), ['dsh-ops'])
@@ -150,6 +157,19 @@ await test('the bundle patch inserts exactly the one row and no removed FastCtx 
   for (const row of rows) {
     for (const key of LEGACY_FASTCTX_KEYS) assert.equal(Object.hasOwn(row.config ?? {}, key), false, `${row.name} still writes ${key}`)
   }
+  // The preset fragment is a loader patch of its own: it inserts one host preset
+  // declaration and carries the upstream `!!js` platform expressions untouched.
+  const { parse: parseWithTags } = await import('yaml')
+  const JS_TAG = { tag: 'tag:yaml.org,2002:js', resolve: (value) => ({ js: String(value) }) }
+  const fragment = parseWithTags(fs.readFileSync(patchFiles[1], 'utf8'), { customTags: [JS_TAG] })
+  const presetRows = fragment.flatMap((entry) => entry.insert ?? [])
+  assert.deepEqual(presetRows.map((row) => row.id), ['preset-ops-ptc'])
+  assert.equal(presetRows[0].config.id, 'ops-ptc')
+  assert.equal(presetRows[0].config.order > 2, true, 'the fragment sorts after the official rows')
+  // The default preset override is a second layer entry, not one more inserted row.
+  const overrides = patch.filter((entry) => entry.id !== undefined)
+  assert.deepEqual(overrides.map((entry) => entry.id), ['agent-preset-registry'])
+  assert.deepEqual(overrides[0].config, { default: 'ops-ptc', selectedDefault: 'ops-ptc' })
   // Every legacy entry stays exported so profiles that still name the old row keep loading.
   for (const legacy of ['shell', 'file', 'ptc', 'hide-official', 'background']) assert.ok(pkg.exports[`./${legacy}`], legacy)
 })
@@ -211,7 +231,7 @@ await test('the display manifest declares the one row, enabled by default', asyn
   const { parse } = await import('yaml')
   const patch = parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'cordis.patch.yml'), 'utf8'))
   const config = patch.flatMap((entry) => entry.insert ?? [])[0].config
-  for (const feature of ['minimal', 'standard', 'ptc', 'cordis', 'discovery']) assert.equal(config[feature].enabled, true, feature)
+  for (const feature of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis', 'discovery']) assert.equal(config[feature].enabled, true, feature)
   for (const feature of ['panel', 'tui']) assert.equal(config[feature].enabled, false, feature)
 })
 

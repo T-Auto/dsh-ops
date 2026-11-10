@@ -369,7 +369,7 @@ await test('the documented config keys, defaults and bundle patch agree', () => 
   assert.deepEqual(spillRetentionConfig(defaults), { retentionDays: 30, totalBudgetMiB: 256, sweepEnabled: true })
   const patch = parseDocument(fs.readFileSync(path.join(PACKAGE_ROOT, 'cordis.patch.yml'), 'utf8')).toJS()
   const config = patch[0].insert[0].config
-  for (const mode of ['minimal', 'standard', 'ptc', 'cordis']) {
+  for (const mode of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis']) {
     const { enabled, ...rest } = config[mode]
     assert.equal(enabled, true)
     const resolved = resolveModeConfig(rest)

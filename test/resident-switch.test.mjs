@@ -12,6 +12,9 @@ import { PTC_RESIDENT_TOOLS } from '../lib/ptc/config.js'
 import { publicToolName, BASH_TOOL } from '../lib/policy.js'
 import { bootHost, shutdown, scopedToolNames } from './lib/host.mjs'
 import { prepareStep, executeCall, selectExecutor } from './lib/executor.mjs'
+import fs from 'node:fs'
+import path from 'node:path'
+import { createHash } from 'node:crypto'
 import { assert, test, report, waitFor, withTempDir } from './lib/harness.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
 
@@ -22,7 +25,7 @@ await test('resident settings exist only on enhanced presets, default on, and ha
   assert.equal('residentTools' in modeFields('minimal'), false)
   assert.equal('residentTools' in Config.dict.global.dict, false)
   assert.throws(() => resolveMergedConfig({ global: { residentTools: false } }), /unknown global key/)
-  for (const mode of ['standard', 'ptc', 'cordis']) {
+  for (const mode of ['standard', 'ptc', 'ops-ptc', 'cordis']) {
     assert.equal(config[mode].config.residentTools, true, mode)
     assert.equal(Config.dict[mode].dict.residentTools.type, 'boolean')
     assert.equal(modeFields(mode).residentTools.type, 'boolean')
@@ -63,7 +66,7 @@ async function setup(cwd, mode, switches, global = {}, override = {}) {
   ctx.provide('agents', { list: () => [...agents] })
   ctx.provide('agentPresets', { composedPreset: inner => presets.get(scopeParentOf(scopeOf(inner))) })
   const config = { global, discovery: { binaryPath: WORKER, required: true } }
-  for (const id of ['minimal', 'standard', 'ptc', 'cordis']) config[id] = { enabled: id === mode,
+  for (const id of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis']) config[id] = { enabled: id === mode,
     binaryPath: WORKER, required: true, ...(id === mode ? switches : {}) }
   await ctx.plugin({ name: 'resident-switch-fixture', apply: inner => apply(inner, { ...config, ...override }) })
   const id = 'resident-' + ++sequence, preset = await scoped(ctx, { preset: id })
@@ -72,7 +75,7 @@ async function setup(cwd, mode, switches, global = {}, override = {}) {
     parameters: { type: 'object', properties: {} }, output: { schema: { type: 'object' }, render: () => [] }, execute: async () => ({}) })
   const agent = { id, session: { id, mode: 'danger-full-access', header: { cwd }, append() {}, read() { return [] } } }
   agent.ctx = await scoped(preset, agent, scopeOf(preset))
-  if (mode === 'ptc') await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply: inner => { selectExecutor(inner, 'ptc') } })
+  if (mode === 'ptc' || mode === 'ops-ptc') await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply: inner => { selectExecutor(inner, 'ptc') } })
   agents.push(agent)
   await ctx.serial('agent/created', { agent })
   await step(ctx, agent)
@@ -103,9 +106,9 @@ for (const mode of ['standard', 'cordis']) for (const residentTools of [true, fa
   }))
 }
 
-for (const residentTools of [true, false]) for (const dynamicTools of [true, false]) {
-  await test('PTC: resident=' + residentTools + ', dynamic=' + dynamicTools, () => withTempDir('resident-ptc', async cwd => {
-    const { ctx, agent } = await setup(cwd, 'ptc', { residentTools, dynamicTools, alwaysLoaded: ['stat'], allowedTools: ['stat'] })
+for (const mode of ['ptc', 'ops-ptc']) for (const residentTools of [true, false]) for (const dynamicTools of [true, false]) {
+  await test(mode + ': resident=' + residentTools + ', dynamic=' + dynamicTools, () => withTempDir('resident-ptc', async cwd => {
+    const { ctx, agent } = await setup(cwd, mode, { residentTools, dynamicTools, alwaysLoaded: ['stat'], allowedTools: ['stat'] })
     try {
       if (residentTools) await waitFor(() => names(ctx, agent).includes(publicToolName(PTC_RESIDENT_TOOLS[0])))
       if (dynamicTools) await waitFor(() => names(ctx, agent).includes(publicToolName('load_sdk')))
@@ -155,4 +158,48 @@ await test('Native discovery disabled does not disable the independent typed PTC
     assert.equal(names(ctx, agent).includes(publicToolName('discover_tools')), false)
   } finally { await shutdown(ctx) }
 }))
+/** sha256 of the exact bytes, the revision OPS' write CAS expects. */
+const revisionOf = text => createHash('sha256').update(text).digest('hex')
+/** One program writing the same path three times; the third write crosses the window. */
+const REPEATED_WRITE_STEPS = [['same.txt', 'b1\n', revisionOf('aaa\n')],
+  ['./same.txt', 'b2\n', revisionOf('b1\n')], ['same.txt', 'b3\n', revisionOf('b2\n')]]
+const REPEATED_WRITE_CODE = `const calls = []
+for (const [path, content, expectedRevision] of ${JSON.stringify(REPEATED_WRITE_STEPS)}) {
+  calls.push((await tools.ops_write_file({ path, content, expectedRevision })).status)
+}
+return { calls }`
+
+await test('ops-ptc batchingGuidance rides the third repeated write tool result', () => withTempDir('batching-guidance', async cwd => {
+  const { ctx, agent } = await setup(cwd, 'ops-ptc', { residentTools: true, dynamicTools: true,
+    batchingGuidance: true, alwaysLoaded: ['write_file'], allowedTools: ['write_file'] })
+  try {
+    fs.writeFileSync(path.join(cwd, 'same.txt'), 'aaa\n')
+    const result = await executeCall(ctx, { agent, toolSet: agent.prepared.toolSet, name: 'run_code',
+      arguments: { description: 'Write one file repeatedly', code: REPEATED_WRITE_CODE },
+      callId: 'batching-' + ++sequence, signal: new AbortController().signal })
+    assert.equal(result.isError, false, JSON.stringify(result))
+    assert.deepEqual(result.value.result.calls, ['completed', 'completed', 'completed'], JSON.stringify(result.value.result))
+    // The guidance was deferred by the third nested call and forwarded to the
+    // outer run_code result as tool-result context, never the system prompt.
+    const contexts = result.additionalContexts ?? []
+    assert.equal(contexts.length, 1, JSON.stringify(contexts))
+    const serialized = JSON.stringify(contexts)
+    assert.match(serialized, /批量调用工具/)
+    assert.match(serialized, /batching-guidance/)
+  } finally { await shutdown(ctx) }
+}))
+
+await test('ops-ptc without batchingGuidance injects nothing', () => withTempDir('batching-off', async cwd => {
+  const { ctx, agent } = await setup(cwd, 'ops-ptc', { residentTools: true, dynamicTools: true,
+    batchingGuidance: false, alwaysLoaded: ['write_file'], allowedTools: ['write_file'] })
+  try {
+    fs.writeFileSync(path.join(cwd, 'same.txt'), 'aaa\n')
+    const result = await executeCall(ctx, { agent, toolSet: agent.prepared.toolSet, name: 'run_code',
+      arguments: { description: 'Write one file repeatedly', code: REPEATED_WRITE_CODE },
+      callId: 'batching-' + ++sequence, signal: new AbortController().signal })
+    assert.equal(result.isError, false, JSON.stringify(result))
+    assert.equal(JSON.stringify(result.additionalContexts ?? []).includes('批量调用工具'), false)
+  } finally { await shutdown(ctx) }
+}))
+
 report('resident-switch')

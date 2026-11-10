@@ -53,14 +53,37 @@ await test('legacy component modules stay exported for saved rows but are no lon
   }
 })
 
+/** The row the host web-app bundle inserts; this bundle only overrides its config. */
+const HOST_PRESET_LAYER = [{ insert: [{ id: 'agent-preset-registry', name: '@deepseek-ai/dsh-agent-preset-registry',
+  config: { default: 'standard', selectedDefault: 'standard' } }] }]
+/** The preset fragment this bundle ships beside its row patch. */
+const presetFragment = parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'presets/ops-ptc.patch.yml'), 'utf8'), {
+  customTags: [{ tag: 'tag:yaml.org,2002:js', resolve: value => value }],
+})
+
 await test('the host composes every shipped row and refuses a missing override target', () => {
-  const rows = composeBundle([patch], boot.composeEntries)
-  assert.deepEqual(rows.map(row => row.id), ['dsh-ops'])
-  assert.deepEqual(rows.map(row => row.name), ['dsh-ops'])
+  // The bundle patch list is ordered: the row bundle, then the preset fragment.
+  // A real profile also carries the host web-app layer that inserts the preset
+  // registry this bundle's second entry overrides.
+  const rows = composeBundle([HOST_PRESET_LAYER, patch, presetFragment], boot.composeEntries)
+  assert.deepEqual(rows.map(row => row.id), ['agent-preset-registry', 'dsh-ops', 'preset-ops-ptc'])
+  assert.deepEqual(rows.find(row => row.id === 'dsh-ops').name, 'dsh-ops')
+  assert.deepEqual(rows.find(row => row.id === 'preset-ops-ptc').config.id, 'ops-ptc')
+  assert.deepEqual(rows.find(row => row.id === 'agent-preset-registry').config,
+    { default: 'ops-ptc', selectedDefault: 'ops-ptc' }, 'the override only narrows the host row config')
+  // Composed without its web-app context the override misses once, and the host
+  // reports that as a warning instead of dropping the whole bundle: an isolated
+  // install still loads dsh-ops, only the default-preset convenience is absent.
+  const warnings = []
+  const isolated = boot.composeEntries([patch], message => warnings.push(String(message)))
+  assert.deepEqual(isolated.map(row => row.id), ['dsh-ops'])
+  assert.equal(warnings.length, 1, warnings.join('; '))
+  assert.match(warnings[0], /agent-preset-registry/)
   const upstream = [{ insert: [{ id: 'upstream', name: 'cordis:fixture' }] }]
   const override = [{ id: 'upstream', config: { enabled: true } }]
-  assert.equal(composeBundle([upstream, patch, override], boot.composeEntries).find(row => row.id === 'upstream').config.enabled, true)
-  assert.throws(() => composeBundle([patch, override], boot.composeEntries), /entry.*upstream.*not found/)
+  assert.equal(composeBundle([HOST_PRESET_LAYER, upstream, patch, override], boot.composeEntries)
+    .find(row => row.id === 'upstream').config.enabled, true)
+  assert.throws(() => composeBundle([HOST_PRESET_LAYER, patch, override], boot.composeEntries), /entry.*upstream.*not found/)
 })
 
 report('host-metadata')

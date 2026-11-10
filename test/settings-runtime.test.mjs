@@ -208,10 +208,10 @@ await test('the snapshot reports every mode resolution and one shared executor',
   const opts = options('snapshot-modes'), directory = managed(opts.env, '2.56.0.2')
   const file = path.join(directory, 'bin/bash.exe')
   const configured = new RuntimeActions({ ...opts, config: () => ({
-    minimal: { bashPath: file }, standard: { bashPath: file }, ptc: { bashPath: file }, cordis: { bashPath: file },
+    minimal: { bashPath: file }, standard: { bashPath: file }, ptc: { bashPath: file }, 'ops-ptc': { bashPath: file }, cordis: { bashPath: file },
   }) })
   const snapshot = configured.snapshot()
-  assert.deepEqual(snapshot.modes.map(mode => mode.id), ['minimal', 'standard', 'ptc', 'cordis'])
+  assert.deepEqual(snapshot.modes.map(mode => mode.id), ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis'])
   assert.ok(snapshot.modes.every(mode => mode.file === file && mode.engine === 'msys' && mode.source === 'config'))
   assert.equal(snapshot.bash?.file, file)
   // A disagreement is not flattened into a single answer.
@@ -219,7 +219,7 @@ await test('the snapshot reports every mode resolution and one shared executor',
   assert.equal(split.snapshot().bash, undefined)
   // Nothing configured: every mode answers from the deployment's own payload, or says it is missing.
   const empty = new RuntimeActions({ ...opts, config: () => ({}) }).snapshot()
-  assert.equal(empty.modes.length, 4)
+  assert.equal(empty.modes.length, 5)
   assert.ok(empty.bash !== undefined)
   assert.ok(['niubash', 'none'].includes(empty.bash.engine))
   if (empty.bash.engine === 'none') assert.match(empty.bash.detail, /Niubash/i)
