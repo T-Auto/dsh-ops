@@ -298,8 +298,10 @@ await test('an explicit events ctx carries the subscriptions and the admission l
 
 // The runtime's own events option is what a shared file source uses: it reads
 // through the agent's ctx but must subscribe where session/event is visible.
-// Nothing else pins that the option is honoured rather than ignored.
-await test('an explicit events ctx receives the runtime subscriptions instead of the read ctx', async () => {
+// Read-dedup follows `events` for that reason. Admission only needs the two
+// execution events, so it follows the ctx the runtime was built with - that is
+// what keeps a shared source admitting puts after one consumer row unloads.
+await test('read-dedup follows the events ctx while admission stays on the read ctx', async () => {
   const read = subscriptionRecorder()
   const events = subscriptionRecorder()
   const runtime = new NativeFileTools({ ctx: read.ctx, events: events.ctx, config: { workerPath: WORKER, required: true } })
@@ -308,9 +310,9 @@ await test('an explicit events ctx receives the runtime subscriptions instead of
   } finally {
     await runtime.stop()
   }
-  assert.deepEqual(read.subscribed, [], 'the read ctx does not become the event receiver')
-  assert.deepEqual(sorted(events.subscribed), sorted([...RUNTIME_EVENTS, ...ADMISSION_EVENTS]))
-  assert.deepEqual(sorted(events.disposed), sorted([...RUNTIME_EVENTS, ...ADMISSION_EVENTS]), 'disposal releases every runtime listener')
+  assert.deepEqual(sorted(events.subscribed), sorted(RUNTIME_EVENTS), 'the session-sensitive listeners go to the events ctx')
+  assert.deepEqual(sorted(read.subscribed), sorted(ADMISSION_EVENTS), 'admission follows the ctx the runtime was built with')
+  assert.deepEqual(sorted([...events.disposed, ...read.disposed]), sorted([...RUNTIME_EVENTS, ...ADMISSION_EVENTS]), 'disposal releases every runtime listener')
 })
 
 report('context-read-dedup')
