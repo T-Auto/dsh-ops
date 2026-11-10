@@ -70,7 +70,7 @@ export async function acquireSharedFile(agent: Agent, api: SharedApi, config: Na
   agent.ctx.fiber.assertActive()
   // Fail closed on the documented regression rather than degrade silently: passing
   // the reading ctx back as the subscription ctx is exactly how the agent scope
-  // takes over and drops `session/event` / `session/disposed` (DESIGN §5 R1).
+  // takes over and drops `session/event` / `session/disposed`.
   // A ctx derived with `extend` is refused by the same rule: it is a distinct
   // object that inherits the agent's scope tag and shares its single fiber, so it
   // subscribes exactly where the reading ctx would.
@@ -78,7 +78,7 @@ export async function acquireSharedFile(agent: Agent, api: SharedApi, config: Na
   // mounted under a scoped ctx receives an injected ctx that inherits that tag
   // while still being a row context that other rows are meant to use, so a
   // tag-based refusal would reject supported compositions. Visibility probing is
-  // ruled out too (DESIGN D6): it subscribes to answer, and a wrong verdict is silent.
+  // ruled out too: it subscribes to answer, and a wrong verdict is silent.
   if (events === agent.ctx || events.fiber === agent.ctx.fiber) throw new Error('Shared file subscription context must not be the reading ctx: the agent scope loses session events')
   const owner = scopeChainOf(agent).find(scope => runtimes.has(scope as Agent)) as Agent | undefined
   const runtimeOwner = owner ?? agent
@@ -102,19 +102,13 @@ export async function acquireSharedFile(agent: Agent, api: SharedApi, config: Na
     const runtime = new NativeFileTools({ ctx: agent.ctx, events, config: normalized })
     const created: Source = { runtime, refs: 0, closed: false, identity, definitions: new Map(), ready: runtime.start([]) }
     // The source dies with the feed it was built with, not with the agent.
-    // `runtimes` is keyed by Agent (:46) and every source is built on the first
-    // caller's `events` while reading through `agent.ctx` (:102). The three
-    // consumers each inject their own row fiber — `consumer/mount.ts:51/53/57`
-    // for `mountNative` / `mountDiscovery` / `mountPtc` — so those rows hand over
-    // three different contexts: the first one builds the source and the rest are
-    // ignored. Teardown used to sit on `agent.ctx` (:106), which outlives every
-    // row, so unloading the building row (a /plugin disable or hot reload) left a
-    // source that keeps serving through the agent while its seven feed
-    // subscriptions — read-dedup and result admission — died with that row:
-    // `ops_result put` then answers PUBLICATION_DENIED for good and read-dedup
-    // silently stops invalidating. Owning the teardown by the fiber behind
-    // `events` closes the source together with its feed. The next caller rebuilds
-    // from its own row context and restarts the worker.
+    // `runtimes` is keyed by agent and the source is built on the first caller's
+    // `events`, while several rows can reach it. A teardown on the agent would
+    // outlive the row whose seven feed subscriptions — read-dedup and result
+    // admission — die with it, leaving a source that keeps serving with a dead
+    // feed: `ops_result put` then answers PUBLICATION_DENIED for good. Owning the
+    // teardown by the fiber behind `events` closes both together; the next caller
+    // rebuilds from its own row context and restarts the worker.
     // Registered before the map insert on purpose: when that row is already gone
     // the effect refuses here, before a later caller can pick up a source whose
     // feed is dead on arrival.

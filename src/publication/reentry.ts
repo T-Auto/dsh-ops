@@ -39,8 +39,10 @@ function queueFor(ctx: Context): Queue {
   const pending = new Set<Work>()
   let timer: NodeJS.Timeout | undefined
   let busy = false, stopped = false, level = 0, refusals = 0, reported = 0, warnings = 0, lastWarning = -Infinity
-  // Owner fibers, not contexts: an `extend`ed context shares its fiber's single
-  // unload, so a per-context count could never come back down.
+  // Count owner fibers rather than contexts. Every context derived from one fiber
+  // registers its effect on that same fiber, so both units come back down on
+  // unload; the fiber is the coarser one and costs one effect per fiber instead of
+  // one per derived context.
   const fibers = new WeakSet<Fiber>()
   let refs = 0
   const warn = (message: string): void => { root.logger.warn(message) }
