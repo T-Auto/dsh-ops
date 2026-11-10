@@ -14,6 +14,7 @@ import * as panelModule from './components/panel/index.js'
 import * as tuiModule from './components/tui/index.js'
 import * as downloadGuardModule from './components/download-guard/index.js'
 import { configureResultCacheGc } from './kernel/result-cache-gc.js'
+import { registerOpsPtcPreset } from './presets/ops-ptc/register.js'
 export { Config } from './settings/merged.js'
 export { applyComponent } from './legacy/host.js'
 export const name = 'dsh-ops'
@@ -45,6 +46,10 @@ export async function apply(root: Context, rawConfig: unknown): Promise<void> {
   const retention = config.resultCache
   configureResultCacheGc(retention.enabled ? retention.config : undefined)
   root.effect(() => () => configureResultCacheGc(undefined), 'dsh-ops: result cache retention')
+  // The ops-ptc preset is a runtime contribution, not a bundle row: registering it
+  // through the host registry means disabling this row can never leave a profile's
+  // selected preset dangling. It never blocks the rest of apply.
+  registerOpsPtcPreset(root)
   beginMergedRow()
   try {
     // The browser half mounts its `opsSettings` remote; the legacy shell row used

@@ -1,38 +1,63 @@
 /**
- * Repeated-write detection and the model-facing batch-call guidance it injects.
+ * Repeated-write detection and the model-facing batch-call guidance it loads.
  *
- * The module is a pure kernel: it imports no host values, so a unit test can
- * drive it with plain objects and a fake agent. The caller owns delivery.
+ * The guidance text lives in an editable Markdown file (prompts/batching-guidance.md)
+ * so wording changes never require a code change. The module imports no host
+ * values, so a unit test can drive it with plain objects and a fake agent. The
+ * caller owns delivery.
  */
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Agent } from '../adapter/dsh/types.js'
 
 /** Identity of the guidance in the host message source. */
 export const BATCHING_GUIDANCE_ID = 'batching-guidance'
-/** Revision of the guidance text; bump it when the wording changes. */
-export const BATCHING_GUIDANCE_REVISION = '1'
+/** Revision of the guidance text; bump it when the wording or the file format changes. */
+export const BATCHING_GUIDANCE_REVISION = '2'
+
+/** The shipped guidance file, resolved from this module's own location (src or lib). */
+const DEFAULT_GUIDANCE_FILE = new URL('../../prompts/batching-guidance.md', import.meta.url)
+
+/** Loaded text by absolute location; a failed load caches '' instead of retrying. */
+const loaded = new Map<string, string>()
+let warned = false
+
+/** Report an unreadable guidance file once, never once per agent or call. */
+function warnUnavailable(location: string, error: unknown): void {
+  if (warned) return
+  warned = true
+  console.warn('dsh-ops: batching guidance is unavailable at ' + location + '; guidance is skipped. ' + String(error))
+}
 
 /**
- * Chinese batch-call guidance, exactly as the user supplied it. It is delivered
- * through a tool result (never the system prompt) after the tracker fires.
+ * Load the batch-call guidance from an editable Markdown file.
+ * The file is read once per location and cached; an unreadable or empty file
+ * yields '' so delivery is skipped instead of failing a tool result.
+ * @param filePath - optional override location (absolute path or file URL).
+ * @returns the trimmed guidance text, or '' when it cannot be read.
  */
-export const BATCHING_GUIDANCE = `# 批量调用工具：
-### 核心规则
-1. **工具只能在 \`run_code\` 里调用**：写 \`await tools.<名字>(参数)\`。
-2. **无依赖 → 并发**：用 \`Promise.all\`，适合只读调用。
-3. **有依赖 → 分步**：后一步需要前一步的结果时，用 \`await\` 顺序执行。
-4. **单项失败 → 容错**：用 \`try/catch\` 包住单个调用，不影响其他项。
-5. **只输出需要的内容**：中间结果不会显示，用 \`return\` 返回摘要。
-6. **写操作 → 显式串联**：即使并发提交也按顺序执行，但建议用 \`await\` 写清楚。
-### 常见错误
-
-| 错误 | 正确做法 |
-|---|---|
-| 有依赖的调用放进 \`Promise.all\` | 分步 \`await\` |
-| 不加上限(上限128)地并发大量文件 | 先 \`slice\` 截断 |
-| 直接 \`return\` 整个大结果 | 只返回需要的字段 |
-| 单项失败导致全部中断 | 用 \`try/catch\` 包单项 |
-| 用 \`e.toolName\` 当错误原因 | 用 \`e.message\` 取原因 |`
+export function loadBatchingGuidance(filePath?: string | URL): string {
+  let location: string
+  try {
+    location = path.resolve(filePath instanceof URL ? fileURLToPath(filePath)
+      : filePath ?? fileURLToPath(DEFAULT_GUIDANCE_FILE))
+  } catch (error) {
+    warnUnavailable(String(filePath), error)
+    return ''
+  }
+  const cached = loaded.get(location)
+  if (cached !== undefined) return cached
+  try {
+    const text = readFileSync(location, 'utf8').trim()
+    loaded.set(location, text)
+    return text
+  } catch (error) {
+    loaded.set(location, '')
+    warnUnavailable(location, error)
+    return ''
+  }
+}
 
 /** Tracker tuning; only the window size is configurable. */
 export interface BatchingTrackerOptions {

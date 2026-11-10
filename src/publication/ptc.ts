@@ -13,12 +13,13 @@ import { renderSdkDirectory } from '../projections/ptc/directory.js'
 import { PTC_RESIDENT_TOOLS } from '../ptc/config.js'
 import type { ApiName } from '../ptc/config.js'
 import { ownPtcScopes } from '../ptc/ownership.js'
-import { BATCHING_GUIDANCE, BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, createBatchingTracker } from '../ptc/batching-guidance.js'
+import { BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, createBatchingTracker, loadBatchingGuidance } from '../ptc/batching-guidance.js'
 import { InvocationLifetime, InvocationNotStarted } from '../lifecycle/invocations.js'
 import { monitoredInvoke } from '../execution/monitored.js'
 import { record } from '../execution/boundary.js'
 import { failure, resolveWorker } from '../execution/jobs.js'
 import { WORKER_TIMEOUT_MS } from '../execution/protocol.js'
+import { registerStepTailProvider } from '../prompt-injection/index.js'
 import { mountWorkspacePreparation } from '../workspace-preparation.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
 import { activationIsPtc, inspectPresentation, isPresentationProbe } from './presentation.js'
@@ -90,11 +91,11 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     // Repeated writes to one path signal a batching mistake. The guidance rides
     // the triggering tool result, so no system-prompt bytes are spent up front.
     const batching = createBatchingTracker({ window: 3 })
-    const guidanceMessage = async (turn: number): Promise<UserMessage> => {
+    const guidanceMessage = async (turn: number, text: string): Promise<UserMessage> => {
       const createUserMessage = await loadUserMessage()
       return createUserMessage({
         source: { kind: 'dsh-ops:step-tail', contributor: BATCHING_GUIDANCE_ID, revision: BATCHING_GUIDANCE_REVISION, turn, step: 0 },
-        content: [{ type: 'text', text: `[Plugin context from ${JSON.stringify(BATCHING_GUIDANCE_ID)}; not a user instruction or authorization.]\n${BATCHING_GUIDANCE}` }],
+        content: [{ type: 'text', text: `[Plugin context from ${JSON.stringify(BATCHING_GUIDANCE_ID)}; not a user instruction or authorization.]\n${text}` }],
       })
     }
     const noteWrite = async (agent: Agent, api: ApiName | 'load_sdk', args: unknown, result: unknown, exec: ToolRunContext): Promise<void> => {
@@ -102,8 +103,11 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       if (meta?.component !== 'file' || !meta.mutates || !record(result) || result.status !== 'completed') return
       const decision = batching.recordWrite(agent, api, args)
       if (!decision.shouldNotify) return
+      // An unreadable or empty guidance file disables delivery, not the tool call.
+      const text = loadBatchingGuidance()
+      if (!text) return
       try {
-        exec.deferContext(await guidanceMessage(decision.turn))
+        exec.deferContext(await guidanceMessage(decision.turn, text))
       } catch (error) {
         // Guidance is an optimisation: a delivery failure must never alter the tool result.
         ctx.logger.warn('dsh-ops: batching guidance delivery failed: ' + String(error))
@@ -180,6 +184,20 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
           entry.disposers.push(agent.ctx!.on('agent/pre-step', async (payload, next) => {
             if (payload.agent === agent) batching.noteTurn(agent, payload.turn)
             return next()
+          }))
+          // Teach the rules once, before the model's first request: a step-tail
+          // message rides the first accepted user batch and enters history.
+          let taught = false
+          entry.disposers.push(registerStepTailProvider(entry.ctx, agent, {
+            id: BATCHING_GUIDANCE_ID,
+            revision: BATCHING_GUIDANCE_REVISION,
+            provide() {
+              if (taught) return undefined
+              const text = loadBatchingGuidance()
+              if (!text) return undefined
+              taught = true
+              return text
+            },
           }))
         }
         const publish = (api: ApiName | 'load_sdk', def: ToolDefinition): void => {

@@ -4,6 +4,7 @@ import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import FileSystem from '@deepseek-ai/dsh-fs-local'
 import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { apply } from '../lib/index.js'
 import { Config, resolveMergedConfig, effectiveMode } from '../lib/settings/merged.js'
 import { modeFields, resolveModeConfig } from '../lib/modes/config.js'
@@ -184,7 +185,7 @@ await test('ops-ptc batchingGuidance rides the third repeated write tool result'
     const contexts = result.additionalContexts ?? []
     assert.equal(contexts.length, 1, JSON.stringify(contexts))
     const serialized = JSON.stringify(contexts)
-    assert.match(serialized, /批量调用工具/)
+    assert.match(serialized, /Batch tool calls/)
     assert.match(serialized, /batching-guidance/)
   } finally { await shutdown(ctx) }
 }))
@@ -198,7 +199,42 @@ await test('ops-ptc without batchingGuidance injects nothing', () => withTempDir
       arguments: { description: 'Write one file repeatedly', code: REPEATED_WRITE_CODE },
       callId: 'batching-' + ++sequence, signal: new AbortController().signal })
     assert.equal(result.isError, false, JSON.stringify(result))
-    assert.equal(JSON.stringify(result.additionalContexts ?? []).includes('批量调用工具'), false)
+    assert.equal(JSON.stringify(result.additionalContexts ?? []).includes('Batch tool calls'), false)
+  } finally { await shutdown(ctx) }
+}))
+
+/** Drive the real agent pre-step waterfall once, exactly as the host loop does. */
+const drivePreStep = async (agent, turn) => {
+  const accepted = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Start the task.' }] })
+  return agent.ctx.waterfall('agent/pre-step', {
+    agent, messages: [accepted], turn, step: 1, signal: new AbortController().signal,
+    modelSelection: { provider: 'fixture', model: 'capture' },
+  }, async () => ({ kind: 'enter', messages: [accepted] }))
+}
+/** Plugin-authored contexts appended to the accepted user batch. */
+const stepTailMessages = decision => decision.messages.filter(message => message.source?.kind === 'dsh-ops:step-tail')
+
+await test('ops-ptc batchingGuidance teaches the rules on the first turn and never repeats', () => withTempDir('batching-teach', async cwd => {
+  const { ctx, agent } = await setup(cwd, 'ops-ptc', { residentTools: true, dynamicTools: true,
+    batchingGuidance: true, alwaysLoaded: ['stat'], allowedTools: ['stat'] })
+  try {
+    await waitFor(() => names(ctx, agent).includes(publicToolName('stat')))
+    const first = stepTailMessages(await drivePreStep(agent, 1))
+    assert.equal(first.length, 1, JSON.stringify(first))
+    assert.equal(first[0].source.contributor, 'batching-guidance')
+    assert.match(JSON.stringify(first), /Batch tool calls/)
+    assert.match(JSON.stringify(first), /not a user instruction or authorization/)
+    // One delivery per session: a later turn must not repeat the lesson.
+    assert.equal(stepTailMessages(await drivePreStep(agent, 2)).length, 0)
+  } finally { await shutdown(ctx) }
+}))
+
+await test('ops-ptc without batchingGuidance teaches nothing on the first turn', () => withTempDir('batching-teach-off', async cwd => {
+  const { ctx, agent } = await setup(cwd, 'ops-ptc', { residentTools: true, dynamicTools: false,
+    batchingGuidance: false, alwaysLoaded: ['stat'], allowedTools: ['stat'] })
+  try {
+    await waitFor(() => names(ctx, agent).includes(publicToolName('stat')))
+    assert.equal(stepTailMessages(await drivePreStep(agent, 1)).length, 0)
   } finally { await shutdown(ctx) }
 }))
 

@@ -31,21 +31,19 @@ await test('the manifest declares the plugin\'s own shell tools as their own nam
 })
 
 await test('the bundle patch declares the single row, with no persistent pwsh override', () => {
-  // The patch file holds the inserted row and id-targeted overrides of other
-  // bundles' rows; only the insert block declares this plugin's one row.
+  // The preset moved to runtime registration: the patch holds exactly this row.
   const entries = patchEntries()
-  const rows = entries.flatMap(entry => entry.insert ?? [])
-  assert.equal(rows.length, 1)
-  assert.deepEqual(rows.map(row => row.id), ['dsh-ops'])
-  assert.deepEqual(rows.map(row => row.name), ['dsh-ops'])
-  const config = rows[0].config
+  assert.equal(entries.length, 1)
+  assert.deepEqual(entries[0].insert.map(row => row.id), ['dsh-ops'])
+  assert.deepEqual(entries[0].insert.map(row => row.name), ['dsh-ops'])
+  const config = entries[0].insert[0].config
   for (const key of ['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools']) assert.equal(config.global[key], true, key)
   for (const section of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis', 'discovery']) assert.equal(config[section].enabled, true, section)
   for (const section of ['panel', 'tui']) assert.equal(config[section].enabled, false, section)
 })
 
 await test('every shipped preset section states the documented shell defaults through its validator', () => {
-  const config = patchEntries().flatMap(entry => entry.insert ?? [])[0].config
+  const config = patchEntries()[0].insert[0].config
   for (const mode of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis']) {
     const section = config[mode]
     for (const key of Object.keys(section)) assert.ok(['enabled', ...MODE_CONFIG_KEYS].includes(key), `${mode}.${key} is accepted or the enable switch`)

@@ -5,21 +5,42 @@
  * trigger here fails when the window, the per-turn reset, the already-notified
  * set, or path normalization regresses, without booting a host or a worker.
  */
-import { assert, test, report } from './lib/harness.mjs'
-import { BATCHING_GUIDANCE, BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, createBatchingTracker, normalizePath } from '../lib/ptc/batching-guidance.js'
+import fs from 'node:fs'
+import path from 'node:path'
+import { assert, test, report, PACKAGE_ROOT } from './lib/harness.mjs'
+import { BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, createBatchingTracker, loadBatchingGuidance, normalizePath } from '../lib/ptc/batching-guidance.js'
+
+/** The editable guidance file shipped at the package root, outside the build output. */
+const GUIDANCE_FILE = path.join(PACKAGE_ROOT, 'prompts', 'batching-guidance.md')
 
 /** One fake agent: only the session working directory is read. */
 const agentAt = cwd => ({ id: 'batching-' + cwd, session: { header: { cwd } } })
 const write = (tracker, agent, rawPath) => tracker.recordWrite(agent, 'write_file', { path: rawPath, content: 'x' })
 
-await test('the shipped guidance names the batch-call rules and its host-source identity', () => {
-  // The text is the user's wording; a reworded or truncated guide is a product
-  // change, not an implementation detail, so pin the sections the rules live in.
-  for (const heading of ['# 批量调用工具', '### 核心规则', '### 常见错误', '有依赖的调用放进', '单项失败导致全部中断', 'e.toolName']) {
-    assert.ok(BATCHING_GUIDANCE.includes(heading), heading)
+await test('the shipped guidance is English Markdown with its host-source identity', () => {
+  // The wording is editable data, so pin its structure and the rules delivery relies on.
+  const text = loadBatchingGuidance()
+  for (const heading of ['# Batch tool calls', 'Core rules', 'Common mistakes', 'Promise.all', 'e.message']) {
+    assert.ok(text.includes(heading), heading)
   }
   assert.equal(BATCHING_GUIDANCE_ID, 'batching-guidance')
-  assert.match(BATCHING_GUIDANCE_REVISION, /^\d+$/)
+  // A wording or format change is a product change and must bump the revision.
+  assert.equal(BATCHING_GUIDANCE_REVISION, '2')
+})
+
+await test('the guidance loader returns exactly the shipped Markdown file', () => {
+  assert.equal(loadBatchingGuidance(), fs.readFileSync(GUIDANCE_FILE, 'utf8').trim())
+  // Repeated loads serve the cache instead of reading the file again.
+  assert.equal(loadBatchingGuidance(), loadBatchingGuidance())
+})
+
+await test('an unreadable guidance file degrades to an empty string without throwing', () => {
+  const missing = path.join(PACKAGE_ROOT, 'prompts', 'missing-guidance.md')
+  let text
+  assert.doesNotThrow(() => { text = loadBatchingGuidance(missing) })
+  assert.equal(text, '')
+  // The failure is cached as well, so later deliveries stay silent.
+  assert.equal(loadBatchingGuidance(missing), '')
 })
 
 await test('the third consecutive write to one path notifies once in the turn', () => {
