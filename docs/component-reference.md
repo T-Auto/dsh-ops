@@ -19,7 +19,7 @@ The `dsh-ops` row owns built-in and explicitly configured consumer plans. Native
 `dsh-ops/shell`, `dsh-ops/file`, `dsh-ops/ptc` and `dsh-ops/hide-official` modules remain as
 unsupported legacy exports for old profiles and are not part of the bundle.
 
-`ops-ptc` is the merged row's fifth built-in mode: the bundle's second patch file declares the `ops-ptc` agent preset (see [Presets and the default mode](presets.md)), and the row's `ops-ptc` section configures it. It publishes the same surface as `ptc` and adds the YAML-only `batchingGuidance`: after three consecutive writes to one normalized path in a turn, the batch-call guidance (core rules plus common mistakes) is appended to the triggering tool result without touching the system prompt. A legacy profile that still names `dsh-ops/mode-ops-ptc` loads that module; under the merged bundle it only warns and stays inert, and its configuration belongs in the merged row's `ops-ptc` section.
+`ops-ptc` is the merged row's fifth built-in mode: the plugin registers the preset at runtime through the host `agentPresets.register` (definition from the shipped `presets/ops-ptc.patch.yml` fragment parsed by the host's `loadOverlayPatches`), so the plugin manager has no matching preset row; disabling or unloading the plugin row removes the preset together with the tool surface, and a default preset pointing at it must be switched first (see [Presets and the default mode](presets.md)). It publishes the same surface as `ptc` and adds the YAML-only `batchingGuidance`: the English batch-call guidance is injected once in the session's first user-message batch (from `prompts/batching-guidance.md`, into history, never the system prompt) and once more after three consecutive writes to one normalized path in a turn, riding that tool result. A legacy profile that still names `dsh-ops/mode-ops-ptc` loads that module; under the merged bundle it only warns and stays inert, and its configuration belongs in the merged row's `ops-ptc` section.
 
 The former `dsh-ops/background` component (FastCtx background jobs: `ops_run`, `ops_run_background`, `ops_job_output`, `ops_job_list`, `ops_job_kill`) has been removed. A profile row that still names it loads as a no-op: it accepts any config, publishes nothing, and logs one warning that the row can be deleted.
 
@@ -150,7 +150,8 @@ Each reader separates scan, page, display and reference-capture completeness. A 
 The `dsh-ops/mode-ptc` row is on by default and publishes these tools only in sessions composed from
 the PTC preset. Its host row switch preserves explicit disablement and its configured pool. The merged
 row describes it with the `ptc` section; the `ops-ptc` section publishes the same surface and only adds the
-batch-call guidance by default. See the OPS PTC mode section of the [configuration reference](configuration-reference.md).
+batch-call guidance by default (its preset is registered at plugin runtime). See the OPS PTC mode section of
+the [configuration reference](configuration-reference.md).
 
 ### `ops_batch`
 

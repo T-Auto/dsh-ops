@@ -92,6 +92,9 @@ See the OPS PTC mode section of the [configuration reference](configuration-refe
 - The switch does not affect Native discovery in `standard`/`cordis`: `discovery.enabled` and each mode's
   `dynamicTools` are independent publication choices, and a PTC presentation never brings the Native directory
   back.
+- The `ops-ptc` preset itself is registered at plugin runtime: disabling the `dsh-ops` row removes the preset
+  together with the SDK loader. If the default preset points at it, switch the default first (see
+  [Presets and the default mode](presets.md)).
 
 ## Focused verification
 

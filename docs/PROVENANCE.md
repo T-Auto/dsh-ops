@@ -6,14 +6,30 @@ was not.
 ## Unreleased: OPS PTC preset fragment
 
 `presets/ops-ptc.patch.yml` is a generated copy of `@deepseek-ai/dsh-web-app/presets/ptc.patch.yml` (MIT,
-Copyright (c) 2026 DeepSeek), changed only in identity: row id `preset-ops-ptc`, preset id `ops-ptc`, display
-name/description and order. `scripts/sync-preset-ops-ptc.mjs` regenerates it from the installed host, `--check`
-refuses drift, and the file header records the source path and its SHA-256. The upstream default PTC preset
-remains the host's own and is not modified.
+Copyright (c) 2026 DeepSeek), changed only in identity: declaration id `preset-ops-ptc`, preset id `ops-ptc`,
+display name/description and order. `scripts/sync-preset-ops-ptc.mjs` regenerates it from the installed host,
+`--check` refuses drift, and the file header records the source path and its SHA-256. The fragment is not a
+bundle row: `dsh-ops` parses it at runtime with the host's `loadOverlayPatches` and registers the preset through
+`agentPresets.register`, so no preset declaration is installed into the profile. The upstream default PTC
+preset remains the host's own and is not modified.
 
 `presets/ops-ptc.patch.yml` 是 `@deepseek-ai/dsh-web-app/presets/ptc.patch.yml`（MIT，2026 DeepSeek）的生成副本，
-只改了行身份与预设身份（行 id、preset id、名称/描述与排序）；`scripts/sync-preset-ops-ptc.mjs` 从已安装宿主重新
-生成，`--check` 拒绝漂移，文件头记录来源路径与 SHA-256。上游官方 PTC 预设本身未被修改。
+只改了身份：声明 id、preset id、名称/描述与排序；`scripts/sync-preset-ops-ptc.mjs` 从已安装宿主重新生成，
+`--check` 拒绝漂移，文件头记录来源路径与 SHA-256。该片段不是 bundle 行：`dsh-ops` 在运行时用宿主的
+`loadOverlayPatches` 解析它，再通过 `agentPresets.register` 注册预设，因此不会把预设声明装进 profile。
+上游官方 PTC 预设本身未被修改。
+
+## Unreleased: batch-call guidance prompt
+
+`prompts/batching-guidance.md` is original text written for this project, not copied from a third party. It
+ships in the package's `files` and is read at runtime by `loadBatchingGuidance()` in
+`src/ptc/batching-guidance.ts`; operators may edit it in an installed copy, and an unreadable or empty file
+skips delivery instead of failing a tool call. Revision marker `2` identifies the current wording contract in
+plugin-context messages.
+
+`prompts/batching-guidance.md` 是本项目自研文案，非第三方拷贝；它随包发布，由 `src/ptc/batching-guidance.ts`
+的 `loadBatchingGuidance()` 在运行时读取。操作者可直接编辑安装副本；读不到或为空时跳过投递，而不影响工具
+调用。插件上下文消息里的 revision 2 标识当前文案契约。
 
 ## Unreleased: optional Windows Bash payload and host PowerShell
 
