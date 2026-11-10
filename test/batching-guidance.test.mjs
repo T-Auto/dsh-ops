@@ -1,21 +1,16 @@
 /**
- * The repeated-write detector behind the ops-ptc batching guidance.
+ * The batching guidance asset and the row switch that delivers it.
  *
- * The module is a pure kernel, so this suite drives it with plain agents: a
- * trigger here fails when the window, the per-turn reset, the already-notified
- * set, or path normalization regresses, without booting a host or a worker.
+ * The trigger itself lives in batching-trigger.test.mjs; this suite covers the shipped
+ * Markdown, its loader contract, and the one row allowed to publish it.
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import { assert, test, report, PACKAGE_ROOT } from './lib/harness.mjs'
-import { BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, createBatchingTracker, loadBatchingGuidance, normalizePath } from '../lib/ptc/batching-guidance.js'
+import { BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, loadBatchingGuidance } from '../lib/ptc/batching-guidance.js'
 
 /** The editable guidance file shipped at the package root, outside the build output. */
 const GUIDANCE_FILE = path.join(PACKAGE_ROOT, 'prompts', 'batching-guidance.md')
-
-/** One fake agent: only the session working directory is read. */
-const agentAt = cwd => ({ id: 'batching-' + cwd, session: { header: { cwd } } })
-const write = (tracker, agent, rawPath) => tracker.recordWrite(agent, 'write_file', { path: rawPath, content: 'x' })
 
 await test('the shipped guidance is English Markdown with its host-source identity', () => {
   // The wording is editable data, so pin its structure and the rules delivery relies on.
@@ -25,7 +20,7 @@ await test('the shipped guidance is English Markdown with its host-source identi
   }
   assert.equal(BATCHING_GUIDANCE_ID, 'batching-guidance')
   // A wording or format change is a product change and must bump the revision.
-  assert.equal(BATCHING_GUIDANCE_REVISION, '2')
+  assert.equal(BATCHING_GUIDANCE_REVISION, '3')
 })
 
 await test('the guidance loader returns exactly the shipped Markdown file', () => {
@@ -43,75 +38,11 @@ await test('an unreadable guidance file degrades to an empty string without thro
   assert.equal(loadBatchingGuidance(missing), '')
 })
 
-await test('the third consecutive write to one path notifies once in the turn', () => {
-  const tracker = createBatchingTracker({ window: 3 }), agent = agentAt('/work')
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, false)
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, false)
-  const third = write(tracker, agent, 'a.txt')
-  assert.equal(third.shouldNotify, true)
-  assert.equal(third.path, normalizePath('a.txt', '/work'))
-  // The injected context rides this tool result; the rest of the turn must not
-  // repeat it for the same path.
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, false)
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, false)
-})
-
-await test('a different path inside the window resets the consecutive run', () => {
-  const tracker = createBatchingTracker({ window: 3 }), agent = agentAt('/work')
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, false)
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, false)
-  // Three same-path writes must be consecutive: the odd write breaks the run.
-  assert.equal(write(tracker, agent, 'b.txt').shouldNotify, false)
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, false, 'the interruption restarts the run')
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, false)
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, true, 'three consecutive writes after the interruption fire')
-})
-
-await test('a new turn clears the window and the already-notified set', () => {
-  const tracker = createBatchingTracker({ window: 3 }), agent = agentAt('/work')
-  tracker.noteTurn(agent, 1)
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, false)
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, false)
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, true)
-  // Repeating the same turn must not clear anything: the host may announce it again.
-  tracker.noteTurn(agent, 1)
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, false)
-  tracker.noteTurn(agent, 2)
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, false)
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, false)
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, true, 'the next turn earns its own guidance')
-})
-
-await test('equivalent spellings of one path share one window entry', () => {
-  const tracker = createBatchingTracker({ window: 3 }), agent = agentAt('/work')
-  assert.equal(normalizePath('a.txt', '/work'), normalizePath('./a.txt', '/work'))
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, false)
-  assert.equal(write(tracker, agent, './a.txt').shouldNotify, false)
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, true, "'a.txt' and './a.txt' are one path")
-})
-
-await test('a write without a usable path never counts toward the window', () => {
-  const tracker = createBatchingTracker({ window: 3 }), agent = agentAt('/work')
-  assert.equal(tracker.recordWrite(agent, 'copy', { from: 'a', to: 'b' }).shouldNotify, false)
-  assert.equal(tracker.recordWrite(agent, 'write_file', { path: '' }).shouldNotify, false)
-  assert.equal(tracker.recordWrite(agent, 'write_file', { path: 7 }).shouldNotify, false)
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, false)
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, false)
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, true, 'pathless calls do not fill the window')
-  // forget() drops the agent state entirely.
-  tracker.forget(agent)
-  assert.equal(write(tracker, agent, 'a.txt').shouldNotify, false)
-})
-
-
 await test('the ops-ptc row is the one row configured to deliver the guidance', async () => {
-  const fs = await import('node:fs')
-  const path = await import('node:path')
   const { parse } = await import('yaml')
   const { resolveMergedConfig } = await import('../lib/settings/merged.js')
   const { resolveModeConfig } = await import('../lib/modes/config.js')
   const { modeGate } = await import('../lib/presets/builtin.js')
-  const { PACKAGE_ROOT } = await import('./lib/harness.mjs')
   // Default off everywhere; only the row-level YAML switch turns it on.
   const defaults = resolveMergedConfig()
   for (const mode of ['minimal', 'standard', 'ptc', 'cordis']) assert.equal(defaults[mode].config.batchingGuidance, false, mode)
@@ -128,6 +59,31 @@ await test('the ops-ptc row is the one row configured to deliver the guidance', 
   for (const mode of ['minimal', 'standard', 'ptc', 'cordis']) assert.equal(Object.hasOwn(config[mode], 'batchingGuidance'), false, mode)
   assert.equal(resolveMergedConfig(config)['ops-ptc'].config.batchingGuidance, true)
   assert.equal(modeGate({}, 'ops-ptc', resolveMergedConfig(config)['ops-ptc'].config.batchingGuidance).batching, true)
+  // The telemetry switch is diagnostics only: off by default, YAML-only, never context.
+  assert.equal(resolveModeConfig({}).batchingTelemetry, false)
+  assert.equal(resolveModeConfig({ batchingTelemetry: true }, 'ops-ptc').batchingTelemetry, true)
+  assert.throws(() => resolveModeConfig({ batchingTelemetry: 'yes' }), /batchingTelemetry must be boolean/)
+  assert.equal(modeGate({}, 'ops-ptc', true, true).telemetry, true)
+  assert.equal(modeGate({}, 'ops-ptc', true).telemetry, false, 'an absent switch never turns observation on')
+})
+
+await test('the teacher trajectory pins the first-line plan and a runnable load step', () => {
+  // The plan line is the mechanism, not decoration: it must be the first line of the
+  // program, and every trajectory must stay copyable against the shipped SDK.
+  const text = loadBatchingGuidance()
+  assert.ok(text.includes('// plan:'), 'the plan directive is present')
+  assert.ok((text.split('// plan:').length - 1) >= 5, 'every trajectory carries a plan line')
+  assert.match(text, /first line of the program/, 'the plan line is pinned to the first line')
+  for (const name of ['ops_glob', 'ops_grep', 'ops_read_files', 'ops_inspect_local_file']) {
+    assert.ok(text.includes(name), name + ' is used by a trajectory')
+  }
+  assert.ok(text.includes('ops_load_sdk'), 'the load step is taught')
+  assert.ok(text.includes('NEXT program'), 'the load lands on the next program')
+  assert.ok(text.includes('128'), 'the per-program dispatch ceiling is stated')
+  assert.ok(text.includes('nextOffset'), 'paging advances by the cursor')
+  // File work belongs to the OPS APIs; a shell example here would teach the bypass.
+  for (const banned of ['find .', 'ls -la', 'grep -rn']) assert.ok(!text.includes(banned), banned)
+  assert.ok(text.length > 2500 && text.length < 9000, 'guidance stays bounded: ' + text.length)
 })
 
 report('batching-guidance')

@@ -27,11 +27,12 @@ export function applyMode(root: Context, rawConfig: unknown, mode: ModeId): void
  * @param batching - whether the PTC publication delivers batching guidance.
  * @returns a consumer gate that also carries the batching switch.
  */
-export function modeGate(root: Context, mode: ModeId, batching: boolean): ConsumerGate & { batching: boolean } {
+export function modeGate(root: Context, mode: ModeId, batching: boolean, telemetry = false): ConsumerGate & { batching: boolean; telemetry: boolean } {
   return {
     allows: (agent: Agent) => integrationFor(root, agent) === undefined && modeOf(root, agent) === mode,
     watch: (notify: () => void) => onModesChange(root, notify),
     batching,
+    telemetry,
   }
 }
 export interface BuiltinConsumerOptions { discovery?: DiscoveryConfig; enabled?: boolean; dynamic?: boolean }
@@ -42,7 +43,7 @@ export function applyResolvedMode(root: Context, config: ModeConfig, mode: ModeI
     const leave = joinMode(root, mode, config)
     root.effect(() => leave, `dsh-ops: ${mode} consumer`)
   }
-  const gate = modeGate(root, mode, config.batchingGuidance)
+  const gate = modeGate(root, mode, config.batchingGuidance, config.batchingTelemetry)
   // Standalone legacy mode rows leave discovery to their explicit discovery row.
   const discovery = options.discovery ?? resolveDiscoveryConfig({ enabled: false, allowedTools: [] })
   mountConsumer(root, {

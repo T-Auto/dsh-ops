@@ -86,30 +86,44 @@ retention, described under built-in advanced configuration below.
 
 ### Batch-call guidance (`batchingGuidance`)
 
-Off (the code default) contributes no extra context. On, the guidance is delivered twice from an external
-English Markdown file:
+Off (the code default) contributes no extra context. On, the guidance is delivered in two places, from an
+external English Markdown file:
 
 - **Once at session start**: one plugin-context message joins the session's first accepted non-empty
   user-message batch (step-tail, source `dsh-ops:step-tail` / `batching-guidance`). It enters logged history,
-  so the model's first request already sees it; each agent receives it once per attachment.
-- **Once on trigger**: after three consecutive writes to one **normalized path** within the same turn, the same
-  text is appended once more to the result of the triggering tool call.
-- Only `status: completed` file writes that carry a usable `path` argument count; copy/move destinations and
-  pathless calls do not.
-- Paths are resolved against the session cwd before comparison, so `./a`, `a` and an absolute spelling share
-  one window. The window resets at the start of every turn, and one path injects at most once per turn.
-- Both deliveries are plugin-context UserMessages in history, never the system prompt: the prompt prefix and
-  tool schemas are unchanged, so the prompt cache survives.
-- The text file is `prompts/batching-guidance.md` (shipped with the package, English, editable). It is read
-  once per path and cached in the process, so restart to apply edits; an unreadable file logs one warning and
-  skips delivery, an empty file also skips, and a failed delivery only logs a warning without rewriting the
-  tool result.
+  so the model's first request already sees the whole procedure: the first-line `// plan:` comment, the
+  dependency split, the load-before-call step and four copyable trajectories.
+- **On a thin program**: when a **root** `run_code` program breaks one of three latched categories, a short
+  notice is appended to that call's own result as `additionalContexts`. The tool result keeps its value, its
+  content and its existing contexts; the program is never blocked or rewritten.
+- The three categories are `bypass` (file work through the shell or `node:fs`), `plan` (no `// plan:` on the
+  first physical line) and `shape` (a single operation in its own round trip). Each is latched once per turn,
+  and a program that complies with a category re-arms it, so a regression inside the same turn speaks again;
+  there is no per-turn cap.
+- Delivery priority is `bypass`, then `plan`, then `shape`: one program earns at most one notice.
+- Only the root call is inspected (`exec.parent === undefined`). Nested `tools.ops_*` calls belong to the PTC
+  execution and say nothing about the shape of the step.
+- The analysis is a literal heuristic over the program text: a loop or `map` counts one dispatch site, not its
+  runtime fan-out, and strings or comments can mislead it. Notices say so, nothing claims a measured dispatch
+  count, and a cancelled or never-dispatched call is not analysed.
+- Everything is plugin-context history and the tool schema is untouched, so the system prompt and its cache
+  survive. The lesson counts as spent only once it appears as a durable `user/message`; a batch withdrawn
+  before admission (cancellation, rejection) leaves the next accepted batch free to teach it again.
+
+`batchingTelemetry` (same row, YAML-only, default `false`) emits one structured log line per delivered
+notice, for example `dsh-ops batching: turn=3 category=plan plan=1 bypass=0 shape=2 total=3`. It is
+observation only: no context, no message, no extra dependency.
+
+The text file is `prompts/batching-guidance.md` (shipped with the package, English, editable). It is read
+once per path and cached in the process, so restart to apply edits; an unreadable file logs one warning and
+skips delivery, an empty file also skips, and a failed delivery only logs a warning without rewriting the
+tool result.
 
 **Contrast-arm usage.** To compare the guidance on one shared PTC surface, keep `ptc` and `ops-ptc` on the same
 API configuration and set `batchingGuidance: true` only on the `ops-ptc` section (the packaged default), or
 set it on the `ptc` section as well to verify the guidance itself; set the `ops-ptc` section to false to return
-to the no-guidance baseline. The key is YAML-only: the plugin page has no switch, and a saved `dsh-ops` row
-override replaces the packaged config as a whole, so add it explicitly after upgrading (see
+to the no-guidance baseline. Both keys are YAML-only: the plugin page has no switch, and a saved `dsh-ops` row
+override replaces the packaged config as a whole, so add them explicitly after upgrading (see
 [Presets and the default mode](presets.md#risks-and-rollback)).
 
 ## Explicit custom consumers

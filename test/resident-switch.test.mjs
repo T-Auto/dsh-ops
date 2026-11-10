@@ -159,47 +159,17 @@ await test('Native discovery disabled does not disable the independent typed PTC
     assert.equal(names(ctx, agent).includes(publicToolName('discover_tools')), false)
   } finally { await shutdown(ctx) }
 }))
-/** sha256 of the exact bytes, the revision OPS' write CAS expects. */
-const revisionOf = text => createHash('sha256').update(text).digest('hex')
-/** One program writing the same path three times; the third write crosses the window. */
-const REPEATED_WRITE_STEPS = [['same.txt', 'b1\n', revisionOf('aaa\n')],
-  ['./same.txt', 'b2\n', revisionOf('b1\n')], ['same.txt', 'b3\n', revisionOf('b2\n')]]
-const REPEATED_WRITE_CODE = `const calls = []
-for (const [path, content, expectedRevision] of ${JSON.stringify(REPEATED_WRITE_STEPS)}) {
-  calls.push((await tools.ops_write_file({ path, content, expectedRevision })).status)
-}
-return { calls }`
-
-await test('ops-ptc batchingGuidance rides the third repeated write tool result', () => withTempDir('batching-guidance', async cwd => {
+await test('a row with batchingGuidance off publishes no notice at all', () => withTempDir('batching-off', async cwd => {
   const { ctx, agent } = await setup(cwd, 'ops-ptc', { residentTools: true, dynamicTools: true,
-    batchingGuidance: true, alwaysLoaded: ['write_file'], allowedTools: ['write_file'] })
+    batchingGuidance: false, alwaysLoaded: ['stat'], allowedTools: ['stat'] })
   try {
-    fs.writeFileSync(path.join(cwd, 'same.txt'), 'aaa\n')
+    await waitFor(() => names(ctx, agent).includes(publicToolName('stat')))
+    // The same program earns a plan notice on a row that enabled the switch.
     const result = await executeCall(ctx, { agent, toolSet: agent.prepared.toolSet, name: 'run_code',
-      arguments: { description: 'Write one file repeatedly', code: REPEATED_WRITE_CODE },
-      callId: 'batching-' + ++sequence, signal: new AbortController().signal })
+      arguments: { description: 'Thin fixture', code: 'const r = await tools.ops_stat({ path: "a" })\nreturn r.status' },
+      callId: 'batching-off-' + ++sequence, signal: new AbortController().signal })
     assert.equal(result.isError, false, JSON.stringify(result))
-    assert.deepEqual(result.value.result.calls, ['completed', 'completed', 'completed'], JSON.stringify(result.value.result))
-    // The guidance was deferred by the third nested call and forwarded to the
-    // outer run_code result as tool-result context, never the system prompt.
-    const contexts = result.additionalContexts ?? []
-    assert.equal(contexts.length, 1, JSON.stringify(contexts))
-    const serialized = JSON.stringify(contexts)
-    assert.match(serialized, /Batch tool calls/)
-    assert.match(serialized, /batching-guidance/)
-  } finally { await shutdown(ctx) }
-}))
-
-await test('ops-ptc without batchingGuidance injects nothing', () => withTempDir('batching-off', async cwd => {
-  const { ctx, agent } = await setup(cwd, 'ops-ptc', { residentTools: true, dynamicTools: true,
-    batchingGuidance: false, alwaysLoaded: ['write_file'], allowedTools: ['write_file'] })
-  try {
-    fs.writeFileSync(path.join(cwd, 'same.txt'), 'aaa\n')
-    const result = await executeCall(ctx, { agent, toolSet: agent.prepared.toolSet, name: 'run_code',
-      arguments: { description: 'Write one file repeatedly', code: REPEATED_WRITE_CODE },
-      callId: 'batching-' + ++sequence, signal: new AbortController().signal })
-    assert.equal(result.isError, false, JSON.stringify(result))
-    assert.equal(JSON.stringify(result.additionalContexts ?? []).includes('Batch tool calls'), false)
+    assert.equal((result.additionalContexts ?? []).length, 0, 'switch off: no listener, therefore no notice')
   } finally { await shutdown(ctx) }
 }))
 
@@ -214,7 +184,7 @@ const drivePreStep = async (agent, turn) => {
 /** Plugin-authored contexts appended to the accepted user batch. */
 const stepTailMessages = decision => decision.messages.filter(message => message.source?.kind === 'dsh-ops:step-tail')
 
-await test('ops-ptc batchingGuidance teaches the rules on the first turn and never repeats', () => withTempDir('batching-teach', async cwd => {
+await test('ops-ptc batchingGuidance teaches until the lesson is committed to history', () => withTempDir('batching-teach', async cwd => {
   const { ctx, agent } = await setup(cwd, 'ops-ptc', { residentTools: true, dynamicTools: true,
     batchingGuidance: true, alwaysLoaded: ['stat'], allowedTools: ['stat'] })
   try {
@@ -224,8 +194,12 @@ await test('ops-ptc batchingGuidance teaches the rules on the first turn and nev
     assert.equal(first[0].source.contributor, 'batching-guidance')
     assert.match(JSON.stringify(first), /Batch tool calls/)
     assert.match(JSON.stringify(first), /not a user instruction or authorization/)
-    // One delivery per session: a later turn must not repeat the lesson.
-    assert.equal(stepTailMessages(await drivePreStep(agent, 2)).length, 0)
+    // The pre-step decision is not the commit point: a batch withdrawn before
+    // admission never becomes history, so the lesson must be offered again.
+    assert.equal(stepTailMessages(await drivePreStep(agent, 2)).length, 1, 'an uncommitted lesson is offered again')
+    // Once the host reports the durable message, the lesson is spent for the session.
+    await ctx.serial('session/event', agent.session, { type: 'user/message', data: { source: first[0].source } })
+    assert.equal(stepTailMessages(await drivePreStep(agent, 3)).length, 0, 'a committed lesson is never repeated')
   } finally { await shutdown(ctx) }
 }))
 
@@ -235,6 +209,32 @@ await test('ops-ptc without batchingGuidance teaches nothing on the first turn',
   try {
     await waitFor(() => names(ctx, agent).includes(publicToolName('stat')))
     assert.equal(stepTailMessages(await drivePreStep(agent, 1)).length, 0)
+  } finally { await shutdown(ctx) }
+}))
+
+await test('the root run_code trigger answers on its own tool result', () => withTempDir('batching-trigger-live', async cwd => {
+  const { ctx, agent } = await setup(cwd, 'ops-ptc', { residentTools: true, dynamicTools: true,
+    batchingGuidance: true, alwaysLoaded: ['stat'], allowedTools: ['stat'] })
+  try {
+    await waitFor(() => names(ctx, agent).includes(publicToolName('stat')))
+    const run = code => executeCall(ctx, { agent, toolSet: agent.prepared.toolSet, name: 'run_code',
+      arguments: { description: 'shape fixture', code }, callId: 'shape-' + ++sequence, signal: new AbortController().signal })
+    const contexts = result => result.additionalContexts ?? []
+    const text = result => JSON.stringify(contexts(result))
+    // A compliant program earns nothing, which is what keeps the notice meaningful.
+    const good = await run('// plan: stat one path; stat another\nconst [a, b] = await Promise.all([tools.ops_stat({ path: "a" }), tools.ops_stat({ path: "b" })])\nreturn { a, b }')
+    assert.equal(good.isError, false, JSON.stringify(good))
+    assert.equal(contexts(good).length, 0, 'a compliant program earns no notice')
+    // No plan line: the plan category speaks, and it says only that the comment is missing.
+    const thin = await run('const r = await tools.ops_stat({ path: "a" })\nreturn r.status')
+    assert.equal(thin.isError, false, JSON.stringify(thin))
+    assert.match(text(thin), /did not open with a plan line/, 'the plan notice rides the root result')
+    assert.doesNotMatch(text(thin), /Promise\.all/, 'the plan notice stays about the comment')
+    // A shell listing is a bypass; the notice names the API that replaces it.
+    const bypass = await run('const r = await tools.ops_bash({ description: "list", command: "ls -la" })\nreturn r.stdout.text')
+    assert.match(text(bypass), /ops_glob/, 'the bypass notice names the listing tool')
+    // The trigger appends context and never rewrites the tool result itself.
+    assert.equal(thin.value.result, 'completed', JSON.stringify(thin.value))
   } finally { await shutdown(ctx) }
 }))
 
