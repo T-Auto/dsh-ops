@@ -38,8 +38,7 @@ import { resolveConfig, resolveDiscoveryConfig } from '../lib/config.js'
 import { resolveMergedConfig } from '../lib/settings/merged.js'
 import { COMPONENTS, componentEntry, componentEnabled } from '../lib/components/defaults.js'
 import { resolveHidingConfig } from '../lib/official-tool-hiding.js'
-import { evaluatePluginCompatibility } from '@deepseek-ai/dsh-app-boot'
-import { composeBundle } from './lib/compose-bundle.mjs'
+import { composeEntries, evaluatePluginCompatibility } from '@deepseek-ai/dsh-app-boot'
 
 /** The repository root (`scripts/`'s parent). */
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -209,48 +208,94 @@ if (projection !== undefined) {
 }
 
 const patch = pkg.dsh?.bundle?.patch
+/**
+ * The bundle's declared patch files, in application order.
+ *
+ * `dsh.bundle.patch` is one file path or an ordered list of paths
+ * (`bundlePatchFiles` in `@deepseek-ai/dsh-app-boot` accepts both); the host
+ * concatenates every file's patch list into one layer, so this gate parses each
+ * file and composes the whole list exactly like the host does.
+ */
+const patchFiles = typeof patch === 'string' ? [patch] : Array.isArray(patch) ? patch : []
 check(
-  typeof patch === 'string' && fs.existsSync(path.join(PACKAGE_ROOT, patch)),
-  `dsh.bundle.patch exists (${String(patch)})`,
+  patchFiles.length > 0 && patchFiles.every((file) => typeof file === 'string'),
+  'dsh.bundle.patch is a file path or a nonempty list of file paths',
+  `got ${JSON.stringify(patch)}`,
 )
+for (const file of patchFiles) {
+  check(
+    typeof file === 'string' && fs.existsSync(path.join(PACKAGE_ROOT, file)),
+    `dsh.bundle.patch file exists (${String(file)})`,
+  )
+}
 
 // The bundle patch is the mount declaration: it is read by the loader at every
 // boot, so a syntax error or an unknown config key in it takes the profile down.
 // Parsing it here, and running the row's config through the plugin's own
 // validator, is the only place those two facts are checked together.
-if (typeof patch === 'string' && fs.existsSync(path.join(PACKAGE_ROOT, patch))) {
-  const patchText = fs.readFileSync(path.join(PACKAGE_ROOT, patch), 'utf8')
-  let document
+const patchDocuments = []
+for (const file of patchFiles) {
+  const patchFile = typeof file === 'string' ? path.join(PACKAGE_ROOT, file) : undefined
+  if (patchFile === undefined || !fs.existsSync(patchFile)) continue
   try {
-    document = parseYaml(patchText, { customTags: LOADER_TAGS })
-    check(true, 'the bundle patch is valid YAML')
+    patchDocuments.push(parseYaml(fs.readFileSync(patchFile, 'utf8'), { customTags: LOADER_TAGS }))
+    check(true, `the bundle patch file is valid YAML (${String(file)})`)
   } catch (error) {
-    check(false, 'the bundle patch is valid YAML', String(error?.message ?? error))
+    check(false, `the bundle patch file is valid YAML (${String(file)})`, String(error?.message ?? error))
   }
+}
 
-  if (document !== undefined) {
-    check(Array.isArray(document), 'the bundle patch is a list of loader patch entries')
-    try {
-      const composed = composeBundle([document])
-      check(composed.length === 1, 'the host composes the single dsh-ops row')
-    } catch (error) { check(false, 'the host composes the single dsh-ops row', String(error?.message ?? error)) }
-    const rows = Array.isArray(document)
-      ? document.flatMap((entry) => (Array.isArray(entry?.insert) ? entry.insert : []))
-      : []
-    check(rows.length === 1, 'the bundle declares exactly one row')
-    const row = rows[0]
+if (patchDocuments.length === patchFiles.length && patchDocuments.length > 0) {
+  check(patchDocuments.every((document) => Array.isArray(document)), 'every bundle patch file is a list of loader patch entries')
+  const warnings = []
+  let composed
+  try {
+    composed = composeEntries(patchDocuments, (message) => warnings.push(message))
+    check(true, 'the host composes the bundle patch files')
+  } catch (error) {
+    check(false, 'the host composes the bundle patch files', String(error?.message ?? error))
+  }
+  // `agent-preset-registry` is a row the host's web bundle inserts. This gate
+  // composes only the files this package ships, so that one override is the
+  // single expected miss; a real profile loads the web bundle first and matches.
+  const expectedMiss = /^patch: entry "agent-preset-registry" not found$/u
+  check(
+    warnings.length === 1 && expectedMiss.test(warnings[0]),
+    'the only unmatched override is the cross-layer agent-preset-registry default',
+    `warnings: ${warnings.join('; ') || '(none)'}`,
+  )
+  if (composed !== undefined) {
+    const rows = patchDocuments.flatMap((document) => document.flatMap((entry) => (Array.isArray(entry?.insert) ? entry.insert : [])))
+    check(rows.length === 2, 'the bundle declares the dsh-ops row and the ops-ptc preset row')
+    const row = rows.find((candidate) => candidate?.id === pkg.name)
     check(row?.id === pkg.name && row?.name === pkg.name, 'the row id and specifier are the package name')
     check(row?.disabled !== true, 'the row ships enabled')
+    check(
+      rows.some((candidate) => candidate?.id === 'preset-ops-ptc' && candidate?.name === '@deepseek-ai/dsh-agent-preset'),
+      'the ops-ptc preset row is declared by this bundle',
+    )
+    check(composed.filter((entry) => entry.id === pkg.name).length === 1, 'the host composes the single dsh-ops row')
+    check(composed.some((entry) => entry.id === 'preset-ops-ptc'), 'the host composes the ops-ptc preset row')
     try {
       const resolved = resolveMergedConfig(row?.config)
       check(true, 'the row config is valid')
       const defaults = resolveMergedConfig({})
       const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
       check(same(resolved.global, defaults.global), 'the bundle switches written in the patch match their code defaults')
-      for (const section of ['minimal', 'standard', 'ptc', 'cordis', 'discovery', 'panel', 'tui']) {
+      for (const section of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis', 'discovery', 'panel', 'tui']) {
         check(resolved[section].enabled === defaults[section].enabled, `${section} enabled matches its code default`)
       }
     } catch (error) { check(false, 'the row config is valid', String(error?.message ?? error)) }
+    // The override's own meaning: composed over a layer that carries the row
+    // the host's web bundle inserts, it defaults the registry to ops-ptc.
+    const withRegistry = composeEntries([[{ insert: [{ id: 'agent-preset-registry', name: '@deepseek-ai/dsh-agent-preset-registry',
+      config: { default: 'standard', selectedDefault: 'standard' } }] }], ...patchDocuments])
+    const registry = withRegistry.find((entry) => entry.id === 'agent-preset-registry')
+    check(
+      registry?.config?.default === 'ops-ptc' && registry?.config?.selectedDefault === 'ops-ptc',
+      'the override defaults the host preset registry to ops-ptc',
+      `got ${JSON.stringify(registry?.config)}`,
+    )
   }
 }
 

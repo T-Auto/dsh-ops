@@ -1,6 +1,7 @@
 /** Built-in defaults are plans for the same assembler used by external presets. */
 import type { Context, Agent } from '../adapter/dsh/types.js'
 import { mountConsumer } from '../consumer/mount.js'
+import type { ConsumerGate } from '../consumer/types.js'
 import { replacementTargets as consumerTargets } from '../consumer/replacements.js'
 import { resolveDiscoveryConfig, type DiscoveryConfig } from '../discovery/config.js'
 import { resolveModeConfig, type ModeConfig } from './config.js'
@@ -16,6 +17,23 @@ export function replacementTargets(mode: ModeId, platform: string = process.plat
 export function applyMode(root: Context, rawConfig: unknown, mode: ModeId): void {
   applyResolvedMode(root, resolveModeConfig(rawConfig, mode), mode)
 }
+/**
+ * The gate one built-in mode hands its consumer.
+ *
+ * The consumer forwards its gate keys to the PTC publication, so the batching
+ * switch rides here instead of changing the PTC configuration contract.
+ * @param root - the row context the gate observes mode changes on.
+ * @param mode - the mode the gate admits.
+ * @param batching - whether the PTC publication delivers batching guidance.
+ * @returns a consumer gate that also carries the batching switch.
+ */
+export function modeGate(root: Context, mode: ModeId, batching: boolean): ConsumerGate & { batching: boolean } {
+  return {
+    allows: (agent: Agent) => integrationFor(root, agent) === undefined && modeOf(root, agent) === mode,
+    watch: (notify: () => void) => onModesChange(root, notify),
+    batching,
+  }
+}
 export interface BuiltinConsumerOptions { discovery?: DiscoveryConfig; enabled?: boolean; dynamic?: boolean }
 export function applyResolvedMode(root: Context, config: ModeConfig, mode: ModeId, options: BuiltinConsumerOptions = {}): void {
   const plan = MODE_PLANS[mode]
@@ -24,8 +42,7 @@ export function applyResolvedMode(root: Context, config: ModeConfig, mode: ModeI
     const leave = joinMode(root, mode, config)
     root.effect(() => leave, `dsh-ops: ${mode} consumer`)
   }
-  const matches = (agent: Agent): boolean => integrationFor(root, agent) === undefined && modeOf(root, agent) === mode
-  const gate = { allows: matches, watch: (notify: () => void) => onModesChange(root, notify) }
+  const gate = modeGate(root, mode, config.batchingGuidance)
   // Standalone legacy mode rows leave discovery to their explicit discovery row.
   const discovery = options.discovery ?? resolveDiscoveryConfig({ enabled: false, allowedTools: [] })
   mountConsumer(root, {

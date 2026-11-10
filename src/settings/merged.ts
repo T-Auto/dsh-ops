@@ -57,6 +57,7 @@ export interface MergedConfig {
   readonly minimal: FeatureState<ModeConfig>
   readonly standard: FeatureState<ModeConfig>
   readonly ptc: FeatureState<ModeConfig>
+  readonly 'ops-ptc': FeatureState<ModeConfig>
   readonly cordis: FeatureState<ModeConfig>
   readonly discovery: FeatureState<DiscoveryConfig>
   readonly 'download-guard': FeatureState<DownloadGuardConfig>
@@ -68,7 +69,7 @@ export interface MergedConfig {
 }
 
 const ENABLED_BY_DEFAULT: Readonly<Record<Feature, boolean>> = Object.freeze({
-  minimal: true, standard: true, ptc: true, cordis: true, discovery: true,
+  minimal: true, standard: true, ptc: true, 'ops-ptc': true, cordis: true, discovery: true,
   // The download guard is off until an operator names a downloader: mounting it
   // against an empty template would register a listener that can never act.
   'download-guard': false, resultCache: true, panel: false, tui: false, disk: true, other: false,
@@ -140,6 +141,7 @@ export function resolveMergedConfig(raw?: unknown): MergedConfig {
     minimal: modeState('minimal', input.minimal),
     standard: modeState('standard', input.standard),
     ptc: modeState('ptc', input.ptc),
+    'ops-ptc': modeState('ops-ptc', input['ops-ptc']),
     cordis: modeState('cordis', input.cordis),
     discovery: discoveryState(input.discovery),
     'download-guard': downloadGuardState(input['download-guard']),
@@ -279,7 +281,8 @@ export const Config = settingsConfig(hostConfig, {
     hideOfficialTools: boolean('Bundle switch: allow presets to hide the official file tools.'),
     dynamicTools: boolean('Bundle switch: allow presets to publish the discovery entry.'),
   } },
-  minimal: modeSection('minimal'), standard: modeSection('standard'), ptc: modeSection('ptc'), cordis: modeSection('cordis'),
+  minimal: modeSection('minimal'), standard: modeSection('standard'), ptc: modeSection('ptc'),
+  'ops-ptc': modeSection('ops-ptc'), cordis: modeSection('cordis'),
   // Only the switch is editable; capture limits, PTC pools, routing text, worker
   // paths and the credential fence stay YAML-only by design.
   panel: { type: 'object', dict: { enabled: boolean('Capture OPS activity for developer diagnosis.') } },

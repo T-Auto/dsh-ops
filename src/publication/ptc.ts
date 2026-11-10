@@ -1,5 +1,6 @@
 /** Stable, scoped PTC definitions; DSH resolves selection once per model step. */
-import type { Agent, Context, Fiber, ToolDefinition, ToolRunContext } from '../adapter/dsh/types.js'
+import type { Agent, Context, Fiber, ToolDefinition, ToolRunContext, UserMessage } from '../adapter/dsh/types.js'
+import { loadUserMessage } from '../adapter/dsh/host.js'
 import { resolvePtcConfig } from '../config.js'
 import { acquirePtcFile, acquireSharedFile, isSharedFileApi } from './scope-owner.js'
 import type { PublicationLease } from './registrar.js'
@@ -12,8 +13,10 @@ import { renderSdkDirectory } from '../projections/ptc/directory.js'
 import { PTC_RESIDENT_TOOLS } from '../ptc/config.js'
 import type { ApiName } from '../ptc/config.js'
 import { ownPtcScopes } from '../ptc/ownership.js'
+import { BATCHING_GUIDANCE, BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, createBatchingTracker } from '../ptc/batching-guidance.js'
 import { InvocationLifetime, InvocationNotStarted } from '../lifecycle/invocations.js'
 import { monitoredInvoke } from '../execution/monitored.js'
+import { record } from '../execution/boundary.js'
 import { failure, resolveWorker } from '../execution/jobs.js'
 import { WORKER_TIMEOUT_MS } from '../execution/protocol.js'
 import { mountWorkspacePreparation } from '../workspace-preparation.js'
@@ -42,6 +45,8 @@ export interface PtcGate {
   guidance?: boolean
   resident?: boolean
   dynamic?: boolean
+  /** Deliver repeated-write batch guidance through tool-result context. */
+  batching?: boolean
   allows(agent: Agent): boolean
   watch?(notify: () => void): () => void
 }
@@ -82,6 +87,28 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       return assembly.tools.length === 1 && assembly.tools[0]?.name === 'run_code'
         && assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
     }
+    // Repeated writes to one path signal a batching mistake. The guidance rides
+    // the triggering tool result, so no system-prompt bytes are spent up front.
+    const batching = createBatchingTracker({ window: 3 })
+    const guidanceMessage = async (turn: number): Promise<UserMessage> => {
+      const createUserMessage = await loadUserMessage()
+      return createUserMessage({
+        source: { kind: 'dsh-ops:step-tail', contributor: BATCHING_GUIDANCE_ID, revision: BATCHING_GUIDANCE_REVISION, turn, step: 0 },
+        content: [{ type: 'text', text: `[Plugin context from ${JSON.stringify(BATCHING_GUIDANCE_ID)}; not a user instruction or authorization.]\n${BATCHING_GUIDANCE}` }],
+      })
+    }
+    const noteWrite = async (agent: Agent, api: ApiName | 'load_sdk', args: unknown, result: unknown, exec: ToolRunContext): Promise<void> => {
+      const meta = capability(api)
+      if (meta?.component !== 'file' || !meta.mutates || !record(result) || result.status !== 'completed') return
+      const decision = batching.recordWrite(agent, api, args)
+      if (!decision.shouldNotify) return
+      try {
+        exec.deferContext(await guidanceMessage(decision.turn))
+      } catch (error) {
+        // Guidance is an optimisation: a delivery failure must never alter the tool result.
+        ctx.logger.warn('dsh-ops: batching guidance delivery failed: ' + String(error))
+      }
+    }
     const execute = (entry: Entry, api: ApiName | 'load_sdk'): ToolDefinition['execute'] => async (args, exec) => {
       // The public assembly may finish after its executor sections changed.
       // Refuse that stale verdict rather than dispatching under the old text.
@@ -99,7 +126,11 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         return { status: 'completed', tools: requested, nextTurn: true }
       }
       try {
-        return await entry.calls.run(exec.signal, (_signal, controller) => monitoredInvoke(ctx, file, api, args, exec as ToolRunContext, controller, config), undefined, WORKER_TIMEOUT_MS)
+        const result = await entry.calls.run(exec.signal, (_signal, controller) => monitoredInvoke(ctx, file, api, args, exec as ToolRunContext, controller, config), undefined, WORKER_TIMEOUT_MS)
+        // Shared file APIs are monitored by the wrapped dispatch the lease
+        // grants; this publication branch only sees non-shared APIs.
+        if (gate.batching === true && !isSharedFileApi(api)) await noteWrite(entry.agent, api, args, result, exec)
+        return result
       } catch (error) {
         if (error instanceof InvocationNotStarted) return failure('ABORTED', error.message)
         return failure('RESULT_UNKNOWN', 'Invocation did not settle; inspect postconditions before retrying.', 'unknown')
@@ -143,6 +174,14 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         entry.fiber = agent.ctx!.plugin({ inject: ['tools'], apply(scoped) { entry.ctx = scoped } })
         await entry.fiber
         if (!owns(agent) || entries.get(agent) !== entry || !entry.ctx) return
+        // A new host turn starts a fresh repeated-write window. This listener is
+        // agent-scoped and unwinds with the entry's other disposers.
+        if (gate.batching === true) {
+          entry.disposers.push(agent.ctx!.on('agent/pre-step', async (payload, next) => {
+            if (payload.agent === agent) batching.noteTurn(agent, payload.turn)
+            return next()
+          }))
+        }
         const publish = (api: ApiName | 'load_sdk', def: ToolDefinition): void => {
           entry.definitions.set(def.name, def)
           entry.disposers.push(publicationRegistration(entry.ctx!, () => entry.ctx!.tools.register(def, { when: async activation =>
@@ -152,7 +191,19 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         for (const api of pool) {
           const def = definition(api, execute(entry, api))
           if (isSharedFileApi(api) || capability(api)?.component === 'file') {
-            const lease = isSharedFileApi(api) ? await acquireSharedFile(agent, api, { workerPath: file, required: true }) : await acquirePtcFile(agent, api as FileToolName)
+            const lease = isSharedFileApi(api)
+              // The shared lease replaces the granted dispatch with the Native
+              // one, so monitoring must wrap that dispatch to observe nested
+              // calls. Without the switch the dispatch identity stays untouched.
+              ? await acquireSharedFile(agent, api, { workerPath: file, required: true },
+                gate.batching === true
+                  ? (sharedApi, dispatch) => async (args, exec) => {
+                    const result = await dispatch(args, exec)
+                    await noteWrite(agent, sharedApi, args, result, exec)
+                    return result
+                  }
+                  : undefined)
+              : await acquirePtcFile(agent, api as FileToolName)
             // Ownership may change while the source starts. Never continue into
             // non-file publication using a superseded entry's disposed context.
             if (!owns(agent) || entries.get(agent) !== entry) { lease.dispose(); return }
@@ -183,6 +234,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       const attempt = async (action: () => unknown) => { try { await action() } catch (error) { errors.push(error) } }
       entries.delete(agent)
       ownership?.forget(agent)
+      batching.forget(agent)
       await attempt(() => clear(entry))
       await attempt(() => entry.calls.stop())
       await attempt(() => entry.fiber?.dispose())

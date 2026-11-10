@@ -33,6 +33,15 @@
           spillRetentionDays: 30
           spillTotalBudgetMiB: 256
           spillSweepEnabled: true
+        # The batching-guidance arm: its preset inherits the PTC tool surface and
+        # turns the guidance on. Other modes keep the key absent (default false).
+        ops-ptc:
+          enabled: true
+          residentTools: true
+          batchingGuidance: true
+          spillRetentionDays: 30
+          spillTotalBudgetMiB: 256
+          spillSweepEnabled: true
         cordis:
           enabled: true
           residentTools: true
@@ -70,3 +79,22 @@
             enabled: false
             maxAgeDays: 0
             maxBytes: 0
+
+# Default the profile's selected agent preset to ops-ptc. This patch matches the
+# existing row by id: @deepseek-ai/dsh-web-app's bundle layer inserts
+# `agent-preset-registry`, so the override only takes effect when this bundle is
+# layered after it (the normal install order appends dsh-ops last).
+#
+# The profile's own cordis.patch.yml is applied after every bundle layer, and an
+# id-targeted patch replaces the whole matched config. A user profile that
+# restates `default`/`selectedDefault` here therefore wins; that is expected
+# behaviour, not a bug. A preset picked in the UI persists as its own setting.
+#
+# A profile that does not load the web bundle has no such row: the loader prints
+# one `patch: entry "agent-preset-registry" not found` warning at startup and
+# skips this entry. It is not fatal.
+- id: agent-preset-registry
+  name: '@deepseek-ai/dsh-agent-preset-registry'
+  config:
+    default: ops-ptc
+    selectedDefault: ops-ptc

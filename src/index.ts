@@ -3,6 +3,7 @@ import type { Context } from './adapter/dsh/types.js'
 import { applyResolvedMode } from './presets/builtin.js'
 import { resolveModeConfig } from './presets/config.js'
 import { resolveMergedConfig, effectiveMode, dynamicForMode } from './settings/merged.js'
+import { MODE_IDS } from './presets/types.js'
 import { beginMergedRow, endMergedRow } from './settings/legacy.js'
 import { mountIntegration } from './integration/index.js'
 import { gateConsumer } from './consumer/gates.js'
@@ -49,7 +50,7 @@ export async function apply(root: Context, rawConfig: unknown): Promise<void> {
     // The browser half mounts its `opsSettings` remote; the legacy shell row used
     // to provide that seam, so the merged row owns it now.
     await host.plugin({ name: 'dsh-ops/runtime-settings', apply: (ctx: Context) => mountRuntimeSettings(ctx, { config: () => rawConfig }) })
-    for (const mode of ['minimal', 'standard', 'ptc', 'cordis'] as const) {
+    for (const mode of MODE_IDS) {
       const state = config[mode]
       const effective = resolveModeConfig(effectiveMode(state, config.global, typeof config.other.raw?.pwsh7Link === 'boolean' ? config.other.raw.pwsh7Link : companionVersion({ sweep: false }) !== undefined), mode)
       await host.plugin({ name: `dsh-ops/consumer-${mode}`, apply(ctx: Context) {

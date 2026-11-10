@@ -44,7 +44,18 @@ interface Source {
   definitions: Map<SharedApi, { canonical: Canonical; dispatch: ToolDefinition['execute'] }>
 }
 const runtimes = new WeakMap<Agent, Source>()
-export async function acquireSharedFile(agent: Agent, api: SharedApi, config: NativeRuntimeConfig): Promise<PublicationLease> {
+/**
+ * Acquire one shared Native/PTC file publication lease.
+ * @param agent - the agent scope the lease belongs to.
+ * @param api - the shared file API to publish.
+ * @param config - the worker/runtime configuration of the shared source.
+ * @param wrapDispatch - optional wrapper around the shared dispatch; the lease
+ *   replaces any grant-time dispatch with the shared one, so a consumer that must
+ *   observe every call (for example PTC write monitoring) has to wrap it here.
+ * @returns the publication lease.
+ */
+export async function acquireSharedFile(agent: Agent, api: SharedApi, config: NativeRuntimeConfig,
+  wrapDispatch?: (api: SharedApi, dispatch: ToolDefinition['execute']) => ToolDefinition['execute']): Promise<PublicationLease> {
   if (!agent.ctx) throw new Error('Shared file source requires an agent scope')
   const { scopeChainOf } = await loadScopes()
   agent.ctx.fiber.assertActive()
@@ -92,8 +103,11 @@ export async function acquireSharedFile(agent: Agent, api: SharedApi, config: Na
     lease = await acquire(agent.ctx, agent, publicToolName(api), shared.canonical)
   } catch (error) { release(); throw error }
   let disposed = false
+  // The shared dispatch wins over any grant-time dispatch; a wrapper is the only
+  // way a consumer can observe calls without changing the shared source.
+  const dispatch = wrapDispatch === undefined ? shared.dispatch : wrapDispatch(api, shared.dispatch)
   return {
-    grant: grant => lease.grant({ ...grant, dispatch: shared.dispatch }),
+    grant: grant => lease.grant({ ...grant, dispatch }),
     ready: () => lease.ready(),
     dispose() {
       if (disposed) return

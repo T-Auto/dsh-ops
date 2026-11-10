@@ -54,7 +54,7 @@ export const GLOBAL: readonly FieldSpec[] = Object.freeze([
   field(at('global', 'dynamicTools'), 'dynamicTools', 'dynamicToolsHint'),
 ])
 
-/** The four preset switches, identical in every mode. */
+/** The five preset switches, identical in every mode. */
 const MODE_FIELDS = (section: string, resident: boolean): readonly FieldSpec[] => Object.freeze([
   field(at(section, 'bash'), 'swBash', 'swBashHint', 'bash'),
   field(at(section, 'hidePwsh'), 'swHidePwsh', 'swHidePwshHint', 'hidePwsh'),
@@ -72,6 +72,7 @@ export const GROUPS: readonly GroupSpec[] = Object.freeze([
   modeGroup('minimal', 'featureMinimal', 'featureMinimalHint', false),
   modeGroup('standard', 'featureStandard', 'featureStandardHint', true),
   modeGroup('ptc', 'featurePtc', 'featurePtcHint', true),
+  modeGroup('ops-ptc', 'featureOpsPtc', 'featureOpsPtcHint', true),
   modeGroup('cordis', 'featureCordis', 'featureCordisHint', true),
   // The three opt-in features share one card: separate cards for one switch each
   // read as three empty shells next to the presets.
@@ -88,6 +89,7 @@ const DEFAULTS: Readonly<Record<string, boolean>> = Object.freeze({
   'minimal.enabled': true, 'minimal.bash': true, 'minimal.hidePwsh': true, 'minimal.hideOfficialTools': true, 'minimal.dynamicTools': true,
   'standard.enabled': true, 'standard.residentTools': true, 'standard.bash': true, 'standard.hidePwsh': true, 'standard.hideOfficialTools': true, 'standard.dynamicTools': true,
   'ptc.enabled': true, 'ptc.residentTools': true, 'ptc.bash': true, 'ptc.hidePwsh': true, 'ptc.hideOfficialTools': true, 'ptc.dynamicTools': true,
+  'ops-ptc.enabled': true, 'ops-ptc.residentTools': true, 'ops-ptc.bash': true, 'ops-ptc.hidePwsh': true, 'ops-ptc.hideOfficialTools': true, 'ops-ptc.dynamicTools': true,
   'cordis.enabled': true, 'cordis.residentTools': true, 'cordis.bash': true, 'cordis.hidePwsh': true, 'cordis.hideOfficialTools': true, 'cordis.dynamicTools': true,
   'panel.enabled': false, 'tui.enabled': false, 'other.pwsh7Link': false,
 })
@@ -216,7 +218,7 @@ export interface ExecutorChoice {
 }
 
 /** The mode sections that publish ops_bash and therefore own `bashPath`. */
-export const EXECUTOR_SECTIONS = Object.freeze(['minimal', 'standard', 'ptc', 'cordis'] as const)
+export const EXECUTOR_SECTIONS = Object.freeze(['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis'] as const)
 
 /** One `bashPath` the saved config already carries, mode or custom preset. */
 interface SavedBashPath { readonly path: readonly string[]; readonly value: string }
