@@ -3,7 +3,7 @@ import path from 'node:path'
 import { preparedNiubashEntries, reclaimPreparedNiubash } from '../lib/niubash/prepared-cache.js'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 
-await test('retirement matches only prepared directories, preserves current and renames before every deletion', async () => withTempDir('niu-retire', async root => {
+await test('retirement matches only prepared directories, preserves current, renames every live name before deletion and never renames a retired one', async () => withTempDir('niu-retire', async root => {
   const current = path.join(root, 'a'.repeat(64))
   const obsolete = ['b'.repeat(64), `${'a'.repeat(64)}.broken-old`, `${'a'.repeat(64)}.stage-old`, `${'b'.repeat(64)}.retired-old`]
   const unrelated = ['notes', `${'c'.repeat(63)}.stage-old`, `${'c'.repeat(64)}.stage-`, `${'c'.repeat(64)}.other-old`]
@@ -17,12 +17,14 @@ await test('retirement matches only prepared directories, preserves current and 
   assert.deepEqual(preparedNiubashEntries(current).map(file => path.basename(file)).sort(), [...obsolete, otherStage].sort())
   const rename = fs.renameSync, remove = fs.rmSync, renamed = []
   fs.renameSync = (from, to) => { renamed.push([from, to]); return rename(from, to) }
+  const retiredOld = path.join(root, `${'b'.repeat(64)}.retired-old`)
   fs.rmSync = (file, options) => {
-    assert.ok(renamed.some(([, to]) => to === file), 'no prepared sibling is deleted in place')
+    assert.ok(file === retiredOld || renamed.some(([, to]) => to === file), 'no live prepared sibling is deleted in place')
     return remove(file, options)
   }
   try { reclaimPreparedNiubash(current) } finally { fs.renameSync = rename; fs.rmSync = remove }
-  assert.equal(renamed.length, obsolete.length)
+  assert.equal(renamed.length, obsolete.length - 1)
+  assert.ok(!renamed.some(([from]) => from === retiredOld), 'an already retired name is removed where it is')
   for (const [from, to] of renamed) assert.ok(to.startsWith(`${from}.retired-`))
   for (const name of obsolete) assert.equal(fs.existsSync(path.join(root, name)), false)
   for (const name of [path.basename(current), ...unrelated]) assert.equal(fs.readFileSync(path.join(root, name, 'payload'), 'utf8'), 'data')

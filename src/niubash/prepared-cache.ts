@@ -18,20 +18,28 @@ export function preparedNiubashEntries(current: string): string[] {
   } catch { return [] }
 }
 
-/** Rename once before deletion. A Windows image/sharing lock leaves the sibling for next selection. */
+/** Rename a live name once before deletion: a Windows image/sharing lock refuses it and leaves the
+ * sibling for the next host start. A `.retired-` name is already out of use and is removed in place:
+ * renaming it again while another process deletes it splits one tree across two names, and
+ * `rmSync` with `force` reports success for the half it no longer finds.
+ */
 export function retirePreparedNiubash(directory: string): boolean {
-  if (!PREPARED_NAME.test(path.basename(directory))) return false
-  const retired = `${directory}.retired-${randomUUID()}`
+  const name = path.basename(directory)
+  if (!PREPARED_NAME.test(name)) return false
+  let retired = directory
   try {
     const info = fs.lstatSync(directory)
     if (!info.isDirectory() || info.isSymbolicLink()) return false
-    fs.renameSync(directory, retired)
+    if (!/\.retired-[A-Za-z0-9-]+$/u.test(name)) {
+      retired = `${directory}.retired-${randomUUID()}`
+      fs.renameSync(directory, retired)
+    }
   } catch { return false }
   try { fs.rmSync(retired, { recursive: true, force: true }); return true }
   catch { return false }
 }
 
-/** A successful selection keeps only its current version; busy siblings never fail selection. */
+/** The first successful preparation in a process keeps only its current version; busy siblings never fail it. */
 export function reclaimPreparedNiubash(current: string): void {
   const hash = path.basename(current)
   for (const directory of preparedNiubashEntries(current)) {

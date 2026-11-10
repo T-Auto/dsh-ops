@@ -10,7 +10,7 @@ import { prepareWorkspace } from '../workspace-preparation.js'
 import { executionRestriction } from '../permissions.js'
 import { isNiubashExecutable, prepareNiubash } from '../niubash/runtime.js'
 
-export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bash: { file: string; source: string; payloadSource?: string }; active(): boolean },
+export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bash: { file: string; source: string }; active(): boolean },
   args: Record<string, unknown>, exec: ShellCall, standing: ShellPolicy, policy: ShellPolicy, dshEnv: NodeJS.ProcessEnv, options: ExecutionOptions): ShellExecution {
   if (!exec.agent?.session) throw new Error('EXECUTOR_UNAVAILABLE: an authoritative session is required.')
   const session = exec.agent.session
@@ -32,7 +32,7 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
       assertAuthority()
       try {
         const runtime = native ? await prepareNiubash(bash.file, dshEnv.PATH ?? dshEnv.Path ?? process.env.PATH, signal,
-          { workspaceRoot: typeof policy.workspaceRoot === 'string' ? policy.workspaceRoot : undefined, sourceFile: bash.payloadSource })
+          { workspaceRoot: typeof policy.workspaceRoot === 'string' ? policy.workspaceRoot : undefined })
           : policy.mode === 'danger-full-access' ? { file: bash.file } : confinedBash(bash.file, { source: bash.source })
         if (native) for (const key of Object.keys(env)) if (['PATH', 'NIU_ROOT', 'WINUXCMD_PATH', 'NIU_SKIP_WINUXCMD_ACTIVATION'].includes(key.toUpperCase())) delete env[key]
         Object.assign(env, native ? runtime.env : { ...runtime.env, ...dshEnv })
