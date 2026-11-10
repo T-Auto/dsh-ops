@@ -73,7 +73,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       return policy !== undefined && ['read-only', 'workspace-write', 'danger-full-access'].includes(policy.mode)
         && (api === 'load_sdk' || api === 'result' || !capability(api)?.mutates || policy.mode !== 'read-only')
     }
-    const loadable = gate.resident === false ? [...new Set<ApiName>([...config.allowedTools, 'result'])] : config.allowedTools
+    const loadable = [...new Set<ApiName>([...config.allowedTools, 'result'])]
     const allowedApis = (agent: Agent): ApiName[] => gate.dynamic === false ? [] : loadable.filter(api => permitted(agent, api))
     const selected = (entry: Entry, api: ApiName | 'load_sdk'): boolean => api === 'load_sdk'
       ? gate.dynamic !== false : resident.has(api) || entry.selected.has(api)

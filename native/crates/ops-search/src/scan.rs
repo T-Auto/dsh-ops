@@ -73,6 +73,7 @@ pub struct Scan {
     started: Instant,
     timeout: Duration,
     max_files: usize,
+    max_depth: usize,
     entries: usize,
     bytes: usize,
 }
@@ -91,6 +92,7 @@ impl Scan {
             started: Instant::now(),
             timeout: SCAN_TIMEOUT,
             max_files: MAX_SCAN_FILES,
+            max_depth: MAX_DEPTH,
             entries: 0,
             bytes: 0,
         }
@@ -336,6 +338,7 @@ impl Scan {
                     continue;
                 }
                 if self.scanned >= self.max_files {
+                    self.skip("file-limit", true, true);
                     self.stopped = Some(TruncatedBy::ScanBudget);
                     break;
                 }
@@ -378,8 +381,8 @@ impl Scan {
         if !self.running() {
             return Ok(());
         }
-        if depth > MAX_DEPTH {
-            self.stopped = Some(TruncatedBy::ScanBudget);
+        if depth > self.max_depth {
+            self.skip("depth-limit", false, true);
             return Ok(());
         }
         let mut entries = match read_entries(&directory, display) {
@@ -397,6 +400,7 @@ impl Scan {
             }
             self.entries += 1;
             if self.entries > MAX_WALK_ENTRIES {
+                self.skip("entry-limit", false, true);
                 self.stopped = Some(TruncatedBy::ScanBudget);
                 break;
             }
@@ -473,6 +477,7 @@ impl Scan {
             }
             if file {
                 if self.scanned >= self.max_files {
+                    self.skip("file-limit", true, true);
                     self.stopped = Some(TruncatedBy::ScanBudget);
                     break;
                 }

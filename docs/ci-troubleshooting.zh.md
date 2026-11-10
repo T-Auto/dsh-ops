@@ -185,7 +185,7 @@ POSIX 上门禁设置了 `DSH_OPS_REQUIRE_RUNTIME=1`，套件说「这台机器�
 
 #### 3.4.6 `no suite summary line; the runner did not finish`
 
-runner 死了（OOM、测试外的 panic、子进程死掉）。看 `full suite verification` 输出末尾。如果是 deadline，会打印 `--- <suite> exceeded the <N>s suite deadline`，并且（`DSH_OPS_RETRY_TIMEOUTS=1` 时）重试一次；**重试仍失败就是真问题**——不要靠调大超时掩盖。
+runner 死了（OOM、测试外的 panic、子进程死掉）。看 `full suite verification` 输出末尾。如果是 deadline，会打印 `--- <suite> exceeded the <N>s suite deadline`，直接判失败、不重试；检查挂死或资源争用，不要靠调大超时掩盖。
 
 #### 3.4.7 `--- <suite> exited 1`
 
@@ -318,7 +318,7 @@ DSH_HOME=$(mktemp -d) node scripts/verify-gate.mjs --skip-install   # 完整门�
 node scripts/apply-ruleset.mjs                            # admin：规则集 dry run（永不在 CI 跑）
 ```
 
-Windows 上 `DSH_OPS_TEST_BASH` 指向校验过的固定 `bash.exe`（门禁会 provision），`DSH_OPS_TEST_NIUBASH` 指向 staged 的 `niu.exe`。CI 会设 `DSH_OPS_SUITE_TIMEOUT_MS`（300 s；Windows 600 s）与 `DSH_OPS_RETRY_TIMEOUTS=1`；`DSH_HOME` 必须是临时目录。
+Windows 上 `DSH_OPS_TEST_BASH` 指向校验过的固定 `bash.exe`（门禁会 provision），`DSH_OPS_TEST_NIUBASH` 指向 staged 的 `niu.exe`。CI 会设 `DSH_OPS_SUITE_TIMEOUT_MS`（各平台均为 300 s）；`DSH_HOME` 必须是临时目录。`DSH_OPS_TEST_JOBS` 可覆盖有界工作池的并发数（默认宿主可用并行度，`1` 为串行）。每套完成后整块打印输出与耗时，末尾列出最慢的十套；仅 `niubash-consumer` 因 prepack 重建共享 `lib/` 而在并行池结束后独占运行；其他 Niubash 套件在各自临时 home 中准备独立副本，不再修改共享源 inode，可安全并行。
 
 ## 7. 不要做
 
@@ -327,7 +327,7 @@ Windows 上 `DSH_OPS_TEST_BASH` 指向校验过的固定 `bash.exe`（门禁会 
 - **不要**删除或削弱 skip 断言来让门禁变绿；补齐运行时或修套件。
 - **不要**在没有说明和测试的情况下放宽 `ALLOWED_SKIPS` 或 `EXPECTED_NON_BLOCKING`。
 - **不要**用调大 job 超时掩盖挂死、或用调大套件 deadline 掩盖慢测试。
-- **不要**用重试通过确定性失败；重试只用于 deadline。
+- **不要**用重试通过确定性失败；deadline 失败也不重试。
 - **不要**把修复直接 push 到 `main`；发布门禁检查的 `CI required` 就在那条路径上。
 
 ## 8. 已知问题登记

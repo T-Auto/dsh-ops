@@ -39,11 +39,8 @@ jobs:
     timeout-minutes: 20
     env:
       CARGO_BUILD_JOBS: '3'
-      # Runners are shared and sometimes loaded: give each suite more headroom than a workstation
-      # needs, and let a deadline be retried once — a timeout is the environment answering, and the
-      # retry prints, so a green summary still shows it happened.
+      # Loaded runners get explicit deadline headroom; failures are never retried.
       DSH_OPS_SUITE_TIMEOUT_MS: '300000'
-      DSH_OPS_RETRY_TIMEOUTS: '1'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -117,7 +114,6 @@ jobs:
     env:
       CARGO_BUILD_JOBS: '3'
       DSH_OPS_SUITE_TIMEOUT_MS: '300000'
-      DSH_OPS_RETRY_TIMEOUTS: '1'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -170,10 +166,9 @@ jobs:
     timeout-minutes: 30
     env:
       CARGO_BUILD_JOBS: '3'
-      # The clean consumer includes verified cold staging and a real 120s descendant deadline.
+      # The clean consumer includes cold artifact setup and frozen payload preparation.
       # Match the full-payload suite watchdog; production command limits remain unchanged.
-      DSH_OPS_SUITE_TIMEOUT_MS: '600000'
-      DSH_OPS_RETRY_TIMEOUTS: '1'
+      DSH_OPS_SUITE_TIMEOUT_MS: '300000'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -342,7 +337,6 @@ jobs:
     env:
       CARGO_BUILD_JOBS: '3'
       DSH_OPS_SUITE_TIMEOUT_MS: '300000'
-      DSH_OPS_RETRY_TIMEOUTS: '1'
     steps:
       - uses: actions/checkout@v7
         with:

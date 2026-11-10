@@ -163,6 +163,7 @@ export function executorUnavailableMessage(error: unknown): string {
   if (code !== undefined) {
     return `EXECUTOR_UNAVAILABLE: ${code}: ${reason} ${REMEDIES[code].remedy}`
   }
+  if (reason.startsWith('EXECUTOR_UNAVAILABLE:')) return reason
   return 'EXECUTOR_UNAVAILABLE: the restricted Bash runtime could not be prepared: '
     + `${reason}. No command was executed. If this was a transient filesystem refusal, one retry may complete the `
     + 'private copy; do not switch shells to bypass confinement.'

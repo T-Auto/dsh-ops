@@ -3,6 +3,7 @@ import type { JsonSchemaNode } from '../../adapter/dsh/types.js'
 import { DOCUMENT_FACTS, isDocumentTool } from '../../capabilities/documents.js'
 import { capability } from '../../capabilities/registry.js'
 import type { FileToolName, PtcToolName } from '../../capabilities/registry.js'
+import { publicToolName } from '../../policy.js'
 import { STORAGE_REFERENCE } from '../../capabilities/result.js'
 const string: JsonSchemaNode = { type: 'string' }
 const integer: JsonSchemaNode = { type: 'integer' }
@@ -20,7 +21,7 @@ const replacementReceipt = object({ path: string, revision: string, revisionAfte
   status: { type: 'string', enum: ['pending', 'completed', 'error'] },
   error: { type: 'object' }, metadataWarnings: array(string) })
 const facts = { revision: string, bytes: integer, lineCount: { oneOf: [integer, { type: 'null' }] } satisfies JsonSchemaNode }
-const cache = { reference: STORAGE_REFERENCE, referenceRoot: string,
+const cache = { reference: { ...STORAGE_REFERENCE, description: `Page ref:// via result; load it with tools.${publicToolName('load_sdk')}({tools:['result']}) if absent.` }, referenceRoot: string,
   storageError: object({ code: string, message: string, effectState: { type: 'string', enum: ['none', 'applied', 'partial', 'unknown'] } }) }
 const coverage = { scanComplete: boolean, pageComplete: boolean, scannedFiles: integer, skippedFiles: integer,
   skipReasons: { type: 'object', description: 'Nonnegative counts keyed by skip reason.' } satisfies JsonSchemaNode,

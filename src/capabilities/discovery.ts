@@ -7,6 +7,7 @@ export const DISCOVERY_TERMS = Object.freeze({
   read_docx: 'docx word document paragraphs body text tables zip xml unicode',
   read_table: 'table csv tsv delimiter quoted records columns rows encoding utf16',
   inspect_local_file: 'read inspect single file text hex binary bounded line windows',
+  read_files: 'read multiple files UTF-8 text independent ranges batch recovery',
   result: 'result reference page release stored output continuation',
   glob: 'glob find search file paths patterns',
   grep: 'grep search content regex matching text count summary',

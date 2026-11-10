@@ -12,7 +12,13 @@ These are the current contracts, including deliberate differences between tools.
 | `edit_file` | Existing UTF-8 file, observed `expectedRevision`, 1–100 nonempty `oldText` replacements with required uniqueness | Receipt `revisionBefore` is the observed before-image and `revision` is the after-image. A stale revision fails with `REVISION_CONFLICT` and no effect. BOM/line endings/EOF bytes not selected by the edit remain unchanged. |
 | `replace` | Literal pattern/replacement, bounded scope and match ceiling; optional preview | Each receipt's `revision` is the before-image and `revisionAfter` is the planned after-image. A real execution marks each receipt `completed`, `error` or `pending`. The operation scans and compares its own read before publishing each file; it has no caller-supplied expected revision. |
 
-`replace` is not bound to an earlier `inspect_local_file` result. Use `edit_file` when a single-file change must depend on that exact read. A `replace` preview is not a reservation: execution rescans. `changed` counts applied literal replacements, not files. A preview has `dryRun: true`; planned hashes alone do not establish that writes happened.
+`write_file` and `edit_file` requests are limited to **2 MiB**, including `content` or `edits` and the protocol envelope. Split larger changes into multiple revision-checked calls; the separate 32 MiB per-file content ceiling is not the effective request budget.
+
+Revision computation for `stat`, `copy`, `move` and `remove` streams SHA-256 instead of loading the whole file, so those operations accept files over 32 MiB. Hex inspection streams whole-file facts without buffering them, then seeks to and buffers only its requested window. Whole-content text inspection, `diff` and mutation buffers retain their explicit content budgets.
+
+On Windows volumes without named-stream or ACL support, mutations preserve available basic metadata and return `metadataWarnings` instead of `METADATA_UNSUPPORTED`. Windows source metadata that is present but unsupported, such as NTFS alternate data streams, still fails closed.
+
+`replace` is not bound to an earlier `inspect_local_file` result. Use `edit_file` when a single-file change must depend on that exact read. A `replace` preview is not a reservation: execution rescans. `changed` counts applied literal replacements, not files. A preview has `dryRun: true`; planned hashes alone do not establish that writes happened. Directory replacement records permission-denied reads in `skippedPaths` and returns `complete: false` with `truncated: true` while continuing eligible neighbors; ordinary binary-file skips do not by themselves make the result incomplete. Update-lock, staging and publication denials still fail the call, and sharing violations or other IO failures retain their structured error instead of becoming skips.
 
 ## One PTC call: read, derive, edit
 

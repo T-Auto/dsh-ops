@@ -9,7 +9,7 @@ import { mountDiscovery } from '../discovery/controller.js'
 import { mountPtc } from '../publication/ptc.js'
 import { NATIVE_RESIDENT_RAW } from '../capabilities/profiles.js'
 import { BASH_TOOL, publicToolName } from '../policy.js'
-import { BASH_PROMPT_SECTION, renderBashGuidance } from '../shells/prompt.js'
+import { BASH_PROMPT_SECTION, renderBashGuidance, renderBashUnavailable } from '../shells/prompt.js'
 import { mountJobWaitGuidance } from '../shells/job-wait-guidance.js'
 import { mountSpillRetention } from '../shells/spill-retention-runtime.js'
 import { spillRetentionConfig } from '../shells/spill-retention.js'
@@ -18,7 +18,7 @@ import type { ConsumerPlan } from './types.js'
 export function mountConsumer(ctx: Context, plan: ConsumerPlan): void {
   const { gate, core } = plan
   let renderShellGuidance: (agent: Agent) => string = () => ''
-  const shellOwnsGuidance = (agent: Agent): boolean => Boolean(renderShellGuidance(agent))
+  const shellOwnsGuidance = (agent: Agent): boolean => Boolean(core.extraGuidance.trim()) && Boolean(renderShellGuidance(agent))
   if (plan.shell) {
     // Host subprocess spills outlive the call that produced them upstream, so the
     // row that publishes the shell also owns one bounded retention runtime.
@@ -28,17 +28,23 @@ export function mountConsumer(ctx: Context, plan: ConsumerPlan): void {
     ctx.effect(() => () => releaseSpillRetention(), 'dsh-ops: spill retention')
     if (process.platform === 'win32') mountWorkspacePreparation(ctx)
     const shells = resolveShells(core)
+    // Resolved once at mount: a slot whose executor never resolved publishes no tool at all, so the
+    // section below has to report that instead of rendering nothing for the whole session.
+    const bashResolution = shells.bash
     ctx.inject(['tools'], inner => mountSessionBash(inner, core, shells, gate))
     if (core.promptPolicy) ctx.inject(['tools', 'systemPrompt'], inner => {
       mountJobWaitGuidance(inner, plan.id, gate)
       let active = true
       inner.effect(() => () => { active = false }, 'dsh-ops: Bash guidance lifetime')
+      // Every consumer of this slot shares one extra-guidance block, so the notice and the normal
+      // guidance must deliver it the same way: exactly once, whichever branch wins.
+      const withExtra = (text: string): string => [text, core.extraGuidance.trim()].filter(Boolean).join('\n\n')
       renderShellGuidance = agent => {
         if (!active || !agent || !gate.allows(agent)) return ''
         const definition = inner.get('tools')?.get(BASH_TOOL, agent)
-        if (!definition) return ''
+        if (!definition) return bashResolution.available ? '' : withExtra(renderBashUnavailable(bashResolution.source, bashResolution.detail))
         const background = Object.hasOwn(definition.parameters.properties ?? {}, 'run_in_background')
-        return [renderBashGuidance(background), core.extraGuidance.trim()].filter(Boolean).join('\n\n')
+        return withExtra(renderBashGuidance(background))
       }
       inner.effect(() => inner.systemPrompt.section({ name: `${BASH_PROMPT_SECTION}:${plan.id}`, order: inner.systemPrompt.getSectionOrder('TOOL_BASH'), interpolate: false,
         text: context => renderShellGuidance(context.agent ?? context.scope as Agent),

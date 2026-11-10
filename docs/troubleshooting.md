@@ -122,35 +122,54 @@ Restricted calls run the pinned Bash from a private, verified copy under `<DSH_H
 
 An interrupted staging leaves a `stage-*` directory in the cache. Confined calls reclaim copies older than one hour automatically (the reported reclaimable bytes include them), `clean-cache --yes --all-hosts-stopped` removes all of them, and deleting them by hand while no confined shell is running is equally safe.
 
-### Windows Bash staging is slow, antivirus scans it, or the payload looks read-only
+### Windows Niubash preparation is slow or old execution trees remain
 
-Each Windows `ops_bash` call now clones the verified Niubash payload by hardlink below
-`%TEMP%\dsh-ops-niu-exec-*` and seals the shared inodes read-only for the duration of the command.
-No payload data is copied, so the clone costs metadata only; the pre-spawn check compares the path
-set, sizes, directory set, read-only seal and link counts instead of re-hashing 1.85 GiB per call.
-The execution receipt `execution-provenance.json` in that tree records `mode` (`hardlink` or
-`copy`), the source manifest digest and the seal level.
+Selecting Niubash verifies the source against the frozen manifest and prepares one runtime per
+manifest hash at `<DSH_HOME>/dsh-ops/shells/niubash-prepared/<manifest hash>`. Preparation copies
+the payload without source hardlinks, materializes the command faces and six startup directories,
+and publishes the completed tree with an atomic sibling rename. Ordinary subsequent calls reuse it; they
+do not clone, hash, seal, write an execution receipt or dispose a per-call tree.
 
-- If a scanner is unhappy with the temporary directory, set `DSH_OPS_EXEC_ROOT` to an allow-listed
-  directory or to the payload's own volume. The root must not be inside the payload; its physical
-  path is resolved, so a junction/symlink cannot hide it. Cross-volume roots, ReFS, a filesystem
-  that refuses hardlinks, or an ACL/permission refusal trigger the whole-tree copy fallback; the
-  receipt records `"mode": "copy"`, `cloneFallbackCode` (`EXDEV`, `EPERM`, …) and
-  `cloneDiagnostics` with the first failed `link`, so a slow path is diagnosable instead of silent.
-- An `EXECUTOR_UNAVAILABLE` naming a size, seal or link-count mismatch means the clone changed
-  between creation and spawn. Nothing was executed; retry once, and restore the pinned payload if
-  it repeats.
-- While a command runs, the payload files are read-only (the Windows READONLY attribute plus a
-  deny-write/deny-delete ACL) and `winuxcmd.exe` with all argv0 faces share one inode. Disposal,
-  `provision-shells --force`, upgrade and `uninstall` unseal first.
-- Concurrency is scoped to **one DSH host process**. Within that process, calls that share a payload
-  defer their unseal and removal until the last live tree is released, so a finishing call cannot
-  hand a writable window to a running sibling. **Separate host processes sharing the same payload
-  are not coordinated**: while one host disposes and unseals, another host's running execution tree
-  can lose the read-only seal until that host's next clone/verification. This is a robustness
-  boundary, not a security boundary against administrators: a privileged process that can rewrite
-  ACLs or clear READONLY can still write through the hardlinks.
-- `NIUBASH_VERIFY=deep` restores the full per-call re-hash of the source payload and the clone.
+The prepared runtime must be **outside the session workspace**. Every call checks that boundary
+and still uses the host's subprocess service and sandbox `confine` in restricted modes. In read-only and
+workspace-write modes, the host denies writes to both the source and prepared payload outside the
+workspace. Full-access mode keeps its normal host policy; the prepared directory is not a separate
+security boundary against the account or an administrator.
+
+- On first preparation only, Windows scanner/indexer handles can delay the atomic publication
+  rename. Only `EPERM`/`EACCES`/`EBUSY` rename refusals are backed off for up to 10 seconds;
+  a persistent failure names the rename in `EXECUTOR_UNAVAILABLE`. Commands are never retried.
+- Put `DSH_HOME` outside the workspace before starting DSH. A workspace containing the prepared
+  runtime is refused rather than silently moving the runtime or running without confinement.
+- `DSH_OPS_EXEC_ROOT` and `NIUBASH_VERIFY=deep` are deprecated and ignored for new calls. Antivirus
+  allow-list rules should target the fixed prepared location, not a per-call temporary directory.
+- For leftovers from older releases, stop **every OPS host and Bash job**, then use the installed
+  package's CLI with the original `DSH_HOME` and, if set, `DSH_OPS_EXEC_ROOT`:
+  `dsh-ops cache status --kind exec-tree`, then
+  `dsh-ops cache reclaim --kind exec-tree --all-hosts-stopped --yes`.
+  `DSH_OPS_EXEC_ROOT` remains relevant only for discovering those legacy trees. Reclamation clears
+  legacy seals before deletion and does not reinstall a corrupt source. Do not recursively delete
+  trees by wildcard or remove them while jobs are running.
+- Successful selection retires obsolete prepared versions, broken/retired leftovers, and staging
+  leftovers of its own hash only. Other hashes' staging directories may still be building and are
+  left for offline `cache reclaim --kind exec-tree --all-hosts-stopped --yes`.
+  Each matching sibling is renamed once to `.retired-<uuid>` before best-effort deletion, never
+  deleted in place. On Windows an in-use version whose rename is refused stays for the next
+  selection; cleanup does not retry or fail the selected runtime. Unrelated names and links are
+  untouched. The same `cache status/reclaim --kind exec-tree` commands include these leftovers
+  while always excluding the current plain manifest hash.
+- Profiles sharing one `DSH_HOME` can run dsh-ops versions with different Niubash pins. Starting
+  one can retire the other's prepared version between commands. The other profile's next call
+  re-prepares its selected pin once from its verified source and continues through normal host
+  confinement. This recovery does not retire anything belonging to another pin, so both versions
+  can continue; ordinary calls still do no deployment work.
+- If a prepared version fails its selection-time integrity check, selection moves it to a
+  `.broken-<random>` sibling and makes one fresh preparation from the verified source. Removal
+  of the broken sibling is best-effort. If repair fails, the error reports both the old integrity
+  failure and the fresh preparation failure; there is no rebuild loop.
+- A missing or corrupt source needs the complete pinned payload restored. Repeated calls or
+  switching sessions do not repair it. Selecting an arbitrary Git Bash is not a restricted-mode
+  workaround: only a compatible pinned MSYS build may run restricted, never an unconfined fallback.
 
 ### A second restricted Bash fails while another Bash is still running
 

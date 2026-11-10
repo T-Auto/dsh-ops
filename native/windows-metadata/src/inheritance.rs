@@ -24,7 +24,7 @@ impl Drop for InheritedDescriptor {
     fn drop(&mut self) {
         // SAFETY: this pointer is owned exclusively and was allocated by CreatePrivateObjectSecurityEx.
         unsafe {
-            DestroyPrivateObjectSecurity(&mut self.0);
+            DestroyPrivateObjectSecurity(&self.0);
         }
     }
 }

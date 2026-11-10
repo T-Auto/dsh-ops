@@ -9,13 +9,13 @@ import { createScope } from '@deepseek-ai/dsh-scope'
 import { assert, test, report, skipSuite, scenarioDir, waitFor } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { verifiedNiubash } from '../lib/niubash/runtime.js'
+import { reclaimPreparedNiubash } from '../lib/niubash/prepared-cache.js'
 import { resolveShells } from '../lib/shells/resolve.js'
 import { pathToFileURL } from 'node:url'
 const consumerRoot = process.env.DSH_OPS_NIUBASH_CONSUMER
 const moduleAt = relative => import(consumerRoot ? pathToFileURL(path.join(consumerRoot, relative)).href : new URL(`../${relative}`, import.meta.url).href)
 const { mountSessionBash } = await moduleAt('lib/session-shells.js')
 const { startSessionBash } = await moduleAt('lib/shells/session-execution.js')
-const { DEFAULT_BASH_TIMEOUT_MS } = await moduleAt('lib/shells/constants.js')
 
 // Opt-in upstream fixture, never a developer profile or installer. The exact full-tree pin is
 // still enforced; this variable cannot bless alternate bytes. CI can supply its frozen artifact.
@@ -47,22 +47,31 @@ const node = code => {
 }
 const ok = value => { assert.equal(value.exitCode, 0, JSON.stringify(value)); assert.equal(value.status, 'completed', JSON.stringify(value)); return value }
 try {
-  await test('the execution root parent honours DSH_OPS_EXEC_ROOT', async () => {
-    const configured = path.join(root, 'exec-root')
+  await test('deprecated execution-root configuration creates no per-call trees', async () => {
+    const configured = path.join(root, 'exec-root-sentinel')
+    fs.mkdirSync(configured)
     const previous = process.env.DSH_OPS_EXEC_ROOT
     process.env.DSH_OPS_EXEC_ROOT = configured
     try {
-      const value = ok(await call(node("const fs=require('fs'),path=require('path');const instance=path.dirname(process.env.NIU_ROOT);const receipt=JSON.parse(fs.readFileSync(path.join(instance,'execution-provenance.json'),'utf8'));const image=fs.statSync(path.join(instance,'niu.exe'));process.stdout.write(JSON.stringify({instance,receipt:receipt.mode,nlink:image.nlink}))")))
-      const data = JSON.parse(value.stdout.text)
-      const instance = data.instance
-      assert.match(path.basename(instance), /^dsh-ops-niu-exec-/u)
-      assert.equal(fs.realpathSync.native(path.dirname(instance)), fs.realpathSync.native(configured))
-      // A root below the workspace is inside the tree the host sandbox labels Low;
-      // sharing the payload's inodes would export that label onto the payload and
-      // make every later image, full access included, run at Low integrity.
-      assert.equal(data.receipt, 'copy', 'an execution root below the workspace clones by copy')
-      assert.equal(data.nlink, 1, 'the workspace-rooted clone does not share the payload inode')
-      assert.equal(fs.existsSync(instance), false, 'the execution tree is disposed')
+      const command = node("process.stdout.write(process.env.NIU_ROOT)")
+      const otherPin = path.join(path.dirname(path.dirname(bash.file)), '0'.repeat(64))
+      const otherStage = `${otherPin}.stage-live`
+      fs.mkdirSync(otherPin)
+      fs.writeFileSync(path.join(otherPin, 'keep'), 'host B')
+      // Host B's successful H2 selection retires H1 between host A's commands.
+      reclaimPreparedNiubash(otherPin)
+      fs.mkdirSync(otherStage)
+      assert.equal(fs.existsSync(bash.file), false, 'host B retired the selected H1 tree')
+      const first = ok(await call(command)).stdout.text
+      assert.ok(fs.existsSync(bash.file), 'host A recovered H1 from its selected source before spawn')
+      assert.equal(fs.readFileSync(path.join(otherPin, 'keep'), 'utf8'), 'host B', 'per-call recovery does not retire H2')
+      assert.ok(fs.existsSync(otherStage), 'per-call recovery does not touch another pin being built')
+      const second = ok(await call(command)).stdout.text
+      assert.equal(first, second, 'consecutive calls reuse the prepared runtime')
+      const concurrent = await Promise.all([call(command), call(command)])
+      assert.deepEqual(concurrent.map(value => ok(value).stdout.text), [first, first], 'concurrent calls execute the same prepared payload, not private trees')
+      assert.equal(fs.realpathSync.native(first), fs.realpathSync.native(path.join(path.dirname(bash.file), 'winuxcmd')))
+      assert.deepEqual(fs.readdirSync(configured), [], 'deprecated root is not used for new execution trees')
     } finally {
       if (previous === undefined) delete process.env.DSH_OPS_EXEC_ROOT
       else process.env.DSH_OPS_EXEC_ROOT = previous
@@ -73,14 +82,14 @@ try {
     assert.equal(value.stdout.text, '牛pipeEOF=1'); assert.equal(value.sandbox.mode, 'workspace-write'); assert.equal(value.sandbox.enforcement, 'partial')
     fs.writeFileSync(path.join(root, '脚本 file.sh'), "printf 'SCRIPT中文'\n")
     assert.equal(ok(await call(undefined, { script_path: path.join(root, '脚本 file.sh') })).stdout.text, 'SCRIPT中文')
-    const native = ok(await call(node("const fs=require('fs'),path=require('path');const base=path.dirname(process.env.NIU_ROOT);const receipt=JSON.parse(fs.readFileSync(path.join(base,'execution-provenance.json'),'utf8'));const cat=fs.statSync(path.join(process.env.NIU_ROOT,'usr/bin/cat.exe'));process.stdout.write(JSON.stringify({cwd:process.cwd(),root:process.env.NIU_ROOT,mode:receipt.mode,seal:receipt.seal,writeBits:cat.mode & 0o222,nlink:cat.nlink}));")))
+    const native = ok(await call(node("process.stdout.write(JSON.stringify({cwd:process.cwd(),root:process.env.NIU_ROOT}))")))
     const data = JSON.parse(native.stdout.text)
-    assert.equal(fs.realpathSync.native(data.cwd), fs.realpathSync.native(root)); assert.notEqual(data.root, path.dirname(file)); assert.equal(path.basename(data.root), 'winuxcmd'); assert.match(path.basename(path.dirname(data.root)), /^dsh-ops-niu-exec-/); assert.equal(fs.existsSync(data.root), false, 'execution copy disposed after settlement')
-    assert.ok(data.mode === 'hardlink' || data.mode === 'copy', JSON.stringify(data))
-    assert.equal(data.seal === 'readonly+acl' || data.seal === 'readonly', true, JSON.stringify(data))
-    assert.equal(data.writeBits, 0, 'the payload is sealed read-only while the command runs')
-    if (data.mode === 'hardlink') assert.ok(data.nlink >= 2, JSON.stringify(data))
-    else assert.equal(data.nlink, 1, JSON.stringify(data))
+    assert.equal(fs.realpathSync.native(data.cwd), fs.realpathSync.native(root))
+    assert.notEqual(data.root, path.join(path.dirname(file), 'winuxcmd'))
+    assert.equal(path.basename(data.root), 'winuxcmd')
+    assert.match(path.basename(path.dirname(data.root)), /^[a-f0-9]{64}$/u)
+    assert.equal(path.basename(path.dirname(path.dirname(data.root))), 'niubash-prepared')
+    assert.equal(fs.existsSync(data.root), true, 'prepared runtime survives settlement')
   })
   await test('workspace in/out and read-only effects are confined for shell and native child', async () => {
     ok(await call('printf allowed > allowed.txt'))
@@ -99,18 +108,48 @@ try {
     agent.session.mode = 'workspace-write'
     ok(await call('printf restored > restored.txt'))
   })
-  await test('two consecutive read-only and workspace-write calls preserve immutable source', async () => {
+  await test('consecutive and concurrent confined calls preserve prepared payload size and mtime', async () => {
+    const snapshot = directory => {
+      const entries = []
+      const visit = base => {
+        for (const item of fs.readdirSync(base, { withFileTypes: true })) {
+          const target = path.join(base, item.name)
+          if (item.isDirectory()) visit(target)
+          else {
+            const stat = fs.statSync(target)
+            entries.push([path.relative(directory, target), stat.size, stat.mtimeMs])
+          }
+        }
+      }
+      visit(directory)
+      return entries.sort((a, b) => a[0].localeCompare(b[0]))
+    }
+    const prepared = path.dirname(bash.file)
+    const sourceBefore = snapshot(path.dirname(file))
+    const preparedBefore = snapshot(prepared)
     for (const mode of ['read-only', 'workspace-write']) {
       agent.session.mode = mode
       for (let n = 0; n < 2; n++) assert.equal(ok(await call('printf repeated')).stdout.text, 'repeated')
-      verifiedNiubash(file)
+      const parallel = await Promise.all([call('printf parallel-one'), call('printf parallel-two')])
+      assert.deepEqual(parallel.map(value => ok(value).stdout.text), ['parallel-one', 'parallel-two'])
+      // Session identity must not create an implicit recovery boundary.
+      const siblingAgent = { ...agent, session: { ...agent.session, id: 'niu-sibling' } }
+      siblingAgent.ctx = createScope(ctx, siblingAgent).ctx
+      await ctx.serial('agent/created', { agent: siblingAgent })
+      await waitFor(() => ctx.get('tools').get('ops_bash', siblingAgent), { what: 'sibling Bash publication' })
+      const siblingTool = ctx.get('tools').get('ops_bash', siblingAgent)
+      const crossSession = await Promise.all([call('printf original'), siblingTool.execute({ description: 'Verify concurrent session',
+        command: 'printf sibling', workdir: root }, { agent: siblingAgent, signal: new AbortController().signal })])
+      assert.deepEqual(crossSession.map(value => ok(value).stdout.text), ['original', 'sibling'])
+      assert.deepEqual(snapshot(prepared), preparedBefore, `${mode}: prepared payload is unchanged`)
+      assert.deepEqual(snapshot(path.dirname(file)), sourceBefore, `${mode}: source is unchanged`)
     }
     agent.session.mode = 'workspace-write'
   })
-  await test('restricted native children cannot modify the source or their execution payload', async () => {
+  await test('restricted native children cannot modify the source or the prepared payload', async () => {
     for (const mode of ['read-only', 'workspace-write']) {
       agent.session.mode = mode
-      for (const target of ['source', 'execution']) {
+      for (const target of ['source', 'prepared']) {
         const command = node(`const fs=require('fs'),path=require('path');const file=${target === 'source' ? 'JSON_SOURCE' : "path.join(process.env.NIU_ROOT,'usr/bin/cat.exe')"};try{fs.appendFileSync(file,'BAD');process.stdout.write('MUTATED')}catch(e){process.stdout.write('DENIED')}`.replace('JSON_SOURCE', JSON.stringify(path.join(path.dirname(file), 'niu.exe'))))
         assert.equal(ok(await call(command)).stdout.text, 'DENIED', `${mode} ${target}`)
       }
@@ -118,10 +157,10 @@ try {
     }
     agent.session.mode = 'workspace-write'
   })
-  await test('external cat and awk resolve inside the fresh production execution payload', async () => {
+  await test('external cat and awk resolve inside the reusable prepared payload', async () => {
     const resolved = JSON.parse(ok(await call(node(`const fs=require('fs'),path=require('path');const find=name=>process.env.PATH.split(path.delimiter).map(dir=>path.join(dir,name+'.exe')).find(file=>fs.existsSync(file));process.stdout.write(JSON.stringify({cat:find('cat'),awk:find('awk')}))`))).stdout.text)
-    assert.match(resolved.cat, /dsh-ops-niu-exec-.*winuxcmd.*cat/i)
-    assert.match(resolved.awk, /dsh-ops-niu-exec-.*winuxcmd.*awk/i)
+    assert.match(resolved.cat, /niubash-prepared.*winuxcmd.*cat/i)
+    assert.match(resolved.awk, /niubash-prepared.*winuxcmd.*awk/i)
     // Explicit external invocation bypasses the rubash builtin without introducing a
     // nested synchronous Node launcher (which has its own host sandbox constraints).
     const value = ok(await call('printf EXTERNAL_CAT | "$NIU_ROOT/usr/bin/cat.exe"'))
@@ -143,17 +182,20 @@ try {
       const marker = path.join(root, cancel ? 'cancel-child.txt' : 'timeout-child.txt')
       const ready = path.join(root, cancel ? 'cancel-ready.txt' : 'timeout-ready.txt')
       const controller = new AbortController()
-      // The deadline includes full verified staging. Schedule the timeout marker
-      // past that absolute deadline so variable preparation cannot make it fire early.
-      const deadline = Date.now() + DEFAULT_BASH_TIMEOUT_MS
-      const markerDelay = cancel ? '30000' : `Math.max(0, ${deadline + 2000} - Date.now())`
-      const command = node(`const fs=require('fs');fs.writeFileSync(${JSON.stringify(ready)},'ready');setTimeout(()=>fs.writeFileSync(${JSON.stringify(marker)},'escaped'),${markerDelay});setInterval(()=>{},1000)`)
-      const pending = call(command, { timeoutMs: DEFAULT_BASH_TIMEOUT_MS }, controller.signal)
-      if (cancel) { await waitFor(() => fs.existsSync(ready), { what: 'native child readiness', timeoutMs: DEFAULT_BASH_TIMEOUT_MS }); controller.abort(new Error('security test cancellation')) }
+      const timeoutMs = 5000
+      const deadline = Date.now() + timeoutMs
+      let markerAt = deadline + 2000
+      const command = node(`const fs=require('fs');const at=${cancel ? 'Date.now()+2000' : markerAt};fs.writeFileSync(${JSON.stringify(ready)},String(at));setTimeout(()=>fs.writeFileSync(${JSON.stringify(marker)},'escaped'),Math.max(0,at-Date.now()));setInterval(()=>{},1000)`)
+      const pending = call(command, { timeoutMs }, controller.signal)
+      if (cancel) {
+        await waitFor(() => fs.existsSync(ready), { what: 'native child readiness', timeoutMs })
+        markerAt = Number(fs.readFileSync(ready, 'utf8'))
+        controller.abort(new Error('security test cancellation'))
+      }
       const value = await pending
       assert.equal(cancel ? value.cancelled : value.timedOut, true, JSON.stringify(value))
       assert.equal(fs.existsSync(ready), true, 'child actually started')
-      await new Promise(resolve => setTimeout(resolve, cancel ? 30200 : Math.max(0, deadline + 2200 - Date.now())))
+      await new Promise(resolve => setTimeout(resolve, Math.max(0, markerAt + 200 - Date.now())))
       assert.equal(fs.existsSync(marker), false, 'no live child remains after host Job termination')
     }
     agent.session.mode = 'workspace-write'

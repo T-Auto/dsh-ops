@@ -69,9 +69,11 @@ The session must already use DSH's **PTC-only** presentation. The component does
 not force presentation, replace the registry, or create a REPL. It recognizes the
 host's public prompt assembly (`tools:ptc-only` section plus the reserved-only wire
 schema), not private `modeFor`, run_code existence alone or a guessed session key.
-This PTC row publishes its independent SDK only in PTC-only scopes, with inspect/result and the
-loader initially resident. Other APIs require next-step activation or `alwaysLoaded`. It adds
-no bindings or extra prompt in Native scopes. The file row independently supplies Native ops_result page/release; see [result budgets](result-budgets.md#native-and-ptc-reference-pages). 文件组件独立提供 Native 引用分页/释放，详见[结果预算](结果预算.md#native-与-ptc-引用分页)。
+This PTC row publishes its independent SDK only in PTC-only scopes, with inspect and the
+loader initially resident. Load `result` on demand through `ops_load_sdk`, even with `allowedTools: []`.
+Other APIs require next-step activation or `alwaysLoaded`.
+It adds no bindings or extra prompt in Native scopes.
+PTC 初始常驻 inspect 与 loader；result 通过 ops_load_sdk 按需加载，即使 allowedTools 为空也可选择。 The file row independently supplies Native ops_result page/release; see [result budgets](result-budgets.md#native-and-ptc-reference-pages). 文件组件独立提供 Native 引用分页/释放，详见[结果预算](结果预算.md#native-与-ptc-引用分页)。
 The host generates SDK declarations from the same tool schemas; no duplicate guide
 or dynamic plan IDs are added to the system prefix.
 

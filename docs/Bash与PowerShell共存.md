@@ -8,7 +8,7 @@ English: [Bash and PowerShell coexistence](shell-coexistence.md).
 
 - 内置 preset 默认开启 Bash 和 `hidePwsh`；自定义 preset 的 `hidePwsh` 仍默认关闭，不随 `replaceOfficial` 文件工具设置推导。
 - `global.hidePwsh` 仍默认开启，但只是允许隐藏的总闸。只有 preset 的隐藏开关开启、总闸允许、Windows 当前 Agent 确实可调用 Bash 且未开启 pwsh7 联动时，才隐藏 `pwsh` 和 `pwsh_persistent`。
-- 旧配置中显式保存的 `hidePwsh: false` 或 `true` 均被尊重，不静默迁移；总闸显式关闭可阻止隐藏。Bash 路径缺失或权限/宿主服务使 Bash 无法发布时，保留官方 PowerShell fallback。
+- 旧配置中显式保存的 `hidePwsh: false` 或 `true` 均被尊重，不静默迁移；总闸显式关闭可阻止隐藏。Bash 路径缺失或权限/宿主服务使 Bash 无法发布时，保留官方 PowerShell fallback；同时提示词会明确说明该槽位不可用并引用解析的 `source` 与 `detail`（含部署侧修复办法），而不是留下一个空段落让模型以为这里本该没有 Bash。
 - `other.pwsh7Link` 开启时保留官方 `pwsh`，让 `dsh-win-pwsh7` 继续管理其 PowerShell 版本。未保存此开关时仍按既有规则检测 companion；显式开/关优先，不要求安装 companion 才能共存。OPS 不修改第三方插件、安装顺序或 profile。
 
 ## 提示词与执行契约
