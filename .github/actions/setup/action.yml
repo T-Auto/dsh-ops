@@ -1,0 +1,104 @@
+name: Set up toolchains
+description: >-
+  Node, the Rust toolchain pinned by native/rust-toolchain.toml, and a dependency-only cargo cache.
+  Every workflow installs its toolchains here so the Rust version is written in exactly one place.
+
+inputs:
+  node-version:
+    description: Node.js version for actions/setup-node.
+    default: '24'
+  rust:
+    description: Install the pinned Rust toolchain.
+    default: 'true'
+  rust-components:
+    description: Comma-separated components to add (for example rustfmt,clippy).
+    default: ''
+  rust-targets:
+    description: Comma-separated extra targets to add (for example x86_64-unknown-linux-musl).
+    default: ''
+  cache:
+    description: >-
+      Use the cargo dependency cache: restore always, save only on pushes. Release builds and
+      measurements pass false so what they ship or report never comes from a restored artifact.
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install the pinned Rust toolchain
+      if: inputs.rust == 'true'
+      shell: bash
+      env:
+        COMPONENTS: ${{ inputs.rust-components }}
+        TARGETS: ${{ inputs.rust-targets }}
+      run: |
+        set -euo pipefail
+        channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' native/rust-toolchain.toml)
+        [ -n "$channel" ] || { echo "::error::native/rust-toolchain.toml pins no channel"; exit 1; }
+        # `args` is never empty, and the loops below never expand an empty array: bash 3.2 (macOS)
+        # fails `"${empty[@]}"` under `set -u`. Component and target names contain no whitespace.
+        args=(toolchain install "$channel" --profile minimal)
+        for part in ${COMPONENTS//,/ }; do args+=(--component "$part"); done
+        for part in ${TARGETS//,/ }; do args+=(--target "$part"); done
+        rustup "${args[@]}"
+        rustup default "$channel"
+        # Checkouts reset every mtime, so incremental state and workspace artifacts are rebuilt
+        # whatever the cache held; neither is worth storing or producing. Line tables keep
+        # backtraces useful at a fraction of the debuginfo size.
+        {
+          echo "CARGO_INCREMENTAL=0"
+          echo "CARGO_PROFILE_DEV_DEBUG=line-tables-only"
+        } >> "$GITHUB_ENV"
+
+    # The key is scoped by job (jobs build different profiles and targets, so a shared key lets
+    # whichever job missed first decide what the others restore), and by a hash of everything that
+    # makes an old tree worthless: the toolchain and this file, which sets the flags above. Those
+    # hashes sit in the fixed prefix, so a changed toolchain starts cold instead of restoring the
+    # old compiler's tree and saving it again with new artifacts piled on top. Only the lockfile
+    # hash is allowed to fall back, because a dependency bump leaves most of the tree valid.
+    #
+    # Only a push saves. A pull request, merge group or manual run restores what protected
+    # branches saved and writes nothing, so a feature branch cannot evict the entries the next
+    # merge needs. The two steps below must stay identical except for the action and their `if`;
+    # `scripts/check-workflows.mjs` asserts it, because a mismatch makes pull requests silently miss.
+    - name: Restore and save the cargo dependency cache
+      if: inputs.rust == 'true' && inputs.cache == 'true' && github.event_name == 'push'
+      uses: actions/cache@v6
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          native/target
+          !native/target/**/incremental
+          !native/target/**/.fingerprint/ops-*
+          !native/target/**/.fingerprint/dsh-ops-*
+          !native/target/**/deps/ops_*
+          !native/target/**/deps/libops_*
+          !native/target/**/deps/dsh_ops*
+          !native/target/**/deps/libdsh_ops*
+        key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('native/rust-toolchain.toml', '.github/actions/setup/action.yml') }}-${{ hashFiles('native/Cargo.lock') }}
+        restore-keys: |
+          cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('native/rust-toolchain.toml', '.github/actions/setup/action.yml') }}-
+
+    - name: Restore the cargo dependency cache
+      if: inputs.rust == 'true' && inputs.cache == 'true' && github.event_name != 'push'
+      uses: actions/cache/restore@v6
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          native/target
+          !native/target/**/incremental
+          !native/target/**/.fingerprint/ops-*
+          !native/target/**/.fingerprint/dsh-ops-*
+          !native/target/**/deps/ops_*
+          !native/target/**/deps/libops_*
+          !native/target/**/deps/dsh_ops*
+          !native/target/**/deps/libdsh_ops*
+        key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('native/rust-toolchain.toml', '.github/actions/setup/action.yml') }}-${{ hashFiles('native/Cargo.lock') }}
+        restore-keys: |
+          cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('native/rust-toolchain.toml', '.github/actions/setup/action.yml') }}-

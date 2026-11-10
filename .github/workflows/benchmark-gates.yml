@@ -29,12 +29,10 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v7
+      # A measurement builds cold: no restored artifact can colour the numbers it reports.
+      - uses: ./.github/actions/setup
         with:
-          node-version: '24'
-      - name: Set up pinned Rust
-        shell: bash
-        run: rustup toolchain install 1.97.1 --profile minimal && rustup default 1.97.1
+          cache: 'false'
       - name: Install locked dependencies
         run: npm ci --ignore-scripts
       - name: Build candidate host
@@ -100,21 +98,11 @@ jobs:
         with:
           # Included benchmark tests verify the pinned historical baseline.
           fetch-depth: 0
-      - uses: actions/setup-node@v7
+      # Only a push saves the cache, and this job runs on a schedule or by hand, so a cache here
+      # could only ever be empty.
+      - uses: ./.github/actions/setup
         with:
-          node-version: '24'
-      - name: Set up pinned Rust
-        shell: bash
-        run: rustup toolchain install 1.97.1 --profile minimal && rustup default 1.97.1
-      - name: Reuse exact locked Rust build cache
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            native/target
-          key: ops-031-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/Cargo.lock') }}
-          restore-keys: ops-031-${{ runner.os }}-${{ runner.arch }}-
+          cache: 'false'
       - name: Install locked dependencies
         run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
       - name: Build the plugin

@@ -25,6 +25,7 @@
  *   node scripts/verify-gate.mjs --skip-install      # node_modules is already current
  *   node scripts/verify-gate.mjs --json              # machine-readable summary
  *   node scripts/verify-gate.mjs --keep-going        # run every step, report all failures
+ *   node scripts/verify-gate.mjs --worker-target <triple>   # also stage that cross-built worker before the suites
  *
  * A red host is reported, not smoothed over: both of `test/run.mjs`'s summary shapes are
  * parsed (the green one and `N of M suite(s) failed`), so a failing run names the failing step
@@ -56,6 +57,8 @@ const HOST = `${process.platform}-${process.arch}`
 const TARGET = option('target', HOST)
 const JSON_OUT = flag('json')
 const KEEP_GOING = flag('keep-going')
+/** A Rust triple to build and stage over the host worker, so the suites resolve the shipped binary. */
+const WORKER_TARGET = option('worker-target', undefined)
 
 /**
  * What each platform is allowed to skip, and no more.
@@ -183,6 +186,11 @@ async function main() {
   await run('build the plugin', 'npm', ['run', 'build'])
   await run('native worker unit tests', 'cargo', ['test', '--workspace', '--locked', '--manifest-path', 'native/Cargo.toml'])
   await run('build and stage the native worker', 'npm', ['run', 'build:ptc'])
+  // The shipped Linux worker is a different binary (musl) from the host build above. Staging it here
+  // makes every suite that resolves `runtime/<target>/` exercise the artifact users receive.
+  if (WORKER_TARGET !== undefined) {
+    await run(`build and stage the ${WORKER_TARGET} worker`, 'node', ['bin/dsh-ops.mjs', 'build-ptc', '--target', WORKER_TARGET])
+  }
 
   // Every pack (including POSIX packs) carries the frozen Windows payload.
   const stageArgs = ['run', 'stage:niubash', '--']
