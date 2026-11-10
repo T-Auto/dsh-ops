@@ -11,7 +11,7 @@ Plugin authors can also mount the [public integration API](integration-api.md) i
 | Section | Defaults and behavior |
 | --- | --- |
 | `global` | `bash`, `hidePwsh`, `hideOfficialTools`, `dynamicTools` all true; each gates the corresponding row-managed consumer choice. The same section also carries `forceDefaultOpsPtc`, see the next row |
-| `global.forceDefaultOpsPtc` | true by default; while the `ops-ptc` preset is registered, forces the default preset to `ops-ptc` at runtime by writing `selectedDefault` through the host settings service (the settings-page mechanism, overriding a manual choice). Turning it off, disabling or unloading the row restores the captured pre-force default, or the host `config.default` (the official default) when nothing was captured or the captured value is `ops-ptc`; forcing only happens after successful registration and failures only warn |
+| `global.forceDefaultOpsPtc` | true by default; while the `ops-ptc` preset is registered, forces the default preset to `ops-ptc` at runtime by writing `selectedDefault` through the host settings service (the settings-page mechanism, overriding a manual choice). Turning it off, disabling or unloading the row restores the captured pre-force default, or the host `config.default` (the official default) when nothing was captured or the captured value is `ops-ptc`; forcing only happens after successful registration; a failed registration never forces, best-effort restores a leftover `ops-ptc` default and only warns |
 | `minimal` | Enabled; no resident file surface; optional Bash and dynamic selection |
 | `standard`, `cordis` | Enabled; resident Native inspect/glob/grep profile, optional Bash, replacement and discovery |
 | `ptc` | Enabled; typed resident APIs and progressive SDK loading under actual host PTC presentation |
@@ -44,7 +44,7 @@ These are publication choices, not filesystem permissions. No switch bypasses ho
 sessions use; it changes no tool publication surface or permission. It writes the same `selectedDefault` field
 as the Agent presets settings page: while on, it forces `ops-ptc` after a successful preset registration (so a
 manual choice is overridden); while off, it restores the value captured before forcing, or the official
-`config.default` when none was captured. A missing host settings service or a failed write only logs a warning.
+`config.default` when none was captured. The write persists through the host settings layer into the profile's `cordis.patch.yml` (an `agent-preset-registry` override that also writes the `default` field) and survives a restart; a remount caused by saving another switch re-registers the preset and re-confirms the default. A missing host settings service or a failed write only logs a warning.
 
 Saves use exact nested paths and the revision read by the page. Unchanged fields are not written;
 conflicts retain the draft. Reset reloads current saved values. The runtime status section shows

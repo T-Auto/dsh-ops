@@ -72,7 +72,11 @@ it in YAML) controls this at runtime rather than baking it into the profile:
   registration, and only writes when the current default really is `ops-ptc`. A missing host settings service
   or a failed write only logs a warning prefixed with `dsh-ops: ` and never blocks unloading.
 - Forcing happens only after a successful registration; a missing fragment, unresolvable app-boot or rejected
-  registration writes no default and simply leaves it unforced.
+  registration never forces, but best-effort restores a leftover `ops-ptc` default (failures only warn).
+- The forced value persists through the host settings layer into the profile's `cordis.patch.yml` (an
+  `agent-preset-registry` override that also writes the `default` field) and survives a restart. Saving another
+  switch on the row remounts it: the preset re-registers and the default is re-confirmed, and the remount's
+  teardown restore settles before the replacement writes, so the two writes cannot race.
 - The switch only changes the default preset choice; it changes no tool surface, permission or preset content.
 
 In the host picker the preset is named `OPS (PTC)` and described as
