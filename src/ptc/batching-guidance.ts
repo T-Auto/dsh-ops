@@ -14,7 +14,7 @@ import type { Agent } from '../adapter/dsh/types.js'
 /** Identity of the guidance in the host message source. */
 export const BATCHING_GUIDANCE_ID = 'batching-guidance'
 /** Revision of the guidance text; bump it when the wording or the file format changes. */
-export const BATCHING_GUIDANCE_REVISION = '2'
+export const BATCHING_GUIDANCE_REVISION = '3'
 
 /** The shipped guidance file, resolved from this module's own location (src or lib). */
 const DEFAULT_GUIDANCE_FILE = new URL('../../prompts/batching-guidance.md', import.meta.url)
@@ -59,106 +59,221 @@ export function loadBatchingGuidance(filePath?: string | URL): string {
   }
 }
 
-/** Tracker tuning; only the window size is configurable. */
-export interface BatchingTrackerOptions {
-  /** Consecutive writes to one normalized path that trigger the guidance. Defaults to 3. */
-  readonly window?: number
-}
+// ---- program shape: what one run_code program says about its step ----
 
-/** One recorded write: the API that ran and the path it normalized to. */
-export interface BatchingWrite {
-  readonly api: string
-  readonly path: string
-}
+/** A program shorter than this is treated as single-step unless it is structured. */
+export const THIN_CODE_CHARS = 800
 
-/** Outcome of recording one successful write. */
-export interface BatchingDecision {
-  /** Whether this write crossed the window and should deliver the guidance. */
-  readonly shouldNotify: boolean
-  /** Turn the guidance belongs to; 0 until the host reported one. */
-  readonly turn: number
-  /** The normalized path this write named, when the call carried one. */
-  readonly path?: string
-}
-
-/** Per-agent rolling window of writes and the paths already notified this turn. */
-export interface BatchingTracker {
-  /** Start a host turn: the write window and notifications reset. Repeated calls with the same turn are no-ops. */
-  noteTurn(agent: Agent, turn: number): void
-  /** Record one successful write and decide whether the guidance belongs to this tool result. */
-  recordWrite(agent: Agent, api: string, args: unknown): BatchingDecision
-  /** Drop all state for one agent, on disposal or detachment. */
-  forget(agent: Agent): void
-}
-
-const DEFAULT_WINDOW = 3
+/** The directive every program opens with: its declared operation list. */
+export const PLAN_DIRECTIVE = '// plan:'
 
 /**
- * Resolve one caller-supplied path against the session cwd, then this process's
- * cwd, so equivalent spellings share one window entry.
- * @param raw - the path exactly as the call carried it.
- * @param cwd - the session working directory, when the host exposes one.
- * @returns the normalized absolute path; the input itself when resolution fails.
+ * Only the first physical line may carry the plan comment.
+ *
+ * The rule is what makes the declaration binding: a comment parked further down
+ * is written after the step was already decided, so it cannot constrain the step.
  */
-export function normalizePath(raw: string, cwd?: string): string {
-  try {
-    return path.resolve(typeof cwd === 'string' && cwd.length > 0 ? cwd : process.cwd(), raw)
-  } catch {
-    try { return path.normalize(raw) } catch { return raw }
+const PLAN_LINE = /^[\t ]*\/\/\s*plan\s*:\s*(.*)$/u
+/** Entries inside one plan line; the full-width semicolon separates them too. */
+const PLAN_ENTRY_SEPARATOR = /[;；]/u
+/** One dispatch site: dot access or bracket access on `tools`. */
+const DISPATCH = /\btools\s*(?:\.\s*([A-Za-z_$][\w$]*)|\[\s*['"]([^'"]+)['"]\s*\])\s*\(/gu
+const BATCHED = /Promise\.all|Promise\.allSettled|\.map\s*\(|for\s*\(|while\s*\(|forEach\s*\(|\[\s*\.\.\./u
+const BRANCHING = /\bif\s*\(|\btry\s*\{|\bswitch\s*\(|\?\s*[^:]{1,80}:/u
+const WAITING = /\bwait\s*:\s*true|job_output\s*\(/u
+const BYPASS = /node:fs|node:child_process|\bfs\./u
+const SHELL_TOOL = /^(?:pwsh|bash|shell|ops_bash|pwsh_persistent|bash_persistent)$/u
+const SHELL_FILE_WORK = /Get-ChildItem|Get-Content|Select-String|Test-Path|(?:^|[\s;&|"'`])(?:ls|dir|cat|type|grep|rg|find|head|tail|wc|sed|awk|cp|mv|rm|mkdir)\s/iu
+
+/** Features observable in the program text alone. */
+export interface ProgramShape {
+  /** Whether the first physical line carries a nonempty plan comment. */
+  readonly hasFirstLinePlan: boolean
+  /** Operations the plan line declares; 0 when there is no plan line. */
+  readonly declaredOperations: number
+  /** Static dispatch sites; a loop or map counts one, not its runtime fan-out. */
+  readonly dispatchSites: number
+  readonly hasBatchingStructure: boolean
+  readonly hasBranching: boolean
+  readonly isWaiting: boolean
+  /** File work routed through the shell or raw Node IO instead of the OPS APIs. */
+  readonly bypassesFileTools: boolean
+  readonly chars: number
+}
+
+/**
+ * Read the operations a program declared on its first line.
+ * @param code - the `run_code` program text.
+ * @returns the declared entries; empty when the first line carries no plan comment.
+ */
+export function parsePlan(code: unknown): string[] {
+  if (typeof code !== 'string' || code.length === 0) return []
+  // A leading BOM must not hide the first line from the anchor.
+  const body = code.charCodeAt(0) === 0xfeff ? code.slice(1) : code
+  const newline = body.search(/\r?\n/u)
+  const firstLine = newline === -1 ? body : body.slice(0, newline)
+  const match = PLAN_LINE.exec(firstLine)
+  if (match === null) return []
+  return match[1].split(PLAN_ENTRY_SEPARATOR).map(entry => entry.trim()).filter(entry => entry.length > 0)
+}
+
+/**
+ * Read the static shape of one program.
+ * @param code - the `run_code` program text, or anything that is not a string.
+ * @returns the observable features; an absent program has zero of each.
+ */
+export function analyzeProgram(code: unknown): ProgramShape {
+  if (typeof code !== 'string' || code.length === 0) {
+    return { hasFirstLinePlan: false, declaredOperations: 0, dispatchSites: 0, hasBatchingStructure: false,
+      hasBranching: false, isWaiting: false, bypassesFileTools: false, chars: 0 }
+  }
+  const sites = [...code.matchAll(DISPATCH)]
+  const plan = parsePlan(code)
+  const shellForFiles = sites.some(match => SHELL_TOOL.test(match[1] ?? match[2] ?? '')) && SHELL_FILE_WORK.test(code)
+  return {
+    hasFirstLinePlan: plan.length > 0,
+    declaredOperations: plan.length,
+    dispatchSites: sites.length,
+    hasBatchingStructure: BATCHED.test(code),
+    hasBranching: BRANCHING.test(code),
+    isWaiting: WAITING.test(code),
+    bypassesFileTools: BYPASS.test(code) || shellForFiles,
+    chars: code.length,
   }
 }
 
-/** The session working directory, when the agent exposes one. */
-function sessionCwd(agent: Agent): string | undefined {
-  try {
-    const cwd = agent.session?.header?.cwd
-    return typeof cwd === 'string' && cwd.length > 0 ? cwd : undefined
-  } catch { return undefined }
-}
-
-/** The path argument of a write call, when it is a usable string. */
-function writePath(args: unknown): string | undefined {
-  if (args === null || typeof args !== 'object' || Array.isArray(args)) return undefined
-  const value = (args as { path?: unknown }).path
-  return typeof value === 'string' && value.length > 0 && !value.includes('\0') ? value : undefined
+/** Which of the three tracked categories one program breaks. */
+export interface ProgramViolations {
+  /** The first line declares no operations. */
+  readonly plan: boolean
+  /** File work bypassed the OPS APIs. */
+  readonly bypass: boolean
+  /** The program spent a round trip on one operation it could have batched. */
+  readonly shape: boolean
 }
 
 /**
- * Create one tracker. State is keyed by agent identity and never serialized.
- * A write without a usable `path` argument is ignored, so copy/move destinations
- * and pathless calls never count toward a window.
- * @param options - optional window size; defaults to 3 writes to the same path.
- * @returns the tracker used by the PTC publication.
+ * Classify one program into the three independently latched categories.
+ *
+ * They are kept separate on purpose: a write window or a single verdict would let
+ * one category mask another, and the notice for each one names a different fix.
+ * @param shape - the parsed shape of the program.
+ * @returns whether each category was violated.
  */
-export function createBatchingTracker(options: BatchingTrackerOptions = {}): BatchingTracker {
-  const window = Number.isInteger(options.window) && (options.window as number) >= 1 ? options.window as number : DEFAULT_WINDOW
-  const states = new WeakMap<Agent, { turn: number; writes: BatchingWrite[]; notified: Set<string> }>()
+export function violationsOf(shape: ProgramShape): ProgramViolations {
+  return {
+    plan: !shape.hasFirstLinePlan,
+    bypass: shape.bypassesFileTools,
+    // Waiting on a job and branching are legitimate non-batched shapes, and a long
+    // program is not judged from its text alone.
+    shape: !shape.hasBatchingStructure && !shape.hasBranching && !shape.isWaiting && shape.chars < THIN_CODE_CHARS,
+  }
+}
+
+// ---- per-turn latch: one notice per category, re-armed by compliance ----
+
+/** The three independently latched categories. */
+export type BatchingCategory = 'plan' | 'bypass' | 'shape'
+
+/** Delivery priority when one program breaks several categories at once. */
+export const CATEGORY_PRIORITY: readonly BatchingCategory[] = Object.freeze(['bypass', 'plan', 'shape'])
+
+/** One notice to deliver, attributed to the category that earned it. */
+export interface ProgramNotice {
+  readonly category: BatchingCategory
+  /** Host turn the notice belongs to; 0 until the host reported one. */
+  readonly turn: number
+  readonly text: string
+}
+
+/** Per-agent latch over the three categories. */
+export interface ProgramLatch {
+  /** Start a host turn: every category re-arms. Repeating the same turn is a no-op. */
+  noteTurn(agent: Agent, turn: number): void
+  /** Record one program and return the notice it earns, if any. */
+  observe(agent: Agent, code: unknown): ProgramNotice | undefined
+  /** Whether a category may still deliver in this turn. */
+  isArmed(agent: Agent, category: BatchingCategory): boolean
+  /** Deliveries so far this turn, for the optional telemetry line. */
+  stats(agent: Agent): { turn: number; plan: number; bypass: number; shape: number; total: number }
+  /** Drop all state for one agent. */
+  forget(agent: Agent): void
+}
+
+/**
+ * The text one category delivers.
+ *
+ * Each notice names one fix, because the teacher trajectory already carries the full
+ * procedure: repeating it here would spend the same words on every turn. The plan
+ * notice says only that the comment is missing, which is all that category asks for.
+ * @param category - the category that earned the notice.
+ * @param shape - the program shape the notice describes.
+ * @returns the model-facing text, without the plugin-context envelope.
+ */
+export function noticeText(category: BatchingCategory, shape: ProgramShape): string {
+  if (category === 'plan') {
+    return [
+      'Your last program did not open with a plan line.',
+      'Start the next program on its first line with `// plan: <operation>; <operation>`, one entry per tool call.',
+      'A plan comment further down does not count.',
+    ].join('\n')
+  }
+  if (category === 'bypass') {
+    return [
+      'Your last program did file work through the shell or Node IO, which bypasses path policy and the audit trail.',
+      'List with `ops_glob`, search with `ops_grep`, read with `ops_read_files` or `ops_inspect_local_file`, edit with `ops_edit_file`.',
+      'Only `ops_inspect_local_file` is resident: load the others with `tools.ops_load_sdk` in the previous program, then call them here.',
+    ].join('\n')
+  }
+  return [
+    'Your last program spent a round trip on a single operation.',
+    'Put independent operations in one program under `Promise.all`; keep a dependent call as a second `await` in the same program.',
+    'This is read from the program text alone: a loop or map counts as one dispatch site, so state the intended shape in the plan line.',
+  ].join('\n')
+}
+
+/**
+ * Create the per-agent latch used by the root `run_code` trigger.
+ *
+ * Compliance re-arms its own category, so a model that fixes a category and then
+ * regresses earns a fresh notice instead of staying silent for the rest of the turn.
+ * There is deliberately no per-turn cap: the cost of an extra short notice is bounded
+ * by the notice text, while a missed correction lasts the rest of the turn.
+ * @returns the latch; state is keyed by agent identity and never serialized.
+ */
+export function createProgramLatch(): ProgramLatch {
+  const states = new WeakMap<Agent, { turn: number; armed: Record<BatchingCategory, boolean>; sent: Record<BatchingCategory, number> }>()
+  const fresh = (turn: number) => ({ turn, armed: { plan: true, bypass: true, shape: true }, sent: { plan: 0, bypass: 0, shape: 0 } })
   const stateFor = (agent: Agent) => {
     let state = states.get(agent)
-    if (state === undefined) {
-      state = { turn: 0, writes: [], notified: new Set() }
-      states.set(agent, state)
-    }
+    if (state === undefined) { state = fresh(0); states.set(agent, state) }
     return state
   }
   return {
     noteTurn(agent, turn) {
-      const current = states.get(agent)
-      if (current !== undefined && current.turn === turn) return
-      states.set(agent, { turn: Number.isSafeInteger(turn) ? turn : 0, writes: [], notified: new Set() })
+      const normalised = Number.isSafeInteger(turn) ? turn : 0
+      const state = states.get(agent)
+      // The host may announce one turn more than once; only a change starts a new turn.
+      if (state !== undefined && state.turn === normalised) return
+      states.set(agent, fresh(normalised))
     },
-    recordWrite(agent, api, args) {
+    observe(agent, code) {
       const state = stateFor(agent)
-      const raw = writePath(args)
-      if (raw === undefined) return { shouldNotify: false, turn: state.turn }
-      const normalized = normalizePath(raw, sessionCwd(agent))
-      state.writes.push({ api, path: normalized })
-      if (state.writes.length > window) state.writes.splice(0, state.writes.length - window)
-      const matches = state.writes.filter(entry => entry.path === normalized).length
-      // Every window slot names the same path and this turn has not delivered yet.
-      if (matches < window || state.notified.has(normalized)) return { shouldNotify: false, turn: state.turn, path: normalized }
-      state.notified.add(normalized)
-      return { shouldNotify: true, turn: state.turn, path: normalized }
+      const shape = analyzeProgram(code)
+      const violations = violationsOf(shape)
+      // A compliant program in a category restores that category's right to speak.
+      for (const entry of CATEGORY_PRIORITY) if (!violations[entry]) state.armed[entry] = true
+      const category = CATEGORY_PRIORITY.find(entry => violations[entry] && state.armed[entry])
+      if (category === undefined) return undefined
+      state.armed[category] = false
+      state.sent[category] += 1
+      return { category, turn: state.turn, text: noticeText(category, shape) }
+    },
+    isArmed(agent, category) { return stateFor(agent).armed[category] },
+    stats(agent) {
+      const state = stateFor(agent)
+      const { plan, bypass, shape } = state.sent
+      return { turn: state.turn, plan, bypass, shape, total: plan + bypass + shape }
     },
     forget(agent) { states.delete(agent) },
   }

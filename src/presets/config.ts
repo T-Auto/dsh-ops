@@ -27,6 +27,8 @@ export interface ModeConfig extends ResolvedConfig {
   residentTools: boolean
   /** Append batching guidance to PTC tool results (YAML-only; the OPS PTC row opts in). */
   batchingGuidance: boolean
+  /** Emit one structured line per delivered batching notice (YAML-only diagnostics). */
+  batchingTelemetry: boolean
 }
 
 /** Every key a mode row accepts: the settings each enhanced preset really reads. */
@@ -37,12 +39,12 @@ export const MODE_CONFIG_KEYS: readonly string[] = Object.freeze([
   'spillRetentionDays', 'spillTotalBudgetMiB', 'spillSweepEnabled',
   'allowedTools', 'alwaysLoaded',
   'bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools', 'residentTools',
-  'batchingGuidance',
+  'batchingGuidance', 'batchingTelemetry',
 ])
 
 const PTC_KEYS = new Set(['allowedTools', 'alwaysLoaded'])
 /** Boolean switches and gates, each supplying its own default below. */
-const SWITCH_KEYS = new Set(['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools', 'residentTools', 'batchingGuidance'])
+const SWITCH_KEYS = new Set(['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools', 'residentTools', 'batchingGuidance', 'batchingTelemetry'])
 
 /**
  * Validate one mode row's config.
@@ -77,7 +79,7 @@ export function resolveModeConfig(rawConfig?: unknown, mode?: ModeId): ModeConfi
     bash, hidePwsh: sw('hidePwsh', true),
     hideOfficialTools: sw('hideOfficialTools', true), dynamicTools: sw('dynamicTools', true),
     residentTools: mode !== 'minimal' && sw('residentTools', true),
-    batchingGuidance: sw('batchingGuidance', false) }
+    batchingGuidance: sw('batchingGuidance', false), batchingTelemetry: sw('batchingTelemetry', false) }
 }
 
 /**
