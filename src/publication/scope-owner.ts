@@ -101,18 +101,11 @@ export async function acquireSharedFile(agent: Agent, api: SharedApi, config: Na
   if (!source) {
     const runtime = new NativeFileTools({ ctx: agent.ctx, events, config: normalized })
     const created: Source = { runtime, refs: 0, closed: false, identity, definitions: new Map(), ready: runtime.start([]) }
-    // The source dies with the feed it was built with, not with the agent.
-    // `runtimes` is keyed by agent and the source is built on the first caller's
-    // `events`, while several rows can reach it. A teardown on the agent would
-    // outlive the row whose seven feed subscriptions — read-dedup and result
-    // admission — die with it, leaving a source that keeps serving with a dead
-    // feed: `ops_result put` then answers PUBLICATION_DENIED for good. Owning the
-    // teardown by the fiber behind `events` closes both together; the next caller
-    // rebuilds from its own row context and restarts the worker.
-    // Registered before the map insert on purpose: when that row is already gone
-    // the effect refuses here, before a later caller can pick up a source whose
-    // feed is dead on arrival.
-    events.effect(() => () => stop(created))
+    // The source belongs to the agent, not to any one consumer: removing one
+    // consumer has to leave the others working, which is also why `runtimes` is
+    // keyed by agent. Registered before the map insert so a refused effect cannot
+    // leave a source nobody is left to stop.
+    agent.ctx.effect(() => () => stop(created))
     runtimes.set(agent, created)
     source = created
   }
