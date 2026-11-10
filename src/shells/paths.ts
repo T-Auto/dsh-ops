@@ -28,7 +28,7 @@ import {
   shellUpstreamPin,
 } from './pins.js'
 
-export type ShellResolution = { available: true; file: string; source: string; detail: string; payloadSource?: string }
+export type ShellResolution = { available: true; file: string; source: string; detail: string }
   | { available: false; file?: undefined; source: string; detail: string }
 export type BundledCause = 'no-manifest' | 'not-declared' | 'not-installed' | 'incomplete-tree'
 interface BundleProbe { kind: ShellKind; bundleRoot: string; platform: string; arch: string }

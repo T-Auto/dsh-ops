@@ -8,7 +8,8 @@ import FileSystem from '@deepseek-ai/dsh-fs-local'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { assert, test, report, skipSuite, scenarioDir, waitFor } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
-import { verifiedNiubash } from '../lib/niubash/runtime.js'
+import { niubashPreparedRoot } from '../lib/niubash/runtime.js'
+import { verifyNiubashTree } from '../lib/cli/niubash-payload.js'
 import { reclaimPreparedNiubash } from '../lib/niubash/prepared-cache.js'
 import { resolveShells } from '../lib/shells/resolve.js'
 import { pathToFileURL } from 'node:url'
@@ -21,10 +22,12 @@ const { startSessionBash } = await moduleAt('lib/shells/session-execution.js')
 // still enforced; this variable cannot bless alternate bytes. CI can supply its frozen artifact.
 const file = consumerRoot ? path.join(consumerRoot, 'runtime/win32-x64/niubash/niu.exe') : process.env.DSH_OPS_TEST_NIUBASH
 if (process.platform !== 'win32' || !file) skipSuite('niubash-security-host', 'requires Windows x64 and DSH_OPS_TEST_NIUBASH pointing at the complete frozen v1.5.0 payload')
-verifiedNiubash(file)
+verifyNiubashTree(path.dirname(file))
 const root = scenarioDir('niu-host-中文'), outside = scenarioDir('niu-outside')
 const bash = consumerRoot ? resolveShells({}, { bundleRoot: consumerRoot }).bash : resolveShells({ bashPath: file }).bash
 assert.equal(bash.available, true, bash.detail)
+// Selection names the payload; the first command prepares this version-keyed copy.
+const preparedFile = path.join(niubashPreparedRoot(), 'niu.exe')
 const { ctx } = await bootHost({ withWorkingDirectory: true })
 const agent = { id: 'niu-security', session: { id: 'niu-security', mode: 'workspace-write', header: { cwd: root }, append() { return Promise.resolve() }, read() { return [] } } }
 agent.ctx = createScope(ctx, agent).ctx
@@ -54,23 +57,26 @@ try {
     process.env.DSH_OPS_EXEC_ROOT = configured
     try {
       const command = node("process.stdout.write(process.env.NIU_ROOT)")
-      const otherPin = path.join(path.dirname(path.dirname(bash.file)), '0'.repeat(64))
+      const otherPin = path.join(path.dirname(path.dirname(preparedFile)), '0'.repeat(64))
       const otherStage = `${otherPin}.stage-live`
+      // Host A's first command prepares H1; preparation is lazy, so selection alone leaves nothing to retire.
+      ok(await call('true'))
+      assert.ok(fs.existsSync(preparedFile), 'the first command prepared H1')
       fs.mkdirSync(otherPin)
       fs.writeFileSync(path.join(otherPin, 'keep'), 'host B')
       // Host B's successful H2 selection retires H1 between host A's commands.
       reclaimPreparedNiubash(otherPin)
       fs.mkdirSync(otherStage)
-      assert.equal(fs.existsSync(bash.file), false, 'host B retired the selected H1 tree')
+      assert.equal(fs.existsSync(preparedFile), false, 'host B retired the selected H1 tree')
       const first = ok(await call(command)).stdout.text
-      assert.ok(fs.existsSync(bash.file), 'host A recovered H1 from its selected source before spawn')
+      assert.ok(fs.existsSync(preparedFile), 'host A recovered H1 from its selected source before spawn')
       assert.equal(fs.readFileSync(path.join(otherPin, 'keep'), 'utf8'), 'host B', 'per-call recovery does not retire H2')
       assert.ok(fs.existsSync(otherStage), 'per-call recovery does not touch another pin being built')
       const second = ok(await call(command)).stdout.text
       assert.equal(first, second, 'consecutive calls reuse the prepared runtime')
       const concurrent = await Promise.all([call(command), call(command)])
       assert.deepEqual(concurrent.map(value => ok(value).stdout.text), [first, first], 'concurrent calls execute the same prepared payload, not private trees')
-      assert.equal(fs.realpathSync.native(first), fs.realpathSync.native(path.join(path.dirname(bash.file), 'winuxcmd')))
+      assert.equal(fs.realpathSync.native(first), fs.realpathSync.native(path.join(path.dirname(preparedFile), 'winuxcmd')))
       assert.deepEqual(fs.readdirSync(configured), [], 'deprecated root is not used for new execution trees')
     } finally {
       if (previous === undefined) delete process.env.DSH_OPS_EXEC_ROOT
@@ -124,7 +130,8 @@ try {
       visit(directory)
       return entries.sort((a, b) => a[0].localeCompare(b[0]))
     }
-    const prepared = path.dirname(bash.file)
+    ok(await call('true'))
+    const prepared = path.dirname(preparedFile)
     const sourceBefore = snapshot(path.dirname(file))
     const preparedBefore = snapshot(prepared)
     for (const mode of ['read-only', 'workspace-write']) {
@@ -153,7 +160,7 @@ try {
         const command = node(`const fs=require('fs'),path=require('path');const file=${target === 'source' ? 'JSON_SOURCE' : "path.join(process.env.NIU_ROOT,'usr/bin/cat.exe')"};try{fs.appendFileSync(file,'BAD');process.stdout.write('MUTATED')}catch(e){process.stdout.write('DENIED')}`.replace('JSON_SOURCE', JSON.stringify(path.join(path.dirname(file), 'niu.exe'))))
         assert.equal(ok(await call(command)).stdout.text, 'DENIED', `${mode} ${target}`)
       }
-      verifiedNiubash(file)
+      verifyNiubashTree(path.dirname(file))
     }
     agent.session.mode = 'workspace-write'
   })
@@ -243,7 +250,7 @@ try {
     assert.equal(fs.readFileSync(path.join(outside, 'full.txt'), 'utf8'), 'full')
   })
   await test('the real frozen payload remains byte-identical after execution', async () => {
-    verifiedNiubash(file); assert.equal(fs.existsSync(path.join(path.dirname(file), 'winuxcmd/dev')), false)
+    verifyNiubashTree(path.dirname(file)); assert.equal(fs.existsSync(path.join(path.dirname(file), 'winuxcmd/dev')), false)
   })
 } finally { await shutdown(ctx) }
 report('niubash-security-host')
