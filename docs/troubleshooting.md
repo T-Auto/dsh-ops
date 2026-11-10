@@ -157,8 +157,9 @@ security boundary against the account or an administrator.
 - The first successful preparation in a process retires obsolete prepared versions, broken/retired leftovers, and staging
   leftovers of its own hash only. Other hashes' staging directories may still be building and are
   left for offline `cache reclaim --kind exec-tree --all-hosts-stopped --yes`.
-  Each matching sibling is renamed once to `.retired-<uuid>` before best-effort deletion, never
-  deleted in place. On Windows an in-use version whose rename is refused stays for the next
+  Each matching sibling is renamed once to `.retired-<uuid>` before best-effort deletion; a
+  sibling already named `.retired-` is out of use and is removed where it is, so two hosts
+  cleaning up at once never split one tree across two names. On Windows an in-use version whose rename is refused stays for the next
   host start; cleanup does not retry or fail the selected runtime. Unrelated names and links are
   untouched. The same `cache status/reclaim --kind exec-tree` commands include these leftovers
   while always excluding the current plain manifest hash.

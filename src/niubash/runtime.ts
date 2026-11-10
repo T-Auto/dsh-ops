@@ -80,6 +80,8 @@ export async function prepareNiubashVersion(source: string, target: string, { re
     if (fs.existsSync(target)) {
       try { return file = inspectPreparedNiubash(target) }
       catch (error) {
+        // A bashPath naming the prepared root itself has no separate source to rebuild from.
+        if (path.resolve(source) === target) throw error
         damage = error instanceof Error ? error : new Error(String(error))
         const aside = `${target}.broken-${randomUUID()}`
         try {
@@ -131,12 +133,7 @@ function preparedVersion(source: string, target: string): Promise<string> {
   const known = versions.get(target)
   if (known && (!known.ready || fs.existsSync(path.join(target, NIUBASH_PIN.executable)))) return known.work
   // Profiles with different pins share DSH_HOME: one may retire ours. Recover without evicting theirs.
-  const retireOthers = known === undefined
-  // A bashPath naming the prepared root itself has no separate source to rebuild from.
-  const work = path.resolve(source) === target
-    ? Promise.resolve().then(() => { const file = inspectPreparedNiubash(target); if (retireOthers) reclaimPreparedNiubash(target); return file })
-    : prepareNiubashVersion(source, target, { retireOthers })
-  const entry = { ready: false, work }
+  const entry = { ready: false, work: prepareNiubashVersion(source, target, { retireOthers: known === undefined }) }
   entry.work.then(() => { entry.ready = true }, () => { if (versions.get(target) === entry) versions.delete(target) })
   versions.set(target, entry)
   return entry.work
