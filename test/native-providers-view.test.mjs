@@ -11,8 +11,8 @@
  *
  * The view already holds every answer the scan needs, so these tests pin both
  * halves: the answer stays the same, and one scan costs one view. The provider
- * notification's effect ownership is pinned by root-ownership AC-2, against a
- * real Cordis row and a guarded root.
+ * notification's effect ownership is pinned by the root-ownership suite, against
+ * a real Cordis row and a guarded root.
  */
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { nativeProviders, registerNativeProviderAtScope } from '../lib/publication/providers.js'
