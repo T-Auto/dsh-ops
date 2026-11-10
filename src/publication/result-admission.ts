@@ -6,10 +6,10 @@ const owners = new WeakMap<object, { refs: number; active: Map<symbol, ToolExecu
  * Track the live `run_code` parent behind one execution surface.
  *
  * `ctx` answers the authorization questions (the prompt service and the
- * agent/toolSet identity); `subscribe` only receives the two event
- * subscriptions and keys the shared ledger, so the ledger is released with the
- * listeners that feed it. The two differ where a shared file source reads
- * through an agent-scoped ctx but must still observe `session/event`.
+ * agent/toolSet identity) and, by default, also receives the two event
+ * subscriptions that key the shared ledger, so the ledger is released with the
+ * listeners that feed it. `subscribe` exists for a caller that needs a different
+ * lifetime than the context it authorizes through.
  * @param ctx - the context that serves authorization.
  * @param subscribe - the context that receives events; defaults to `ctx`.
  * @returns the per-surface admission handle.

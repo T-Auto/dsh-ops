@@ -46,7 +46,10 @@ export class NativeFileTools {
     // agent.ctx misses `session/event` and `session/disposed`. A shared file
     // source passes the row ctx as `events` while it reads through agent.ctx.
     this.readDedup = createNativeReadDedup(this.events)
-    this.resultAdmission = acquireResultAdmission(ctx, this.events)
+    // Admission answers authorization questions and only needs the two
+    // execution events, so it follows the constructing ctx: a shared file source
+    // reads through `agent.ctx` and must outlive any one consumer row.
+    this.resultAdmission = acquireResultAdmission(ctx)
   }
 
   async start(names: readonly NativeToolName[] = NATIVE_FILE_TOOLS as readonly NativeToolName[]): Promise<string[]> {
