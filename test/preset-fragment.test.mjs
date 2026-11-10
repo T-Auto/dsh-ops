@@ -14,11 +14,14 @@ import { assert, test, report, PACKAGE_ROOT } from './lib/harness.mjs'
 import {
   DEFAULT_OUT,
   FRAGMENT_PATH,
+  PRESET_DESCRIPTION,
   PRESET_ID,
+  PRESET_NAME,
   PRESET_ORDER,
   ROW_ID,
   generateFragment,
   inspectFragment,
+  parsePreset,
   resolveSource,
   sha256,
 } from '../scripts/sync-preset-ops-ptc.mjs'
@@ -45,6 +48,19 @@ await test('the fragment declares the ops-ptc identity and records its upstream 
   assert.equal(ROW_ID, 'preset-ops-ptc')
   assert.ok(PRESET_ORDER > 2, 'the preset sorts after the official ptc row (order 2)')
   assert.ok(pluginCount >= 20, 'the fragment carries the upstream plugin list, not a stub')
+})
+
+await test('the selector shows a Chinese description under the unchanged preset name', () => {
+  // The host renders config.name and config.description verbatim in the preset
+  // selector, so these two strings are user-visible text. Pin the exact Chinese
+  // sentence and keep the ASCII name, which must read the same in every locale.
+  const expectedDescription = '代码驱动的 PTC 工具面，由 dsh-ops 的 ops_* 工具扩展。'
+  assert.equal(PRESET_NAME, 'OPS (PTC)')
+  assert.equal(PRESET_DESCRIPTION, expectedDescription)
+  const { document } = parsePreset(text)
+  const config = document[0].insert[0].config
+  assert.equal(config.name, 'OPS (PTC)')
+  assert.equal(config.description, expectedDescription, 'the shipped fragment carries the Chinese selector text')
 })
 
 await test('the fragment is exactly what the installed host preset generates', () => {

@@ -49,7 +49,7 @@ export async function apply(root: Context, rawConfig: unknown): Promise<void> {
   // The ops-ptc preset is a runtime contribution, not a bundle row: registering it
   // through the host registry means disabling this row can never leave a profile's
   // selected preset dangling. It never blocks the rest of apply.
-  registerOpsPtcPreset(root)
+  registerOpsPtcPreset(root, { forceDefault: config.global.forceDefaultOpsPtc })
   beginMergedRow()
   try {
     // The browser half mounts its `opsSettings` remote; the legacy shell row used

@@ -68,7 +68,7 @@ export const DEFAULT_OUT = path.join(ROOT, FRAGMENT_PATH)
 export const ROW_ID = 'preset-ops-ptc'
 export const PRESET_ID = 'ops-ptc'
 export const PRESET_NAME = 'OPS (PTC)'
-export const PRESET_DESCRIPTION = 'Code-driven PTC tools, extended by the dsh-ops ops_* tool surface.'
+export const PRESET_DESCRIPTION = '代码驱动的 PTC 工具面，由 dsh-ops 的 ops_* 工具扩展。'
 export const PRESET_ORDER = 6
 
 /** Plugin the declaration row instantiates. */

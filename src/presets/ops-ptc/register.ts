@@ -32,6 +32,9 @@ export const PRESET_PLUGIN = '@deepseek-ai/dsh-agent-preset'
 /** The preset id the host preset registry publishes under. */
 export const PRESET_ID = 'ops-ptc'
 
+/** The profile entry whose volatile `selectedDefault` names the default preset. */
+export const REGISTRY_NAMESPACE = 'agent-preset-registry'
+
 /**
  * The shipped preset fragment, resolved from the compiled module (so
  * `lib/presets/ops-ptc/register.js` finds `<package>/presets/ops-ptc.patch.yml`).
@@ -56,9 +59,27 @@ export interface PresetDefinition {
   readonly plugins: readonly PresetPlugin[]
 }
 
+/** The registry's `selectedDefault` reference: a read-only volatile snapshot. */
+export interface DefaultSelection {
+  get(): string | undefined
+}
+
+/** The registry fields the default-preset switch reads. */
+export interface PresetRegistryConfig {
+  readonly default: string
+  readonly selectedDefault?: DefaultSelection
+}
+
 /** The slice of the host `agentPresets` service this registration needs. */
 export interface PresetRegistry {
+  readonly config: PresetRegistryConfig
+  readonly defaultId: string
   register(definition: PresetDefinition): Promise<() => Promise<void>>
+}
+
+/** The slice of the host settings service used to persist the selected default. */
+export interface SettingsService {
+  update(namespace: string, patch: Record<string, unknown>): Promise<unknown>
 }
 
 /** One parsed loader patch list, as the host's `loadOverlayPatches` returns it. */
@@ -74,6 +95,8 @@ export interface RegistrationOptions {
   file?: string
   /** Replace the host entry anchor (tests only); defaults to `process.argv[1]`. */
   hostEntry?: string
+  /** The row's force-default switch; absent keeps the shipped default (on). */
+  forceDefault?: boolean
 }
 
 /** The subset of the host boot package this registration needs. */
@@ -87,13 +110,23 @@ export interface ResolvedAppBoot {
   readonly load: FragmentLoader
 }
 
-/** Roots already handled, so a second apply on the same fiber cannot register twice. */
+/**
+ * Injected activations already handled.
+ *
+ * The Loader reuses a row's fiber across a config remount (it re-runs `apply` on
+ * the same fiber), so the injected child is the activation identity: one
+ * registration per injection, and a remount injects a fresh child.
+ */
 const registered = new WeakSet<object>()
 
 /** The live registration of one injected context. */
 interface Slot {
   release?: () => Promise<void>
   disposed: boolean
+  /** The default selection the profile carried before this row forced one. */
+  previous?: string
+  /** The settings service, kept so teardown can still write while disposing. */
+  settings?: SettingsService
 }
 
 /** One human-readable error message. */
@@ -108,6 +141,132 @@ function warn(options: RegistrationOptions, root: Context, message: string): voi
     return
   }
   root.logger?.warn?.(message)
+}
+
+/** The host settings service, or undefined when this deployment has none. */
+function settingsOf(ctx: Context): SettingsService | undefined {
+  return service<SettingsService>(ctx, 'settings')
+}
+
+/** The preset new sessions currently default to. */
+function currentDefault(registry: PresetRegistry): string | undefined {
+  try {
+    const value = registry.defaultId
+    return typeof value === 'string' && value !== '' ? value : undefined
+  } catch { return undefined }
+}
+
+/** The preset this registry names as the official default. */
+function officialDefault(registry: PresetRegistry): string | undefined {
+  try {
+    const value = registry.config.default
+    return typeof value === 'string' && value !== '' ? value : undefined
+  } catch { return undefined }
+}
+
+/** The default selection saved in the profile before this row touched it. */
+function savedDefault(registry: PresetRegistry): string | undefined {
+  try {
+    const value = registry.config.selectedDefault?.get?.()
+    return typeof value === 'string' && value !== '' ? value : undefined
+  } catch { return undefined }
+}
+
+/**
+ * The default this row gives back when it stops owning it.
+ *
+ * The selection found before forcing wins: that is the operator's own default.
+ * A saved selection that is ops-ptc itself can only be a leftover force, so it
+ * falls back to the official default — the preset disappears when this row is
+ * unloaded, and a default naming it would break every new session.
+ */
+function restoreTarget(registry: PresetRegistry, previous: string | undefined): string | undefined {
+  if (previous !== undefined && previous !== PRESET_ID) return previous
+  return officialDefault(registry)
+}
+
+/**
+ * Persist one default-preset selection through the host settings service.
+ *
+ * This is the same mechanism the settings page uses, so the write lands in the
+ * profile layer and hot-applies to the live registry. A missing service or a
+ * rejected write only warns: the preset itself is still registered.
+ */
+async function writeSelectedDefault(ctx: Context, slot: Slot, options: RegistrationOptions, value: string): Promise<void> {
+  const settings = slot.settings ?? settingsOf(ctx)
+  if (settings === undefined || typeof settings.update !== 'function') {
+    warn(options, ctx, `dsh-ops: cannot persist the default agent preset as ${value}: the host settings service is unavailable; the current default stays.`)
+    return
+  }
+  slot.settings = settings
+  try {
+    await settings.update(REGISTRY_NAMESPACE, { selectedDefault: value })
+  } catch (error) {
+    warn(options, ctx, `dsh-ops: cannot persist the default agent preset as ${value}: ${errorText(error)}; the current default stays.`)
+  }
+}
+
+/**
+ * Make the ops-ptc preset the profile default.
+ *
+ * Reached only after the registration succeeded, so a missing fragment or an
+ * unresolvable host package can never point new sessions at a preset that does
+ * not exist. An already-forced default is left untouched.
+ */
+async function forceDefault(ctx: Context, registry: PresetRegistry, slot: Slot, options: RegistrationOptions): Promise<void> {
+  if (currentDefault(registry) === PRESET_ID) return
+  await writeSelectedDefault(ctx, slot, options, PRESET_ID)
+}
+
+/**
+ * Hand the default back when this row stops owning it: the switch went off, the
+ * row is being unloaded, or the registration failed. Only a default this row
+ * may have forced is touched; an operator-chosen default is never rewritten.
+ */
+async function restoreDefault(ctx: Context, registry: PresetRegistry, slot: Slot, options: RegistrationOptions): Promise<void> {
+  if (currentDefault(registry) !== PRESET_ID) return
+  const target = restoreTarget(registry, slot.previous)
+  if (target === undefined || target === PRESET_ID) return
+  await writeSelectedDefault(ctx, slot, options, target)
+}
+
+/**
+ * Defaults being restored by a teardown, per preset registry.
+ *
+ * A remount disposes the old fiber and mounts the new one, so the restore and
+ * the replacement's force write would race. The replacement activation awaits
+ * the restore first and then settles the default from the saved configuration,
+ * which makes the outcome independent of which write reaches the profile lock
+ * first.
+ */
+const pendingRestores = new WeakMap<object, Promise<void>>()
+
+/** Wait for a teardown restore of the same registry, if one is in flight. */
+async function settlePendingRestore(registry: PresetRegistry): Promise<void> {
+  const pending = pendingRestores.get(registry)
+  if (pending === undefined) return
+  pendingRestores.delete(registry)
+  try { await pending } catch { /* the teardown already warned */ }
+}
+
+/**
+ * Release the registration on teardown.
+ *
+ * The write is deliberately not awaited here: teardown can run inside the
+ * Loader reconciliation a settings save started, which already holds the profile
+ * lock, so awaiting it could deadlock. The replacement activation awaits the
+ * same promise instead. Teardown never rejects either.
+ */
+function releaseRegistration(ctx: Context, registry: PresetRegistry, slot: Slot, options: RegistrationOptions): void {
+  const restored = restoreDefault(ctx, registry, slot, options)
+    .catch(error => warn(options, ctx, `dsh-ops: cannot restore the default agent preset: ${errorText(error)}`))
+  pendingRestores.set(registry, restored)
+  try {
+    const released = slot.release?.()
+    if (released !== undefined) released.catch(error => warn(options, ctx, `dsh-ops: cannot release the ops-ptc preset: ${errorText(error)}`))
+  } catch (error) {
+    warn(options, ctx, `dsh-ops: cannot release the ops-ptc preset: ${errorText(error)}`)
+  }
 }
 
 /**
@@ -279,21 +438,25 @@ export async function readOpsPtcDefinition(options: RegistrationOptions, root: C
  *
  * The call is synchronous by design: the registration itself is asynchronous,
  * and a delay or failure must never delay the row's tools. Disposal releases the
- * registration through the same fiber that created it.
+ * registration through the same injected context that created it; a remount
+ * injects a new context and registers again.
  * @param root - this plugin row's context.
  * @param options - test seams; production passes none.
  * @returns nothing; the work continues in the background.
  */
 export function registerOpsPtcPreset(root: Context, options: RegistrationOptions = {}): void {
-  if (registered.has(root)) return
-  registered.add(root)
   root.inject(['agentPresets'], ctx => {
     const registry = service<PresetRegistry>(ctx, 'agentPresets')
     if (registry === undefined || typeof registry.register !== 'function') return
+    // One registration per injection: the same activation cannot register twice,
+    // while a remount injects a fresh child and registers again.
+    const activation: object = ctx.fiber ?? ctx
+    if (registered.has(activation)) return
+    registered.add(activation)
     const slot: Slot = { disposed: false }
     ctx.effect(() => () => {
       slot.disposed = true
-      if (slot.release !== undefined) void slot.release()
+      releaseRegistration(ctx, registry, slot, options)
     }, 'dsh-ops: ops-ptc preset')
     void activate(ctx, registry, slot, options).catch(error => {
       warn(options, ctx, `dsh-ops: cannot register the ops-ptc agent preset: ${errorText(error)}; the preset stays unavailable.`)
@@ -310,12 +473,29 @@ export function registerOpsPtcPreset(root: Context, options: RegistrationOptions
  * @returns resolves once the registration is owned by {@link slot}.
  */
 async function activate(ctx: Context, registry: PresetRegistry, slot: Slot, options: RegistrationOptions): Promise<void> {
+  // A remount's teardown may still be restoring the previous default; settle it
+  // before reading, or the new activation would capture a value about to change.
+  await settlePendingRestore(registry)
+  // Capture the operator's default before anything can force a new one; teardown
+  // gives this exact selection back.
+  slot.previous = savedDefault(registry)
   const definition = await readOpsPtcDefinition(options, ctx)
   if (definition === undefined || slot.disposed) return
-  const release = await registry.register(definition)
+  let release: (() => Promise<void>) | undefined
+  try {
+    release = await registry.register(definition)
+  } catch (error) {
+    // A failed activation must not leave a forced default behind.
+    await restoreDefault(ctx, registry, slot, options).catch(() => undefined)
+    throw error
+  }
   if (slot.disposed) {
     await release()
     return
   }
   slot.release = release
+  // Only a registered preset may become the default; the switch being off means
+  // the row gives back a default a previous run forced.
+  if (options.forceDefault === false) await restoreDefault(ctx, registry, slot, options)
+  else await forceDefault(ctx, registry, slot, options)
 }

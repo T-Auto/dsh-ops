@@ -12,6 +12,8 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import { assert, PACKAGE_ROOT, report, test, waitFor, withTempDir } from './lib/harness.mjs'
+import { componentProfile } from './lib/component-profile.mjs'
+import { shutdown } from './lib/host.mjs'
 import {
   FRAGMENT_FILE,
   PRESET_ID,
@@ -85,12 +87,53 @@ await test('the running host copy resolves from the checkout before any fallback
 })
 
 /**
+ * A registry double: records the definition, answers with a counting disposer,
+ * and exposes the `config`/`defaultId` pair the default switch reads.
+ * @param {string} [selected] - the already-saved `selectedDefault`, if any.
+ * @returns {object} the registry double with its recorded state.
+ */
+function stubRegistry(selected) {
+  const state = { definitions: [], disposed: 0, fail: undefined, selected, updates: [], order: [] }
+  return {
+    state,
+    config: { default: 'standard', selectedDefault: { get: () => state.selected } },
+    get defaultId() { return state.selected ?? 'standard' },
+    register(definition) {
+      state.definitions.push(definition)
+      state.order.push('register')
+      if (state.fail !== undefined) return Promise.reject(state.fail)
+      return Promise.resolve(async () => { state.disposed += 1 })
+    },
+  }
+}
+
+/**
+ * A settings-service double: records each update and applies the volatile write
+ * to the registry state, exactly as the host hot-applies it.
+ * @param {object} registry - the registry the written default belongs to.
+ * @param {Error} [fail] - make the write reject, for the failure path.
+ * @returns {object} the settings service.
+ */
+function stubSettings(registry, fail) {
+  return {
+    async update(namespace, patch) {
+      registry.state.updates.push({ namespace, patch: { ...patch } })
+      registry.state.order.push('default')
+      if (fail !== undefined) throw fail
+      if (typeof patch.selectedDefault === 'string') registry.state.selected = patch.selectedDefault
+    },
+  }
+}
+
+/**
  * A context double that plays both the row root and the injected child.
  * @param {object} registry - the service the injected context exposes as `agentPresets`.
+ * @param {object|null} [settings] - the service exposed as `settings`; defaults to a recording writer.
  * @returns {object} the stub root plus its recorded calls.
  */
-function stubRoot(registry) {
-  const events = { inject: [], effects: [], disposed: false }
+function stubRoot(registry, settings) {
+  const events = { inject: [], effects: [] }
+  const services = { agentPresets: registry, settings: settings === undefined ? stubSettings(registry) : settings }
   const root = {
     logger: { warn: () => {} },
     inject(deps, callback) {
@@ -98,7 +141,7 @@ function stubRoot(registry) {
       callback(root)
     },
     get(name) {
-      return name === 'agentPresets' ? registry : undefined
+      return services[name]
     },
     effect(callback, label) {
       const cleanup = callback()
@@ -107,19 +150,6 @@ function stubRoot(registry) {
     },
   }
   return { root, events }
-}
-
-/** A registry double: records the definition and answers with a counting disposer. */
-function stubRegistry() {
-  const state = { definitions: [], disposed: 0, fail: undefined }
-  return {
-    state,
-    register(definition) {
-      state.definitions.push(definition)
-      if (state.fail !== undefined) return Promise.reject(state.fail)
-      return Promise.resolve(async () => { state.disposed += 1 })
-    },
-  }
 }
 
 await test('the shipped fragment resolves from the built module and yields the host preset', () => {
@@ -159,8 +189,8 @@ await test('disposing the injected fiber releases the registration', async () =>
   await waitFor(() => registry.state.definitions.length === 1, { what: 'the ops-ptc registration' })
   const effect = events.effects.find(entry => entry.label === 'dsh-ops: ops-ptc preset')
   assert.ok(effect !== undefined, 'the registration is owned by a tracked effect')
-  effect.cleanup()
-  assert.equal(registry.state.disposed, 1)
+  await effect.cleanup()
+  await waitFor(() => registry.state.disposed === 1, { what: 'the released registration' })
 })
 
 await test('the real Cordis fiber owns the registration and releases it on disposal', async () => {
@@ -168,21 +198,149 @@ await test('the real Cordis fiber owns the registration and releases it on dispo
   ctx.logger.level = 0
   const registry = stubRegistry()
   ctx.provide('agentPresets', registry)
+  ctx.provide('settings', stubSettings(registry))
   registerOpsPtcPreset(ctx)
   await waitFor(() => registry.state.definitions.length === 1, { what: 'the real injection' })
   assert.equal(registry.state.definitions[0].id, 'ops-ptc')
+  await waitFor(() => registry.state.selected === 'ops-ptc', { what: 'the forced default through the real fiber' })
+  assert.deepEqual(registry.state.order, ['register', 'default'])
   await ctx.fiber.dispose()
   await waitFor(() => registry.state.disposed === 1, { what: 'the fiber disposal to release the preset' })
+  await waitFor(() => registry.state.selected === 'standard', { what: 'the restored official default' })
 })
 
-await test('one root never registers the preset twice', async () => {
+await test('one injected activation never registers the preset twice', async () => {
   const registry = stubRegistry()
-  const { root, events } = stubRoot(registry)
+  const { root } = stubRoot(registry)
   registerOpsPtcPreset(root)
   registerOpsPtcPreset(root)
   await waitFor(() => registry.state.definitions.length === 1, { what: 'the ops-ptc registration' })
-  assert.equal(events.inject.length, 1, 'the second call must not inject again')
-  assert.equal(registry.state.definitions.length, 1)
+  await new Promise(resolve => setImmediate(resolve))
+  // The Loader reuses the row context across a remount, so the guard lives on
+  // the injected activation; a repeated call on the same one stays a no-op.
+  assert.equal(registry.state.definitions.length, 1, 'one registration per activation')
+})
+
+/** Wait for a registration to settle, then confirm nothing else writes the default. */
+async function settle(registry) {
+  await waitFor(() => registry.state.definitions.length === 1, { what: 'the ops-ptc registration' })
+  await new Promise(resolve => setImmediate(resolve))
+}
+
+await test('force=true writes ops-ptc only after the registration succeeded', async () => {
+  const registry = stubRegistry()
+  const { root } = stubRoot(registry)
+  registerOpsPtcPreset(root, { forceDefault: true })
+  await waitFor(() => registry.state.updates.length === 1, { what: 'the forced default' })
+  assert.deepEqual(registry.state.updates[0], { namespace: 'agent-preset-registry', patch: { selectedDefault: 'ops-ptc' } })
+  assert.deepEqual(registry.state.order, ['register', 'default'], 'the preset is registered before the default changes')
+  assert.equal(registry.defaultId, 'ops-ptc')
+})
+
+await test('force=true with ops-ptc already default writes nothing', async () => {
+  const registry = stubRegistry('ops-ptc')
+  const { root } = stubRoot(registry)
+  registerOpsPtcPreset(root, { forceDefault: true })
+  await settle(registry)
+  assert.deepEqual(registry.state.updates, [])
+})
+
+await test('force=false restores the official default when ops-ptc is the leftover', async () => {
+  const registry = stubRegistry('ops-ptc')
+  const { root } = stubRoot(registry)
+  registerOpsPtcPreset(root, { forceDefault: false })
+  await waitFor(() => registry.state.updates.length === 1, { what: 'the restore write' })
+  assert.deepEqual(registry.state.updates[0], { namespace: 'agent-preset-registry', patch: { selectedDefault: 'standard' } })
+  assert.equal(registry.defaultId, 'standard')
+})
+
+await test('force=false leaves a default the operator chose alone', async () => {
+  const registry = stubRegistry('ptc')
+  const { root } = stubRoot(registry)
+  registerOpsPtcPreset(root, { forceDefault: false })
+  await settle(registry)
+  assert.deepEqual(registry.state.updates, [])
+  assert.equal(registry.defaultId, 'ptc')
+})
+
+await test('disposal restores the selection captured before forcing', async () => {
+  const registry = stubRegistry('ptc')
+  const { root, events } = stubRoot(registry)
+  registerOpsPtcPreset(root, { forceDefault: true })
+  await waitFor(() => registry.state.selected === 'ops-ptc', { what: 'the forced default' })
+  const effect = events.effects.find(entry => entry.label === 'dsh-ops: ops-ptc preset')
+  await effect.cleanup()
+  await waitFor(() => registry.state.selected === 'ptc', { what: 'the operator default restored on teardown' })
+  assert.deepEqual(registry.state.updates.map(entry => entry.patch.selectedDefault), ['ops-ptc', 'ptc'])
+})
+
+await test('disposal with no saved selection restores the official default', async () => {
+  const registry = stubRegistry()
+  const { root, events } = stubRoot(registry)
+  registerOpsPtcPreset(root, { forceDefault: true })
+  await waitFor(() => registry.state.selected === 'ops-ptc', { what: 'the forced default' })
+  const effect = events.effects.find(entry => entry.label === 'dsh-ops: ops-ptc preset')
+  await effect.cleanup()
+  await waitFor(() => registry.state.selected === 'standard', { what: 'the official default restored on teardown' })
+})
+
+await test('a remount teardown restore is settled by the replacement activation', async () => {
+  const registry = stubRegistry()
+  const first = stubRoot(registry)
+  registerOpsPtcPreset(first.root, { forceDefault: true })
+  await waitFor(() => registry.state.selected === 'ops-ptc', { what: 'the forced default' })
+  const effect = first.events.effects.find(entry => entry.label === 'dsh-ops: ops-ptc preset')
+  await effect.cleanup()
+  // The Loader mounts a replacement fiber from the same row; it awaits the
+  // teardown restore, then re-forces from the saved switch.
+  const second = stubRoot(registry)
+  registerOpsPtcPreset(second.root, { forceDefault: true })
+  await waitFor(() => registry.state.definitions.length === 2, { what: 'the replacement registration' })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(registry.state.selected, 'ops-ptc', 'the replacement activation owns the final default')
+  assert.equal(registry.state.updates.at(-1).patch.selectedDefault, 'ops-ptc')
+})
+
+await test('a disabled row restores the default on teardown', async () => {
+  const registry = stubRegistry()
+  const { root, events } = stubRoot(registry)
+  registerOpsPtcPreset(root, { forceDefault: true })
+  await waitFor(() => registry.state.selected === 'ops-ptc', { what: 'the forced default' })
+  const effect = events.effects.find(entry => entry.label === 'dsh-ops: ops-ptc preset')
+  await effect.cleanup()
+  await waitFor(() => registry.state.selected === 'standard', { what: 'the default restored by a disabled row' })
+})
+
+await test('a failed registration never forces the default', async () => {
+  const registry = stubRegistry()
+  registry.state.fail = new Error('activation failed')
+  const { root } = stubRoot(registry)
+  registerOpsPtcPreset(root, { forceDefault: true, warn: () => {} })
+  await waitFor(() => registry.state.definitions.length === 1, { what: 'the failed registration attempt' })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(registry.state.updates, [], 'a missing preset must never become the default')
+  assert.equal(registry.defaultId, 'standard')
+})
+
+await test('a missing settings service only warns and keeps the preset registered', async () => {
+  const registry = stubRegistry()
+  const warnings = []
+  const { root } = stubRoot(registry, null)
+  registerOpsPtcPreset(root, { forceDefault: true, warn: message => warnings.push(message) })
+  await waitFor(() => warnings.length === 1, { what: 'the settings warning' })
+  assert.match(warnings[0], /settings service is unavailable/)
+  await settle(registry)
+  assert.equal(registry.defaultId, 'standard')
+})
+
+await test('a rejected settings write only warns and leaves the default unchanged', async () => {
+  const registry = stubRegistry()
+  const warnings = []
+  const { root } = stubRoot(registry, stubSettings(registry, new Error('denied')))
+  registerOpsPtcPreset(root, { forceDefault: true, warn: message => warnings.push(message) })
+  await waitFor(() => warnings.length === 1, { what: 'the rejected write warning' })
+  assert.match(warnings[0], /cannot persist the default agent preset as ops-ptc: denied/)
+  assert.equal(registry.defaultId, 'standard')
 })
 
 await test('a deployment without the preset registry is left alone', () => {
@@ -232,6 +390,38 @@ await test('a rejected registration promise only warns', async () => {
   registerOpsPtcPreset(root, { load: boot.loadOverlayPatches, warn: message => warnings.push(message) })
   await waitFor(() => warnings.length === 1, { what: 'the registration failure warning' })
   assert.match(warnings[0], /cannot register the ops-ptc agent preset: activation failed/)
+})
+
+await test('a live Loader remount keeps the forced default and a disable restores it', async () => {
+  const current = fs.readFileSync(path.join(PACKAGE_ROOT, 'cordis.patch.yml'), 'utf8')
+  const fixture = componentProfile('preset-registration-loader', current)
+  const host = await fixture.boot('linux')
+  const registry = stubRegistry()
+  try {
+    // The row mounts before the services exist, exactly like a profile whose
+    // settings/preset rows activate after the bundle row: the injection is what
+    // starts the registration.
+    host.ctx.provide('agentPresets', registry)
+    host.ctx.provide('settings', stubSettings(registry))
+    await waitFor(() => registry.state.selected === 'ops-ptc', { what: 'the forced default in a live Loader tree' })
+    assert.equal(registry.state.updates.length, 1)
+
+    // Saving an ordinary row switch remounts the fiber from the same entry. The
+    // old teardown must not restore (that write would race the new activation and
+    // wait on the profile lock the save holds).
+    fs.writeFileSync(fixture.profile.patchPath, JSON.stringify([{ id: 'dsh-ops', config: { panel: { enabled: true } } }]))
+    await host.refresh()
+    await waitFor(() => registry.state.definitions.length === 2, { what: 'the replacement activation' })
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(registry.state.updates.at(-1).patch.selectedDefault, 'ops-ptc',
+      'the replacement activation settles the default after the teardown restore')
+    assert.equal(registry.state.selected, 'ops-ptc', 'the replacement activation keeps the forced default')
+
+    // Disabling the row loses the owner, so teardown gives the default back.
+    fs.writeFileSync(fixture.profile.patchPath, JSON.stringify([{ id: 'dsh-ops', config: { panel: { enabled: true } }, disabled: true }]))
+    await host.refresh()
+    await waitFor(() => registry.state.selected === 'standard', { what: 'the default restored when the row is disabled' })
+  } finally { await shutdown(host.ctx) }
 })
 
 await test('the host entry anchor resolves app-boot when the install does not hoist it', async () => {

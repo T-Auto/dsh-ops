@@ -1,7 +1,7 @@
 /**
  * The single row's page, exactly as the maintainer specified it.
  *
- * Two bundle switches, four switches per preset, and one card for the three
+ * Bundle switches, four switches per preset, and one card for the three
  * opt-in features. Every switch is addressed by a path (`[section, key]`) so the
  * three opt-in switches can share one card while still writing their own section.
  */
@@ -46,12 +46,13 @@ const at = (section: string, key: string): readonly [string, string] => [section
 const field = (path: readonly [string, string], label: LocaleKey, hint?: LocaleKey, gatedBy?: BundleGate): FieldSpec =>
   ({ path, label, hint, ...(gatedBy === undefined ? {} : { gatedBy }) })
 
-/** The two bundle switches. */
+/** The bundle switches: four gates, then the default-preset force switch. */
 export const GLOBAL: readonly FieldSpec[] = Object.freeze([
   field(at('global', 'bash'), 'swBash', 'globalBashHint'),
   field(at('global', 'hidePwsh'), 'swHidePwsh', 'globalHidePwshHint'),
   field(at('global', 'hideOfficialTools'), 'hideOfficialTools', 'hideOfficialToolsHint'),
   field(at('global', 'dynamicTools'), 'dynamicTools', 'dynamicToolsHint'),
+  field(at('global', 'forceDefaultOpsPtc'), 'swForceDefaultOpsPtc', 'swForceDefaultOpsPtcHint'),
 ])
 
 /** The five preset switches, identical in every mode. */
@@ -86,6 +87,7 @@ export const GROUPS: readonly GroupSpec[] = Object.freeze([
 /** What a switch runs with when it is absent. */
 const DEFAULTS: Readonly<Record<string, boolean>> = Object.freeze({
   'global.bash': true, 'global.hidePwsh': true, 'global.hideOfficialTools': true, 'global.dynamicTools': true,
+  'global.forceDefaultOpsPtc': true,
   'minimal.enabled': true, 'minimal.bash': true, 'minimal.hidePwsh': true, 'minimal.hideOfficialTools': true, 'minimal.dynamicTools': true,
   'standard.enabled': true, 'standard.residentTools': true, 'standard.bash': true, 'standard.hidePwsh': true, 'standard.hideOfficialTools': true, 'standard.dynamicTools': true,
   'ptc.enabled': true, 'ptc.residentTools': true, 'ptc.bash': true, 'ptc.hidePwsh': true, 'ptc.hideOfficialTools': true, 'ptc.dynamicTools': true,

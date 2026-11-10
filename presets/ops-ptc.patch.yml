@@ -14,7 +14,7 @@
       config:
         id: ops-ptc
         name: 'OPS (PTC)'
-        description: Code-driven PTC tools, extended by the dsh-ops ops_* tool surface.
+        description: 代码驱动的 PTC 工具面，由 dsh-ops 的 ops_* 工具扩展。
         order: 6
         plugins:
           - id: persona

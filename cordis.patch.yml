@@ -10,12 +10,14 @@
     - id: dsh-ops
       name: dsh-ops
       config:
-        # Four bundle switches (one per preset switch), then each preset; all default on.
+        # Four bundle switches that gate the same-named preset switch, plus the
+        # default-preset force switch; then each preset. All default on.
         global:
           bash: true
           hidePwsh: true
           hideOfficialTools: true
           dynamicTools: true
+          forceDefaultOpsPtc: true
         minimal:
           enabled: true
           spillRetentionDays: 30
