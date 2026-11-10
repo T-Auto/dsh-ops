@@ -24,7 +24,7 @@ import { errorMessage } from '../shells/types.js'
 import { reclaimNiubashSiblings, verifyNiubashTree, niubashFileHash, NIUBASH_EXECUTION_DIRECTORIES, NIUBASH_HOME_PATH, NIUBASH_PACKAGE_PATH, NIUBASH_PIN, NIUBASH_RECEIPT } from './niubash-payload.js'
 import { NIUBASH_MANIFEST_SHA256 } from './niubash-payload.js'
 import { preparedNiubashEntries, retirePreparedNiubash } from '../niubash/prepared-cache.js'
-import { NIUBASH_FACES } from '../niubash/faces.js'
+import { NIUBASH_FACES, NIUBASH_WINUXCMD, niubashFacePath } from '../niubash/faces.js'
 import { pendingRoot, planPendingSweep, sweepPendingScratch } from './pending-scratch.js'
 
 /** The resource classes this command knows, and the only ones it may print or touch. */
@@ -191,10 +191,10 @@ function auditItems(root: string): CacheItem[] {
 
 /** Legacy cleanup accepts incomplete clones, but every payload member must match the frozen bytes. */
 function verifyExecutionTreeForReclaim(target: string): void {
-  const executable = 'winuxcmd/usr/bin/winuxcmd.exe'
+  const executable = NIUBASH_WINUXCMD
   const sizes: Readonly<Record<string, number>> = NIUBASH_PIN.sizes
   const allowedDirectories = new Set([...NIUBASH_PIN.directories, ...NIUBASH_EXECUTION_DIRECTORIES])
-  const derived = new Set(NIUBASH_FACES.map(face => `winuxcmd/usr/bin/${face}.exe`))
+  const derived = new Set(NIUBASH_FACES.map(niubashFacePath))
   const walk = (relative: string): void => {
     for (const entry of fs.readdirSync(path.join(target, relative), { withFileTypes: true })) {
       const name = relative === '' ? entry.name : `${relative}/${entry.name}`

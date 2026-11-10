@@ -304,7 +304,7 @@ await test('exec-tree status and offline reclaim include obsolete prepared versi
   })
 })
 
-await test('prepared reclaim renames once before deletion, retains a busy sibling and never selects a missing current version', async () => {
+await test('prepared reclaim renames a live name once before deletion, removes a retired name in place, retains a busy sibling and never selects a missing current version', async () => {
   await withTempDir('cache-prepared-busy', root => {
     const { home, prepared, directories } = preparedFixture(root)
     const temp = path.join(root, 'temp')
@@ -320,7 +320,9 @@ await test('prepared reclaim renames once before deletion, retains a busy siblin
     }
     fs.rmSync = (target, options) => {
       removals.push(target)
-      assert.ok(renames.some(([source, destination]) => source !== busy && destination === target), 'delete only a successfully renamed directory')
+      const retiredInPlace = /\.retired-[A-Za-z0-9-]+$/u.test(target) && directories.includes(target)
+      assert.ok(retiredInPlace || renames.some(([source, destination]) => source !== busy && destination === target), 'delete only a successfully renamed directory or an already retired one')
+      if (retiredInPlace) assert.ok(!renames.some(([source]) => source === target), 'a retired name is never renamed again')
       assert.equal(options.maxRetries ?? 0, 0, 'deletion has no retries')
       return remove(target, options)
     }

@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { NIUBASH_HOME_PATH, NIUBASH_PIN, NIUBASH_RECEIPT } from '../cli/niubash-payload.js'
 import { unsealDirectorySync } from '../niubash/seal.js'
-import { isNiubashExecutable, niubashCandidates, verifiedNiubash } from '../niubash/runtime.js'
+import { isNiubashExecutable, niubashCandidates, selectNiubash } from '../niubash/runtime.js'
 import { PACKAGE_ROOT, dshHome } from '../paths.js'
 import { provisionedShellStore } from './pins.js'
 import { executableNames, isSpawnableFile, isWslBashLauncher, wellKnownCandidates } from './paths.js'
@@ -137,14 +137,14 @@ export function selectBashRuntime(source: BashSelectionSource, options: BashSele
     // Clearing `bashPath` is the choice: the ladder then prefers the provisioned
     // copy and falls back to the payload shipped inside the package.
     const resolved = niubashCandidates(PACKAGE_ROOT, env).map(candidate => {
-      try { return verifiedNiubash(candidate.file, env.PATH ?? env.Path, env) } catch { return undefined }
-    }).find(runtime => runtime !== undefined)
+      try { return selectNiubash(candidate.file) } catch { return undefined }
+    }).find(file => file !== undefined)
     return { source, clear: true, engine: 'niubash',
-      ...(resolved === undefined ? {} : { file: resolved.file }),
+      ...(resolved === undefined ? {} : { file: resolved }),
       detail: resolved === undefined
-        ? `No verified Niubash ${NIUBASH_PIN.upstreamVersion} payload is installed; saving clears bashPath and the row reports the missing payload. Run dsh-ops bash-runtime install first.`
+        ? `No complete pinned Niubash ${NIUBASH_PIN.upstreamVersion} payload is installed; saving clears bashPath and the row reports the missing payload. Run dsh-ops bash-runtime install first.`
         : `Niubash ${NIUBASH_PIN.upstreamVersion} resolved from the deployment's own payload.`,
-      restriction: resolved === undefined ? '' : restrictedCompatibility(resolved.file, options).reason ?? '' }
+      restriction: resolved === undefined ? '' : restrictedCompatibility(resolved, options).reason ?? '' }
   }
   const requested = options.path?.trim()
   const candidate = requested === undefined || requested === '' ? gitBashCandidates(options)[0] : requested
@@ -153,7 +153,7 @@ export function selectBashRuntime(source: BashSelectionSource, options: BashSele
   const absolute = path.resolve(candidate)
   if (!isSpawnableFile(absolute)) throw new Error('The Bash executable does not exist: ' + absolute)
   const engine = isNiubashExecutable(absolute) ? 'niubash' : 'msys'
-  if (engine === 'niubash') verifiedNiubash(absolute, env.PATH ?? env.Path, env)
+  if (engine === 'niubash') selectNiubash(absolute)
   const check = restrictedCompatibility(absolute, options)
   return { source, file: absolute, clear: false, engine,
     detail: engine === 'niubash' ? 'Explicit Niubash payload selected.' : 'Explicit Git Bash (MSYS) executable selected.',

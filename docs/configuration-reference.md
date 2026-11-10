@@ -147,18 +147,20 @@ report `CREDENTIAL_DENIED`, no effect and no retry, and do not disclose denied p
 `DSH_OPS_DENY_READ` can widen the fence; disabling the Native override is an explicit operator
 choice for that consumer, not an authorization grant.
 
-Windows Niubash selection verifies the frozen source and prepares one copied runtime at
+Windows Niubash bytes are hashed against the frozen manifest only by the package build and
+`provision-shells --bash`. Selection checks that the pinned files are present with their pinned
+sizes and reads no contents. The first Bash call in a process prepares one copied runtime at
 `<DSH_HOME>/dsh-ops/shells/niubash-prepared/<manifest hash>`, including command faces and six
-startup directories. Source files are never hardlinked into it. Ordinary calls reuse that runtime without
+startup directories. Source files are never hardlinked into it. Later calls reuse that runtime without
 per-call cloning, hashing, seals or execution receipts, while every call follows the current host policy (`confine` in restricted modes).
 `DSH_HOME` must place the prepared runtime outside the session workspace; each call enforces this.
 `DSH_OPS_EXEC_ROOT` and `NIUBASH_VERIFY=deep` are deprecated and ignored by runtime execution.
 Only offline legacy execution-tree reclamation still reads `DSH_OPS_EXEC_ROOT` to discover old roots.
-A damaged prepared version is moved aside and rebuilt once at selection from the verified source;
-failed repair reports both causes instead of looping. After successful selection, other prepared
+A prepared version missing a pinned file or with a wrong size is moved aside and rebuilt once from
+the selected payload; failed repair reports both causes instead of looping. After the first successful preparation in a process, other prepared
 versions and broken/retired leftovers, plus staging leftovers of the selected hash only are renamed to `.retired-<uuid>`
 siblings before best-effort deletion. Only exact prepared-version names and real directories are
-touched; a refused rename is not retried until the next selection. `cache status/reclaim --kind
+touched; a refused rename is not retried until the next host start. `cache status/reclaim --kind
 exec-tree` also lists/reclaims these non-current prepared directories (including other hashes'
 staging leftovers), never the current hash. If another profile with a different Niubash pin retires
 the selected version, its next call prepares that pin once from its selected verified source,
