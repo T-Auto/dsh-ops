@@ -40,7 +40,9 @@ Supported: Windows x64, Linux x64, and macOS 13+ on Apple Silicon or Intel
   once at session start and once more after three consecutive writes to one path in a turn, without
   touching the system prompt. Native discovery and typed SDK loading are independently configured.
   Advanced selections activate in the owning agent's next provider request, never by executing a
-  discovery action. See [presets](docs/presets.md).
+  discovery action. The default preset is forced by the `global.forceDefaultOpsPtc` switch (on by
+  default; turning it off or disabling the row restores the previous or official default). See
+  [presets](docs/presets.md).
 - The PTC SDK catalogue has 18 APIs: 15 file/document tools, batch, result references and its loader.
   Only the configured resident or selected APIs are exposed. Native and PTC use separate outputs.
 - Discover bounded CSV/TSV, DOCX main-body paragraphs and a restricted PDF text layer. Binary DOC,

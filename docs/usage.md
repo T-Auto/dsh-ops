@@ -26,6 +26,7 @@ Standard and Cordis publish resident Native tools; Minimal has no file baseline;
 typed APIs with a separate SDK loader; OPS PTC (`ops-ptc`) is registered at plugin runtime and keeps
 that surface, adding the batch-call guidance from the editable `prompts/batching-guidance.md` once at
 session start and once more after repeated writes (on in the packaged bundle; see [presets](presets.md)).
+The default preset is forced by `global.forceDefaultOpsPtc` (on by default).
 Residency, dynamic loading, Bash, file replacement and
 Windows host-shell hiding are independently controlled. Global gates preserve saved per-preset
 intent. Explicit consumers use the same assembler; unlisted presets remain unchanged.

@@ -55,22 +55,46 @@ Source resolution tries `--source`, `DSH_WEB_APP_PRESETS`, package resolution of
 with an installed `@deepseek-ai/dsh`. An unresolvable source is a failure, never a quiet pass. Re-run the script
 after upgrading the host and review the diff; `--check` fits a local verification step.
 
-## Making it the default preset
+## Forcing the default preset (`global.forceDefaultOpsPtc`)
 
-The bundle no longer overrides `agent-preset-registry`: `dsh.bundle.patch` is only `./cordis.patch.yml`, and
-that file only inserts the single `dsh-ops` row. The default preset is decided by the host/operator in one of
-two ways:
+`dsh-ops` forces new sessions to default to `ops-ptc`. The bundle switch `global.forceDefaultOpsPtc` (label
+"Force the default agent preset to OPS (PTC)", default true; toggle it on the plugin page's global card or set
+it in YAML) controls this at runtime rather than baking it into the profile:
 
-- **Host Agent presets settings page**: selecting `ops-ptc` persists `selectedDefault` (the volatile user-level
-  default, resolved before the deployment `default` for new sessions).
+- **On (default)**: after the `ops-ptc` preset registers successfully, the plugin writes
+  `selectedDefault: ops-ptc` on `agent-preset-registry` through the host settings service — the same
+  mechanism and the same volatile field as choosing a default on the Agent presets settings page. A manual
+  choice is therefore overridden on the next apply while the switch stays on.
+- **Off**: restores the `selectedDefault` captured before forcing. When no value was saved, or the captured
+  value is itself `ops-ptc` (a leftover from an earlier forced run), it falls back to the host
+  `config.default`, i.e. that deployment's official default preset.
+- **Disabling or unloading the `dsh-ops` row**: cleanup restores the default before releasing the preset
+  registration, and only writes when the current default really is `ops-ptc`. A missing host settings service
+  or a failed write only logs a warning prefixed with `dsh-ops: ` and never blocks unloading.
+- Forcing happens only after a successful registration; a missing fragment, unresolvable app-boot or rejected
+  registration writes no default and simply leaves it unforced.
+- The switch only changes the default preset choice; it changes no tool surface, permission or preset content.
+
+In the host picker the preset is named `OPS (PTC)` and described as
+"代码驱动的 PTC 工具面，由 dsh-ops 的 ops_* 工具扩展。".
+
+## Setting another default preset manually
+
+`ops-ptc` is only made the default by the switch above: while the switch is off, a default still pointing at
+`ops-ptc` is restored on apply to the captured pre-force value or the official default (so disabling the row
+never leaves a dangling default), so do not set `ops-ptc` as the default by hand. Other default presets are
+still decided by the host/operator:
+
+- **Host Agent presets settings page**: picking an already registered preset such as `standard` or `ptc`
+  persists `selectedDefault`.
 - **Explicit profile patch** (paste into `$DSH_HOME/profiles/<profile>/cordis.patch.yml`):
 
 ```yaml
 - id: agent-preset-registry
   name: '@deepseek-ai/dsh-agent-preset-registry'
   config:
-    default: ops-ptc
-    selectedDefault: ops-ptc
+    default: standard
+    selectedDefault: standard
 ```
 
 `default` is the deployment default used when no user selection exists; `selectedDefault` is the user-level
@@ -82,13 +106,16 @@ default comes from that profile's own composition.
 
 ### Risks and rollback
 
-- **Switch the default first, then disable `dsh-ops`.** The preset is registered at plugin runtime: disabling or
-  unloading the `dsh-ops` row releases the registration. Existing sessions keep their composition, but while the
-  default still points at `ops-ptc` **new sessions cannot find that preset** (recovery resolves against the
-  current definition and fails). The correct order is to switch the default back to `standard`, `ptc` or
-  another registered preset first, then disable the plugin; re-enable it and switch back afterwards.
+- **With the switch on (the default)**: disabling or unloading restores the default before releasing the
+  registration, so the normal path does not leave a dangling default; after re-enabling, or with the switch
+  off, pick the default you want on the settings page. A failed restore only warns and does not block
+  unloading; treat that case as the next bullet.
+- **With the switch off**: apply also restores an `ops-ptc` default (the captured value or the official
+  default), so a manual switch is usually unnecessary; if a missing host settings service makes that restore
+  fail, switch the default to another preset before disabling or unloading, otherwise new sessions may fail to
+  resolve the vanished preset against the current definition.
 - A missing fragment or a host upgrade that breaks parsing leaves the preset unavailable while the tools keep
-  working; regenerate the fragment and restart the host to recover.
+  working and no default is forced; regenerate the fragment and restart the host to recover.
 - Not finding an `ops-ptc` preset row in the plugin manager is by design; do not add a declaration by hand.
 - Existing sessions keep the composition they already bound; changing the default only affects sessions created
   afterwards.
@@ -103,6 +130,7 @@ default comes from that profile's own composition.
 | Compaction | official `compaction-basic` | official `compaction-basic` as well; no `dsh-compress-codex` |
 | Batch-call guidance | none | `batchingGuidance`: code default false, packaged `ops-ptc` section true; once at session start plus once after three consecutive writes to one path in a turn, with the text in the editable `prompts/batching-guidance.md` |
 | Single-row section | `ptc` | `ops-ptc` (same keys plus `batchingGuidance`) |
+| Default preset | decided by the host/operator | forced to `ops-ptc` at runtime by `global.forceDefaultOpsPtc` (on by default); restored when turned off or the row is disabled |
 | Ordering | order 2 | order 6, sorted after the official rows |
 
 Having both modes over one tool surface is the point of the contrast arm: `ptc` keeps the official preset
