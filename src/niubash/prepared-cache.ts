@@ -18,7 +18,7 @@ export function preparedNiubashEntries(current: string): string[] {
   } catch { return [] }
 }
 
-/** Rename once before deletion. A Windows image/sharing lock leaves the sibling for next selection. */
+/** Rename once before deletion. A Windows image/sharing lock leaves the sibling for the next host start. */
 export function retirePreparedNiubash(directory: string): boolean {
   if (!PREPARED_NAME.test(path.basename(directory))) return false
   const retired = `${directory}.retired-${randomUUID()}`
@@ -31,7 +31,7 @@ export function retirePreparedNiubash(directory: string): boolean {
   catch { return false }
 }
 
-/** A successful selection keeps only its current version; busy siblings never fail selection. */
+/** The first successful preparation in a process keeps only its current version; busy siblings never fail it. */
 export function reclaimPreparedNiubash(current: string): void {
   const hash = path.basename(current)
   for (const directory of preparedNiubashEntries(current)) {

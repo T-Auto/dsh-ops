@@ -1,7 +1,7 @@
 /** Installation-relative, verified private MSYS runtime for confined Windows calls.
  * Original payloads remain untouched. Full access does not select this runtime.
  */
-import { isNiubashExecutable, verifiedNiubash } from './niubash/runtime.js'
+import { isNiubashExecutable, selectNiubash } from './niubash/runtime.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
@@ -59,7 +59,7 @@ export function restrictedRemedy(file: string, source: string | undefined, why: 
 export function restrictedCompatibility(file: string, {platform=process.platform}: { platform?: NodeJS.Platform }={}) {
   if(platform!=='win32')return {compatible:true,reason:'no MSYS IPC compatibility layer is needed on this platform'}
   if(isNiubashExecutable(file)) {
-    try { verifiedNiubash(file); return {compatible:true,reason:'verified native Niubash; the host sandbox provides confinement'} }
+    try { selectNiubash(file); return {compatible:true,reason:'complete native Niubash; the host sandbox provides confinement'} }
     catch(error) { return {compatible:false,reason:errorMessage(error)} }
   }
   const dll=path.join(msysRoot(file),'usr/bin/msys-2.0.dll')
@@ -445,7 +445,8 @@ export function bashIpcReport(file: string | undefined, {home, platform=process.
  * @param {{home?: string, platform?: NodeJS.Platform, source?: string}} options */
 export function confinedBash(file: string, {home=process.env.DSH_HOME ?? path.join(os.homedir(),'.dsh'), platform=process.platform, source}: { home?: string; platform?: NodeJS.Platform; source?: string }={}): Runtime {
   if(platform!=='win32')return {file}
-  if(isNiubashExecutable(file))return verifiedNiubash(file)
+  // Niubash runs natively under host confinement (shells/session-execution.ts); it has no IPC runtime.
+  if(isNiubashExecutable(file))throw bashRuntimeFailure('bash-runtime-incompatible',restrictedRemedy(file,source,'Niubash runs natively and has no MSYS IPC runtime.'))
   const root=msysRoot(file)
   const check=restrictedCompatibility(file,{platform})
   if(!check.compatible)throw bashRuntimeFailure('bash-runtime-incompatible',restrictedRemedy(file,source,check.reason))

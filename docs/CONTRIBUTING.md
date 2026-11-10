@@ -136,7 +136,7 @@ keep 120 seconds. A positive finite `DSH_OPS_SUITE_TIMEOUT_MS` overrides either 
 passes 300 seconds explicitly; the clean consumer reserves 60 seconds for packing/installing,
 leaving 240 seconds for its real host checks. Bash commands retain their production 120-second default, but the
 descendant timeout/cancellation test uses an explicit 5-second command deadline. Version-level
-Niubash preparation happens at selection, not on each call; the suite watchdog is a separate outer
+Niubash preparation happens once per process at the first Bash call, not on each call; the suite watchdog is a separate outer
 limit. The descendant test proves that a child starts before its deadline and cannot write afterward.
 Reference Windows validation after removing per-call staging measured 37 seconds for
 `niubash-security-host` and 69 seconds for the clean `niubash-consumer`; these observations are

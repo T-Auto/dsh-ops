@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Windows Niubash selection no longer hashes the payload. Each mode consumer, the settings page and `ops_status` hashed the source and the prepared copy (about 893 MiB, faces included) synchronously on the host thread, so one default mount of four modes stalled for seconds. Selection now checks only that each pinned file is present with its pinned size, reads no contents and writes nothing; bytes are still hashed where they enter the machine (package build and `provision-shells --bash`). The prepared runtime is built asynchronously at the first Bash call, once per process, and its publication backoff no longer blocks the event loop. Files the shell writes into its state directories no longer mark the prepared copy damaged and force a full rebuild.
+- Windows Niubash 选择阶段不再哈希载荷。此前每个模式消费者、设置页和 `ops_status` 都会在宿主线程上同步哈希源载荷与准备副本（含 face 约 893 MiB），默认四个模式挂载一次就卡数秒。选择现在只检查每个固定文件存在且大小一致，不读取内容、不写文件；字节仍在进入本机时哈希（打包构建与 `provision-shells --bash`）。准备运行时改为进程内第一次 Bash 调用时异步构建一次，发布退避不再阻塞事件循环。Shell 写入启动目录的文件不再使准备副本被判为损坏而整份重建。
+
 - The package no longer ships the duplicate `README.zh.md`; `README.md` is the Chinese readme and `README.en.md` the English one.
 - 发行包不再包含重复的 `README.zh.md`：`README.md` 即中文说明，`README.en.md` 为英文说明。
 

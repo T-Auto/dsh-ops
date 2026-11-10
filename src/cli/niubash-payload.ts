@@ -1,5 +1,5 @@
 /** Frozen complete Niubash distribution. Receipts describe bytes; only this manifest authorizes them. */
-import { NIUBASH_FACES } from '../niubash/faces.js'
+import { NIUBASH_FACES, NIUBASH_WINUXCMD, niubashFacePath } from '../niubash/faces.js'
 import { unsealDirectorySync } from '../niubash/seal.js'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -111,7 +111,7 @@ function noLinks(directory: string) {
 
 export const NIUBASH_EXECUTION_DIRECTORIES = ['winuxcmd/usr/local', 'winuxcmd/usr/local/bin', 'winuxcmd/etc', 'winuxcmd/var', 'winuxcmd/dev', 'winuxcmd/dev/shm']
 
-/** Rehash a tree against the compiled inventory, not the untrusted local receipt. */
+/** The local receipt must restate the compiled inventory; it never authorizes bytes itself. */
 function assertProvenanceReceipt(value: unknown) {
   const receipt = (value !== null && typeof value === 'object' ? value : {}) as Record<string, unknown>
   if (receipt.version !== 1 || receipt.archiveSha256 !== manifest.archiveSha256
@@ -120,11 +120,33 @@ function assertProvenanceReceipt(value: unknown) {
     || JSON.stringify(receipt.sizes) !== JSON.stringify(sizes)) throw Error('Invalid Niubash provenance receipt')
 }
 
+/** One regular file of the expected size, judged by metadata alone. */
+export function expectNiubashFile(directory: string, name: string, size: number): void {
+  let stat: fs.Stats
+  try { stat = fs.lstatSync(path.join(directory, name)) } catch { throw Error(`Incomplete Niubash payload: ${name} is missing`) }
+  if (!stat.isFile()) throw Error(`Unsafe Niubash payload member: ${name}`)
+  if (stat.size !== size) throw Error(`Niubash payload size mismatch: ${name}`)
+}
+
 /**
- * Installation/selection verification: rehash every source byte against the
- * compiled inventory, including generated argv0 faces when present.
+ * Selection check: the pinned inventory is present with its pinned sizes. Reads metadata only.
+ * Bytes are trusted at the point they enter this machine ({@link stageNiubashArchive} and the
+ * package build); every later writer is the same account that could equally edit this module,
+ * so rehashing here would add cost, not protection. Paths outside the inventory are not inspected.
+ * @returns the absolute `niu.exe` path.
  */
-function verifyTree(directory: string, prepared: boolean) {
+export function inspectNiubashTree(directory: string): string {
+  noLinks(directory)
+  for (const [name, size] of Object.entries(sizes)) expectNiubashFile(directory, name, size)
+  return path.join(directory, manifest.executable)
+}
+
+/**
+ * Installation verification: rehash every byte of a pristine tree against the compiled inventory
+ * and reject anything the inventory does not name. Used where bytes enter or leave this machine,
+ * never on the mount or command path (see {@link inspectNiubashTree}).
+ */
+export function verifyNiubashTree(directory: string) {
   noLinks(directory)
   const seenFiles = new Set<string>()
   const walk = (relative: string) => {
@@ -139,28 +161,19 @@ function verifyTree(directory: string, prepared: boolean) {
       else if (!entry.isFile() || fs.lstatSync(file).isSymbolicLink()) throw Error(`Unsafe Niubash tree member: ${name}`)
       else if (name === NIUBASH_RECEIPT) continue
       else {
-        const original = Object.hasOwn(files, name) ? name : NIUBASH_FACES.some(face => name === `winuxcmd/usr/bin/${face}.exe`) ? 'winuxcmd/usr/bin/winuxcmd.exe' : undefined
+        // Trees older releases ran in place may still carry faces; they hash as winuxcmd.exe.
+        const original = Object.hasOwn(files, name) ? name : NIUBASH_FACES.some(face => name === niubashFacePath(face)) ? NIUBASH_WINUXCMD : undefined
         if (original === undefined || fs.statSync(file).size !== sizes[original] || niubashFileHash(file) !== files[original]) throw Error(`Niubash tree checksum mismatch: ${name}`)
         if (Object.hasOwn(files, name)) seenFiles.add(name)
       }
     }
   }
   walk('')
-  if (prepared) {
-    for (const name of NIUBASH_EXECUTION_DIRECTORIES) {
-      if (!fs.statSync(path.join(directory, name)).isDirectory()) throw Error(`Incomplete Niubash state directories: ${name}`)
-    }
-    for (const face of NIUBASH_FACES) {
-      if (!fs.existsSync(path.join(directory, `winuxcmd/usr/bin/${face}.exe`))) throw Error(`Incomplete Niubash argv0 faces: ${face}`)
-    }
-  }
   // npm omits empty directories; required parents are enforced by the complete file inventory.
   if (seenFiles.size !== Object.keys(files).length) throw Error('Incomplete Niubash payload tree')
   assertProvenanceReceipt(JSON.parse(fs.readFileSync(path.join(directory, NIUBASH_RECEIPT), 'utf8')))
   return path.join(directory, manifest.executable)
 }
-
-export function verifyNiubashTree(directory: string, prepared = false) { return verifyTree(directory, prepared) }
 
 /** Build in a fresh sibling, verify before rename, and preserve the previous payload on failure. */
 export function stageNiubashArchive(archive: string, target: string) {

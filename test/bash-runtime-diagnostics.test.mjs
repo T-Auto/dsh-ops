@@ -176,7 +176,7 @@ await test('a restricted bash that cannot run reports which bash and why, not a 
 })
 
 await test('Niubash selection failures preserve their actionable reason without legacy execution-tree remedies', () => {
-  const reason = 'EXECUTOR_UNAVAILABLE: Niubash payload verification failed: checksum mismatch. Restore the complete pinned payload; do not bypass confinement.'
+  const reason = 'EXECUTOR_UNAVAILABLE: Niubash payload is unusable: Niubash payload size mismatch: niu.exe. Restore the complete pinned payload; do not bypass confinement.'
   assert.equal(executorUnavailableMessage(new Error(reason)), reason)
   assert.doesNotMatch(reason, /link.count|exec-tree|private copy/)
 })
