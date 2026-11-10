@@ -3,8 +3,10 @@
  *
  * The module is a pure kernel: literal rules over the program text, no host, no
  * worker, no disk. These cases pin the rules the trigger relies on, including the
- * two that a naive implementation gets wrong: the plan comment must be the first
- * physical line, and a full-width semicolon separates entries too.
+ * ones a naive implementation gets wrong: the plan comment must be the first
+ * physical line, a full-width semicolon separates entries too, a program that
+ * dispatches nothing has no call shape to correct, and comment or string text is
+ * never mistaken for raw file IO.
  */
 import { assert, test, report } from './lib/harness.mjs'
 import { analyzeProgram, parsePlan, violationsOf, createProgramLatch, noticeText, CATEGORY_PRIORITY, PLAN_DIRECTIVE, THIN_CODE_CHARS } from '../lib/ptc/batching-guidance.js'
@@ -51,6 +53,38 @@ await test('the bypass rule separates shell file work from shell process work', 
   assert.equal(analyzeProgram('const r = await tools.ops_bash({ description: "list", command: "ls -la" })').bypassesFileTools, true)
   assert.equal(analyzeProgram('const r = await tools.ops_bash({ description: "cat", command: "cat package.json" })').bypassesFileTools, true)
   assert.equal(analyzeProgram('const raw = require("node:fs").readFileSync("a")').bypassesFileTools, true)
+})
+
+await test('comments and strings are not a bypass, while real module IO still is', () => {
+  // The rule text itself names node:fs; mentioning it is not doing it.
+  assert.equal(analyzeProgram('// plan: read the manifest\n// never call node:fs or fs.readFileSync directly\nconst r = await tools.ops_read_files({ files: [{ path: "a" }] })\nreturn r').bypassesFileTools, false)
+  assert.equal(analyzeProgram('/* node:fs and node:child_process are forbidden */\nconst r = await tools.ops_stat({ path: "a" })\nreturn r').bypassesFileTools, false)
+  assert.equal(analyzeProgram('const r = await tools.ops_stat({ path: "a" })\nreturn { rule: "node:fs is forbidden" }').bypassesFileTools, false)
+  assert.equal(analyzeProgram('const note = \x60use ops_read_files, not node:fs\x60\nconst r = await tools.ops_stat({ path: "a" })\nreturn note').bypassesFileTools, false)
+  // A comment that names a shell listing is not the program running one.
+  assert.equal(analyzeProgram('const r = await tools.ops_bash({ description: "build", command: "npm run build" })\n// ls -la would be a bypass\nreturn r').bypassesFileTools, false)
+  // Real module access still counts: import, require, the fs namespace, and an
+  // interpolated expression that really reads a file.
+  assert.equal(analyzeProgram('import fs from "node:fs"\nconst r = await tools.ops_stat({ path: "a" })\nreturn fs.readFileSync("a", "utf8")').bypassesFileTools, true)
+  assert.equal(analyzeProgram('const cp = require("node:child_process")\nconst r = await tools.ops_stat({ path: "a" })\nreturn cp').bypassesFileTools, true)
+  assert.equal(analyzeProgram('const r = await tools.ops_stat({ path: "a" })\nreturn fs.readFileSync("a")').bypassesFileTools, true)
+  assert.equal(analyzeProgram('const r = await tools.ops_stat({ path: "a" })\nreturn \x60\x24{fs.readFileSync("a")}\x60').bypassesFileTools, true)
+})
+
+await test('a program with no dispatch site earns no category', () => {
+  // A value program and a comment-only program have no call shape to correct.
+  for (const code of ['return 1', '// plan: read nothing\n// a note about node:fs\nreturn 1', '// tools.ops_stat({ path: "a" })\nreturn 1']) {
+    assert.equal(analyzeProgram(code).dispatchSites, 0, 'a commented-out call is not a dispatch site')
+    assert.deepEqual(violationsOf(analyzeProgram(code)), { plan: false, bypass: false, shape: false })
+  }
+  // The latch stays silent, so the model is never accused of a shape it did not take.
+  const latch = createProgramLatch(), agent = {}
+  assert.equal(latch.observe(agent, 'return 1'), undefined)
+  assert.equal(latch.observe(agent, '// plan: read nothing\n// a note\nreturn 1'), undefined)
+  assert.equal(latch.stats(agent).total, 0, 'no category was spent')
+  // One dispatch site restores the normal verdict: the gate is not a blanket silence.
+  assert.deepEqual(violationsOf(analyzeProgram('const r = await tools.ops_stat({ path: "a" })\nreturn r')),
+    { plan: true, bypass: false, shape: true })
 })
 
 await test('each of the three categories is decided independently', () => {

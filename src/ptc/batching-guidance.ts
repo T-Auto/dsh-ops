@@ -85,6 +85,138 @@ const BYPASS = /node:fs|node:child_process|\bfs\./u
 const SHELL_TOOL = /^(?:pwsh|bash|shell|ops_bash|pwsh_persistent|bash_persistent)$/u
 const SHELL_FILE_WORK = /Get-ChildItem|Get-Content|Select-String|Test-Path|(?:^|[\s;&|"'`])(?:ls|dir|cat|type|grep|rg|find|head|tail|wc|sed|awk|cp|mv|rm|mkdir)\s/iu
 
+/** Program text with comments and string bodies separated from executable tokens. */
+interface ReadableProgram {
+  /** Comments blanked; string bodies intact, so dispatch names and shell commands stay visible. */
+  readonly code: string
+  /** Comments blanked as well, with string bodies blanked except module specifiers and template expressions. */
+  readonly bare: string
+}
+
+/**
+ * Whether one string literal opens in a module-specifier position.
+ *
+ * A real import of `node:fs` must stay visible to the bypass rule, while the same
+ * text inside a message or a comment must not.
+ * @param code - the program text.
+ * @param open - index of the opening quote.
+ * @returns whether the quote follows `from`, `import`, `require(` or `import(`.
+ */
+function isModuleSpecifier(code: string, open: number): boolean {
+  let index = open - 1
+  while (index >= 0 && /\s/u.test(code[index]!)) index -= 1
+  if (index < 0) return false
+  if (code[index] === '(') {
+    index -= 1
+    while (index >= 0 && /\s/u.test(code[index]!)) index -= 1
+    const end = index
+    while (index >= 0 && /[\w$]/u.test(code[index]!)) index -= 1
+    const callee = code.slice(index + 1, end + 1)
+    return callee === 'require' || callee === 'import'
+  }
+  if (!/[\w$]/u.test(code[index]!)) return false
+  const end = index
+  while (index >= 0 && /[\w$]/u.test(code[index]!)) index -= 1
+  const keyword = code.slice(index + 1, end + 1)
+  return keyword === 'from' || keyword === 'import'
+}
+
+/**
+ * Separate executable program text from comments and string bodies.
+ *
+ * A false bypass is worse than a missed one: a program that only mentions
+ * `node:fs` in a comment or a message must not be accused of raw file IO. Module
+ * specifiers and template expressions stay readable, so real imports and real
+ * `fs.readFileSync(...)` calls still count.
+ * @param code - the program text.
+ * @returns the comment-free view and the comment-and-string-free view.
+ */
+function readProgram(code: string): ReadableProgram {
+  const comments = [...code]
+  const bare = [...code]
+  const blank = (target: string[], from: number, to: number): void => {
+    for (let index = from; index < to; index += 1) {
+      const char = target[index]
+      if (char !== '\n' && char !== '\r') target[index] = ' '
+    }
+  }
+  const stringEnd = (open: number, quote: string): number => {
+    let index = open + 1
+    while (index < code.length) {
+      const char = code[index]
+      if (char === '\\') { index += 2; continue }
+      if (char === quote) return index + 1
+      if (char === '\n') return index
+      index += 1
+    }
+    return code.length
+  }
+  const commentEnd = (open: number, block: boolean): number => {
+    let end: number
+    if (block) {
+      const close = code.indexOf('*/', open + 2)
+      end = close === -1 ? code.length : close + 2
+    } else {
+      end = code.indexOf('\n', open)
+      if (end === -1) end = code.length
+    }
+    blank(comments, open, end)
+    blank(bare, open, end)
+    return end
+  }
+  const quotedEnd = (open: number, quote: string): number => {
+    const end = stringEnd(open, quote)
+    if (!isModuleSpecifier(code, open)) {
+      const close = end > open && code[end - 1] === quote ? end - 1 : end
+      blank(bare, open + 1, close)
+    }
+    return end
+  }
+  const templateEnd = (open: number): number => {
+    let index = open + 1
+    let literal = index
+    while (index < code.length) {
+      const char = code[index]
+      if (char === '\\') { index += 2; continue }
+      if (char === '\x60') { blank(bare, literal, index); return index + 1 }
+      if (char === '$' && code[index + 1] === '{') {
+        blank(bare, literal, index)
+        index = expressionEnd(index + 2)
+        literal = index
+        continue
+      }
+      index += 1
+    }
+    blank(bare, literal, code.length)
+    return code.length
+  }
+  const expressionEnd = (open: number): number => {
+    let depth = 1
+    let index = open
+    while (index < code.length) {
+      const char = code[index]
+      if (char === '/' && code[index + 1] === '/') { index = commentEnd(index, false); continue }
+      if (char === '/' && code[index + 1] === '*') { index = commentEnd(index, true); continue }
+      if (char === "'" || char === '"') { index = quotedEnd(index, char); continue }
+      if (char === '\x60') { index = templateEnd(index); continue }
+      if (char === '{') depth += 1
+      else if (char === '}' && --depth === 0) return index + 1
+      index += 1
+    }
+    return code.length
+  }
+  let index = 0
+  while (index < code.length) {
+    const char = code[index]
+    if (char === '/' && code[index + 1] === '/') { index = commentEnd(index, false); continue }
+    if (char === '/' && code[index + 1] === '*') { index = commentEnd(index, true); continue }
+    if (char === "'" || char === '"') { index = quotedEnd(index, char); continue }
+    if (char === '\x60') { index = templateEnd(index); continue }
+    index += 1
+  }
+  return { code: comments.join(''), bare: bare.join('') }
+}
+
 /** Features observable in the program text alone. */
 export interface ProgramShape {
   /** Whether the first physical line carries a nonempty plan comment. */
@@ -127,9 +259,12 @@ export function analyzeProgram(code: unknown): ProgramShape {
     return { hasFirstLinePlan: false, declaredOperations: 0, dispatchSites: 0, hasBatchingStructure: false,
       hasBranching: false, isWaiting: false, bypassesFileTools: false, chars: 0 }
   }
-  const sites = [...code.matchAll(DISPATCH)]
+  const readable = readProgram(code)
+  // A commented-out call is not a call: dispatch sites are read from comment-free
+  // text, which is also what lets a truly dispatch-free program earn no notice.
+  const sites = [...readable.code.matchAll(DISPATCH)]
   const plan = parsePlan(code)
-  const shellForFiles = sites.some(match => SHELL_TOOL.test(match[1] ?? match[2] ?? '')) && SHELL_FILE_WORK.test(code)
+  const shellForFiles = sites.some(match => SHELL_TOOL.test(match[1] ?? match[2] ?? '')) && SHELL_FILE_WORK.test(readable.code)
   return {
     hasFirstLinePlan: plan.length > 0,
     declaredOperations: plan.length,
@@ -137,7 +272,9 @@ export function analyzeProgram(code: unknown): ProgramShape {
     hasBatchingStructure: BATCHED.test(code),
     hasBranching: BRANCHING.test(code),
     isWaiting: WAITING.test(code),
-    bypassesFileTools: BYPASS.test(code) || shellForFiles,
+    // Comments and message text are not file work; module specifiers stay readable
+    // so a real import of node:fs still bypasses.
+    bypassesFileTools: BYPASS.test(readable.bare) || shellForFiles,
     chars: code.length,
   }
 }
@@ -161,6 +298,9 @@ export interface ProgramViolations {
  * @returns whether each category was violated.
  */
 export function violationsOf(shape: ProgramShape): ProgramViolations {
+  // No dispatch site means there is no call shape to correct: a value program or a
+  // comment-only program must never earn a plan, bypass or shape notice.
+  if (shape.dispatchSites === 0) return { plan: false, bypass: false, shape: false }
   return {
     plan: !shape.hasFirstLinePlan,
     bypass: shape.bypassesFileTools,
