@@ -73,7 +73,7 @@ the host's `loadOverlayPatches`; there is no matching preset row in the plugin m
 | `hidePwsh` | true | Hide the official Windows shell while Bash is available; disabled entirely when `global.hidePwsh` is false |
 | `hideOfficialTools` | true | Hide the official file tools this mode replaces; disabled entirely when `global.hideOfficialTools` is false |
 | `dynamicTools` | true | Publish the progressive SDK loader `ops_load_sdk`; effective only while `global.dynamicTools` is also on (AND gate) |
-| `batchingGuidance` | false | Deliver the guidance once at session start and again after three consecutive writes to one path in a turn; the text lives in the editable `prompts/batching-guidance.md`. YAML-only (no page switch); the packaged `cordis.patch.yml` sets true in its `ops-ptc` section |
+| `batchingGuidance` | false | Teach once at session start (logged history, system prompt untouched), then correct the shape of root `run_code` programs: `bypass`, `plan` and `shape` each latch once per turn and re-arm when the program complies; the notice rides the triggering result as `additionalContexts` and never blocks or rewrites the program. Text lives in the editable `prompts/batching-guidance.md`. YAML-only; the packaged `ops-ptc` section sets true |
 | `spillRetentionDays` | 30 | Host subprocess spill retention window; `0` reports only and never deletes |
 | `spillTotalBudgetMiB` | 256 | Total retained spill budget in MiB; `0` disables the budget |
 | `spillSweepEnabled` | true | Run one bounded sweep on activation and every 256 settlements |

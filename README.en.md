@@ -36,9 +36,11 @@ Supported: Windows x64, Linux x64, and macOS 13+ on Apple Silicon or Intel
 - The single row enables the five built-in preset consumers: Standard and Cordis publish resident
   Native file tools, PTC publishes typed APIs, and Minimal has no resident file baseline. OPS PTC is
   the fifth enhanced preset, registered by the plugin at runtime (no plugin-manager preset row): it
-  keeps the PTC surface and injects the English batch-call guidance from `prompts/batching-guidance.md`
-  once at session start and once more after three consecutive writes to one path in a turn, without
-  touching the system prompt. Native discovery and typed SDK loading are independently configured.
+  keeps the PTC surface and delivers the English batch-call guidance from `prompts/batching-guidance.md`:
+  one lesson at session start, then short `additionalContexts` notices when a root `run_code` program
+  breaks the `bypass`/`plan`/`shape` shape categories (each latched once per turn), without touching the
+  system prompt and without blocking or rewriting the program. Native discovery and typed SDK loading are
+  independently configured.
   Advanced selections activate in the owning agent's next provider request, never by executing a
   discovery action. The default preset is forced by the `global.forceDefaultOpsPtc` switch (on by
   default; turning it off or disabling the row restores the previous or official default). See

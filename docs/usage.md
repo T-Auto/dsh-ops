@@ -25,7 +25,8 @@ this row before removing obsolete overrides; OPS does not rewrite profiles autom
 Standard and Cordis publish resident Native tools; Minimal has no file baseline; PTC publishes
 typed APIs with a separate SDK loader; OPS PTC (`ops-ptc`) is registered at plugin runtime and keeps
 that surface, adding the batch-call guidance from the editable `prompts/batching-guidance.md` once at
-session start and once more after repeated writes (on in the packaged bundle; see [presets](presets.md)).
+session start, then shape notices for root `run_code` programs (`bypass`/`plan`/`shape`, each latched per
+ turn) appended as `additionalContexts` (on in the packaged bundle; see [presets](presets.md)).
 The default preset is forced by `global.forceDefaultOpsPtc` (on by default).
 Residency, dynamic loading, Bash, file replacement and
 Windows host-shell hiding are independently controlled. Global gates preserve saved per-preset

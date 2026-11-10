@@ -132,7 +132,7 @@ default comes from that profile's own composition.
 | Plugin-manager row | a dedicated preset row | no preset row; lives and dies with the `dsh-ops` row |
 | Publication surface | official PTC tools | same as the `ptc` section: `run_code` under real PTC presentation plus the same-stack typed SDK file tools |
 | Compaction | official `compaction-basic` | official `compaction-basic` as well; no `dsh-compress-codex` |
-| Batch-call guidance | none | `batchingGuidance`: code default false, packaged `ops-ptc` section true; once at session start plus once after three consecutive writes to one path in a turn, with the text in the editable `prompts/batching-guidance.md` |
+| Batch-call guidance | none | `batchingGuidance`: code default false, packaged `ops-ptc` section true; one lesson at session start, then shape notices for root `run_code` programs (`bypass`/`plan`/`shape`, each latched per turn and re-armed by compliance) appended as `additionalContexts`; text in the editable `prompts/batching-guidance.md` |
 | Single-row section | `ptc` | `ops-ptc` (same keys plus `batchingGuidance`) |
 | Default preset | decided by the host/operator | forced to `ops-ptc` at runtime by `global.forceDefaultOpsPtc` (on by default); restored when turned off or the row is disabled |
 | Ordering | order 2 | order 6, sorted after the official rows |
