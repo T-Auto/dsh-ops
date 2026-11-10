@@ -5,7 +5,7 @@ What the single `dsh-ops` row publishes for built-in and explicit consumers, wit
 ## Components at a glance
 
 Third-party presets should use [`dsh-ops/integration`](integration-api.md) rather than mounting
-one of the four built-in identities. It adds independently configured tools and `ops_status`
+one of the five built-in identities. It adds independently configured tools and `ops_status`
 diagnostics, while external Native plugins may use the [provider contract](external-provider.md).
 
 | Row `name` | Description | Default | Published tools |
@@ -13,10 +13,13 @@ diagnostics, while external Native plugins may use the [provider contract](exter
 | `dsh-ops` | Single-row bundle: built-in Standard/Cordis Native tools, PTC typed APIs, Minimal dynamic surface, and optional custom consumers | On | Depends on the selected preset and presentation |
 | `dsh-ops/panel` | Legacy entry retained for old profiles; use `panel.enabled` in the merged row | Off | None; see the [configuration reference](configuration-reference.md) |
 | `dsh-ops/tui` | Legacy entry retained for old profiles; use `tui.enabled` in the merged row | Off | None; see the [sidebar guide](tui-panel.md) |
+| `dsh-ops/mode-ops-ptc` | Legacy mode row retained for old profiles; use the merged row's `ops-ptc` section | On (inert and warns under the merged bundle) | Typed PTC APIs for `ops-ptc` sessions only; publishes nothing under the merged bundle |
 
 The `dsh-ops` row owns built-in and explicitly configured consumer plans. Native discovery and the PTC SDK loader are independent publication choices; file replacement and host-shell hiding are independent masks. Legacy entries remain only so old profiles can load; new configuration belongs to the single row. The former
 `dsh-ops/shell`, `dsh-ops/file`, `dsh-ops/ptc` and `dsh-ops/hide-official` modules remain as
 unsupported legacy exports for old profiles and are not part of the bundle.
+
+`ops-ptc` is the merged row's fifth built-in mode: the bundle's second patch file declares the `ops-ptc` agent preset (see [Presets and the default mode](presets.md)), and the row's `ops-ptc` section configures it. It publishes the same surface as `ptc` and adds the YAML-only `batchingGuidance`: after three consecutive writes to one normalized path in a turn, the batch-call guidance (core rules plus common mistakes) is appended to the triggering tool result without touching the system prompt. A legacy profile that still names `dsh-ops/mode-ops-ptc` loads that module; under the merged bundle it only warns and stays inert, and its configuration belongs in the merged row's `ops-ptc` section.
 
 The former `dsh-ops/background` component (FastCtx background jobs: `ops_run`, `ops_run_background`, `ops_job_output`, `ops_job_list`, `ops_job_kill`) has been removed. A profile row that still names it loads as a no-op: it accepts any config, publishes nothing, and logs one warning that the row can be deleted.
 
@@ -145,7 +148,9 @@ Each reader separates scan, page, display and reference-capture completeness. A 
 ## PTC mode — native batches and result references
 
 The `dsh-ops/mode-ptc` row is on by default and publishes these tools only in sessions composed from
-the PTC preset. Its host row switch preserves explicit disablement and its configured pool.
+the PTC preset. Its host row switch preserves explicit disablement and its configured pool. The merged
+row describes it with the `ptc` section; the `ops-ptc` section publishes the same surface and only adds the
+batch-call guidance by default. See the OPS PTC mode section of the [configuration reference](configuration-reference.md).
 
 ### `ops_batch`
 

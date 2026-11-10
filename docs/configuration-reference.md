@@ -14,6 +14,7 @@ Plugin authors can also mount the [public integration API](integration-api.md) i
 | `minimal` | Enabled; no resident file surface; optional Bash and dynamic selection |
 | `standard`, `cordis` | Enabled; resident Native inspect/glob/grep profile, optional Bash, replacement and discovery |
 | `ptc` | Enabled; typed resident APIs and progressive SDK loading under actual host PTC presentation |
+| `ops-ptc` | Enabled; the fifth enhanced built-in mode, same surface as PTC plus opt-in batch-call context guidance (`batchingGuidance`, code default false, packaged `ops-ptc` section true) |
 | `presets` | Empty by default; map of exact preset ids to explicit consumer options |
 | `discovery` | Enabled; default built-in Native pool, maxResults 3, no always-loaded selections |
 | `panel`, `tui` | Disabled by default; opt-in capture and read-only sidebar |
@@ -25,7 +26,7 @@ Plugin authors can also mount the [public integration API](integration-api.md) i
 the resource inventory, the read-only `dsh-ops disk status` report and what it deliberately never scans.
 
 The page uses native Switch controls. Built-in cards start collapsed. Disabling a card greys its
-switches without erasing saved values. Standard/PTC/Cordis have `residentTools` (default true),
+switches without erasing saved values. Standard/PTC/OPS PTC/Cordis have `residentTools` (default true),
 independent of dynamic loading. Minimal retains its intentionally non-resident default; an explicit
 consumer for `minimal` can select a different profile. Bash has an independent publication switch.
 File replacement and Windows host-PowerShell hiding are independent.
@@ -42,6 +43,57 @@ Saves use exact nested paths and the revision read by the page. Unchanged fields
 conflicts retain the draft. Reset reloads current saved values. The runtime status section shows
 actual host platform, managed/Git Bash, PowerShell and companion facts. Installation/removal needs
 a preview and explicit execution; configuration saves do not deploy binaries or alter PATH.
+
+## OPS PTC mode (`ops-ptc`)
+
+`ops-ptc` is the fifth enhanced built-in mode (both the preset id and the single-row section are named
+`ops-ptc`). Its publication surface matches the official PTC preset: under real host PTC presentation only
+`run_code` is visible and this plugin publishes the same-stack typed SDK file tools. Compaction stays the
+official `compaction-basic`; `dsh-compress-codex` is not introduced. It accepts the same keys as the `ptc`
+section; the only behavioral difference is `batchingGuidance`. The preset itself is declared by
+`presets/ops-ptc.patch.yml` and ships with the package; generation, setting it as the default preset and
+rollback are covered in [Presets and the default mode](presets.md).
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | true | Publish this surface for sessions of the `ops-ptc` preset; page switch, also settable in YAML |
+| `residentTools` | true | Publish the startup APIs. The PTC resident surface is only `ops_inspect_local_file`; everything else loads on demand through `ops_load_sdk` |
+| `bash` | true | Allow publishing `ops_bash` on Windows; POSIX sessions keep the host bash |
+| `hidePwsh` | true | Hide the official Windows shell while Bash is available; disabled entirely when `global.hidePwsh` is false |
+| `hideOfficialTools` | true | Hide the official file tools this mode replaces; disabled entirely when `global.hideOfficialTools` is false |
+| `dynamicTools` | true | Publish the progressive SDK loader `ops_load_sdk`; effective only while `global.dynamicTools` is also on (AND gate) |
+| `batchingGuidance` | false | Append one batch-call guidance block to a tool result after it fires. YAML-only (no page switch); the packaged `cordis.patch.yml` sets true in its `ops-ptc` section |
+| `spillRetentionDays` | 30 | Host subprocess spill retention window; `0` reports only and never deletes |
+| `spillTotalBudgetMiB` | 256 | Total retained spill budget in MiB; `0` disables the budget |
+| `spillSweepEnabled` | true | Run one bounded sweep on activation and every 256 settlements |
+
+The remaining keys (`binaryPath`, `required`, `denyCredentialReads`, `promptPolicy`, `extraGuidance`,
+`allowSystemShellFallback`, `allowedTools`, `alwaysLoaded`) keep the PTC meaning (`extraGuidance` only feeds
+Native guidance; `allowedTools`/`alwaysLoaded` accept loadable raw API names only, see
+[Progressive PTC SDK loading](ptc-sdk-loading.md)). The three `spill*` keys bound host subprocess spill
+retention, described under built-in advanced configuration below.
+
+### Batch-call guidance (`batchingGuidance`)
+
+Off (the code default) contributes no extra context. On, three consecutive writes to one **normalized path**
+within the same turn append one batch-call guidance block ("core rules + common mistakes") to the result of
+the triggering tool call:
+
+- Only `status: completed` file writes that carry a usable `path` argument count; copy/move destinations and
+  pathless calls do not.
+- Paths are resolved against the session cwd before comparison, so `./a`, `a` and an absolute spelling share
+  one window. The window resets at the start of every turn, and one path injects at most once per turn.
+- The guidance rides the tool result's deferred context (`deferContext`) with source
+  `dsh-ops:step-tail` / `batching-guidance` (revision 1), never the system prompt: the prompt prefix and tool
+  schemas are unchanged, so the prompt cache survives.
+- A failed delivery only logs a warning and never rewrites the tool result.
+
+**Contrast-arm usage.** To compare the guidance on one shared PTC surface, keep `ptc` and `ops-ptc` on the same
+API configuration and set `batchingGuidance: true` only on the `ops-ptc` section (the packaged default), or
+set it on the `ptc` section as well to verify the guidance itself; set the `ops-ptc` section to false to return
+to the no-guidance baseline. The key is YAML-only: the plugin page has no switch, and a saved `dsh-ops` row
+override replaces the bundle-layer config as a whole, so add it explicitly after upgrading (see
+[Presets and the default mode](presets.md#risks-and-rollback)).
 
 ## Explicit custom consumers
 
@@ -196,3 +248,4 @@ old executor. `configUpdateVersion` is a migration marker, not a capability swit
 
 - [Integration API](integration-api.md), [external providers](external-provider.md), [diagnostics](diagnostics.md)
 - [Internal architecture](internal-architecture.md), [usage](usage.md), [troubleshooting](troubleshooting.md)
+- [Presets and the default mode](presets.md), [dynamic tool directory](dynamic-tool-directory.md)

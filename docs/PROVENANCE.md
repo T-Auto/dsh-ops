@@ -3,6 +3,18 @@
 What this repository is, where its parts came from, what was verified, and what
 was not.
 
+## Unreleased: OPS PTC preset fragment
+
+`presets/ops-ptc.patch.yml` is a generated copy of `@deepseek-ai/dsh-web-app/presets/ptc.patch.yml` (MIT,
+Copyright (c) 2026 DeepSeek), changed only in identity: row id `preset-ops-ptc`, preset id `ops-ptc`, display
+name/description and order. `scripts/sync-preset-ops-ptc.mjs` regenerates it from the installed host, `--check`
+refuses drift, and the file header records the source path and its SHA-256. The upstream default PTC preset
+remains the host's own and is not modified.
+
+`presets/ops-ptc.patch.yml` 是 `@deepseek-ai/dsh-web-app/presets/ptc.patch.yml`（MIT，2026 DeepSeek）的生成副本，
+只改了行身份与预设身份（行 id、preset id、名称/描述与排序）；`scripts/sync-preset-ops-ptc.mjs` 从已安装宿主重新
+生成，`--check` 拒绝漂移，文件头记录来源路径与 SHA-256。上游官方 PTC 预设本身未被修改。
+
 ## Unreleased: optional Windows Bash payload and host PowerShell
 
 The npm package and release assembly declare this distribution's own Windows Bash platform package as an OPTIONAL dependency: `@dsh-ops/bash-win32-x64@0.2.1`, published from the pinned upstream PortableGit release (`v2.56.0.windows.2`, GNU bash 5.3.15), so npm fetches it automatically on Windows x64. POSIX keeps using the host Bash and adds no payload; optional-dependency resolution is silent on failure, so `dsh-ops bash-runtime install` (with the 0.4.0 runtime settings pages) stays the selection and repair path. PowerShell is selected entirely by the host;

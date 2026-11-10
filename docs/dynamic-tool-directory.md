@@ -70,6 +70,29 @@ for those agents. PTC likewise keeps only a one-line loader pointer. Its loader 
 names (including on-demand `result`), independently of Native providers; selection and commit
 recheck current authority rather than treating that configured list as authorization.
 
+## ops-ptc and the progressive-disclosure switches
+
+A PTC presentation never publishes the Native `ops_discover_tools` entry: that is by design, not a fault.
+PTC-only agents load typed APIs exclusively through `ops_load_sdk`, and the Native directory is suppressed.
+Under the `ops-ptc` mode, therefore, the SDK loader is the only progressive-disclosure entry:
+`ops_load_sdk` is published only while both `ops-ptc.dynamicTools` and the bundle-level
+`global.dynamicTools` are on (an AND gate; the plugin page renders the bundle switch as the master switch).
+See the OPS PTC mode section of the [configuration reference](configuration-reference.md) for every key.
+
+- Turning `dynamicTools` off removes the loader, so no on-demand API can be newly loaded. Resident and
+  explicitly published APIs are untouched (`ops_inspect_local_file` and any `alwaysLoaded` API stay visible),
+  and APIs already loaded in this session keep working.
+- `result` is the loader's implicit selection exception (loadable even with `allowedTools: []`), but without a
+  loader there is no entry point. If result references must survive the switch, put `result` in that section's
+  `alwaysLoaded`.
+- **Loaded APIs appear on the next turn.** `ops_load_sdk` only queues names; they are absent from the currently
+  frozen SDK snapshot and become visible only after the owning session commits `step/end` and the next model step
+  re-assembles. Do not call an API you just loaded in the same `run_code` — it always fails; `return` first and
+  call it next turn. Prompt assembly, diagnostic assembly and registry notifications never activate queued names.
+- The switch does not affect Native discovery in `standard`/`cordis`: `discovery.enabled` and each mode's
+  `dynamicTools` are independent publication choices, and a PTC presentation never brings the Native directory
+  back.
+
 ## Focused verification
 
 ```console
