@@ -1,7 +1,7 @@
 /**
  * The single row's page, exactly as the maintainer specified it.
  *
- * Two bundle switches, four switches per preset, and one card for the three
+ * Bundle switches, four switches per preset, and one card for the three
  * opt-in features. Every switch is addressed by a path (`[section, key]`) so the
  * three opt-in switches can share one card while still writing their own section.
  */
@@ -46,15 +46,16 @@ const at = (section: string, key: string): readonly [string, string] => [section
 const field = (path: readonly [string, string], label: LocaleKey, hint?: LocaleKey, gatedBy?: BundleGate): FieldSpec =>
   ({ path, label, hint, ...(gatedBy === undefined ? {} : { gatedBy }) })
 
-/** The two bundle switches. */
+/** The bundle switches: four gates, then the default-preset force switch. */
 export const GLOBAL: readonly FieldSpec[] = Object.freeze([
   field(at('global', 'bash'), 'swBash', 'globalBashHint'),
   field(at('global', 'hidePwsh'), 'swHidePwsh', 'globalHidePwshHint'),
   field(at('global', 'hideOfficialTools'), 'hideOfficialTools', 'hideOfficialToolsHint'),
   field(at('global', 'dynamicTools'), 'dynamicTools', 'dynamicToolsHint'),
+  field(at('global', 'forceDefaultOpsPtc'), 'swForceDefaultOpsPtc', 'swForceDefaultOpsPtcHint'),
 ])
 
-/** The four preset switches, identical in every mode. */
+/** The five preset switches, identical in every mode. */
 const MODE_FIELDS = (section: string, resident: boolean): readonly FieldSpec[] => Object.freeze([
   field(at(section, 'bash'), 'swBash', 'swBashHint', 'bash'),
   field(at(section, 'hidePwsh'), 'swHidePwsh', 'swHidePwshHint', 'hidePwsh'),
@@ -72,6 +73,7 @@ export const GROUPS: readonly GroupSpec[] = Object.freeze([
   modeGroup('minimal', 'featureMinimal', 'featureMinimalHint', false),
   modeGroup('standard', 'featureStandard', 'featureStandardHint', true),
   modeGroup('ptc', 'featurePtc', 'featurePtcHint', true),
+  modeGroup('ops-ptc', 'featureOpsPtc', 'featureOpsPtcHint', true),
   modeGroup('cordis', 'featureCordis', 'featureCordisHint', true),
   // The three opt-in features share one card: separate cards for one switch each
   // read as three empty shells next to the presets.
@@ -85,9 +87,11 @@ export const GROUPS: readonly GroupSpec[] = Object.freeze([
 /** What a switch runs with when it is absent. */
 const DEFAULTS: Readonly<Record<string, boolean>> = Object.freeze({
   'global.bash': true, 'global.hidePwsh': true, 'global.hideOfficialTools': true, 'global.dynamicTools': true,
+  'global.forceDefaultOpsPtc': true,
   'minimal.enabled': true, 'minimal.bash': true, 'minimal.hidePwsh': true, 'minimal.hideOfficialTools': true, 'minimal.dynamicTools': true,
   'standard.enabled': true, 'standard.residentTools': true, 'standard.bash': true, 'standard.hidePwsh': true, 'standard.hideOfficialTools': true, 'standard.dynamicTools': true,
   'ptc.enabled': true, 'ptc.residentTools': true, 'ptc.bash': true, 'ptc.hidePwsh': true, 'ptc.hideOfficialTools': true, 'ptc.dynamicTools': true,
+  'ops-ptc.enabled': true, 'ops-ptc.residentTools': true, 'ops-ptc.bash': true, 'ops-ptc.hidePwsh': true, 'ops-ptc.hideOfficialTools': true, 'ops-ptc.dynamicTools': true,
   'cordis.enabled': true, 'cordis.residentTools': true, 'cordis.bash': true, 'cordis.hidePwsh': true, 'cordis.hideOfficialTools': true, 'cordis.dynamicTools': true,
   'panel.enabled': false, 'tui.enabled': false, 'other.pwsh7Link': false,
 })
@@ -216,7 +220,7 @@ export interface ExecutorChoice {
 }
 
 /** The mode sections that publish ops_bash and therefore own `bashPath`. */
-export const EXECUTOR_SECTIONS = Object.freeze(['minimal', 'standard', 'ptc', 'cordis'] as const)
+export const EXECUTOR_SECTIONS = Object.freeze(['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis'] as const)
 
 /** One `bashPath` the saved config already carries, mode or custom preset. */
 interface SavedBashPath { readonly path: readonly string[]; readonly value: string }

@@ -1,6 +1,6 @@
 {
   "name": "dsh-ops",
-  "version": "0.5.2",
+  "version": "0.5.4",
   "publishConfig": {
     "access": "public"
   },
@@ -120,6 +120,12 @@
     "./mode-ptc/package.json": "./lib/components/mode-ptc/package.json",
     "./mode-ptc/locale/*.json": "./lib/components/mode-ptc/locale/*.json",
     "./mode-ptc/icon": "./lib/components/mode-ptc/icon.png",
+    "./mode-ops-ptc": {
+      "default": "./lib/components/mode-ops-ptc/index.js"
+    },
+    "./mode-ops-ptc/package.json": "./lib/components/mode-ops-ptc/package.json",
+    "./mode-ops-ptc/locale/*.json": "./lib/components/mode-ops-ptc/locale/*.json",
+    "./mode-ops-ptc/icon": "./lib/components/mode-ops-ptc/icon.png",
     "./mode-cordis": {
       "default": "./lib/components/mode-cordis/index.js"
     },
@@ -160,6 +166,8 @@
     "lib",
     "bin",
     "cordis.patch.yml",
+    "presets",
+    "prompts",
     "dsh-plugin.json",
     "docs/assets/icon.png",
     "locale",

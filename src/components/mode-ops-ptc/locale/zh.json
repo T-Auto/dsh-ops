@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "优化ops-ptc模式",
+    "description": "为ops-ptc模式增加一些好用的ops工具并替换部分原版工具。且若当前环境为windows，将pwsh替换为bash。"
+  }
+}

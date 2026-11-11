@@ -5,7 +5,7 @@ What the single `dsh-ops` row publishes for built-in and explicit consumers, wit
 ## Components at a glance
 
 Third-party presets should use [`dsh-ops/integration`](integration-api.md) rather than mounting
-one of the four built-in identities. It adds independently configured tools and `ops_status`
+one of the five built-in identities. It adds independently configured tools and `ops_status`
 diagnostics, while external Native plugins may use the [provider contract](external-provider.md).
 
 | Row `name` | Description | Default | Published tools |
@@ -13,10 +13,13 @@ diagnostics, while external Native plugins may use the [provider contract](exter
 | `dsh-ops` | Single-row bundle: built-in Standard/Cordis Native tools, PTC typed APIs, Minimal dynamic surface, and optional custom consumers | On | Depends on the selected preset and presentation |
 | `dsh-ops/panel` | Legacy entry retained for old profiles; use `panel.enabled` in the merged row | Off | None; see the [configuration reference](configuration-reference.md) |
 | `dsh-ops/tui` | Legacy entry retained for old profiles; use `tui.enabled` in the merged row | Off | None; see the [sidebar guide](tui-panel.md) |
+| `dsh-ops/mode-ops-ptc` | Legacy mode row retained for old profiles; use the merged row's `ops-ptc` section | On (inert and warns under the merged bundle) | Typed PTC APIs for `ops-ptc` sessions only; publishes nothing under the merged bundle |
 
 The `dsh-ops` row owns built-in and explicitly configured consumer plans. Native discovery and the PTC SDK loader are independent publication choices; file replacement and host-shell hiding are independent masks. Legacy entries remain only so old profiles can load; new configuration belongs to the single row. The former
 `dsh-ops/shell`, `dsh-ops/file`, `dsh-ops/ptc` and `dsh-ops/hide-official` modules remain as
 unsupported legacy exports for old profiles and are not part of the bundle.
+
+`ops-ptc` is the merged row's fifth built-in mode: the plugin registers the preset at runtime through the host `agentPresets.register` (definition from the shipped `presets/ops-ptc.patch.yml` fragment parsed by the host's `loadOverlayPatches`), so the plugin manager has no matching preset row; disabling or unloading the plugin row removes the preset together with the tool surface. The default preset is forced at runtime by `global.forceDefaultOpsPtc` (on by default) and restored when the switch is turned off or the row is disabled; see [Presets and the default mode](presets.md). It publishes the same surface as `ptc` and adds the YAML-only `batchingGuidance`: the English lesson arrives once in the session's first user-message batch (from `prompts/batching-guidance.md`, into history, never the system prompt), and a **root** `run_code` program that breaks one of the three latched shape categories — `bypass`, `plan` or `shape` — gets one short notice appended to its own result as `additionalContexts`; each category latches once per turn, a compliant program re-arms it, priority is `bypass` → `plan` → `shape`, and the program is never blocked or rewritten. A legacy profile that still names `dsh-ops/mode-ops-ptc` loads that module; under the merged bundle it only warns and stays inert, and its configuration belongs in the merged row's `ops-ptc` section.
 
 The former `dsh-ops/background` component (FastCtx background jobs: `ops_run`, `ops_run_background`, `ops_job_output`, `ops_job_list`, `ops_job_kill`) has been removed. A profile row that still names it loads as a no-op: it accepts any config, publishes nothing, and logs one warning that the row can be deleted.
 
@@ -145,7 +148,10 @@ Each reader separates scan, page, display and reference-capture completeness. A 
 ## PTC mode — native batches and result references
 
 The `dsh-ops/mode-ptc` row is on by default and publishes these tools only in sessions composed from
-the PTC preset. Its host row switch preserves explicit disablement and its configured pool.
+the PTC preset. Its host row switch preserves explicit disablement and its configured pool. The merged
+row describes it with the `ptc` section; the `ops-ptc` section publishes the same surface and only adds the
+batch-call guidance by default (its preset is registered at plugin runtime). See the OPS PTC mode section of
+the [configuration reference](configuration-reference.md).
 
 ### `ops_batch`
 

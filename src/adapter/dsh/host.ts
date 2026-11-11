@@ -24,7 +24,7 @@ export function service<T>(ctx: Pick<Context, 'get'>, name: string): T | undefin
 type Scopes = typeof import('@deepseek-ai/dsh-scope')
 
 /** Whether two file URLs name the same module on disk, whatever their spelling. */
-function sameModule(a: string | undefined, b: string | undefined): boolean {
+export function sameModule(a: string | undefined, b: string | undefined): boolean {
   if (a === undefined || b === undefined) return false
   if (a === b) return true
   try { return realpathSync.native(fileURLToPath(a)) === realpathSync.native(fileURLToPath(b)) } catch { return false }
@@ -34,7 +34,7 @@ function sameModule(a: string | undefined, b: string | undefined): boolean {
 const packageRoot = new URL('../../../', import.meta.url).href
 
 /** The module the running host was started from, when argv names one (not a single executable). */
-function hostEntry(): string | undefined {
+export function hostEntry(): string | undefined {
   const entry = process.argv[1]
   return entry !== undefined && path.isAbsolute(entry) ? entry : undefined
 }
@@ -52,8 +52,23 @@ function profileScopesUrl(): string | undefined {
 }
 
 /** The profile tree this process serves; a copy resolved there may be another bundle's hoist. */
-function profileLayer(): string {
+export function profileLayer(): string {
   return path.join(process.env.DSH_HOME ?? path.join(homedir(), '.dsh'), 'profiles')
+}
+
+/**
+ * The running host entry through its real path, for a module-resolution anchor.
+ *
+ * A published bin is a symlink (`bin/dsh` → `lib/bin.js`), and a require
+ * anchored on the link resolves from the `bin` directory instead of the host
+ * package's module tree. Resolving the link first points the anchor at the host
+ * copy every other module in this process uses.
+ * @param entry - the entry path; defaults to {@link hostEntry}.
+ * @returns the canonical absolute entry, or undefined when there is none.
+ */
+export function hostEntryAnchor(entry: string | undefined = hostEntry()): string | undefined {
+  if (entry === undefined) return undefined
+  try { return realpathSync.native(entry) } catch { return undefined }
 }
 
 /** Whether one URL sits inside this package's checkout or the profile tree that loads it. */

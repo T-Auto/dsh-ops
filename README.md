@@ -24,6 +24,7 @@
 
 - Bash 与宿主 Shell 隐藏独立配置；Windows 可用 ops_bash 替代 pwsh，也可保留官方 Shell。
 - Native/PTC 消费者预设发布共享的有界工具面；Bash 由单行开关控制，关闭替换时原版工具保持可用。
+- 第五个内置模式 `ops-ptc` 继承 PTC 工具面，由插件运行时注册（定义来自随包片段 `presets/ops-ptc.patch.yml`，不是插件管理器行），并可开启批量调用上下文提示（`batchingGuidance`）：会话首轮注入一次英文教学（`prompts/batching-guidance.md`，进入历史、不改系统提示词），之后按根 `run_code` 程序形状（`bypass`/`plan`/`shape`，每类每轮一次、合规解锁）以 `additionalContexts` 纠偏、不阻断不改写程序；默认模式由 `global.forceDefaultOpsPtc` 开关控制（默认开启，关闭或禁用行时恢复强制前/官方默认），详见[预设与默认模式](docs/预设与默认模式.md)。
 - 启用 DSH 预留的 `tools_addition` 动态工具加载，并提供渐进式纰漏的工具，作为高级功能（如pdf、word读取、超多文件批量修改）的加载平台，大大减少常见特定场景的token消耗量，且不会导致系统提示词膨胀
 - 为 Native 模式提供返回紧凑、带行号和更好错误回馈的工具以遏制报错循环，减少调用轮次
 - 为 PTC 模式提供一些返回结构化 JSON 值的工具以降低 ai 在 ptc 模式下编写 TypeScript 代码的token总量和心智负担
@@ -112,7 +113,7 @@ npx --yes dsh-ops@latest uninstall --profile desktop
 
 - [第三方预设集成接口](docs/集成接口.md) · [外部 Native 提供者](docs/外部工具提供者.md) · [作用域诊断](docs/集成诊断.md)
 
-- [使用指南](docs/使用指南.md) · [常见问题](docs/常见问题.md) · [组件参考](docs/组件参考.md) · [配置参考](docs/配置参考.md)
+- [使用指南](docs/使用指南.md) · [常见问题](docs/常见问题.md) · [组件参考](docs/组件参考.md) · [配置参考](docs/配置参考.md) · [预设与默认模式](docs/预设与默认模式.md)
 - [Windows 运行时证据](docs/windows-runtime-evidence.zh.md)：载荷兼容、Low 完整性、MSYS 启动及杀软/审批排查。
 - [PTC 设计与使用](docs/native-ptc.md) · [手动验证](docs/手动验收.md)
 - [贡献指南](docs/贡献指南.md) · [路线图](docs/路线图.md) · [变更日志](docs/CHANGELOG.md) · [溯源记录](docs/PROVENANCE.md)

@@ -149,7 +149,7 @@ node test/run.mjs niubash
 ```
 
 How to read the gate and the expected numbers per host: [verify-locally.md](verify-locally.md).
-CI runs on every pull request and every push to `main`, `0.3.2` and `release/0.4.0`. **Every job in `ci.yml` is a merge gate**: Linux x64 and macOS arm64 (`validate-posix`), macOS Intel (`validate-macos-intel`), Windows x64 (`validate-windows`), the Node floor, the tools trial, Rust formatting and lints, workflow lint and the source-size check. A red leg anywhere blocks the merge; there is no `continue-on-error` leg left.
+CI runs on every pull request and every push to `main`, `0.3.2` and `release/0.4.0`. **Every job in `ci.yml` is a merge gate**: Linux x64, macOS arm64, macOS Intel and Windows x64 (the four legs of `validate`), the Node floor, the tools trial, Rust formatting and lints (clippy runs for the Linux, Windows and macOS targets), workflow lint and the source-size check. The Rust version lives only in `native/rust-toolchain.toml`; workflows install it through `.github/actions/setup`. A red leg anywhere blocks the merge; there is no `continue-on-error` leg left.
 
 ## One CI run per pull request
 

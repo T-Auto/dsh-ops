@@ -3,7 +3,7 @@
   "manifestVersion": "0.15",
   "id": "dsh-ops.native",
   "name": "dsh-ops",
-  "version": "0.5.2",
+  "version": "0.5.4",
   "license": "MIT",
   "facets": {
     "host": {
@@ -139,7 +139,7 @@
           "darwin-arm64",
           "darwin-x64"
         ],
-        "presentation": "One row configures every feature: the four preset modes, discovery, capture and the TUI link each carry their own switch and settings on the row page.",
+        "presentation": "One row configures every feature: the five preset modes, discovery, capture and the TUI link each carry their own switch and settings on the row page.",
         "tools": [
           "ops_bash",
           "ops_inspect_local_file",
