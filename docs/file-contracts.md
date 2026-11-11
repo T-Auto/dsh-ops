@@ -34,6 +34,8 @@ Observed matches are lower bounds, and no stable continuation or full total is c
 directs a fresh query under a smaller readable `path`, with up to two gap examples (stable code and path)
 when available. A non-UTF-8 name uses its containing directory as the sample. Intentional exclusions
 remain distinct from scan gaps. Complete scans retain their existing pagination and continuation checks.
+The non-UTF-8 filename fixture runs on Linux; APFS rejects those bytes when creating the directory.
+Directory discovery and no-follow fixtures also run on macOS and Windows.
 
 ## One PTC call: read, derive, edit
 
