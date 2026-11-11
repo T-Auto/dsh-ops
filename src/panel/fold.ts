@@ -102,6 +102,14 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
   }
   const preview = (value: unknown) => String(value ?? '').replace(/\s+/gu, ' ').slice(0, PREVIEW_CHARS)
   const dropped = (field: TextField | null | undefined) => { if (field?.truncated === true) droppedChars += field.droppedChars ?? 0 }
+  // The call id → tool name index is bounded: a long session must not grow it without limit,
+  // and a job row resolves its tool through it. Top-level `tool/call` records and PTC
+  // dispatch records both feed it, so a job dispatched from a `run_code` program resolves too.
+  const rememberCall = (callId: string, name: string) => {
+    callNames.set(callId, name)
+    const oldest = callNames.keys().next()
+    if (callNames.size > CALL_NAME_LIMIT && oldest.done !== true) callNames.delete(oldest.value)
+  }
 
   for (const record of records) {
     if (!object(record) || Array.isArray(record)) continue
@@ -149,9 +157,7 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
         toolCallsByName[key] = (toolCallsByName[key] ?? 0) + 1
         if (record.callId !== undefined) {
           pending.set(record.callId, { name, startedAt: time })
-          callNames.set(record.callId, name)
-          const oldest = callNames.keys().next()
-          if (callNames.size > CALL_NAME_LIMIT && oldest.done !== true) callNames.delete(oldest.value)
+          rememberCall(record.callId, name)
         }
         pushTrace(traceRow(record, 'tool_call', 'tool_call', {
           name, callId: record.callId, step: record.step, text: preview(record.arguments?.text),
@@ -174,6 +180,10 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
       case 'tool/ptc-dispatch-start': case 'tool/ptc-dispatch': {
         const settled = record.type === 'tool/ptc-dispatch'
         const failed = settled && record.isError === true
+        // The inner tool name exists only on the dispatch records, and a job dispatched from
+        // the program carries this sub call id. Index it like `tool/call`; when the host sends
+        // no name the job keeps its honest `kind` fallback instead of a fabricated one.
+        if (record.callId !== undefined && record.name !== undefined && record.name !== '(unnamed)') rememberCall(record.callId, record.name)
         pushTrace(traceRow(record, failed ? 'error' : 'tool_result', failed ? 'ptc_dispatch_error' : settled ? 'ptc_dispatch' : 'ptc_dispatch_start', {
           name: record.name, callId: record.callId, isError: failed, errorCode: record.errorCode,
           text: failed

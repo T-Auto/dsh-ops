@@ -13,6 +13,20 @@ function clamp(value: unknown, limit: number) {
   return { text: full.slice(0, limit), chars: full.length, truncated: true, droppedChars: full.length - limit }
 }
 
+/**
+ * Text a durable event value carries. The host writes PTC `arguments` as detached JSON
+ * values rather than strings, so serialise them once here: strings stay verbatim, other
+ * JSON values become their JSON text, and nothing is ever rendered as `[object Object]`.
+ */
+function argumentText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (value === undefined || value === null) return ''
+  try {
+    const text = JSON.stringify(value)
+    return typeof text === 'string' ? text : ''
+  } catch { return '' }
+}
+
 /** Non-negative safe integer, or undefined. */
 const integer = (value: unknown) => (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined)
 /** Non-empty string, or undefined. */
@@ -103,13 +117,13 @@ export function projectEvent(event: unknown, config: PanelConfig = PANEL_DEFAULT
     case 'tool/ptc-dispatch-start':
       return {
         ...base, callId: string(data.subCallId), name: string(data.name) ?? '(unnamed)',
-        arguments: clamp(typeof data.arguments === 'string' ? data.arguments : '', config.textLimit),
+        arguments: clamp(argumentText(data.arguments), config.textLimit),
       }
     case 'tool/ptc-dispatch':
       return {
         ...base, callId: string(data.subCallId), name: string(data.name) ?? '(unnamed)', isError: data.isError === true,
         errorCode: string(field(data.error, 'code')),
-        arguments: clamp(typeof data.arguments === 'string' ? data.arguments : '', config.textLimit),
+        arguments: clamp(argumentText(data.arguments), config.textLimit),
         payload: clamp(contentText(data.content), config.textLimit),
       }
     // Job lifecycle: without the id, a registration that never settles cannot be attributed.
