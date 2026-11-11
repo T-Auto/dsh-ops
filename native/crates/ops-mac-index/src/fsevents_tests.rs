@@ -47,6 +47,34 @@ impl TempTree {
         Self { path: base }
     }
 
+    /// A tree whose own creation event has already been delivered.
+    ///
+    /// fseventsd assigns event ids asynchronously (see
+    /// [`EventStream::current_event_id`]), so a live stream opened right after
+    /// [`TempTree::new`] can still be handed the directory's creation. That
+    /// only shows under load (a cold build leaves fseventsd behind), which is
+    /// why it surfaced as a flaky failure rather than a constant one. A test
+    /// that asserts an idle live stream stays empty has to wait that event out
+    /// first. A probe over the parent, replayed from an id taken before the
+    /// directory existed, is guaranteed to see it; once it has, the journal
+    /// tail is past the creation and no later live stream can receive it.
+    fn settled(tag: &str) -> Self {
+        let before = EventStream::current_event_id();
+        let tree = Self::new(tag);
+        let parent = tree
+            .path
+            .parent()
+            .expect("temporary tree has a parent")
+            .to_path_buf();
+        let mut probe = open_stream(&[parent], before);
+        assert!(
+            wait_for_path(&mut probe, &tree.path).is_some(),
+            "no FSEvents event for the creation of {:?} within {DELIVERY_TIMEOUT:?}",
+            tree.path
+        );
+        tree
+    }
+
     fn to_path_buf(&self) -> PathBuf {
         self.path.clone()
     }
@@ -380,11 +408,10 @@ fn replay_from_a_persisted_id_reports_a_new_file() {
 
 #[test]
 fn an_idle_live_stream_reports_no_events() {
-    let tree = TempTree::new("idle");
+    // Settled: the directory's own creation may otherwise still be assigned an
+    // id after this stream opens, which is not activity on an idle stream.
+    let tree = TempTree::settled("idle");
     let root = tree.to_path_buf();
-    // SINCE_NOW replays nothing, not even operations recorded a moment before
-    // the call: a stream opened at a concrete id can legitimately receive those
-    // because fseventsd assigns ids asynchronously.
     let mut stream = open_stream(std::slice::from_ref(&root), EventId::SINCE_NOW);
     let batch = stream.drain(Duration::from_millis(300));
     assert!(batch.is_empty(), "{:?}", batch.events);
@@ -400,7 +427,7 @@ fn an_idle_live_stream_reports_no_events() {
 
 #[test]
 fn a_live_batch_never_reports_the_since_now_sentinel() {
-    let tree = TempTree::new("live-cursor");
+    let tree = TempTree::settled("live-cursor");
     let root = tree.to_path_buf();
     // Opened live: there is no replay, so the batch is empty — but its cursor
     // must still be a real journal id, because persisting SINCE_NOW would make
@@ -416,7 +443,7 @@ fn a_live_batch_never_reports_the_since_now_sentinel() {
 
 #[test]
 fn drain_returns_within_its_timeout() {
-    let tree = TempTree::new("timeout");
+    let tree = TempTree::settled("timeout");
     let root = tree.to_path_buf();
     // A live stream has no replay to finish, so nothing can end the wait early
     // except a real event; none is written here.
