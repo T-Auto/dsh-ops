@@ -1,5 +1,6 @@
 use super::*;
 use crate::ffi;
+use crate::rescan::{Recovery, recovery};
 use objc2_core_services::{
     kFSEventStreamCreateFlagFileEvents, kFSEventStreamCreateFlagUseCFTypes,
     kFSEventStreamCreateFlagUseExtendedData, kFSEventStreamCreateFlagWatchRoot,
@@ -47,34 +48,6 @@ impl TempTree {
         Self { path: base }
     }
 
-    /// A tree whose own creation event has already been delivered.
-    ///
-    /// fseventsd assigns event ids asynchronously (see
-    /// [`EventStream::current_event_id`]), so a live stream opened right after
-    /// [`TempTree::new`] can still be handed the directory's creation. That
-    /// only shows under load (a cold build leaves fseventsd behind), which is
-    /// why it surfaced as a flaky failure rather than a constant one. A test
-    /// that asserts an idle live stream stays empty has to wait that event out
-    /// first. A probe over the parent, replayed from an id taken before the
-    /// directory existed, is guaranteed to see it; once it has, the journal
-    /// tail is past the creation and no later live stream can receive it.
-    fn settled(tag: &str) -> Self {
-        let before = EventStream::current_event_id();
-        let tree = Self::new(tag);
-        let parent = tree
-            .path
-            .parent()
-            .expect("temporary tree has a parent")
-            .to_path_buf();
-        let mut probe = open_stream(&[parent], before);
-        assert!(
-            wait_for_path(&mut probe, &tree.path).is_some(),
-            "no FSEvents event for the creation of {:?} within {DELIVERY_TIMEOUT:?}",
-            tree.path
-        );
-        tree
-    }
-
     fn to_path_buf(&self) -> PathBuf {
         self.path.clone()
     }
@@ -88,6 +61,38 @@ impl Drop for TempTree {
 
 fn open_stream(roots: &[PathBuf], since: EventId) -> EventStream {
     EventStream::open(roots, since, Duration::from_millis(50)).expect("open FSEvents stream")
+}
+
+/// What an idle live stream over `root` may deliver, and nothing more.
+///
+/// fseventsd assigns event ids asynchronously (see
+/// [`EventStream::current_event_id`]), so the creation of a directory made just
+/// before the stream opened can still arrive afterwards, whenever fseventsd is
+/// behind (a cold build leaves it behind). That is not activity on an idle
+/// stream, and "no events at all" is not something FSEvents promises.
+///
+/// What a consumer relies on is narrower and is asserted exactly: no event for
+/// anything inside the tree, and no event that makes [`recovery`] ask for a
+/// rescan, so a clean live batch is still a caught-up answer. The root's own
+/// event is allowed only while it carries no rescan flag, because
+/// `RootChanged`, `Mount` and `Unmount` arrive on the root path too.
+fn assert_idle(batch: &Batch, root: &Path) {
+    let root = root.to_path_buf();
+    for event in &batch.events {
+        assert_eq!(
+            event.relative_to(std::slice::from_ref(&root)),
+            Some(PathBuf::new()),
+            "an idle live stream reported activity inside the tree: {event:?}"
+        );
+    }
+    assert_eq!(
+        recovery(batch, EventId::SINCE_NOW),
+        Recovery::CaughtUp {
+            latest: batch.latest
+        },
+        "an idle live batch must be a clean, caught-up answer: {:?}",
+        batch.events
+    );
 }
 
 /// Drains until an event for `target` arrives or the wait elapses.
@@ -408,13 +413,11 @@ fn replay_from_a_persisted_id_reports_a_new_file() {
 
 #[test]
 fn an_idle_live_stream_reports_no_events() {
-    // Settled: the directory's own creation may otherwise still be assigned an
-    // id after this stream opens, which is not activity on an idle stream.
-    let tree = TempTree::settled("idle");
+    let tree = TempTree::new("idle");
     let root = tree.to_path_buf();
     let mut stream = open_stream(std::slice::from_ref(&root), EventId::SINCE_NOW);
     let batch = stream.drain(Duration::from_millis(300));
-    assert!(batch.is_empty(), "{:?}", batch.events);
+    assert_idle(&batch, &root);
     assert!(!batch.dropped);
     assert!(!batch.event_ids_wrapped);
     assert!(!batch.history_done);
@@ -427,15 +430,15 @@ fn an_idle_live_stream_reports_no_events() {
 
 #[test]
 fn a_live_batch_never_reports_the_since_now_sentinel() {
-    let tree = TempTree::settled("live-cursor");
+    let tree = TempTree::new("live-cursor");
     let root = tree.to_path_buf();
-    // Opened live: there is no replay, so the batch is empty — but its cursor
+    // Opened live: there is no replay, so the batch is idle — but its cursor
     // must still be a real journal id, because persisting SINCE_NOW would make
     // the next process replay nothing forever.
     let mut stream = open_stream(std::slice::from_ref(&root), EventId::SINCE_NOW);
     assert_eq!(stream.since(), EventId::SINCE_NOW);
     let batch = stream.drain(Duration::from_millis(150));
-    assert!(batch.is_empty(), "{:?}", batch.events);
+    assert_idle(&batch, &root);
     assert!(!batch.latest.is_since_now());
     assert!(batch.latest > EventId::from_raw(0));
     assert!(batch.latest <= EventStream::current_event_id());
@@ -443,15 +446,16 @@ fn a_live_batch_never_reports_the_since_now_sentinel() {
 
 #[test]
 fn drain_returns_within_its_timeout() {
-    let tree = TempTree::settled("timeout");
+    let tree = TempTree::new("timeout");
     let root = tree.to_path_buf();
-    // A live stream has no replay to finish, so nothing can end the wait early
-    // except a real event; none is written here.
+    // A live stream has no replay to finish: `drain` only returns early on
+    // `HistoryDone` plus an event, and a live stream never sees `HistoryDone`.
+    // So even the directory's own late creation event cannot end the wait.
     let mut stream = open_stream(std::slice::from_ref(&root), EventId::SINCE_NOW);
     let start = Instant::now();
     let batch = stream.drain(Duration::from_millis(150));
     let elapsed = start.elapsed();
-    assert!(batch.is_empty(), "{:?}", batch.events);
+    assert_idle(&batch, &root);
     assert!(
         elapsed >= Duration::from_millis(140),
         "drain returned too early: {elapsed:?}"
@@ -460,6 +464,75 @@ fn drain_returns_within_its_timeout() {
         elapsed < Duration::from_secs(5),
         "drain ignored its timeout: {elapsed:?}"
     );
+}
+
+fn synthetic_batch(events: Vec<Event>, dropped: bool) -> Batch {
+    Batch {
+        events,
+        latest: EventId::from_raw(100),
+        history_done: false,
+        dropped,
+        event_ids_wrapped: false,
+    }
+}
+
+fn event_at(path: &Path, flags: EventFlags) -> Event {
+    Event {
+        id: EventId::from_raw(101),
+        flags,
+        path: path.to_path_buf(),
+        file_id: None,
+    }
+}
+
+// `assert_idle` is what three real-FSEvents tests rely on, and real delivery cannot be made to
+// misbehave on demand, so its two refusals are pinned with hand-built batches.
+
+#[test]
+fn an_idle_batch_may_carry_the_roots_own_late_creation() {
+    let root = PathBuf::from("/synthetic/root");
+    let created =
+        EventFlags::from_raw(EventFlags::ITEM_CREATED.raw() | EventFlags::ITEM_IS_DIR.raw());
+    assert_idle(
+        &synthetic_batch(vec![event_at(&root, created)], false),
+        &root,
+    );
+    assert_idle(&synthetic_batch(Vec::new(), false), &root);
+}
+
+#[test]
+#[should_panic(expected = "reported activity inside the tree")]
+fn an_idle_batch_with_activity_inside_the_tree_is_refused() {
+    let root = PathBuf::from("/synthetic/root");
+    let batch = synthetic_batch(
+        vec![event_at(&root.join("child.txt"), EventFlags::ITEM_CREATED)],
+        false,
+    );
+    assert_idle(&batch, &root);
+}
+
+#[test]
+fn an_idle_batch_whose_root_event_asks_for_a_rescan_is_refused() {
+    // The root's own events are tolerated, but not the ones `recovery` turns into a rescan: a
+    // filter on the path alone would let a real `RootChanged` or unmount through as "idle".
+    let root = PathBuf::from("/synthetic/root");
+    for flag in [
+        EventFlags::ROOT_CHANGED,
+        EventFlags::MOUNT,
+        EventFlags::UNMOUNT,
+        EventFlags::MUST_SCAN_SUBDIRS,
+    ] {
+        let batch = synthetic_batch(vec![event_at(&root, flag)], false);
+        let refused = std::panic::catch_unwind(|| assert_idle(&batch, &root)).is_err();
+        assert!(refused, "{flag:?} on the root must not pass as idle");
+    }
+}
+
+#[test]
+#[should_panic(expected = "clean, caught-up answer")]
+fn an_idle_batch_that_reports_a_drop_is_refused() {
+    let root = PathBuf::from("/synthetic/root");
+    assert_idle(&synthetic_batch(Vec::new(), true), &root);
 }
 
 #[test]
