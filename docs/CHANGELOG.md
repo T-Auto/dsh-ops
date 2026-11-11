@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.5.4] — 2026-11-11 — Patch release
+
 - Fix `ops-ptc` silently losing batching guidance when an older profile replaces the whole bundle row config and omits the new mode section. The code now defaults `batchingGuidance` to true for `ops-ptc` only; explicit false still disables it, other modes remain off, and telemetry remains opt-in.
 - 修复旧 profile 整行覆盖 bundle 配置且缺少新模式配置节时，`ops-ptc` 静默失去批量引导的问题。代码现在仅对 `ops-ptc` 默认开启 `batchingGuidance`；显式 false 仍可关闭，其它模式仍默认关闭，遥测仍需主动开启。
 
