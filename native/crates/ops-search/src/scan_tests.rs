@@ -82,9 +82,10 @@ fn io_gap_examples_preserve_stable_codes_without_changing_reason_counts() {
     assert_eq!(scan.gap_examples[1]["code"], "ENAMETOOLONG");
 }
 
-#[cfg(unix)]
+// Linux filesystems accept arbitrary name bytes; APFS rejects this fixture at creation.
+#[cfg(target_os = "linux")]
 #[test]
-fn non_utf8_directory_names_are_reported_as_gaps() {
+fn linux_non_utf8_directory_names_are_reported_as_gaps() {
     use std::os::unix::ffi::OsStrExt;
     let (root, request) = fixture();
     fs::create_dir(root.join(std::ffi::OsStr::from_bytes(b"bad-\xff"))).unwrap();
