@@ -104,7 +104,7 @@ Any of these are environment, not code, when they are the only failure and a re-
 
 - `npm ci` — `ENOTFOUND`, `ECONNRESET`, `EAI_AGAIN`, registry 5xx. The workflow installs with
   `--ignore-scripts --registry=https://registry.npmjs.org`.
-- `rustup toolchain install 1.97.1` — toolchain download failure.
+- `rustup toolchain install` (run by `.github/actions/setup`) — toolchain download failure.
 - `actions/cache` — restore/save warnings are non-fatal; a failed save does not fail the job.
 - `actions/upload-artifact` — `Failed to CreateArtifact: … ENOTFOUND` is a GitHub-side DNS blip,
   not an action-version problem. Re-run; it happened once in 235 runs.
@@ -113,9 +113,10 @@ Any of these are environment, not code, when they are the only failure and a re-
 ### 2.4 Disk
 
 Hosted runners have ~14 GB. The Windows leg installs the pinned Bash payload (411 MB) and the
-Niubash payload; macOS keeps a ~1.3 GB cargo cache. `No space left on device` during `cargo test`
-or `npm ci` is usually a cached `native/target` from an older, larger tree plus the payload
-downloads. Delete the cache entry or bump the cache key; nothing in the product needs to change.
+Niubash payload. `No space left on device` during `cargo test` or `npm ci` is usually a restored
+cargo cache from an older, larger tree plus the payload downloads. The cache holds dependencies only
+(see `docs/ci.md`); delete the entry or change a hash input of its key (`Cargo.lock`,
+`rust-toolchain.toml` or `.github/actions/setup/action.yml`). Nothing in the product needs to change.
 
 ## 3. Gate-by-gate dictionary
 
@@ -126,12 +127,16 @@ workflow, never in the lint.
 
 | Message fragment | Meaning | Fix |
 | --- | --- | --- |
-| `every job is classified in EXPECTED_BLOCKING / EXPECTED_NON_BLOCKING` | a job was added to `ci.yml` without being classified | add the id to `EXPECTED_BLOCKING` in `scripts/check-workflows.mjs`, to `ci-required`'s `needs` and to its failure loop |
+| `every job is classified in EXPECTED_BLOCKING / EXPECTED_NON_BLOCKING` | a job was added to `ci.yml` without being classified | add the id to `EXPECTED_BLOCKING` in `scripts/check-workflows.mjs` and to `ci-required`'s `needs` |
 | `"CI required" waits on exactly the blocking jobs` | `needs` and the list disagree | edit `needs` |
-| `failure loop covers exactly the blocking jobs` | the `for job in …` loop and the list disagree | edit the loop |
+| `"CI required" reads every result from toJSON(needs)` / `fails unless every result is "success"` / `never interpolates a result` | the verdict step was rewritten into a hand-kept list, weakened, or interpolates `needs.<job>.result` into the script | restore the `NEEDS: ${{ toJSON(needs) }}` env and the `jq -e 'all(.[]; .result == "success")'` check |
+| `validate covers exactly the four shipped targets` / `every validate leg bounds its own runtime` / `hands its matrix target to the gate` | a platform leg was dropped from the matrix, lost its `timeout`, or the gate no longer gets `--target` (so a wrong runner would not be refused) | restore the leg or the `--target ${{ matrix.target }}` argument |
+| `the Linux leg tests the musl worker that is published` | `worker_target` was removed, so the suites test only the glibc build | restore `worker_target: x86_64-unknown-linux-musl` |
+| `clippy covers the Linux, Windows and macOS code paths` | a `--target` was dropped from the clippy step | restore it; code behind `cfg(windows)` / `cfg(target_os = "macos")` is otherwise never linted |
 | `no blocking job sets continue-on-error` | a gate opted out | remove `continue-on-error`, or (only for a measurement) move the job to `benchmark-gates.yml` |
 | `"CI required" runs even when a dependency fails` | lost `if: always()` | restore it |
-| `native/rust-toolchain.toml pins a channel` / `rustup installs the toolchain pinned by …` | the pinned Rust version drifted between the file and a workflow | edit both to the same channel |
+| `native/rust-toolchain.toml pins a channel` / `installs Rust through the setup action, not rustup directly` / `does not pin a cargo version by hand` / `reads the Rust channel from native/rust-toolchain.toml and never spells the version` | a workflow or the setup action names a Rust version instead of reading it from the toml | install via `uses: ./.github/actions/setup`; change the version only in `native/rust-toolchain.toml` |
+| `.github/actions/setup/action.yml: …` (cache) | the cache saves on an event other than a push, lost its job/OS/arch scope, drifted between its saving and restore-only step, moved the toolchain hash out of the fixed key prefix, or started storing workspace artifacts or a local crate outside `ops-*`/`dsh-ops-*` | restore the property named in the message; they exist so a PR cannot evict `main`'s cache and one job's cache cannot be served to another |
 | `release.yml: refuses a tag that was force-moved …` / `requires a green CI required check` / `runs the same verify-gate` / `checks the release closure` / `publishing is append-only` | a release guard was deleted or renamed | restore the step (grep the step name in `release.yml`); the lint is the only thing that notices these disappear |
 | `release.yml: the gate may read the tagged commit's check runs` | lost `checks: read` | restore the job permission |
 | `benchmark-gates.yml: carries the bench smoke` / `schedules the measurement monthly` | the measurement job moved or the schedule was removed | restore it in `benchmark-gates.yml`; it must not be in `ci.yml` |
@@ -151,8 +156,14 @@ use it:
 ```console
 cargo +1.97.1 fmt --all --manifest-path native/Cargo.toml            # fix
 cargo +1.97.1 fmt --all --check --manifest-path native/Cargo.toml    # verify, what CI runs
-cargo +1.97.1 clippy --workspace --all-targets --locked --manifest-path native/Cargo.toml -- -D warnings
+rustup target add x86_64-pc-windows-msvc aarch64-apple-darwin
+cargo +1.97.1 clippy --workspace --all-targets --locked --manifest-path native/Cargo.toml \
+  --target x86_64-unknown-linux-gnu --target x86_64-pc-windows-msvc --target aarch64-apple-darwin -- -D warnings
 ```
+
+Clippy runs for all three OS families because code behind `#![cfg(windows)]` and
+`cfg(target_os = "macos")` compiles to nothing on Linux. `--target` only type-checks, so no linker or
+foreign host is needed.
 
 - `cargo fmt` failure — always fix by running the formatter with the pinned toolchain; never hand-edit
   formatting. A different rustfmt version can produce a different result, which is why the version is
@@ -163,13 +174,20 @@ cargo +1.97.1 clippy --workspace --all-targets --locked --manifest-path native/C
 - A new Rust release can add lints; the version is pinned, so the lint set only changes when
   `native/rust-toolchain.toml` changes — do that in its own PR.
 
-### 3.4 The functional gate (`validate-posix`, `validate-macos-intel`, `validate-windows`, `node-floor`)
+### 3.4 The functional gate (`validate`, all four legs, and `node-floor`)
 
 All of these run the same entry point:
 
 ```console
-node scripts/verify-gate.mjs --skip-install
+node scripts/verify-gate.mjs --skip-install --target <platform>
+# the Linux leg adds --worker-target x86_64-unknown-linux-musl
 ```
+
+`--target` must equal the host (`<platform>-<arch>`), so a mislabelled runner fails the gate instead of
+reporting another platform's result. `--worker-target` builds that triple right after `build:ptc` and
+stages it over the host worker, so every suite that resolves `runtime/<platform>/` runs against the
+shipped musl binary; suites that call the host build directly under `native/target/release` still use
+the glibc one.
 
 It runs, in order: `node --version`, `cargo --version`, `npm run build` (tsc), `cargo test
 --workspace --locked`, `npm run build:ptc`, `npm run stage:niubash`, Windows-only legacy MSYS

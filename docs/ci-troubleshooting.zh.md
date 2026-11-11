@@ -83,14 +83,14 @@ gh api -X POST repos/T-Auto/dsh-ops/actions/runs/<run-id>/approve
 如果只有这一步失败、重跑就绿，按环境问题处理：
 
 - `npm ci` — `ENOTFOUND`、`ECONNRESET`、`EAI_AGAIN`、registry 5xx；workflow 用 `--ignore-scripts --registry=https://registry.npmjs.org`。
-- `rustup toolchain install 1.97.1` — 工具链下载失败。
+- `rustup toolchain install`（由 `.github/actions/setup` 执行）— 工具链下载失败。
 - `actions/cache` — restore/save 的告警不致命，save 失败不会让 job 红。
 - `actions/upload-artifact` — `Failed to CreateArtifact: … ENOTFOUND` 是 GitHub 侧 DNS 抖动，不是 action 版本问题；重跑即可（235 次里只出现过 1 次）。
 - 发布门禁里的 `gh api` / `git ls-remote` — 5xx 或 DNS 失败会让 gate 红；重新 dispatch。
 
 ### 2.4 磁盘
 
-托管 runner 约 14 GB。Windows 腿要装固定的 Bash 载荷（411 MB）与 Niubash 载荷；macOS 的 cargo 缓存约 1.3 GB。`cargo test` 或 `npm ci` 期间 `No space left on device`，通常是「旧的大 tree 留下的 `native/target` 缓存 + 载荷下载」叠加。删缓存条目或换缓存 key，产品代码无需改动。
+托管 runner 约 14 GB。Windows 腿要装固定的 Bash 载荷（411 MB）与 Niubash 载荷；`cargo test` 或 `npm ci` 期间 `No space left on device`，通常是「恢复出来的旧的大 cargo 缓存 + 载荷下载」叠加。缓存只存依赖（见 `docs/ci.md`）；删缓存条目或改动 key 的某个哈希输入（`Cargo.lock`、`rust-toolchain.toml`、`.github/actions/setup/action.yml`），产品代码无需改动。
 
 ## 3. 逐个门禁的错误字典
 
@@ -100,12 +100,16 @@ gh api -X POST repos/T-Auto/dsh-ops/actions/runs/<run-id>/approve
 
 | 消息片段 | 含义 | 处理 |
 | --- | --- | --- |
-| `every job is classified in EXPECTED_BLOCKING / EXPECTED_NON_BLOCKING` | `ci.yml` 加了 job 但没分类 | 把 id 加进 `scripts/check-workflows.mjs` 的 `EXPECTED_BLOCKING`，以及 `ci-required` 的 `needs` 与失败循环 |
+| `every job is classified in EXPECTED_BLOCKING / EXPECTED_NON_BLOCKING` | `ci.yml` 加了 job 但没分类 | 把 id 加进 `scripts/check-workflows.mjs` 的 `EXPECTED_BLOCKING` 和 `ci-required` 的 `needs` |
 | `"CI required" waits on exactly the blocking jobs` | `needs` 与常量不一致 | 改 `needs` |
-| `failure loop covers exactly the blocking jobs` | `for job in …` 循环与常量不一致 | 改循环 |
+| `"CI required" reads every result from toJSON(needs)` / `fails unless every result is "success"` / `never interpolates a result` | 判定步骤被改回手写名单、被弱化，或把 `needs.<job>.result` 直接插进脚本 | 恢复 `NEEDS: ${{ toJSON(needs) }}` 环境变量与 `jq -e 'all(.[]; .result == "success")'` 判定 |
+| `validate covers exactly the four shipped targets` / `every validate leg bounds its own runtime` / `hands its matrix target to the gate` | 矩阵少了某个平台腿、腿丢了 `timeout`，或 gate 不再收到 `--target`（错误的 runner 不会被拒绝） | 恢复该腿或 `--target ${{ matrix.target }}` 参数 |
+| `the Linux leg tests the musl worker that is published` | 删掉了 `worker_target`，suite 只测 glibc 构建 | 恢复 `worker_target: x86_64-unknown-linux-musl` |
+| `clippy covers the Linux, Windows and macOS code paths` | clippy 步骤少了某个 `--target` | 恢复；否则 `cfg(windows)` / `cfg(target_os = "macos")` 后的代码永远不会被 lint |
+| `native/rust-toolchain.toml pins a channel` / `installs Rust through the setup action, not rustup directly` / `does not pin a cargo version by hand` / `reads the Rust channel from native/rust-toolchain.toml and never spells the version` | workflow 或 setup action 写死了 Rust 版本，而不是从 toml 读取 | 通过 `uses: ./.github/actions/setup` 安装；版本只改 `native/rust-toolchain.toml` |
+| `.github/actions/setup/action.yml: …`（缓存） | 缓存在 push 以外的事件上保存、丢了 job/系统/架构作用域、保存步骤与只恢复步骤不一致、工具链哈希移出了 key 的固定前缀，或开始存工作区产物 / `ops-*`、`dsh-ops-*` 之外的本地 crate | 恢复消息里点名的属性；它们保证 PR 不会挤掉 `main` 的缓存、一个 job 的缓存不会被另一个 job 取到 |
 | `no blocking job sets continue-on-error` | 有门禁「退出」了 | 去掉 `continue-on-error`；只有测量类 job 才应移到 `benchmark-gates.yml` |
 | `"CI required" runs even when a dependency fails` | 丢了 `if: always()` | 加回来 |
-| `native/rust-toolchain.toml pins a channel` / `rustup installs the toolchain pinned by …` | Rust 版本在文件与某个 workflow 之间漂移 | 两处改成同一 channel |
 | `release.yml: refuses a tag that was force-moved …` / `requires a green CI required check` / `runs the same verify-gate` / `checks the release closure` / `publishing is append-only` | 发布守卫被删除或改名 | 按名字找回 step；删掉这些守卫只有 lint 会发现 |
 | `release.yml: the gate may read the tagged commit's check runs` | 丢了 `checks: read` | 恢复 job 权限 |
 | `benchmark-gates.yml: carries the bench smoke` / `schedules the measurement monthly` | 测量 job 位置或 schedule 被改 | 放回 `benchmark-gates.yml`；它不能回到 `ci.yml` |
@@ -122,20 +126,27 @@ gh api -X POST repos/T-Auto/dsh-ops/actions/runs/<run-id>/approve
 ```console
 cargo +1.97.1 fmt --all --manifest-path native/Cargo.toml            # 修复
 cargo +1.97.1 fmt --all --check --manifest-path native/Cargo.toml    # 校验（CI 跑的就是这条）
-cargo +1.97.1 clippy --workspace --all-targets --locked --manifest-path native/Cargo.toml -- -D warnings
+rustup target add x86_64-pc-windows-msvc aarch64-apple-darwin
+cargo +1.97.1 clippy --workspace --all-targets --locked --manifest-path native/Cargo.toml \
+  --target x86_64-unknown-linux-gnu --target x86_64-pc-windows-msvc --target aarch64-apple-darwin -- -D warnings
 ```
+
+clippy 对三个系统族都要跑：`#![cfg(windows)]` 与 `cfg(target_os = "macos")` 后面的代码在 Linux 上编译为空。`--target` 只做类型检查，不需要链接器或异构宿主。
 
 - `cargo fmt` 失败：永远用钉住的工具链跑 formatter，不要手改格式。不同 rustfmt 版本结果可能不同，这正是版本只写在一处的原因。
 - `clippy` 失败：`-D warnings` 把每条 lint 变成错误。本地复现后，要么按建议改（`cargo clippy --fix`），要么在**该处**用注释说明并只静音那一条 lint。不要加 crate 级 `#![allow(...)]`。
 - 新的 Rust 版本会引入新 lint；版本被钉住，所以 lint 集合只有在改 `native/rust-toolchain.toml` 时才会变——那应该在单独 PR 里做。
 
-### 3.4 功能门禁（`validate-posix`、`validate-macos-intel`、`validate-windows`、`node-floor`）
+### 3.4 功能门禁（`validate` 的四条腿与 `node-floor`）
 
 它们跑同一个入口：
 
 ```console
-node scripts/verify-gate.mjs --skip-install
+node scripts/verify-gate.mjs --skip-install --target <platform>
+# Linux 腿另加 --worker-target x86_64-unknown-linux-musl
 ```
+
+`--target` 必须等于宿主（`<platform>-<arch>`），所以标签错误的 runner 会让 gate 失败，而不是报告另一个平台的结果。`--worker-target` 在 `build:ptc` 之后构建该 triple 并覆盖 staged 的宿主 worker，因此所有经由 `runtime/<platform>/` 解析 worker 的 suite 测的都是发布的 musl 二进制；直接取 `native/target/release` 的 suite 仍使用 glibc 构建。
 
 顺序是：`node --version`、`cargo --version`、`npm run build`（tsc）、`cargo test --workspace --locked`、`npm run build:ptc`、`npm run stage:niubash`、（Windows）legacy MSYS fixture + `npm run build:bash-ipc`、`npm run validate:manifest`、`npm run verify`（全部套件）、`native-runtime check`、`npm pack`、解包、对包内再 check。失败会打印 `step failed (<code>): <step>` 和 summary；之后 6 条断言专门抓「静默失败」。
 

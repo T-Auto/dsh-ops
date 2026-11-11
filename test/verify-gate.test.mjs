@@ -43,10 +43,10 @@ export async function load(url, context, next) {
   return next(url, context);
 }
 `)
-    for (const failure of ['none', 'unpack', 'closure']) {
+    const runGate = (failure, extraArgs = []) => {
       const child = spawnSync(process.execPath, ['--experimental-loader', pathToFileURL(loader).href,
         '--import', pathToFileURL(preload).href,
-        path.join(PACKAGE_ROOT, 'scripts/verify-gate.mjs'), '--skip-install', '--keep-going', '--json'], {
+        path.join(PACKAGE_ROOT, 'scripts/verify-gate.mjs'), '--skip-install', '--keep-going', '--json', ...extraArgs], {
         cwd: PACKAGE_ROOT, encoding: 'utf8', timeout: 30000,
         env: { ...process.env, DSH_OPS_TEST_BASH: '', DSH_OPS_SUITE_TIMEOUT_MS: undefined, GATE_ARTIFACT_FAILURE: failure },
       })
@@ -54,7 +54,16 @@ export async function load(url, context, next) {
       assert.equal(child.status, failure === 'none' ? 0 : 1, child.stdout + child.stderr)
       const match = /\n(\{\n  "host":[\s\S]*?\n\})\n/.exec(child.stdout)
       assert.ok(match, child.stdout + child.stderr)
-      const result = JSON.parse(match[1])
+      return { child, result: JSON.parse(match[1]) }
+    }
+    const musl = runGate('none', ['--worker-target', 'x86_64-unknown-linux-musl']).result.steps.map(step => step.title)
+    assert.ok(musl.indexOf('build and stage the x86_64-unknown-linux-musl worker') > musl.indexOf('build and stage the native worker'),
+      'the cross worker is staged over the host worker')
+    assert.ok(musl.indexOf('build and stage the x86_64-unknown-linux-musl worker') < musl.indexOf('full suite verification'),
+      'the suites run against the cross worker, not before it')
+    for (const failure of ['none', 'unpack', 'closure']) {
+      const { child, result } = runGate(failure)
+      assert.equal(result.steps.some(step => /--target/.test(step.command)), false, 'no cross worker unless --worker-target is given')
       assert.equal(result.steps.filter(step => /run build$/.test(step.command)).length, 1)
       assert.equal(result.steps.filter(step => /run validate:manifest$/.test(step.command)).length, 1)
       assert.equal(result.steps.find(step => step.title === 'full suite verification').command, 'node test/run.mjs')
