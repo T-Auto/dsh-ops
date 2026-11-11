@@ -91,6 +91,12 @@ interface ReadableProgram {
   readonly code: string
   /** Comments blanked as well, with string bodies blanked except module specifiers and template expressions. */
   readonly bare: string
+  /** Only executable tokens; offsets use UTF-16 code units, like RegExp indices. */
+  readonly tokens: string
+  /** Literal spans, including complete templates, used to bound command values. */
+  readonly literals: ReadonlyMap<number, number>
+  /** Statically known literal text; template expressions are never shell text. */
+  readonly literalText: ReadonlyMap<number, string>
 }
 
 /**
@@ -132,8 +138,11 @@ function isModuleSpecifier(code: string, open: number): boolean {
  * @returns the comment-free view and the comment-and-string-free view.
  */
 function readProgram(code: string): ReadableProgram {
-  const comments = [...code]
-  const bare = [...code]
+  const comments = code.split('')
+  const bare = code.split('')
+  const tokens = code.split('')
+  const literals = new Map<number, number>()
+  const literalText = new Map<number, string>()
   const blank = (target: string[], from: number, to: number): void => {
     for (let index = from; index < to; index += 1) {
       const char = target[index]
@@ -162,10 +171,14 @@ function readProgram(code: string): ReadableProgram {
     }
     blank(comments, open, end)
     blank(bare, open, end)
+    blank(tokens, open, end)
     return end
   }
   const quotedEnd = (open: number, quote: string): number => {
     const end = stringEnd(open, quote)
+    literals.set(open, end)
+    literalText.set(open, code.slice(open + 1, end - 1))
+    blank(tokens, open, end)
     if (!isModuleSpecifier(code, open)) {
       const close = end > open && code[end - 1] === quote ? end - 1 : end
       blank(bare, open + 1, close)
@@ -173,14 +186,25 @@ function readProgram(code: string): ReadableProgram {
     return end
   }
   const templateEnd = (open: number): number => {
+    blank(tokens, open, open + 1)
     let index = open + 1
     let literal = index
+    const parts: string[] = []
     while (index < code.length) {
       const char = code[index]
       if (char === '\\') { index += 2; continue }
-      if (char === '\x60') { blank(bare, literal, index); return index + 1 }
+      if (char === '\x60') {
+        blank(bare, literal, index)
+        blank(tokens, literal, index + 1)
+        literals.set(open, index + 1)
+        parts.push(code.slice(literal, index))
+        literalText.set(open, parts.join('\0'))
+        return index + 1
+      }
       if (char === '$' && code[index + 1] === '{') {
         blank(bare, literal, index)
+        blank(tokens, literal, index + 2)
+        parts.push(code.slice(literal, index))
         index = expressionEnd(index + 2)
         literal = index
         continue
@@ -188,6 +212,8 @@ function readProgram(code: string): ReadableProgram {
       index += 1
     }
     blank(bare, literal, code.length)
+    blank(tokens, literal, code.length)
+    literals.set(open, code.length)
     return code.length
   }
   const expressionEnd = (open: number): number => {
@@ -214,7 +240,40 @@ function readProgram(code: string): ReadableProgram {
     if (char === '\x60') { index = templateEnd(index); continue }
     index += 1
   }
-  return { code: comments.join(''), bare: bare.join('') }
+  return { code: comments.join(''), bare: bare.join(''), tokens: tokens.join(''), literals, literalText }
+}
+
+/** Inspect only a literal command in the first argument object of this shell call.
+ * Dynamic values are deliberately not resolved: guidance must not guess at file IO.
+ */
+function shellCommandUsesFiles(program: ReadableProgram, start: number): boolean {
+  const { code, tokens, literals, literalText } = program
+  let index = start
+  while (/\s/u.test(code[index] ?? "") && index < code.length) index += 1
+  if (tokens[index] !== "{") return false
+  let depth = 1
+  let propertyStart = true
+  index += 1
+  while (index < code.length && depth > 0) {
+    const char = code[index]!
+    if (/\s/u.test(char)) { index += 1; continue }
+    if (depth === 1 && propertyStart) {
+      // Quoted property names are valid, but nested objects and descriptions are not commands.
+      const key = /^(?:command|"command"|'command')\s*:\s*/u.exec(code.slice(index))
+      if (key) {
+        const text = literalText.get(index + key[0].length)
+        if (text !== undefined && SHELL_FILE_WORK.test(text)) return true
+      }
+      propertyStart = false
+    }
+    const end = literals.get(index)
+    if (end !== undefined) { index = end; continue }
+    if ("{[(".includes(char)) depth += 1
+    else if ("}])".includes(char)) depth -= 1
+    else if (char === "," && depth === 1) propertyStart = true
+    index += 1
+  }
+  return false
 }
 
 /** Features observable in the program text alone. */
@@ -260,11 +319,12 @@ export function analyzeProgram(code: unknown): ProgramShape {
       hasBranching: false, isWaiting: false, bypassesFileTools: false, chars: 0 }
   }
   const readable = readProgram(code)
-  // A commented-out call is not a call: dispatch sites are read from comment-free
-  // text, which is also what lets a truly dispatch-free program earn no notice.
-  const sites = [...readable.code.matchAll(DISPATCH)]
+  // Read names from the literal-preserving view, but require an executable call site.
+  // This retains tools["name"] without mistaking text inside a string for a call.
+  const sites = [...readable.code.matchAll(DISPATCH)].filter(match => readable.tokens.slice(match.index, match.index + 5) === 'tools')
   const plan = parsePlan(code)
-  const shellForFiles = sites.some(match => SHELL_TOOL.test(match[1] ?? match[2] ?? '')) && SHELL_FILE_WORK.test(readable.code)
+  const shellForFiles = sites.some(match => SHELL_TOOL.test(match[1] ?? match[2] ?? '')
+    && shellCommandUsesFiles(readable, match.index + match[0].length))
   return {
     hasFirstLinePlan: plan.length > 0,
     declaredOperations: plan.length,

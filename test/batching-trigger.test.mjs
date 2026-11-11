@@ -71,6 +71,76 @@ await test('comments and strings are not a bypass, while real module IO still is
   assert.equal(analyzeProgram('const r = await tools.ops_stat({ path: "a" })\nreturn \x60\x24{fs.readFileSync("a")}\x60').bypassesFileTools, true)
 })
 
+// Literal text is not a dispatch site, even when it resembles executable code.
+for (const code of [
+  'return "tools.ops_stat()"',
+  'return "tools.ops_bash()"',
+  'return `tools.ops_stat()`',
+  "return 'tools[\"ops_bash\"]()'",
+  'const note = "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"; return "tools.ops_stat()"',
+  'return `outer ${"tools.ops_stat()"}`',
+  'const note = "😀"; return "tools.ops_stat()"',
+]) {
+  await test(`literal dispatch is ignored: ${code}`, () => {
+    const shape = analyzeProgram(code)
+    assert.equal(shape.dispatchSites, 0)
+    assert.deepEqual(violationsOf(shape), { plan: false, bypass: false, shape: false })
+    assert.equal(createProgramLatch().observe({}, code), undefined)
+  })
+}
+
+for (const code of [
+  'return tools["ops_stat"]({ path: "a" })',
+  'return `result: ${await tools.ops_stat({ path: "a" })}`',
+  'return `outer ${`inner ${await tools["ops_stat"]({ path: "a" })}`}`',
+  '// 😀 中文\nreturn tools.ops_stat({ path: "a" })',
+  '// 😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\nreturn tools.ops_stat({ path: "a" })',
+  'const note = "😀"; /* 😀 */ return tools["ops_stat"]({ path: "a" })',
+]) {
+  await test(`executable dispatch is retained: ${code}`, () => {
+    assert.equal(analyzeProgram(code).dispatchSites, 1)
+  })
+}
+
+for (const code of [
+  'await tools.ops_bash({ command: "npm test", description: "grep results" })',
+  'await tools.ops_bash({ command: `npm test ${helper("cat file")}` })',
+  'await tools.ops_bash({ command: `cat${suffix} file` })',
+  'const command = choose(); await tools.ops_bash({ command, description: "cat file" })',
+  'await tools.ops_bash({ command: "npm test" }); return "cat file"',
+  'await tools.ops_bash({ command: "npm test", workdir: "cat folder" })',
+  'await tools.ops_bash({ command: "npm test" }); await tools.ops_write_file({ content: "ls -la" })',
+  'const example = { command: "cat file" }; await tools.ops_bash({ command: "npm test" })',
+  'await tools.ops_bash({ command: "npm test", metadata: { command: "cat file" } })',
+  'await tools.ops_bash({ command: "npm test", description: `cat ${"file"}` })',
+  'await tools.ops_bash({ script_path: "cat script.sh", description: "ls files" })',
+  '// 😀\nawait tools.ops_bash({ command: "npm test", description: "cat file" })',
+]) {
+  await test(`shell metadata is not file work: ${code}`, () => {
+    assert.equal(analyzeProgram(code).bypassesFileTools, false)
+  })
+}
+
+for (const code of [
+  'await tools["ops_bash"]({ command: "cat file", description: "read" })',
+  'await tools.ops_bash({ "command": "ls -la" })',
+  'await tools.ops_bash({ command: `cat ${path}` })',
+  'await tools.ops_bash({ command: "cat " + path })',
+  'return `result: ${await tools.ops_bash({ command: "cat file" })}`',
+  'await tools.pwsh({ command: "Get-Content file" })',
+  'const note = "😀"; /* 😀 */ await tools["ops_bash"]({ command: "cat file" })',
+]) {
+  await test(`shell command file work is retained: ${code}`, () => {
+    assert.equal(analyzeProgram(code).bypassesFileTools, true)
+  })
+}
+
+await test('unicode offsets preserve raw IO detection and ignore literal IO', () => {
+  assert.equal(analyzeProgram('const note = "😀"; return fs.readFileSync("a")').bypassesFileTools, true)
+  assert.equal(analyzeProgram('// 😀\nconst fs = await import("node:fs")').bypassesFileTools, true)
+  assert.equal(analyzeProgram('const note = "😀"; return "fs.readFileSync(a)"').bypassesFileTools, false)
+})
+
 await test('a program with no dispatch site earns no category', () => {
   // A value program and a comment-only program have no call shape to correct.
   for (const code of ['return 1', '// plan: read nothing\n// a note about node:fs\nreturn 1', '// tools.ops_stat({ path: "a" })\nreturn 1']) {

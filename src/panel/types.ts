@@ -23,10 +23,11 @@ export interface FoldedEvents {
 export interface SessionState {
   sessionId: string; paths: PanelPaths; size: number; droppedEvents: number; capped: boolean; closed: boolean
   pendingBytes: number; queueCapped: boolean; openFailed: boolean
+  captureFailed: boolean; failurePending: boolean
   header?: Row; chain: Promise<void>
 }
 export interface PanelMeta { pluginVersion?: unknown; platform?: unknown; node?: unknown; argv?: unknown }
-export interface FoldContext { config?: PanelConfig; meta?: PanelMeta; droppedEvents?: number; malformed?: number }
+export interface FoldContext { config?: PanelConfig; meta?: PanelMeta; droppedEvents?: number; malformed?: number; captureFailed?: boolean }
 export type PanelIO = Pick<typeof fsp, 'readFile' | 'mkdir' | 'appendFile' | 'writeFile' | 'rename' | 'stat' | 'rm'>
 export interface CollectorOptions {
   config?: PanelConfig; io?: PanelIO; env?: NodeJS.ProcessEnv; now?: () => number

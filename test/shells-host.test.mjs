@@ -7,7 +7,7 @@ import { sessionWorkdir } from '../lib/session-shells.js'
 import { hostForeground } from '../lib/shells/host-contract.js'
 import { assert, report, test, TEST_HOME } from './lib/harness.mjs'
 
-function fixture({ mode = 'danger-full-access', jobs, approval, settle = true, exitCode = 0, file = process.execPath } = {}) {
+function fixture({ mode = 'danger-full-access', jobs, approval, settle = true, exitCode = 0, stderr = 'warning', file = process.execPath } = {}) {
   const calls = [], pending = Promise.withResolvers()
   const agent = { id: 'shell-host', session: { id: 'shell-host', header: { cwd: TEST_HOME } } }
   const services = { jobs, approval, sandboxPolicy: { resolve: () => ({ mode, workspaceRoot: TEST_HOME }) },
@@ -17,7 +17,7 @@ function fixture({ mode = 'danger-full-access', jobs, approval, settle = true, e
       const stream = text => ({ readFrom: offset => ({ text: text.slice(offset), nextOffset: text.length, lossy: false }) })
       if (settle) pending.resolve({ exitCode, signal: null })
       else spec.signal.addEventListener('abort', () => pending.resolve({ exitCode: null, signal: 'SIGTERM' }))
-      return { done: pending.promise, collected: { stdout: stream('ok'), stderr: stream('warning') } }
+      return { done: pending.promise, collected: { stdout: stream('ok'), stderr: stream(stderr) } }
     } },
   }
   // A tracked Cordis service hands out a fresh traceable proxy on every read, so the definition
@@ -374,6 +374,91 @@ await test('timeout cannot claim no effects while an invoked asynchronous starte
       stdout: { text: '', truncated: false }, stderr: { text: '', truncated: false } }) })
   await jobs.hooks.done
   assert.equal(stopped, true); assert.equal(jobs.outcome.status, 'killed')
+})
+
+await test('successful command diagnostics never impersonate a sandbox startup failure', async () => {
+  for (const stderr of ['sandbox_unavailable', "couldn't create signal pipe", 'fatal error: win32 error 5']) {
+    const f = fixture({ stderr })
+    const value = await f.definition.execute({ command: 'echo diagnostic >&2', description: 'Preserve successful diagnostic command output' }, f.exec)
+    assert.equal(value.exitCode, 0); assert.equal(value.status, 'completed')
+    assert.equal(value.error, undefined); assert.equal(value.failure, undefined)
+    assert.equal(value.stderr.text, stderr); assert.equal(value.sandbox.runnerFailed, undefined)
+  }
+})
+
+await test('nonzero command diagnostics preserve command failure and uncertain effects', async () => {
+  for (const stderr of ['sandbox_unavailable', "couldn't create signal pipe", 'fatal error: win32 error 5']) {
+    const f = fixture({ exitCode: 7, stderr })
+    const value = await f.definition.execute({ command: 'exit 7', description: 'Preserve ordinary diagnostic command failure' }, f.exec)
+    assert.equal(value.exitCode, 7); assert.equal(value.status, 'failed')
+    assert.equal(value.error, undefined); assert.equal(value.failure.code, 'EXIT_CODE')
+    assert.equal(value.failure.effectState, 'unknown'); assert.equal(value.stderr.text, stderr)
+    assert.equal(value.sandbox.runnerFailed, undefined)
+  }
+})
+
+await test('background successful diagnostics retain the completed job outcome', async () => {
+  const jobs = jobRegistry(), f = fixture({ jobs, stderr: 'sandbox_unavailable' })
+  const value = await f.definition.execute({ command: 'echo diagnostic >&2', description: 'Preserve background diagnostic command output', run_in_background: true }, f.exec)
+  assert.equal(value.kind, 'background')
+  await jobs.hooks.done
+  assert.equal(jobs.outcome.status, 'completed'); assert.equal(jobs.outcome.detail, 'exit code: 0')
+})
+
+await test('host confinement diagnostics still distinguish runner failure, denial and preparation refusal', async () => {
+  // Exercise the borrowed host contract without staging a real Windows runtime or changing ACLs.
+  // The suite runs serially; the platform descriptor is restored even when an assertion fails.
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+  Object.defineProperty(process, 'platform', { ...platform, value: 'linux' })
+  try {
+    for (const sample of [
+      { exitCode: 0, stderr: 'sandbox_unavailable', status: 'completed' },
+      { exitCode: 7, stderr: 'sandbox_unavailable', code: 'EXIT_CODE' },
+      { exitCode: 125, stderr: 'trusted runner fatal', code: 'EXECUTOR_UNAVAILABLE', runner: true },
+      { exitCode: 7, stderr: 'trusted runner fatal', code: 'EXIT_CODE' },
+      { exitCode: 125, stderr: 'runner information: trusted runner fatal', code: 'EXIT_CODE' },
+      { exitCode: 1, stderr: 'host file access denied', denied: true },
+    ]) {
+      const f = fixture({ mode: 'read-only', exitCode: sample.exitCode, stderr: sample.stderr })
+      f.services.sandbox = { async confine(argv) { return { argv, enforcement: 'full',
+        runnerFailureRules: [{ allowedExitCodes: [125], fatalSignatures: ['trusted runner fatal'], informationalLines: ['runner information: trusted runner fatal'] }],
+        denialSignatures: ['host file access denied'] } } }
+      const value = await f.definition.execute({ command: 'true', description: 'Verify borrowed host diagnostic contracts' }, f.exec)
+      assert.equal(f.calls.length, 1); assert.equal(value.exitCode, sample.exitCode)
+      assert.equal(value.status, sample.status ?? 'failed')
+      if (sample.code) assert.equal(value.failure.code, sample.code)
+      assert.equal(value.sandbox.runnerFailed, sample.runner)
+      assert.equal(value.sandbox.denied, sample.denied === true)
+      if (sample.denied) assert.ok(value.restriction)
+    }
+    for (const sandbox of [undefined,
+      { async confine() { throw new Error('SANDBOX_UNAVAILABLE: test provider failed') } },
+      { async confine() { throw new Error('provider unavailable without a magic keyword') } },
+      { async confine() { return { argv: [], enforcement: 'none' } } },
+    ]) {
+      const unavailable = fixture({ mode: 'read-only' })
+      unavailable.services.sandbox = sandbox
+      const value = await unavailable.definition.execute({ command: 'true', description: 'Refuse failed host confinement preparation' }, unavailable.exec)
+      assert.equal(unavailable.calls.length, 0); assert.equal(value.status, 'failed')
+      assert.match(value.error, /^EXECUTOR_UNAVAILABLE:/)
+      assert.equal(value.failure.code, 'EXECUTOR_UNAVAILABLE')
+      assert.equal(value.failure.effectState, 'none')
+      assert.equal(value.sandbox.runnerFailed, true); assert.equal(value.sandbox.denied, false)
+    }
+    const changed = fixture({ mode: 'read-only' })
+    changed.services.sandbox = { async confine(argv) { changed.setMode('workspace-write'); return { argv, enforcement: 'full' } } }
+    const authority = await changed.definition.execute({ command: 'true', description: 'Preserve changed authority before command spawn' }, changed.exec)
+    assert.match(authority.error, /AUTHORITY_CHANGED/); assert.equal(changed.calls.length, 0)
+    assert.equal(authority.sandbox.runnerFailed, undefined)
+    const cancelled = fixture({ mode: 'read-only' }), controller = new AbortController()
+    cancelled.services.sandbox = { async confine() {
+      controller.abort(new Error('cancel confinement preparation'))
+      throw new Error('SANDBOX_UNAVAILABLE: interrupted provider')
+    } }
+    const aborted = await cancelled.definition.execute({ command: 'true', description: 'Preserve cancellation during confinement preparation' }, { ...cancelled.exec, signal: controller.signal })
+    assert.equal(aborted.failure.code, 'CANCELLED'); assert.equal(aborted.failure.effectState, 'none')
+    assert.equal(cancelled.calls.length, 0); assert.equal(aborted.sandbox.runnerFailed, undefined)
+  } finally { Object.defineProperty(process, 'platform', platform) }
 })
 
 report('shells-host')

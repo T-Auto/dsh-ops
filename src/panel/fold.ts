@@ -82,6 +82,7 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
   let endedAt: number | undefined
   let turnEndReason: string | undefined
   let capped = false
+  let captureFailed = context.captureFailed === true
   let conversationTruncated = false
   let traceTruncated = false
   let droppedChars = 0
@@ -119,6 +120,7 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
       continue
     }
     if (record.record === 'capped') { capped = true; continue }
+    if (record.record === 'capture-failed') { captureFailed = true; continue }
     if (record.record !== 'event') continue
     if (!foldEvent(record)) { malformedRecords += 1; counters.usageReported = false; continue }
     const time = Number.isFinite(record.time) && record.time >= 0 ? record.time : 0
@@ -233,6 +235,7 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
         break
     }
   }
+  if (captureFailed) counters.usageReported = false
   usage.grandTotal = USAGE_BUCKETS.reduce((total, key) => total + usage[key], 0)
   const at = (ms: number | undefined) => (ms === undefined ? undefined : new Date(ms).toISOString())
   const events: FoldedEvents = { layout: 'merged', merged: true, mergedAt: undefined,
@@ -257,8 +260,10 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
     trace,
     verify: {
       checks: 0, passed: 0, failed: 0,
-      degraded: capped || conversationTruncated || traceTruncated || events.malformed > 0,
+
+      degraded: captureFailed || capped || conversationTruncated || traceTruncated || events.malformed > 0,
       notes: [
+        ...(captureFailed ? ['采集追加失败，事件或用量统计不完整。'] : []),
         '实时采集没有 verifier:「判卷」标签页只反映采集自身的完整性,不代表任何任务的通过情况。',
         '只有挂载之后产生的事件会被采集;挂载之前的历史与已恢复的会话前缀不回放。',
       ],
@@ -266,6 +271,7 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
     events,
     archive,
     limits: {
+      ...(captureFailed ? { captureFailed: true } : {}),
       textLimit: config.textLimit ?? PANEL_DEFAULTS.textLimit, maxSessionBytes: config.maxSessionBytes ?? PANEL_DEFAULTS.maxSessionBytes,
       truncated: capped, droppedEvents: context.droppedEvents ?? 0, droppedChars,
       traceTruncated, conversationTruncated, trimmed: false, trimmedRows: 0,

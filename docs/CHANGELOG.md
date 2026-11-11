@@ -7,6 +7,13 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Keep panel capture gaps observable after failed or partial appends and across recovery; isolate unterminated WAL tails so resumed events are not lost. Failed marker writes retain the WAL and use the existing report as an integrity fallback.
+- 面板追加零写或部分写失败后保留采集缺口，并在恢复后继续报告不完整；隔离未换行 WAL 残尾，避免吞掉恢复后的新事件。缺口标记写入失败时保留 WAL，并用既有报告兜底保存完整性状态。
+- Show partial disk measurements, skipped reasons and sampled omissions in text diagnostics. Only the latest panel load may update the selected report, including local-file and network races.
+- 磁盘文本诊断显示部分测量、跳过原因及未展示样本数；面板只接纳最后一次加载结果，覆盖本地文件与网络请求交错。
+- Batching guidance ignores tool-call examples inside strings and file commands mentioned outside a shell call's command field, with consistent UTF-16 offsets. Shell diagnostics classify pre-spawn failures by their actual source and host runner rules, not keywords printed by successful commands.
+- 批量引导不再把字符串中的调用示例或 shell 命令字段之外的文字误判为操作，并统一 UTF-16 偏移。Shell 诊断按真实启动前失败来源及宿主 runner 规则分类，不再凭成功命令打印的关键词报执行器损坏。
+
 - Preserve explicit JSON `null` in captured PTC arguments and filter result blocks by their text type. Add a real NodePtc-to-collector persistence regression, capture-off coverage for the added categories, and production-viewer DOM safety checks (#700).
 - 捕获 PTC 参数时保留显式 JSON `null`，结果块只采集 text 类型。补充真实 NodePtc 到采集器落盘回归、新增类别关闭采集验证，以及产品查看器的 DOM 安全检查（#700）。
 

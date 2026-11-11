@@ -239,10 +239,18 @@ export function renderDiskStatus(report: DiskStatusReport): string {
   lines.push('')
   lines.push(pad('id', 5) + pad('resource', 34) + pad('category', 14) + pad('owner', 22) + pad('action', 17) + pad('count', 7) + pad('files', 7) + pad('bytes', 11) + pad('oldest', 8) + 'reclaimable')
   for (const row of report.resources) {
-    const state = row.count === 0 ? ' (missing)' : ''
+    const partial = row.truncated || row.skippedCount > 0
+    const state = partial ? ' (partial)' : row.count === 0 ? ' (missing)' : ''
     lines.push(pad(row.id, 5) + pad(row.name, 34) + pad(row.category, 14) + pad(row.owner, 22)
       + pad(row.action, 17) + pad(String(row.count), 7) + pad(String(row.files), 7)
       + pad(humanBytes(row.bytes), 11) + pad(humanAge(row.ageMs), 8) + humanBytes(row.reclaimableBytes) + state)
+    if (partial) {
+      lines.push('      measurement: truncated=' + row.truncated + ' skipped=' + row.skippedCount)
+      for (const skip of row.skipped) {
+        lines.push('      skipped: ' + skip.reason + (skip.code ? ' (' + skip.code + ')' : '') + ' - ' + skip.path)
+      }
+      if (row.skippedCount > row.skipped.length) lines.push('      skipped: ' + (row.skippedCount - row.skipped.length) + ' additional entries not shown')
+    }
     if (row.reclaimBlocked !== null && row.count > 0) {
       lines.push('      retained: ' + row.reclaimBlocked.reason + ' - ' + row.reclaimBlocked.evidence)
     }
@@ -250,7 +258,8 @@ export function renderDiskStatus(report: DiskStatusReport): string {
     lines.push('      cleanup:  ' + row.cleanupEntry)
   }
   lines.push('')
-  lines.push('totals: ' + humanBytes(report.totals.bytes) + ' in ' + String(report.totals.files) + ' files across '
+  const partial = report.resources.some((row) => row.truncated || row.skippedCount > 0)
+  lines.push('totals' + (partial ? ' (partial; measured bytes only)' : '') + ': ' + humanBytes(report.totals.bytes) + ' in ' + String(report.totals.files) + ' files across '
     + String(report.totals.count) + ' items; reclaimable now: ' + humanBytes(report.totals.reclaimableBytes))
   lines.push('categories: ' + CATEGORIES.map((category) => category + '=' + humanBytes(report.totals.byCategory[category] ?? 0)).join(' '))
   for (const note of report.notes) lines.push('note: ' + note)
