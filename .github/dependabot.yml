@@ -1,11 +1,15 @@
 version: 2
 
-# The pinned action versions (`actions/checkout@v4`, …) and the Rust toolchain pin are deliberate, so
+# The pinned action versions (`actions/checkout@v7`, …) and the Rust toolchain pin are deliberate, so
 # updates are proposed as reviewable pull requests rather than applied silently. Grouping keeps the
 # noise to one PR per ecosystem per week.
 updates:
+  # The workflows and the composite setup action both pin third-party actions; the action's
+  # directory has to be listed or its pins would never be proposed for update.
   - package-ecosystem: github-actions
-    directory: /
+    directories:
+      - /
+      - /.github/actions/setup
     schedule:
       interval: weekly
     open-pull-requests-limit: 3

@@ -21,15 +21,13 @@ stale by accident.
 
 | Job | Runner | Blocking? | What it proves |
 | --- | --- | --- | --- |
-| `validate-posix` | `ubuntu-24.04` (linux-x64), `macos-latest` (darwin-arm64) | **Yes** | `cargo test --workspace --locked`, the native worker builds, then `scripts/verify-gate.mjs --skip-install`: no unauthorised skips (`DSH_OPS_REQUIRE_RUNTIME=1` on POSIX turns a missing runtime into a failure), every suite file on disk was collected, and the packed artifact unpacks and passes `native-runtime check` |
-| `validate-macos-intel` | `macos-15-intel` (darwin-x64) | **Yes** | The same gate on Intel macOS, including the Mach-O x86_64 worker and its receipt; uploads `native-darwin-x64` |
-| `validate-windows` | `windows-latest` (win32-x64) | **Yes** | The same gate on Windows, plus the UNC directory regression; uploads `native-win32-x64` |
+| `validate` | matrix: `ubuntu-24.04` (linux-x64), `macos-latest` (darwin-arm64), `macos-15-intel` (darwin-x64), `windows-latest` (win32-x64) | **Yes** | `scripts/verify-gate.mjs --target <leg>` on each shipped platform: `cargo test --workspace --locked`, the native worker builds, no unauthorised skips (`DSH_OPS_REQUIRE_RUNTIME=1` on POSIX turns a missing runtime into a failure), every suite file on disk was collected, and the staged and packed artifact pass `native-runtime check`. `--target` makes the gate refuse a runner of another platform. The Linux leg also stages the **musl static-pie worker over the host build before the suites run** (`--worker-target x86_64-unknown-linux-musl`), so the suites exercise the binary that is published; the Windows leg adds the UNC directory regression. Each leg uploads `native-<target>` |
 | `tools-trial` | `ubuntu-24.04` | **Yes** | Boots a real host and calls every published tool; a broken tool is a blocked merge |
 | `node-floor` | `ubuntu-24.04` | **Yes** | `package.json` promises `^22.19 \|\| >=24`; this runs the same gate on the declared **floor**. The floor is a runtime property, so one host is enough; Windows-on-22.19 is tracked in #774 because three npm-pack suites fail there while passing on 24 |
 | `workflow-lint` | `ubuntu-24.04` | **Yes** | `scripts/check-workflows.mjs`: every workflow parses, declares triggers/jobs/permissions, bounds each job with `timeout-minutes`, avoids `write-all` and `pull_request_target`, keeps `ci.yml`'s aggregate check wired to every blocking job, every job classified, and the release path's guards present |
 | `source-size` | `ubuntu-24.04` | **Yes** | `scripts/check-file-size.mjs`: every tracked code file stays at or under 1000 lines. The file set comes from `git ls-files`, so a new module is in scope the moment it is added |
-| `rust-lint` | `ubuntu-24.04` | **Yes** | `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` with the toolchain pinned by `native/rust-toolchain.toml` (1.97.1) |
-| `ci-required` | `ubuntu-24.04` | — (this is the check to require) | Collapses the matrix into one status: it waits on every job above and fails unless all of them succeeded |
+| `rust-lint` | `ubuntu-24.04` | **Yes** | `cargo fmt --all --check` and `cargo clippy --workspace --all-targets -- -D warnings` for the Linux, Windows (`x86_64-pc-windows-msvc`) and macOS (`aarch64-apple-darwin`) targets, with the toolchain pinned by `native/rust-toolchain.toml`. Code behind `#![cfg(windows)]` and `cfg(target_os = "macos")` compiles to nothing on Linux, so a Linux-only clippy never linted it; `clippy --target` type-checks without linking, so no extra runner is needed |
+| `ci-required` | `ubuntu-24.04` | — (this is the check to require) | Collapses the jobs into one status: it fails unless every entry of `needs` is `success` (a skipped or cancelled job fails it too). The verdict is computed from `toJSON(needs)`, so a job in `needs` is judged by construction |
 
 There are **no non-blocking jobs in `ci.yml`**. The former `continue-on-error` legs (Windows, Intel,
 tools-trial) are gates: their red runs were real defects — DACL handling, Niubash execution, the pack
@@ -38,17 +36,18 @@ that is not deterministic enough to gate a merge (the bench smoke) lives in `ben
 where it is dispatched or scheduled monthly and where failing it never holds a PR.
 
 The set of blocking jobs is stated once, in `scripts/check-workflows.mjs` (`EXPECTED_BLOCKING`).
-Adding a job to `ci.yml` without classifying it fails `workflow-lint`; so does a `needs` list or a
-failure loop that disagrees with the classification. A job cannot quietly opt out of the gate.
+Adding a job to `ci.yml` without classifying it fails `workflow-lint`; so does a `needs` list that
+disagrees with the classification, a `validate` matrix that loses one of the four shipped targets,
+or a verdict that stops reading every result. A job cannot quietly opt out of the gate.
 
 ### Measured durations (30-day window ending 2026-11-07)
 
 | Job | p50 | p90 | p99 / max |
 | --- | --- | --- | --- |
-| `validate-posix` (linux-x64) | 271 s | 389 s | 424 s |
-| `validate-posix` (darwin-arm64) | 249 s | 378 s | 581 s |
-| `validate-macos-intel` | 494 s | 730 s | 1292 s |
-| `validate-windows` | 573 s | 1335 s | 1514 s |
+| `validate` (linux-x64) | 271 s | 389 s | 424 s |
+| `validate` (darwin-arm64) | 249 s | 378 s | 581 s |
+| `validate` (darwin-x64) | 494 s | 730 s | 1292 s |
+| `validate` (win32-x64) | 573 s | 1335 s | 1514 s |
 | `node-floor` | 253 s | 364 s | 402 s |
 | `tools-trial` | 42 s | 49 s | 209 s |
 | `workflow-lint` | 11 s | 16 s | 193 s |
@@ -59,6 +58,37 @@ Timeouts are set from these numbers with headroom (20 minutes for the POSIX legs
 30 for Intel and Windows), so a hung job fails in minutes rather than in the old 35-minute default.
 The 411 MB Windows Bash payload is installed by `npm ci` in ~11 s on the hosted image; it is not the
 reason the Windows leg is slow — the suites are.
+
+### Toolchains and the cargo cache
+
+Every workflow installs Node and Rust through `.github/actions/setup`. It reads the Rust channel from
+`native/rust-toolchain.toml`, the only place a workflow or the action states the version;
+`workflow-lint` rejects a hand-written `rustup toolchain install` or `cargo +<version>`. The
+commands in these docs still name it, because they run from the repository root where rustup sees no
+`rust-toolchain.toml`.
+
+The cargo cache stores **dependencies only**. A checkout resets every mtime, so incremental state and
+the workspace crates' own artifacts are rebuilt whatever the cache held; excluding them (and building
+with `CARGO_INCREMENTAL=0` and line-table debuginfo) shrinks a test build's `native/target` from
+1027 MiB to 478 MiB, of which 287 MiB is dependencies, and compiles it in 9 s instead of 14 s. Those
+numbers are from a Linux arm64 container, not a hosted runner; the runners' own cache sizes are in
+the run logs. Cache rules:
+
+- The key is scoped by job, OS and architecture, because jobs build different profiles and targets
+  and a shared key lets whichever job missed first decide what the others restore.
+- `rust-toolchain.toml` and the action itself are hashed into the fixed part of the key; only the
+  `Cargo.lock` hash may fall back. A new compiler or new flags therefore start cold, instead of
+  restoring the old compiler's tree and saving it again with new artifacts piled on top. A dependency
+  bump still reuses everything else.
+- Only a push saves. A pull request, merge group or manual run restores what protected branches
+  saved and writes nothing, so a feature branch cannot evict the entries the next merge needs. A
+  pull request after a lockfile change compiles the changed dependencies once; the push to `main`
+  that follows saves the new entry.
+- `release.yml` and the benchmark workflow pass `cache: 'false'`: shipped bytes and measured numbers
+  are never produced from a restored artifact, and the scheduled smoke could never hit an entry only
+  pushes write.
+- The exclusions match crate names by prefix (`ops-*`, `dsh-ops-*`), so `workflow-lint` fails if
+  `native/Cargo.lock` gains a local crate outside them.
 
 ## Reproduce it locally
 
@@ -74,9 +104,11 @@ DSH_HOME=$(mktemp -d) node scripts/verify-gate.mjs --skip-install
 node scripts/check-workflows.mjs
 node scripts/check-file-size.mjs
 
-# Rust formatting and lints, with the toolchain the repository pins
+# Rust formatting and lints, with the toolchain the repository pins, for every shipped OS family
+rustup target add x86_64-pc-windows-msvc aarch64-apple-darwin
 cargo +1.97.1 fmt --all --check --manifest-path native/Cargo.toml
-cargo +1.97.1 clippy --workspace --all-targets --locked --manifest-path native/Cargo.toml -- -D warnings
+cargo +1.97.1 clippy --workspace --all-targets --locked --manifest-path native/Cargo.toml \
+  --target x86_64-unknown-linux-gnu --target x86_64-pc-windows-msvc --target aarch64-apple-darwin -- -D warnings
 
 # The bench smoke (a measurement; never a merge gate)
 node scripts/tools-trial.mjs
@@ -139,10 +171,10 @@ A pull request whose head is a branch of this repository runs immediately and ne
 
 ## How to add a job
 
-1. Add it to `ci.yml`.
-2. Add its id to `EXPECTED_BLOCKING` in `scripts/check-workflows.mjs`, and to `ci-required`'s `needs`
-   and failure loop.
-3. Run `node scripts/check-workflows.mjs` locally — it fails until all three agree.
+1. Add it to `ci.yml`, installing toolchains with `uses: ./.github/actions/setup`.
+2. Add its id to `EXPECTED_BLOCKING` in `scripts/check-workflows.mjs` and to `ci-required`'s `needs`.
+   The verdict reads `needs` itself, so there is no second list to edit.
+3. Run `node scripts/check-workflows.mjs` locally — it fails until the two agree.
 
 A job that genuinely cannot gate a merge (a measurement) does not belong in `ci.yml`: put it in a
 non-gating workflow. There is currently exactly one such job, the bench smoke in

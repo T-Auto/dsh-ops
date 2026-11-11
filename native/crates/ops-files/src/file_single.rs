@@ -542,7 +542,6 @@ fn publish_new(
         }
         drop(file);
         sync_applied(&checked.parent)?;
-        return Ok((facts, warnings));
     }
     #[cfg(not(target_os = "macos"))]
     let published = checked
