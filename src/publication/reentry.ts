@@ -1,5 +1,5 @@
 /** Registry writes share one refusal window across all rows in a host root. */
-import type { Context } from '../adapter/dsh/types.js'
+import type { Context, Fiber } from '../adapter/dsh/types.js'
 
 const REFUSAL = 'session append cannot reenter while another append is being published'
 const delays = [25, 100, 400, 1000] as const
@@ -21,17 +21,30 @@ interface Work {
   resolve(): void
   reject(error: unknown): void
 }
-interface Queue { submit(work: Work, immediate: boolean): void; pending: Set<Work> }
+interface Queue {
+  submit(work: Work, immediate: boolean): void
+  /** Count one owner fiber: contexts derived from one fiber share its single unload. */
+  retain(owner: Context): void
+  /** Drop one owner fiber; the last one stops the queue and rejects what it still owes. */
+  release(): void
+  pending: Set<Work>
+}
 const queues = new WeakMap<object, Queue>()
 const registrations = new WeakMap<() => void, Work>()
 
 function queueFor(ctx: Context): Queue {
   const root = ctx.root ?? ctx
   const existing = queues.get(root)
-  if (existing) return existing
+  if (existing) { existing.retain(ctx); return existing }
   const pending = new Set<Work>()
   let timer: NodeJS.Timeout | undefined
   let busy = false, stopped = false, level = 0, refusals = 0, reported = 0, warnings = 0, lastWarning = -Infinity
+  // Count owner fibers rather than contexts. Every context derived from one fiber
+  // registers its effect on that same fiber, so both units come back down on
+  // unload; the fiber is the coarser one and costs one effect per fiber instead of
+  // one per derived context.
+  const fibers = new WeakSet<Fiber>()
+  let refs = 0
   const warn = (message: string): void => { root.logger.warn(message) }
   const arm = (): void => {
     if (stopped || timer || !pending.size) return
@@ -82,6 +95,14 @@ function queueFor(ctx: Context): Queue {
       }
     } finally { busy = false }
   }
+  const release = (): void => {
+    if (stopped || --refs > 0) return
+    stopped = true
+    if (timer) clearTimeout(timer)
+    timer = undefined
+    for (const work of pending) work.reject(new Error('Publication root disposed'))
+    pending.clear(); queues.delete(root)
+  }
   const queue: Queue = { pending, submit(work, immediate) {
     if (stopped) return
     if (!work.wanted && !work.undo && !work.running) { pending.delete(work); work.reject(new Error('Publication cancelled before registration')) }
@@ -89,15 +110,25 @@ function queueFor(ctx: Context): Queue {
     if (!pending.size && timer) { clearTimeout(timer); timer = undefined; level = 0 }
     if (immediate) flush(work)
     else flush()
-  } }
+  }, retain(owner) {
+    const fiber = owner.fiber
+    if (fibers.has(fiber)) return
+    fibers.add(fiber)
+    try {
+      // The effect lands on the row fiber, never on the composition root a host
+      // may refuse to give a plugin. It forgets the fiber before releasing, so a
+      // reload that retains again gets a reference of its own.
+      owner.effect(() => () => { fibers.delete(fiber); release() }, 'dsh-ops: registry refusal queue')
+    } catch (error) {
+      fibers.delete(fiber)
+      throw error
+    }
+    ++refs
+  }, release }
+  // Publish the queue and take the first reference in one synchronous step: a
+  // refused retain must not leave a queue with nobody left to end it.
   queues.set(root, queue)
-  root.effect(() => () => {
-    stopped = true
-    if (timer) clearTimeout(timer)
-    timer = undefined
-    for (const work of pending) work.reject(new Error('Publication root disposed'))
-    pending.clear(); queues.delete(root)
-  }, 'dsh-ops: registry refusal queue')
+  try { queue.retain(ctx) } catch (error) { queues.delete(root); throw error }
   return queue
 }
 
@@ -114,6 +145,9 @@ export function publicationRegistration(ctx: Context, apply: () => (() => void))
   // still await this original promise and roll back a later permanent failure.
   void ready.catch(() => {})
   const queue = queueFor(ctx), work: Work = { wanted: true, apply, ready, resolve, reject }
+  // Registered after the queue's own effect, so it disposes first (a fiber runs
+  // its effects last-in first-out): an unload cancels this work before the last
+  // release can stop the queue it sits in.
   const lifetime = ctx.effect(() => () => { work.wanted = false; queue.submit(work, true) }, 'dsh-ops: registry publication lease')
   const dispose = () => { lifetime() }
   registrations.set(dispose, work)

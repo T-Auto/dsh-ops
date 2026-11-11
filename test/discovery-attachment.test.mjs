@@ -45,6 +45,8 @@ for (const conflict of ['worker', 'credentials', 'timeout']) await test(`awaited
       sourceConfig.workerPath = path.join(dir, path.basename(WORKER))
       fs.copyFileSync(WORKER, sourceConfig.workerPath)
     }
+    // The preexisting source stands in for the mode row that would own one in
+    // production.
     const source = await acquireSharedFile(agent, 'stat', sourceConfig)
     source.grant({ consumer: {}, agent, token: {}, entitled: true, present: () => true, dispatch: async () => undefined })
     const original = tools.get(STAT_TOOL, agent)

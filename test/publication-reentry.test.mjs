@@ -114,6 +114,49 @@ await test('scope teardown cancels pending publication and automatic host effect
   } finally { await shutdown(ctx) }
 })
 
+// A withdrawal refused by the shared window stays owed until it can run or the
+// queue stops. When the last owner fiber unloads first, the queue stops instead of
+// retrying into a dead context; the host-owned registration still disappears with
+// that fiber, and a fresh owner starts from a clean queue.
+await test('the last owner fiber unload settles an owed refusal without a retry into a dead context', async () => {
+  const { ctx, tools } = await bootHost()
+  const unhandled = [], observe = reason => unhandled.push(reason)
+  process.on('unhandledRejection', observe)
+  const agent = { id: 'owed-undo', session: { id: 'owed-undo' } }
+  const scope = createScope(ctx, agent)
+  const nextAgent = { id: 'owed-undo-next' }
+  const other = createScope(ctx, nextAgent)
+  let attempts = 0, locked = true
+  try {
+    const release = publicationRegistration(scope.ctx, () => {
+      const undo = scope.ctx.get('tools').register(definition('owed-fixture'))
+      return () => { ++attempts; if (locked) throw refusal(); undo() }
+    })
+    await ready(release)
+    assert.ok(tools.get('owed-fixture', agent), 'the registration is live before the withdrawal')
+    release()
+    assert.equal(attempts, 1, 'the refused withdrawal is owed, not dropped')
+    assert.ok(tools.get('owed-fixture', agent), 'a refused undo leaves the registration in place')
+    await scope.dispose()
+    assert.deepEqual(tools.definitions(agent), [], 'the host-owned effect removes the registration with its fiber')
+    assert.ok(attempts >= 1 && attempts <= 3, `the owed undo is attempted a bounded number of times: ${attempts}`)
+    locked = false
+    await wait(150)
+    assert.equal(attempts, 1, 'the stopped queue never retries into the dead context')
+    const next = publicationRegistration(other.ctx, () => other.ctx.get('tools').register(definition('owed-next')))
+    await ready(next)
+    assert.ok(tools.get('owed-next', nextAgent), 'a fresh owner gets a working queue')
+    next()
+    assert.equal(tools.get('owed-next', nextAgent), undefined)
+    assert.deepEqual(unhandled, [], 'no owed work is left as an unhandled rejection')
+  } finally {
+    locked = false
+    await other.dispose()
+    await shutdown(ctx)
+    process.off('unhandledRejection', observe)
+  }
+})
+
 await test('a permanent error after cooldown rejects readiness once and never retries', async () => {
   const { ctx } = await bootHost()
   let locked = true, failures = 0
@@ -218,6 +261,26 @@ await test('real session append ordering rolls back refused registry effects and
     revoke(); lease.dispose()
     assert.equal(tools.get(name, agent), undefined)
   } finally { steps.forEach(step => step.dispose()); await shutdown(ctx) }
+})
+
+await test('a queue refused the effect that would release it is not left half built', async () => {
+  const { ctx } = await bootHost()
+  let attempts = 0
+  const agent = { id: 'half-built-queue' }, scope = createScope(ctx, agent)
+  try {
+    // A guarded host refuses the effect the queue has to own itself; the lease
+    // of the registration itself is untouched, exactly like dsh-tui's refusal.
+    const inherited = scope.ctx.effect.bind(scope.ctx)
+    const guarded = scope.ctx.extend()
+    guarded.effect = (execute, label) => {
+      if (label === 'dsh-ops: registry refusal queue') throw new Error('root.effect is unavailable from a plugin activation')
+      return inherited(execute, label)
+    }
+    const register = () => publicationRegistration(guarded, () => { ++attempts; return () => {} })
+    assert.throws(register, /root.effect is unavailable/)
+    assert.throws(register, /root.effect is unavailable/, 'a rejected retain must not leave a reusable queue behind')
+    assert.equal(attempts, 0, 'the half-built queue must never run the work it failed to own')
+  } finally { await scope.dispose(); await shutdown(ctx) }
 })
 
 report('publication-reentry')

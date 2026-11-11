@@ -7,6 +7,13 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Stop treating the composition root as the receiver for event subscriptions and effects. The native publication row, the PTC row, the discovery row and the shared file source now subscribe on contexts they were given or own, and dsh-tui's first-launch session creation no longer fails with `root.events.on is unavailable from a plugin activation` (or the `root.effect` refusal that followed it).
+- The shared file source owns its event subscriptions: they live on an unscoped context minted under the agent scope, so they last exactly as long as the source. Removing the consumer row that created the source used to leave every remaining consumer with a runtime that could no longer see `tools/result`, `llm/stream`, `session/event`, `session/disposed` or `agent/disposed`; the source's feed no longer depends on which row happened to create it. The agent's own scoped view is not used for these listeners, because its scope tag hides the session events.
+- The shared registry-refusal queue keeps its cross-row 25/100/400/1000 ms recovery window. References are counted per owner fiber, and the queue stops only when the last one goes.
+- 不再把组合根当作事件订阅与 effect 的接收者：native 发布行、PTC 行、discovery 行与共享文件源各自订阅在收到的或自己持有的 ctx 上，dsh-tui 首启创建会话不再以 `root.events.on is unavailable from a plugin activation` 失败（其后接着拦的 `root.effect` 拒斥同样消失）。
+- 共享文件源自持事件订阅：监听落在 agent 作用域下新建的无 tag ctx 上，寿命与源一致。此前移除建立源的那个消费者行，其余消费者会拿到一个再也看不到 `tools/result`、`llm/stream`、`session/event`、`session/disposed`、`agent/disposed` 的运行时；现在源的 feed 不再取决于它恰好由哪一行建立。agent 自身那个带 scope tag 的视图不用于这些监听，因为它的 tag 会挡掉会话事件。
+- 跨插件行共享的注册拒绝队列保留 25/100/400/1000 ms 恢复窗口。引用按 owner fiber 计数，最后一个引用释放时队列才停止。
+
 ## [0.5.4] — 2026-11-11 — Patch release
 
 - Fix `ops-ptc` silently losing batching guidance when an older profile replaces the whole bundle row config and omits the new mode section. The code now defaults `batchingGuidance` to true for `ops-ptc` only; explicit false still disables it, other modes remain off, and telemetry remains opt-in.
@@ -42,7 +49,6 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 修正 `ops-ptc` 预设归属：移除旧的 bundle 层接线（片段不再作为 bundle 补丁，默认也不再用静态 `agent-preset-registry` 覆盖），预设改为随 `dsh-ops` 行启停的运行时注册，片段缺失或注册被拒只告警、工具面照常工作。默认处理改由显式的 `global.forceDefaultOpsPtc` 开关负责；开关关闭时，手动设成 `ops-ptc` 的默认仍须先切换再禁用该行，否则新会话解析不到预设。
 - Move the batch-call guidance to the editable English `prompts/batching-guidance.md`, delivered from that one file: a lesson once in the session's first accepted user-message batch (logged history, visible to the first request, never the system prompt), plus the shape notices described by the entry above; the prompt prefix and tool schemas stay unchanged, and an unreadable file skips delivery instead of failing the call. Progressive disclosure under `ops-ptc` still follows `dynamicTools` (mode switch AND bundle switch), and loaded APIs appear only on the next model step.
 - 批量调用提示改为可编辑的英文外置文件 `prompts/batching-guidance.md`，统一从该文件投递：会话首个被接受的用户消息批次里教学一次（进入历史、模型第一条请求可见、不改系统提示词），另加上一条所述的形状提醒；系统提示词前缀与 tool schema 不变，文件读不到时跳过投递而不影响调用。`ops-ptc` 的渐进式披露仍由 `dynamicTools`（模式开关与 bundle 总开关的与门）控制，新加载的 API 只在下一模型步骤可见。
-
 - The package no longer ships the duplicate `README.zh.md`; `README.md` is the Chinese readme and `README.en.md` the English one.
 - 发行包不再包含重复的 `README.zh.md`：`README.md` 即中文说明，`README.en.md` 为英文说明。
 
@@ -109,7 +115,6 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 合并设置行可在四种内置模式中保存、清除选定的 Git Bash 路径。
 - Offline execution-cache reclamation discovers configured/same-volume roots and clears the verified tree's read-only/deny-delete seal before removal; Niubash failures give specific recovery commands instead of promising a retry fixes every failure.
 - 离线执行缓存回收覆盖显式及同卷根目录，删除前解除已验证树的只读/拒绝删除封印；Niubash 故障提供具体恢复命令，不再笼统承诺重试可修复。
-
 ## [0.5.1] — 2026-11-08 — Patch release
 
 - Bound temporary-resource growth through ownership ledgers, deferred result-cache cleanup and explicit cache reclamation; preserve data-bearing snapshots and user content. Host output spills now have bounded retention rather than accumulating indefinitely.
