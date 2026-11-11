@@ -75,9 +75,10 @@ pub struct Scan {
     /// Whether ordinary dot-prefixed directories are traversed.
     ///
     /// The caller sets this from its own arguments; `Scan::new()` keeps the
-    /// historical answer. It lifts only [`dotdir`]: internal sidecars
-    /// (`.dsh-ops-*`) stay invisible to every selection tool regardless, so a
-    /// directory-wide `ops_replace` can never rewrite an update lock.
+    /// historical answer. It lifts only [`dotdir`]: the plugin's own sidecars
+    /// stay invisible to every selection tool regardless, so a directory-wide
+    /// `ops_replace` can never rewrite an update lock or read a half-written
+    /// temporary.
     pub include_hidden: bool,
     pub hash: Sha256,
     started: Instant,

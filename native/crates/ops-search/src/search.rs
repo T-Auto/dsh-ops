@@ -138,6 +138,10 @@ pub fn glob(request: &Request) -> Result<Value> {
 mod include_hidden_tests {
     use super::*;
 
+    /// A digest-shaped tail, so the fixture names the lock the way
+    /// `lock_for_update` does: 64 lowercase hex digits.
+    const LOCK_DIGEST: &str = "0d18d4eb377a214157ad45e7ee0f189a2d7370788a483e729c7f269d94cafe41";
+
     struct Fixture {
         root: PathBuf,
     }
@@ -254,7 +258,7 @@ mod include_hidden_tests {
         let fixture = Fixture::new("internal");
         fixture.file("src/a.ts", b"export const a = 1;\n");
         fixture.file(".dsh-ops/a.ts", b"export const hidden = 2;\n");
-        fixture.file(".dsh-ops-update-deadbeef.lock", b"lock");
+        fixture.file(&format!(".dsh-ops-update-{}.lock", LOCK_DIGEST), b"lock");
 
         for include_hidden in [false, true] {
             for tool in ["glob", "grep"] {
@@ -274,6 +278,227 @@ mod include_hidden_tests {
                     "{tool} includeHidden={include_hidden} returned {found:?}"
                 );
             }
+        }
+    }
+
+    /// Nested dot directories are the same question one level down: the walk
+    /// prunes by component, so `.a/.b` must behave like `.a`.
+    #[test]
+    fn nested_dot_directories_are_lifted_together() {
+        let fixture = Fixture::new("nested");
+        fixture.file("src/a.ts", b"export const a = 1;\n");
+        fixture.file(".outer/inner/b.ts", b"export const b = 2;\n");
+
+        let hidden = glob(&fixture.request("glob", json!({"pattern": ["**/*.ts"]}))).unwrap();
+        assert_eq!(paths(&fixture.root, &hidden), vec!["src/a.ts"]);
+
+        let shown = glob(&fixture.request(
+            "glob",
+            json!({"pattern": ["**/*.ts"], "includeHidden": true}),
+        ))
+        .unwrap();
+        let mut got = paths(&fixture.root, &shown);
+        got.sort();
+        assert_eq!(got, vec![".outer/inner/b.ts", "src/a.ts"]);
+    }
+
+    /// The switch lifts exactly one rule. `reserved` trees stay pruned, which is
+    /// what keeps the opt-in from turning a narrow answer into a whole-tree
+    /// scan by accident.
+    #[test]
+    fn the_switch_does_not_lift_reserved_trees() {
+        let fixture = Fixture::new("reserved");
+        fixture.file("src/a.ts", b"export const a = 1;\n");
+        fixture.file(".github/b.ts", b"export const b = 2;\n");
+        fixture.file("node_modules/dep/c.ts", b"export const c = 3;\n");
+        fixture.file("target/d.ts", b"export const d = 4;\n");
+        fixture.file(".venv/e.ts", b"export const e = 5;\n");
+
+        for tool in ["glob", "grep"] {
+            let args = if tool == "glob" {
+                json!({"pattern": ["**/*.ts"], "includeHidden": true})
+            } else {
+                json!({"pattern": "export", "glob": ["**/*.ts"], "includeHidden": true})
+            };
+            let answer = if tool == "glob" {
+                glob(&fixture.request(tool, args)).unwrap()
+            } else {
+                grep(&fixture.request(tool, args)).unwrap()
+            };
+            let mut got = paths(&fixture.root, &answer);
+            got.sort();
+            assert_eq!(got, vec![".github/b.ts", "src/a.ts"], "{tool}");
+        }
+    }
+
+    /// A caller-supplied exclude still wins over the opt-in: `includeHidden`
+    /// widens the default, it does not override an explicit filter.
+    #[test]
+    fn an_explicit_exclude_still_applies_under_the_switch() {
+        let fixture = Fixture::new("exclude");
+        fixture.file("src/a.ts", b"export const a = 1;\n");
+        fixture.file(".github/b.ts", b"export const b = 2;\n");
+
+        let shown = glob(&fixture.request(
+            "glob",
+            json!({"pattern": ["**/*.ts", "!.github/**"], "includeHidden": true}),
+        ))
+        .unwrap();
+        assert_eq!(paths(&fixture.root, &shown), vec!["src/a.ts"]);
+    }
+
+    /// A continuation minted before the flag changed must not be replayed
+    /// against the new page: the cursor binds `args`, so widening mid-scan is
+    /// refused rather than mixing two answers.
+    #[test]
+    fn changing_the_switch_invalidates_an_older_continuation() {
+        let fixture = Fixture::new("cursor");
+        fixture.file("src/a.ts", b"export const a = 1;\n");
+        fixture.file("src/b.ts", b"export const b = 2;\n");
+        fixture.file(".github/c.ts", b"export const c = 3;\n");
+
+        let first =
+            glob(&fixture.request("glob", json!({"pattern": ["**/*.ts"], "limit": 1}))).unwrap();
+        assert_eq!(first["matchedTotal"], 2, "{first}");
+        let continuation = first["continuation"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a partial page mints a continuation: {first}"))
+            .to_string();
+
+        // Replaying the token under the widened switch must not silently resume
+        // a different page: `includeHidden` is part of the cursor's authority.
+        let error = glob(&fixture.request(
+            "glob",
+            json!({
+                "pattern": ["**/*.ts"],
+                "limit": 1,
+                "includeHidden": true,
+                "continuation": continuation,
+            }),
+        ))
+        .unwrap_err();
+        assert_eq!(error.code, "SEARCH_STALE", "{error:?}");
+    }
+
+    /// Enumerating and naming must agree. A root that the walk prunes may not
+    /// become readable just because the caller spelled it out, so the explicit
+    /// path is refused with the same authority the store already claims.
+    #[test]
+    fn an_explicit_internal_root_is_refused() {
+        let fixture = Fixture::new("explicit-internal");
+        fixture.file("src/a.ts", b"export const a = 1;\n");
+        let lock = fixture.file(&format!(".dsh-ops-update-{}.lock", LOCK_DIGEST), b"lock");
+        let store = fixture.file(".dsh-ops/state", b"state");
+
+        for root in [&lock, &store] {
+            let mut request = fixture.request("grep", json!({"pattern": "lock|state"}));
+            request.args["path"] = json!(root.to_str().unwrap());
+            let error = grep(&request).unwrap_err();
+            assert_eq!(error.code, "PATH_RESTRICTED", "{}", root.display());
+        }
+
+        // An ordinary file root still reads, so the refusal is about the
+        // sidecar names rather than about explicit paths in general.
+        let ordinary = fixture.root.join("src/a.ts");
+        let mut request = fixture.request("grep", json!({"pattern": "export"}));
+        request.args["path"] = json!(ordinary.to_str().unwrap());
+        assert_eq!(grep(&request).unwrap()["matched"], 1);
+    }
+
+    /// The atomic-write temporary holds bytes the caller has not committed.
+    ///
+    /// `atomic_write` stages `.a.ts.dsh-ops-<uuid>` beside the target, restores
+    /// its metadata, syncs, and only then renames. The old blanket dot rule hid
+    /// it by accident; a switch that lifts that rule must not start reporting a
+    /// half-written file as a search result.
+    #[test]
+    fn the_atomic_write_temporary_stays_invisible_under_every_setting() {
+        let fixture = Fixture::new("atomic-temp");
+        fixture.file("src/a.ts", b"export const a = 1;\n");
+        fixture.file(
+            "src/.a.ts.dsh-ops-0f9c2b3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d",
+            b"export const half_written = 2;\n",
+        );
+
+        for include_hidden in [false, true] {
+            for tool in ["glob", "grep"] {
+                let args = if tool == "glob" {
+                    json!({"pattern": ["**/*"], "includeHidden": include_hidden})
+                } else {
+                    json!({"pattern": "export", "glob": ["**/*"], "includeHidden": include_hidden})
+                };
+                let answer = if tool == "glob" {
+                    glob(&fixture.request(tool, args)).unwrap()
+                } else {
+                    grep(&fixture.request(tool, args)).unwrap()
+                };
+                let found = paths(&fixture.root, &answer);
+                assert!(
+                    !found.iter().any(|path| path.contains(".dsh-ops-")),
+                    "{tool} includeHidden={include_hidden} returned {found:?}"
+                );
+            }
+        }
+
+        // Naming it explicitly is refused too, so both answers agree.
+        let staged = fixture
+            .root
+            .join("src/.a.ts.dsh-ops-0f9c2b3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d");
+        let mut request = fixture.request("grep", json!({"pattern": "export"}));
+        request.args["path"] = json!(staged.to_str().unwrap());
+        assert_eq!(grep(&request).unwrap_err().code, "PATH_RESTRICTED");
+    }
+
+    /// Names that merely begin the same way belong to the caller.
+    ///
+    /// `ops-files` learned this in review of #81, when a prefix rule deleted an
+    /// operator's `.notes.txt.dsh-ops-personal-backup`. The search side must not
+    /// reintroduce it: `.dsh-ops-backup`, `.dsh-ops.json` and a lock-shaped name
+    /// with the wrong digest are content, and they read, list and match normally
+    /// whether or not the caller opts into dot directories.
+    #[test]
+    fn near_miss_sidecar_names_stay_readable() {
+        let fixture = Fixture::new("near-miss");
+        fixture.file("src/a.ts", b"export const a = 1;\n");
+        let backup = fixture.file(".dsh-ops-backup/notes.md", b"export const notes = 1;\n");
+        let json = fixture.file(".dsh-ops.json", b"export const config = 1;\n");
+        let short_lock = fixture.file(".dsh-ops-update-deadbeef.lock", b"export const lock = 1;\n");
+        let wrong_suffix = fixture.file(".dsh-ops-update-notes.md", b"export const notes = 1;\n");
+        // The atomic shape with a non-v4 tail: `sweep_debris` refuses to treat
+        // this as its own, so a reader must not either.
+        let backup_copy = fixture.file(
+            ".notes.txt.dsh-ops-personal-backup",
+            b"export const backup = 1;\n",
+        );
+
+        for root in [&backup, &json, &short_lock, &wrong_suffix, &backup_copy] {
+            let mut request = fixture.request("grep", json!({"pattern": "export"}));
+            request.args["path"] = json!(root.to_str().unwrap());
+            let answer = grep(&request)
+                .unwrap_or_else(|error| panic!("{} must stay readable: {error:?}", root.display()));
+            assert_eq!(answer["matched"], 1, "{}", root.display());
+        }
+
+        // Enumeration agrees with the explicit root.
+        let listed = glob(&fixture.request(
+            "glob",
+            json!({
+                "pattern": ["**/*"], "includeHidden": true
+            }),
+        ))
+        .unwrap();
+        let found = paths(&fixture.root, &listed);
+        for expected in [
+            ".dsh-ops-backup/notes.md",
+            ".dsh-ops.json",
+            ".dsh-ops-update-deadbeef.lock",
+            ".dsh-ops-update-notes.md",
+            ".notes.txt.dsh-ops-personal-backup",
+        ] {
+            assert!(
+                found.iter().any(|path| path == expected),
+                "{expected} missing from {found:?}"
+            );
         }
     }
 
@@ -354,6 +579,7 @@ fn glob_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
         ));
     }
     let root = target(&args.path, false)?;
+    reject_internal_root(&root)?;
     if !root.is_dir() {
         return Err(Failure::new(
             "INVALID_ARGUMENT",
@@ -505,6 +731,7 @@ fn grep_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
         .build()
         .map_err(|error| Failure::new("INVALID_ARGUMENT", error))?;
     let root = target(&args.path, false)?;
+    reject_internal_root(&root)?;
     let (cursor, expected) = cursor_for(request, args.offset, args.continuation.as_deref())?;
     let mut scan = Scan::new();
     scan.include_hidden = args.include_hidden;

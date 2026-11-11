@@ -46,6 +46,35 @@ await test('search descriptions retain matching and completeness rules without r
   for (const tool of ['grep', 'replace']) assert.doesNotMatch(PARAMETERS[tool].properties.glob.description, /positive entry/)
 })
 
+await test('mutation parameter contracts and Windows preservation remain after text de-duplication', () => {
+  assert.match(PARAMETERS.edit_file.properties.edits.description, /1-100 nonoverlapping edits against the same original bytes/)
+  assert.match(PARAMETERS.edit_file.properties.edits.items.properties.oldText.description, /Nonempty text that occurs exactly once/)
+  assert.match(PARAMETERS.write_file.properties.expectedRevision.description, /SHA-256.*absent.*Never omit or pass null\/empty/)
+  assert.match(PARAMETERS.move.properties.to.description, /Absent destination file on the same filesystem; relative to session cwd/)
+  for (const name of ['write_file', 'edit_file', 'copy', 'replace']) {
+    assert.match(DESCRIPTIONS[name], /Windows preserves available owner\/group\/ordered DACL/)
+    assert.match(DESCRIPTIONS[name], /volumes without stream\/ACL support report metadataWarnings/)
+    assert.match(DESCRIPTIONS[name], /readonly overwrite is refused/)
+    assert.match(DESCRIPTIONS[name], /SACL\/audit labels are not preserved/)
+  }
+  assert.match(DESCRIPTIONS.edit_file, /Preserve CRLF\/BOM explicitly/)
+  assert.doesNotMatch(DESCRIPTIONS.edit_file, /1-100|oldText must|Required expectedRevision/)
+  assert.doesNotMatch(DESCRIPTIONS.write_file, /Pass expectedRevision:|null\/empty/)
+})
+
+await test('result help keeps stored-row completeness while defaults live only in parameters', () => {
+  assert.match(RESULT_PAGE_PARAMETERS.root.description, /Defaults to current session cwd.*after cwd changes/)
+  assert.match(RESULT_PAGE_PARAMETERS.offset.description, /default 0/)
+  assert.match(RESULT_PAGE_PARAMETERS.limit.description, /1-512 rows; default 64/)
+  assert.match(RESULT_PAGE_PARAMETERS.maxBytes.description, /512-65536 serialized bytes; default 16384/)
+  assert.match(RESULT_PAGE_PARAMETERS.equals.description, /before projection and paging/)
+  assert.match(NATIVE_RESULT_DESCRIPTION, /Follow nextOffset only when all page rows are displayed/)
+  assert.match(NATIVE_RESULT_DESCRIPTION, /page complete never proves the source operation complete/)
+  assert.match(NATIVE_RESULT_DESCRIPTION, /Offsets count filtered stored rows, including chunks/)
+  assert.match(NATIVE_RESULT_DESCRIPTION, /join text in byteOffset order.*parse only after complete=true/)
+  assert.doesNotMatch(NATIVE_RESULT_DESCRIPTION, /defaults|Page defaults|equals filters before fields/)
+})
+
 await test('every file tool states that failures are values, not thrown errors', () => {
   for (const tool of Object.keys(PARAMETERS)) {
     assert.match(DESCRIPTIONS[tool], /Failures (?:resolve as \{status:"error"\|"rejected", error\.code\}; they are not thrown|return status:error\|rejected and error\.code; never throw)\.$/, tool)
