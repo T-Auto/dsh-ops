@@ -12,7 +12,12 @@ await test('grep, glob and replace parameters are pinned exactly', () => {
     path: 'string', pattern: 'string', glob: 'array', outputMode: 'string', caseInsensitive: 'boolean',
     lineNumbers: 'boolean', beforeContext: 'integer', afterContext: 'integer', multiline: 'boolean', offset: 'integer', limit: 'integer', exactTotal: 'boolean', continuation: 'string',
   })
-  assert.deepEqual(fields('glob'), { path: 'string', pattern: 'array', outputMode: 'string', sort: 'string', offset: 'integer', limit: 'integer', continuation: 'string' })
+  assert.deepEqual(fields('glob'), { path: 'string', kind: 'string', pattern: 'array', outputMode: 'string', sort: 'string', offset: 'integer', limit: 'integer', continuation: 'string' })
+  assert.deepEqual(PARAMETERS.glob.properties.kind.enum, ['file', 'directory', 'all'])
+  assert.deepEqual(PARAMETERS.glob.required, ['pattern'])
+  assert.match(PARAMETERS.glob.properties.kind.description, /default file/)
+  assert.match(PARAMETERS.glob.properties.kind.description, /empty directories/)
+  assert.deepEqual(PARAMETERS.glob.properties.outputMode.enum, ['paths', 'details'])
   assert.deepEqual(fields('replace'), { path: 'string', pattern: 'string', replacement: 'string', glob: 'array', maxReplacements: 'integer', dryRun: 'boolean' })
   for (const tool of ['grep', 'glob', 'replace']) assert.equal(PARAMETERS[tool].properties.include, undefined)
 })

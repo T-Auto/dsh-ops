@@ -73,7 +73,7 @@ await test('definitions rows carry their declaration kind through the Native pro
     const value = await call('grep', args, root)
     const native = render('grep', args, value)
     assert.ok(native.includes('| function export function greet() {}'), native)
-    assert.match(native, /matched=2/)
+    assert.match(native, /matchedObserved=2/)
     assert.match(native, /total=1/)
   })
 })

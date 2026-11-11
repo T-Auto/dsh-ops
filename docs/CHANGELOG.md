@@ -7,6 +7,13 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Glob accepts `kind: file | directory | all` (default `file`), including empty directories in shallow listings without following links or changing hidden-item policy. Partial Native searches retain paths, scan counters, skip reasons and bounded diagnostic examples; directory read refusals give usable guidance.
+- Glob 新增 `kind: file | directory | all`（默认 `file`），浅层列举可见空目录，仍不跟随链接，也不改变隐藏项策略。Native 搜索不完整时保留路径、扫描计数、跳过原因与有界诊断样例；目录读取拒绝给出可执行指引。
+- Correct the model-visible glob/grep/read-files result shapes and the ops-ptc batching examples. Bypass reminders distinguish command-output filters from definite file access. On-demand integration diagnostics report the host-selected runtime version or `unknown`, without adding version text to prompts or SDKs. Shared SDK declaration deduplication remains a documented host dependency.
+- 修正模型可见的 glob/grep/read-files 结果类型与 ops-ptc 批量示例。绕过提醒区分命令输出过滤与明确的文件操作。按需集成诊断返回宿主选定的运行时版本或 `unknown`，不向提示词或 SDK 注入版本文字。公共 SDK 声明去重仍作为宿主依赖记录。
+- Native output omits only proven duplicate summaries and successful read-only zero-change counts, preserving scan/page/display completeness and failure facts. The Native naming audit identifies the host-owned stale `read` instruction separately from OPS routing; no aliases or additional tools are published.
+- Native 输出仅合并已确认重复的摘要，并省略成功只读操作的零变更计数，保留扫描、分页、显示完整性与失败事实。Native 名称审计将宿主自有的过期 `read` 指引与 OPS 路由区分记录，不发布别名或额外工具。
+
 ## [0.5.4] — 2026-11-11 — Patch release
 
 - Fix `ops-ptc` silently losing batching guidance when an older profile replaces the whole bundle row config and omits the new mode section. The code now defaults `batchingGuidance` to true for `ops-ptc` only; explicit false still disables it, other modes remain off, and telemetry remains opt-in.

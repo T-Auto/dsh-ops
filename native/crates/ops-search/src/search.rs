@@ -81,6 +81,8 @@ struct GlobArgs {
     path: String,
     pattern: Vec<String>,
     #[serde(default)]
+    kind: String,
+    #[serde(default)]
     output_mode: String,
     #[serde(default)]
     sort: String,
@@ -163,6 +165,12 @@ fn glob_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
             "outputMode must be paths or details",
         ));
     }
+    if !matches!(args.kind.as_str(), "" | "file" | "directory" | "all") {
+        return Err(Failure::new(
+            "INVALID_ARGUMENT",
+            "kind must be file, directory or all",
+        ));
+    }
     let root = target(&args.path, false)?;
     if !root.is_dir() {
         return Err(Failure::new(
@@ -172,35 +180,52 @@ fn glob_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
     }
     let (cursor, expected) = cursor_for(request, args.offset, args.continuation.as_deref())?;
     let mut scan = Scan::new();
+    scan.include_directories = matches!(args.kind.as_str(), "directory" | "all");
+    let allow_index = !scan.include_directories;
     let mut files = Vec::new();
     let used = walk_request(
         &mut scan,
         &root,
         &args.pattern,
         request,
-        true,
+        allow_index,
         source,
         |file, metadata, _| {
+            if args.kind == "directory" && !metadata.is_dir() {
+                return Ok(());
+            }
             let modified = metadata
                 .modified()
                 .ok()
                 .and_then(|time| time.into_std().duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|time| time.as_millis());
-            files.push((file.to_path_buf(), modified, metadata.len()));
+            files.push((
+                file.to_path_buf(),
+                modified,
+                metadata.len(),
+                metadata.is_dir(),
+            ));
             Ok(())
         },
     )?;
     let cursor = actual_cursor(request, cursor, expected, used)?;
+    if scan.include_directories {
+        files.sort_by(|a, b| a.0.cmp(&b.0));
+    }
     if args.sort == "modified" {
-        files.sort_by_key(|(_, modified, _)| std::cmp::Reverse(*modified));
+        files.sort_by_key(|(_, modified, _, _)| std::cmp::Reverse(*modified));
     }
     let total = files.len();
     let mut page = Page::new(cursor.offset, args.limit, request.output_sink.clone());
-    for (ordinal, (file, modified, bytes)) in files.into_iter().enumerate() {
+    for (ordinal, (file, modified, bytes, directory)) in files.into_iter().enumerate() {
         if page.wants(ordinal) {
             page.push(
                 if args.output_mode == "details" {
-                    json!({"path":file,"bytes":bytes,"modified":modified})
+                    let mut item = json!({"path":file,"bytes":bytes,"modified":modified});
+                    if scan.include_directories {
+                        item["kind"] = json!(if directory { "directory" } else { "file" });
+                    }
+                    item
                 } else {
                     json!(file)
                 },

@@ -11,6 +11,9 @@ const boolean: JsonSchemaNode = { type: 'boolean' }
 const nullableInteger: JsonSchemaNode = { oneOf: [integer, { type: 'null' }] }
 const object = (properties: Record<string, JsonSchemaNode>): JsonSchemaNode => ({ type: 'object', properties })
 const array = (items: JsonSchemaNode): JsonSchemaNode => ({ type: 'array', items })
+const row = (properties: Record<string, JsonSchemaNode>, required: string[]): JsonSchemaNode =>
+  ({ type: 'object', properties, required, additionalProperties: false })
+const clipping = { truncatedInLine: boolean, bytesTotal: integer, bytesOmitted: integer }
 const physicalLine = object({ path: string, line: integer, text: string, view: string, offset: integer,
   truncatedInLine: boolean, bytesTotal: integer, bytesOmitted: integer })
 const receipt = object({ path: string, to: string, revision: string, revisionBefore: string,
@@ -36,8 +39,14 @@ export function canonicalOutput(tool: FileToolName | PtcToolName): JsonSchemaNod
   if (isDocumentTool(tool)) return { ...entry.output, properties }
   if (tool === 'inspect_local_file') Object.assign(properties, facts, { path: string, items: array(physicalLine) })
   else if (tool === 'read_files') properties.items = array(object({ ...range, items: array(physicalLine) }))
-  else if (tool === 'glob') properties.items = array({ oneOf: [string, object({ path: string, bytes: integer, modified: nullableInteger })] })
-  else if (tool === 'grep') properties.items = array(object({ path: string, line: integer, text: string, count: integer, matches: integer, kind: string }))
+  else if (tool === 'glob') properties.items = { ...array({ oneOf: [string,
+    row({ path: string, bytes: integer, modified: nullableInteger, kind: { type: 'string', enum: ['file', 'directory'] } }, ['path', 'bytes', 'modified'])] }),
+    description: 'paths (default): string[]; details: {path,bytes,modified,kind?}[]. kind is included for directory/all queries.' }
+  else if (tool === 'grep') properties.items = { ...array({ oneOf: [
+    row({ path: string }, ['path']), row({ path: string, count: integer }, ['path', 'count']),
+    row({ path: string, line: integer, text: string, ...clipping }, ['path', 'line', 'text']),
+    row({ path: string, line: integer, text: string, kind: string, ...clipping }, ['path', 'line', 'text', 'kind']),
+  ] }), description: 'files_with_matches: {path}[]; count: {path,count}[]; content (default): {path,line,text}[]; definitions adds kind; summary: [] with files/matches totals.' }
   else if (tool === 'stat') Object.assign(properties, facts, { exists: boolean, path: string, readonly: boolean, mode: string, modifiedMs: nullableInteger })
   else if (tool === 'diff') Object.assign(properties, { before: object(facts), after: object(facts),
     hunk: object({ startLine: integer, removed: integer, added: integer }), items: array(object({ kind: string, line: integer, text: string })) })
@@ -45,5 +54,10 @@ export function canonicalOutput(tool: FileToolName | PtcToolName): JsonSchemaNod
     itemEncoding: string, capturedItems: integer, captureComplete: boolean })
   else if (tool === 'replace') Object.assign(properties, { pending: integer, items: array(replacementReceipt) })
   else if (tool !== 'batch') properties.items = array(receipt)
+  // Search never returns file metadata or a write preview at its top level.
+  if (tool === 'glob' || tool === 'grep') {
+    for (const field of ['revision', 'bytes', 'lineCount', 'dryRun']) delete properties[field]
+    if (tool === 'glob') for (const field of ['files', 'matches']) delete properties[field]
+  }
   return { ...entry.output, properties }
 }

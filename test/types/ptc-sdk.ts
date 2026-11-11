@@ -126,3 +126,29 @@ async function replacementReceipts() {
   return { before, after, state }
 }
 void [readThenEdit, replacementReceipts]
+
+async function searchRows() {
+  const glob = await tools.ops_glob({ pattern: ['*'], kind: 'all', outputMode: 'paths' })
+  const entry = glob.data?.items?.[0]
+  if (typeof entry === 'string') {
+    // @ts-expect-error paths mode yields strings, not objects with a path property.
+    void entry.path
+  } else if (entry) {
+    const path: string = entry.path
+    const modified: number | null = entry.modified
+    void [path, modified]
+  }
+  const grep = await tools.ops_grep({ pattern: 'needle', outputMode: 'count' })
+  const row = grep.data?.items?.[0]
+  if (row && 'count' in row) {
+    const count: number = row.count
+    // @ts-expect-error Count rows contain no line text.
+    void row.text
+    return count
+  }
+  if (row && 'text' in row) {
+    const line: number = row.line
+    return { line, text: row.text }
+  }
+}
+void searchRows

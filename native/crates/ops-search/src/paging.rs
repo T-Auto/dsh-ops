@@ -257,8 +257,15 @@ pub fn finish(
         output["nextAction"] = json!(if scan.stopped == Some(TruncatedBy::RowLimit) {
             "Stopped at the requested row limit (exactTotal=false). matchedObserved is a lower bound; no stable continuation is available. Start a fresh query with exactTotal=true for totals, resolving any reported scan gaps. If a line is only partly displayed, inspect its file with bounded text/hex ranges."
         } else {
-            "Narrow path/glob or resolve the reported scan gaps, then start a fresh query. No stable continuation is available for an incomplete traversal."
+            "Narrow path to a smaller readable subdirectory and start a fresh query. Check skipReasons for exclusions and scan gaps. No stable continuation is available for an incomplete traversal."
         });
+        if !scan.gap_examples.is_empty() {
+            output["nextAction"] = json!(format!(
+                "{} Gap examples: {}",
+                output["nextAction"].as_str().unwrap(),
+                json!(scan.gap_examples)
+            ));
+        }
     } else if page.partial_item {
         output["nextAction"] = json!(
             "A matching line is only partially displayed. Inspect that file with bounded text/hex ranges; nextOffset does not skip the undisplayed suffix."

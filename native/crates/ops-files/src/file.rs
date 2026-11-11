@@ -240,7 +240,7 @@ fn inspect_hex(args: InspectArgs, include_path: bool) -> Result<Value> {
     if !path.is_file() {
         return Err(Failure::new(
             "INVALID_ARGUMENT",
-            "path is a directory; use ops_glob or ops_grep",
+            "path is a directory; choose a file, or list directory entries with the shell",
         ));
     }
     let mut file = open_read(&path)?;
@@ -276,7 +276,7 @@ fn load_inspection(raw: &str) -> Result<PreparedInspection> {
     if !path.is_file() {
         return Err(Failure::new(
             "INVALID_ARGUMENT",
-            "path is a directory; use ops_glob or ops_grep",
+            "path is a directory; choose a file, or list directory entries with the shell",
         ));
     }
     let bytes = read_bytes(&path)?;

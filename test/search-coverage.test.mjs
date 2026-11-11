@@ -95,7 +95,7 @@ await test('oversized and non-UTF8 files are coverage gaps with no invented tota
       assert.equal(value.total, undefined); assert.equal(value.omitted, undefined)
       assert.equal(value.skippedFiles, 2); assert.equal(value.failed, 0)
       assert.equal(value.skipReasons.oversized, 1); assert.equal(value.skipReasons['invalid-encoding'], 1)
-      assert.equal(value.continuation, undefined); assert.match(value.nextAction, /Narrow path\/glob/)
+      assert.equal(value.continuation, undefined); assert.match(value.nextAction, /Narrow path to a smaller readable subdirectory/)
     }
     const filtered = await grep(root, { glob: ['a.txt'], outputMode: 'summary' })
     assert.equal(filtered.scanComplete, true); assert.equal(filtered.matchedTotal, 3)
