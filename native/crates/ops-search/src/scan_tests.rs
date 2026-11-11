@@ -51,8 +51,16 @@ fn partial_directory_scan_reports_budget_and_bounded_gap_examples() {
     assert!(output.get("continuation").is_none());
     assert!(output.get("matchedTotal").is_none());
     let action = output["nextAction"].as_str().unwrap();
-    assert!(action.contains("d1") && action.contains("d2"), "{action}");
-    assert!(!action.contains("d3"), "samples must be bounded: {action}");
+    let (_, samples) = action.split_once("Gap examples: ").unwrap();
+    let samples: Value = serde_json::from_str(samples).unwrap();
+    // Compare complete entries: a random fixture ancestor may itself contain "d3".
+    assert_eq!(
+        samples,
+        json!([
+            {"code":"depth-limit","path":root.join("d1")},
+            {"code":"depth-limit","path":root.join("d2")},
+        ])
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
