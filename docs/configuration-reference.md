@@ -15,7 +15,7 @@ Plugin authors can also mount the [public integration API](integration-api.md) i
 | `minimal` | Enabled; no resident file surface; optional Bash and dynamic selection |
 | `standard`, `cordis` | Enabled; resident Native inspect/glob/grep profile, optional Bash, replacement and discovery |
 | `ptc` | Enabled; typed resident APIs and progressive SDK loading under actual host PTC presentation |
-| `ops-ptc` | Enabled; the fifth enhanced built-in mode, same surface as PTC, preset registered at plugin runtime, plus opt-in batch-call context guidance (`batchingGuidance`, code default false, packaged `ops-ptc` section true) |
+| `ops-ptc` | Enabled; the fifth enhanced built-in mode, same surface as PTC, preset registered at plugin runtime, plus batch-call context guidance (`batchingGuidance`, default true for `ops-ptc` in both code and the packaged section; explicit false disables it) |
 | `presets` | Empty by default; map of exact preset ids to explicit consumer options |
 | `discovery` | Enabled; default built-in Native pool, maxResults 3, no always-loaded selections |
 | `panel`, `tui` | Disabled by default; opt-in capture and read-only sidebar |
@@ -73,7 +73,7 @@ the host's `loadOverlayPatches`; there is no matching preset row in the plugin m
 | `hidePwsh` | true | Hide the official Windows shell while Bash is available; disabled entirely when `global.hidePwsh` is false |
 | `hideOfficialTools` | true | Hide the official file tools this mode replaces; disabled entirely when `global.hideOfficialTools` is false |
 | `dynamicTools` | true | Publish the progressive SDK loader `ops_load_sdk`; effective only while `global.dynamicTools` is also on (AND gate) |
-| `batchingGuidance` | false | Teach once at session start (logged history, system prompt untouched), then correct the shape of root `run_code` programs: `bypass`, `plan` and `shape` each latch once per turn and re-arm when the program complies; the notice rides the triggering result as `additionalContexts` and never blocks or rewrites the program. Text lives in the editable `prompts/batching-guidance.md`. YAML-only; the packaged `ops-ptc` section sets true |
+| `batchingGuidance` | true for `ops-ptc`, false otherwise | Teach once at session start (logged history, system prompt untouched), then correct the shape of root `run_code` programs: `bypass`, `plan` and `shape` each latch once per turn and re-arm when the program complies; the notice rides the triggering result as `additionalContexts` and never blocks or rewrites the program. Text lives in the editable `prompts/batching-guidance.md`. YAML-only; an omitted `ops-ptc` section in a legacy whole-row profile override retains true; explicit false disables it |
 | `spillRetentionDays` | 30 | Host subprocess spill retention window; `0` reports only and never deletes |
 | `spillTotalBudgetMiB` | 256 | Total retained spill budget in MiB; `0` disables the budget |
 | `spillSweepEnabled` | true | Run one bounded sweep on activation and every 256 settlements |
@@ -86,7 +86,7 @@ retention, described under built-in advanced configuration below.
 
 ### Batch-call guidance (`batchingGuidance`)
 
-Off (the code default) contributes no extra context. On, the guidance is delivered in two places, from an
+Off contributes no extra context. The code default is on for `ops-ptc` only, even when a legacy profile replaces the whole row config without that section; explicit `batchingGuidance: false` still disables it. On, the guidance is delivered in two places, from an
 external English Markdown file:
 
 - **Once at session start**: one plugin-context message joins the session's first accepted non-empty

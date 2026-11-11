@@ -25,7 +25,7 @@ export interface ModeConfig extends ResolvedConfig {
   dynamicTools: boolean
   /** Publish baseline file tools independently of progressive discovery. */
   residentTools: boolean
-  /** Append batching guidance to PTC tool results (YAML-only; the OPS PTC row opts in). */
+  /** Append batching guidance to PTC tool results (YAML-only; defaults on for OPS PTC). */
   batchingGuidance: boolean
   /** Emit one structured line per delivered batching notice (YAML-only diagnostics). */
   batchingTelemetry: boolean
@@ -79,7 +79,7 @@ export function resolveModeConfig(rawConfig?: unknown, mode?: ModeId): ModeConfi
     bash, hidePwsh: sw('hidePwsh', true),
     hideOfficialTools: sw('hideOfficialTools', true), dynamicTools: sw('dynamicTools', true),
     residentTools: mode !== 'minimal' && sw('residentTools', true),
-    batchingGuidance: sw('batchingGuidance', false), batchingTelemetry: sw('batchingTelemetry', false) }
+    batchingGuidance: sw('batchingGuidance', mode === 'ops-ptc'), batchingTelemetry: sw('batchingTelemetry', false) }
 }
 
 /**
