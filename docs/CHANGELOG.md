@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.5.3] — 2026-11-11 — Patch release
+
 - The batch trigger now analyses the **root `run_code` program text** instead of counting repeated writes. Three independently latched categories — `bypass` (file work through the shell or `node:fs`), `plan` (no `// plan:` on the first physical line) and `shape` (a single operation in its own round trip) — each speak once per turn; a program that complies re-arms its category, so a regression inside the same turn speaks again, with no per-turn cap. Only the root call is inspected, delivery priority is `bypass` → `plan` → `shape`, and the notice rides the triggering result as `additionalContexts` without changing the tool value, its content or the system prompt.
 - 批量触发器改为分析**根 `run_code` 的程序文本**，不再统计重复写路径。三类独立锁——`bypass`（用 shell 或 `node:fs` 做文件工作）、`plan`（第一物理行没有 `// plan:`）、`shape`（一次往返只做一件事）——每类每轮各发言一次；某类一旦合规即解锁，同一轮内先改对再退回仍可再次提醒，且不设每轮条数上限。只检查根调用，投递优先级为 `bypass` → `plan` → `shape`，提醒以 `additionalContexts` 附在触发调用自身的结果上，不改工具值、正文与系统提示词。
 - The teacher trajectory is now a full procedure: the first-line `// plan:` directive with both `;` and the full-width `；` as separators, the dependency split, the load-before-call step (`ops_load_sdk` takes effect on the next program), four copyable trajectories that use the OPS file APIs instead of the shell, the 128-dispatch ceiling and the common-mistake table.
