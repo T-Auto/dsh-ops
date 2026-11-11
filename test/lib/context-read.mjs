@@ -22,7 +22,7 @@ export const elided = result => {
   assert.match(text(result), /=== FILE: .*Lines \d+-\d+ of \d+/)
   assert.match(text(result), /revision=[a-f0-9]{64}/)
 }
-class RecordingAdapter extends LlmAdapter {
+export class RecordingAdapter extends LlmAdapter {
   requests = []
   next = undefined
   async *stream(options) {
@@ -34,30 +34,42 @@ class RecordingAdapter extends LlmAdapter {
     yield { type: 'finish', reason: { kind: 'stop' } }
   }
 }
+/**
+ * Boot the read fixture's host: real session, LLM, subprocess and policy services,
+ * a recording adapter, and the agent inventory the discovery row refreshes from.
+ * Shared by {@link fixture} and by suites that mount their own consumer rows.
+ * @param {string} dir - the temporary workspace the sessions report as their cwd.
+ * @returns {Promise<{ctx: object, modes: Map, policyReads: {count: number}, agents: object[], adapter: RecordingAdapter}>}
+ */
+export async function bootReadHost(dir) {
+  const { ctx } = await bootHost()
+  await ctx.plugin(SessionStore)
+  await ctx.plugin(LlmRuntime)
+  await ctx.plugin(Subprocess)
+  await ctx.plugin(Sandbox, {})
+  const modes = new Map()
+  const policyReads = { count: 0 }
+  await ctx.plugin(inner => inner.provide('sandboxPolicy', {
+    resolve: ({ session }) => { policyReads.count++; return { mode: modes.get(session) ?? 'danger-full-access', workspaceRoot: session.header.cwd, sessionId: session.id } },
+  }))
+  const agents = []
+  ctx.provide('agents', { list: () => [...agents] })
+  const adapter = new RecordingAdapter()
+  ctx.get('llm').registerAdapter(['fixture'], adapter)
+  return { ctx, modes, policyReads, agents, adapter }
+}
+
 export async function fixture(run) {
   return withTempDir('context-read', async dir => {
     const file = path.join(dir, 'read.txt')
     fs.writeFileSync(file, Array.from({ length: 30 }, (_, i) => `payload line ${i + 1}: ${'content '.repeat(10)}`).join('\n'))
-    const { ctx } = await bootHost()
+    const { ctx, modes, policyReads, agents, adapter } = await bootReadHost(dir)
     try {
-      await ctx.plugin(SessionStore)
-      await ctx.plugin(LlmRuntime)
-      await ctx.plugin(Subprocess)
-      await ctx.plugin(Sandbox, {})
-      const modes = new Map()
-      const policyReads = { count: 0 }
-      await ctx.plugin(inner => inner.provide('sandboxPolicy', {
-        resolve: ({ session }) => { policyReads.count++; return { mode: modes.get(session) ?? 'danger-full-access', workspaceRoot: session.header.cwd, sessionId: session.id } },
-      }))
-      const agents = []
-      ctx.provide('agents', { list: () => [...agents] })
       const { fiber: fileFiber } = await mountPlugin({ ctx, config: { required: true } })
       const discoveryFiber = await ctx.plugin(legacyComponent(Discovery), { enabled: false, required: true,
         alwaysLoaded: ['inspect_local_file', 'read_files'].filter(name => DISCOVERABLE_TOOLS.includes(name)) })
       const fiber = { dispose: async () => { await discoveryFiber.dispose(); await fileFiber.dispose() } }
       const admitted = new WeakSet()
-      const adapter = new RecordingAdapter()
-      ctx.get('llm').registerAdapter(['fixture'], adapter)
       let sequence = 0
       const mint = id => {
         const agent = { id, session: ctx.get('sessions').create(id, { meta: { cwd: dir } }) }

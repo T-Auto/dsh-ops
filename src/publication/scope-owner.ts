@@ -37,6 +37,8 @@ type SharedApi = typeof SHARED_FILE_APIS[number]
 type Canonical = Omit<ToolDefinition, 'name' | 'execute'>
 interface Source {
   runtime: NativeFileTools
+  /** Owns the source's event subscriptions; its lifetime is the source's, not a row's. */
+  feed: { dispose(): Promise<void> }
   ready: Promise<unknown>
   refs: number
   closed: boolean
@@ -44,42 +46,58 @@ interface Source {
   definitions: Map<SharedApi, { canonical: Canonical; dispatch: ToolDefinition['execute'] }>
 }
 const runtimes = new WeakMap<Agent, Source>()
+type Scopes = Awaited<ReturnType<typeof loadScopes>>
+/**
+ * Mint the event feed the shared source subscribes on.
+ *
+ * The feed has to hold two properties that no single host context offers by
+ * itself. It must outlive every consumer row, because one source serves the
+ * native publication row, the PTC row and the discovery row of an agent, and the
+ * row that created it may unload first. And it must carry no scope tag:
+ * `session/event` and `session/disposed` are dispatched with an undefined
+ * routing key, so a tagged listener is never admitted and read-dedup would
+ * silently stop invalidating. The agent scope matches the lifetime; its own view
+ * is tagged. A child scope minted with an undefined key has both: Cordis gives
+ * the fiber the agent scope's lifetime, and its own `undefined` tag shadows the
+ * inherited one. The tag is re-read here rather than assumed, so a host whose
+ * scope primitive changed fails closed instead of going deaf.
+ * Synchronous on purpose: the caller replaces "no source" with a source in the
+ * same turn, and an await here let two concurrent consumers (the PTC row and the
+ * discovery row attach in parallel) both build one, which then registered the same
+ * publication name with two different canonical objects.
+ * @param owner - the agent scope the source is keyed by.
+ * @param scopes - the already-loaded host scope helpers.
+ * @returns the unscoped feed context and its disposal boundary.
+ */
+function subscriptionScope(owner: Agent, scopes: Scopes): { ctx: Context; dispose(): Promise<void> } {
+  if (!owner.ctx) throw new Error('Shared file source requires an agent scope')
+  // The undefined key is the point, not an accident: any defined key would tag the
+  // feed and lose the session events. The cast is the price of an API typed for
+  // identities only.
+  const scope = scopes.createScope(owner.ctx, undefined as unknown as Parameters<typeof scopes.createScope>[1])
+  if (scopes.scopeOf(scope.ctx) !== undefined) {
+    void scope.dispose()
+    throw new Error('Shared file subscription context must not carry a scope tag: the agent scope loses session events')
+  }
+  return scope
+}
+
 /**
  * Acquire one shared file source for an agent.
  *
+ * One source serves every consumer row of an agent, so its event feed belongs to
+ * the source rather than to whichever row acquired first (see
+ * {@link subscriptionScope}).
  * @param agent - the reading agent; its ctx serves services, credentials and cwd.
  * @param api - the shared file capability.
  * @param config - the worker and policy configuration, part of the source identity.
- * @param events - the context that receives provider and execution events. This is
- *   the only construction point that reads through `agent.ctx`, so every caller
- *   must pass its row-level ctx here: an agent ctx carries a scope tag and misses
- *   `session/event` and `session/disposed`, which is exactly the evidence
- *   read-dedup invalidates on. Omitting it, or deriving a ctx from the reading
- *   one, is refused below instead of quietly degrading.
  * @returns the publication lease.
  */
-export async function acquireSharedFile(agent: Agent, api: SharedApi, config: NativeRuntimeConfig, events: Context): Promise<PublicationLease> {
-  // Required at runtime, not only in the type. `NativeFileTools` keeps
-  // `events ?? ctx`, so a forgotten fourth argument lands on the reading ctx and
-  // restores exactly the degradation this source exists to avoid. The signature
-  // stops TypeScript callers only; JavaScript callers, casts and reflection reach
-  // this function regardless, so the check has to live here.
-  if (!events) throw new Error('Shared file subscription context is required: omitting it silently degrades to the agent scope')
+export async function acquireSharedFile(agent: Agent, api: SharedApi, config: NativeRuntimeConfig): Promise<PublicationLease> {
   if (!agent.ctx) throw new Error('Shared file source requires an agent scope')
-  const { scopeChainOf } = await loadScopes()
+  const scopes = await loadScopes()
+  const { scopeChainOf } = scopes
   agent.ctx.fiber.assertActive()
-  // Fail closed on the documented regression rather than degrade silently: passing
-  // the reading ctx back as the subscription ctx is exactly how the agent scope
-  // takes over and drops `session/event` / `session/disposed`.
-  // A ctx derived with `extend` is refused by the same rule: it is a distinct
-  // object that inherits the agent's scope tag and shares its single fiber, so it
-  // subscribes exactly where the reading ctx would.
-  // The test is fiber identity, not scope tags, and deliberately so: a publisher row
-  // mounted under a scoped ctx receives an injected ctx that inherits that tag
-  // while still being a row context that other rows are meant to use, so a
-  // tag-based refusal would reject supported compositions. Visibility probing is
-  // ruled out too: it subscribes to answer, and a wrong verdict is silent.
-  if (events === agent.ctx || events.fiber === agent.ctx.fiber) throw new Error('Shared file subscription context must not be the reading ctx: the agent scope loses session events')
   const owner = scopeChainOf(agent).find(scope => runtimes.has(scope as Agent)) as Agent | undefined
   const runtimeOwner = owner ?? agent
   // Startup policy is not execution identity once a worker has been selected.
@@ -96,17 +114,24 @@ export async function acquireSharedFile(agent: Agent, api: SharedApi, config: Na
     if (runtimes.get(runtimeOwner) === owned) runtimes.delete(runtimeOwner)
     owned.runtime.cancel('Shared file source disposed')
     // dispose() is synchronous; explicitly handle asynchronous teardown rejection.
-    void owned.runtime.stop().catch(error => agent.ctx!.logger.warn(`dsh-ops: shared file stop failed: ${String(error)}`))
+    // The feed is disposed only after the listeners it owns are gone, and a failed
+    // stop still releases it so a dead source cannot keep a subscription alive.
+    void owned.runtime.stop()
+      .then(() => owned.feed.dispose())
+      .catch(error => (runtimeOwner.ctx ?? agent.ctx!).logger.warn(`dsh-ops: shared file stop failed: ${String(error)}`))
   }
   if (!source) {
-    const runtime = new NativeFileTools({ ctx: agent.ctx, events, config: normalized })
-    const created: Source = { runtime, refs: 0, closed: false, identity, definitions: new Map(), ready: runtime.start([]) }
-    // The source belongs to the agent, not to any one consumer: removing one
-    // consumer has to leave the others working, which is also why `runtimes` is
-    // keyed by agent. Registered before the map insert so a refused effect cannot
-    // leave a source nobody is left to stop.
-    agent.ctx.effect(() => () => stop(created))
-    runtimes.set(agent, created)
+    const feed = subscriptionScope(runtimeOwner, scopes)
+    const runtime = new NativeFileTools({ ctx: agent.ctx, events: feed.ctx, config: normalized })
+    const created: Source = { runtime, feed, refs: 0, closed: false, identity, definitions: new Map(), ready: runtime.start([]) }
+    // The source belongs to the agent scope it is keyed by, not to the consumer
+    // that happened to arrive first: removing one consumer has to leave the others
+    // working, and a source shared with a descendant must not die with the
+    // descendant that created it. Registered before the map insert so a refused
+    // effect cannot leave a source nobody is left to stop.
+    const ownerCtx = runtimeOwner.ctx!
+    try { ownerCtx.effect(() => () => stop(created)) } catch (error) { stop(created); throw error }
+    runtimes.set(runtimeOwner, created)
     source = created
   }
   const owned = source

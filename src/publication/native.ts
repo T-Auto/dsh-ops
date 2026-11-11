@@ -68,7 +68,7 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
       const scope = agent
       const leases: PublicationLease[] = [], registrations: (() => void)[] = []
       for (const api of names.filter(isSharedFileApi)) {
-        const lease = await acquireSharedFile(agent, api, { workerPath: worker, required: true, denyCredentialReads: config.denyCredentialReads }, ctx)
+        const lease = await acquireSharedFile(agent, api, { workerPath: worker, required: true, denyCredentialReads: config.denyCredentialReads })
         if (stopped || entries.get(agent) !== entry || !cover(agent)) { lease.dispose(); return }
         entry.disposers.push(() => lease.dispose())
         lease.grant({ consumer: entry, agent, token: {}, entitled: true,

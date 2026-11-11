@@ -27,10 +27,7 @@ for (const removed of ['native', 'ptc']) await test(`stat shares canonical sourc
   try {
     for (const plugin of [Subprocess, Sandbox, FileSystem, NodePtc]) await ctx.plugin(plugin)
     ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: root }) })
-    // The row that mounts the native source is also its subscription context:
-    // a real plugin row, because the agent's own ctx would be refused.
-    let row
-    const native = ctx.plugin({ apply(inner) { row = inner; mountNative(inner, resolveConfig({ binaryPath: WORKER, required: true }), {
+    const native = ctx.plugin({ apply(inner) { mountNative(inner, resolveConfig({ binaryPath: WORKER, required: true }), {
       id: 'shared-stat', tools: [...SHARED_FILE_APIS], section: null, gate: { allows: () => true },
     }) } })
     await native
@@ -52,7 +49,7 @@ for (const removed of ['native', 'ptc']) await test(`stat shares canonical sourc
       assert.deepEqual(nativeDefinition(api, async () => {}).parameters, ptcDefinition(api, async () => {}).parameters)
     }
     for (const config of [{ workerPath: process.execPath }, { workerPath: WORKER, denyCredentialReads: false }, { workerPath: WORKER, toolCallTimeoutMs: 1 }]) {
-      await assert.rejects(acquireSharedFile(agent, 'stat', config, row), /Conflicting shared file runtime configuration/)
+      await assert.rejects(acquireSharedFile(agent, 'stat', config), /Conflicting shared file runtime configuration/)
     }
     const canonical = tools.definitions(agent).find(def => def.name === 'ops_stat')
     executor()

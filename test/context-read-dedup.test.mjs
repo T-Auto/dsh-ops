@@ -1,12 +1,17 @@
 import fs from 'node:fs'
+import path from 'node:path'
 import { ToolExecutionPipeline } from '@deepseek-ai/dsh-tools/pipeline'
+import { createScope } from '@deepseek-ai/dsh-scope'
 import { createAssistantMessage, createToolResultMessage, createUserMessage, freezeMessage } from '@deepseek-ai/dsh-llm'
-import { assert, test, report } from './lib/harness.mjs'
+import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { NativeFileTools } from '../lib/projections/native/runtime.js'
 import { acquireResultAdmission } from '../lib/publication/result-admission.js'
+import { acquireSharedFile } from '../lib/publication/scope-owner.js'
+import { bootReadHost, fixture, READ, text, full, elided } from './lib/context-read.mjs'
+import { prepareStep, executeCall } from './lib/executor.mjs'
+import { shutdown } from './lib/host.mjs'
 import { WORKER } from './lib/boundary.mjs'
 import { requireWorker } from './lib/boundary.mjs'
-import { fixture, READ, text, full, elided } from './lib/context-read.mjs'
 requireWorker('context-read-dedup')
 
 await test('only exact prior Native body in a completed ordinary provider request permits a compact repeat', () => fixture(async ({ agent, adapter, request, read, policyReads }) => {
@@ -264,6 +269,87 @@ await test('root observers remain runtime-owned and separate source lifetimes ca
   await request()
   elided(await read())
   assert.equal(first.value.data.items.length, 30)
+}))
+
+// One source, two consumer rows: the row that created the source unloads first and
+// the remaining consumer must keep every feed behaviour. Recording new evidence
+// (`tools/result`), proving it from a completed request (`llm/stream`), invalidating
+// on a sandbox-mode event and on session disposal (`session/event`,
+// `session/disposed`) are all assertions that fail when the feed goes back to the
+// acquiring row.
+const sharedSourceFixture = run => withTempDir('shared-source', async dir => {
+  const file = path.join(dir, 'read.txt')
+  fs.writeFileSync(file, Array.from({ length: 30 }, (_, i) => `payload line ${i + 1}: ${'content '.repeat(10)}`).join('\n'))
+  const { ctx } = await bootReadHost(dir)
+  const steps = []
+  try {
+    const session = ctx.get('sessions').prepare('shared-source', { meta: { cwd: dir } })
+    const detach = ctx.get('sessions').enter(session)
+    ctx.get('sessions').announce(session)
+    const agent = { id: 'shared-source', session }
+    agent.ctx = createScope(ctx, agent).ctx
+    const rows = []
+    const openRow = async () => {
+      let row
+      const fiber = await ctx.plugin({ apply(inner) { row = inner } })
+      rows.push(fiber)
+      return { row, fiber }
+    }
+    const acquire = async row => {
+      const lease = await acquireSharedFile(agent, 'inspect_local_file', { workerPath: WORKER, required: true })
+      lease.grant({ consumer: row, agent, token: {}, entitled: true })
+      // Production rows dispose their leases on unload; model that so unloading a
+      // row releases its reference without stopping a source the other row holds.
+      row.effect(() => () => lease.dispose())
+      await lease.ready()
+      return lease
+    }
+    let sequence = 0
+    const call = async callId => {
+      const prepared = await prepareStep(ctx, agent)
+      steps.push(prepared)
+      const result = await executeCall(ctx, { agent, toolSet: prepared.toolSet, callId, name: READ, arguments: { path: file } })
+      assert.equal(result.isError, false, text(result))
+      return result
+    }
+    const read = async callId => {
+      const assistant = createAssistantMessage({ source: { provider: 'fixture', model: 'fixture' },
+        content: [{ type: 'tool-call', id: callId, name: READ, arguments: JSON.stringify({ path: file }) }] })
+      session.append('assistant/message', { turn: 1, step: ++sequence, message: assistant, stream: [] }, { surfaceOp: 'append' })
+      const result = await call(callId)
+      const message = createToolResultMessage({ callId, content: result.content, isError: result.isError })
+      session.append('tool/result', { turn: 1, step: sequence, message }, { surfaceOp: 'append' })
+      ctx.emit('session/event', session, { type: 'step/end' })
+      return result
+    }
+    const request = async (messages = session.deriveMessages()) => {
+      for await (const chunk of ctx.get('llm').stream({ provider: 'fixture', model: 'fixture', sessionId: session.id, messages })) void chunk
+    }
+    const first = await openRow()
+    await acquire(first.row)
+    const second = await openRow()
+    await acquire(second.row)
+    full(await read('shared-first'))
+    await request()
+    elided(await read('shared-second'))
+    await run({ agent, call, ctx, detach, first, read, request, second, session })
+  } finally {
+    steps.forEach(step => step.dispose())
+    await shutdown(ctx)
+  }
+})
+
+await test('a shared source keeps recording, proving and invalidating evidence after the creating row unloads', () => sharedSourceFixture(async ({ call, detach, first, read, request, session }) => {
+  await first.fiber.dispose()
+  await request()
+  elided(await read('shared-after-row-unload'))
+  await request()
+  session.append('sandbox/mode', { mode: 'read-only' })
+  full(await read('shared-after-mode'))
+  await request()
+  elided(await read('shared-reproved'))
+  detach()
+  full(await call('shared-after-session-disposed'))
 }))
 
 // The admission ledger is keyed by the ctx that receives the events, not by the

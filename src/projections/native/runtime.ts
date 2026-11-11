@@ -41,10 +41,11 @@ export class NativeFileTools {
     this.file = undefined
     this.disposers = []
     this.stopped = false
-    // Provider and execution events are subscribed on this ctx: an untagged
-    // row-level ctx sees the same seven events as the compose root, whereas
-    // agent.ctx misses `session/event` and `session/disposed`. A shared file
-    // source passes the row ctx as `events` while it reads through agent.ctx.
+    // Provider and execution events are subscribed on this ctx: a ctx without a
+    // scope tag sees the same seven events as the compose root, whereas agent.ctx
+    // misses `session/event` and `session/disposed`. A shared file source passes
+    // the unscoped feed it owns (minted under the agent scope) as `events` while
+    // it reads through agent.ctx.
     this.readDedup = createNativeReadDedup(this.events)
     // Admission answers authorization questions and only needs the two
     // execution events, so it follows the constructing ctx: a shared file source

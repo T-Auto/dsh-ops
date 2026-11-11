@@ -34,7 +34,6 @@ const stat = (ctx, agent) => executeCall(ctx, { agent, name: STAT_TOOL, argument
 
 for (const conflict of ['worker', 'credentials', 'timeout']) await test(`awaited ${conflict} conflict rolls back partial discovery and permits recovery`, () => withTempDir('discovery-conflict', async dir => {
   const { ctx, tools } = await bootHost()
-  const rows = []
   try {
     await services(ctx, dir)
     fs.writeFileSync(path.join(dir, 'note'), 'original source')
@@ -47,10 +46,8 @@ for (const conflict of ['worker', 'credentials', 'timeout']) await test(`awaited
       fs.copyFileSync(WORKER, sourceConfig.workerPath)
     }
     // The preexisting source stands in for the mode row that would own one in
-    // production: a real plugin row, because the agent's own ctx would be refused.
-    let row
-    rows.push(await ctx.plugin({ apply(inner) { row = inner } }))
-    const source = await acquireSharedFile(agent, 'stat', sourceConfig, row)
+    // production.
+    const source = await acquireSharedFile(agent, 'stat', sourceConfig)
     source.grant({ consumer: {}, agent, token: {}, entitled: true, present: () => true, dispatch: async () => undefined })
     const original = tools.get(STAT_TOOL, agent)
     await ctx.plugin({ apply(inner) { mountDiscovery(inner, config, { allows: () => true }) } })
@@ -73,7 +70,7 @@ for (const conflict of ['worker', 'credentials', 'timeout']) await test(`awaited
     await ctx.serial('agent/disposed', { agent })
     assert.equal(pendingSelection(ctx, agent), undefined)
     assert.equal(tools.get(STAT_TOOL, agent), undefined)
-  } finally { rows.forEach(row => row.dispose()); await shutdown(ctx) }
+  } finally { await shutdown(ctx) }
 }))
 
 await test('background discovery conflict is observed, leaves no partial state and recovers', () => withTempDir('discovery-background-conflict', async dir => {
@@ -81,15 +78,12 @@ await test('background discovery conflict is observed, leaves no partial state a
   const unhandled = [], observe = error => unhandled.push(error)
   process.on('unhandledRejection', observe)
   let enabled = false, notify
-  const rows = []
   try {
     await services(ctx, dir)
     fs.writeFileSync(path.join(dir, 'note'), 'background source')
     const agent = mint(ctx, dir)
     ctx.provide('agents', { list: () => [agent] })
-    let row
-    rows.push(await ctx.plugin({ apply(inner) { row = inner } }))
-    const source = await acquireSharedFile(agent, 'stat', { workerPath: WORKER, denyCredentialReads: false }, row)
+    const source = await acquireSharedFile(agent, 'stat', { workerPath: WORKER, denyCredentialReads: false })
     source.grant({ consumer: {}, agent, token: {}, entitled: true, present: () => true, dispatch: async () => undefined })
     const baseline = tools.definitions(agent)
     await ctx.plugin({ apply(inner) { mountDiscovery(inner, config, {
@@ -113,7 +107,7 @@ await test('background discovery conflict is observed, leaves no partial state a
     assert.equal(pendingSelection(ctx, agent), undefined)
     assert.equal(tools.get(DISCOVER_TOOL, agent), undefined)
     assert.deepEqual(unhandled, [])
-  } finally { rows.forEach(row => row.dispose()); await shutdown(ctx); process.off('unhandledRejection', observe) }
+  } finally { await shutdown(ctx); process.off('unhandledRejection', observe) }
 }))
 
 await test('a deferred shared registration failure rejects discovery attachment and rolls back once', () => withTempDir('discovery-deferred-failure', async dir => {
