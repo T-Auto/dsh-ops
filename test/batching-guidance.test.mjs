@@ -43,10 +43,13 @@ await test('the ops-ptc row is the one row configured to deliver the guidance', 
   const { resolveMergedConfig } = await import('../lib/settings/merged.js')
   const { resolveModeConfig } = await import('../lib/modes/config.js')
   const { modeGate } = await import('../lib/presets/builtin.js')
-  // Default off everywhere; only the row-level YAML switch turns it on.
+  // Only ops-ptc defaults on; the row-level switch remains an explicit override.
   const defaults = resolveMergedConfig()
   for (const mode of ['minimal', 'standard', 'ptc', 'cordis']) assert.equal(defaults[mode].config.batchingGuidance, false, mode)
-  assert.equal(defaults['ops-ptc'].config.batchingGuidance, false)
+  // The preset keeps its defining guidance even when an older profile replaces the bundle config.
+  // An explicit false still opts out; other modes remain quiet by default.
+  assert.equal(defaults['ops-ptc'].config.batchingGuidance, true)
+  assert.equal(resolveModeConfig({ batchingGuidance: false }, 'ops-ptc').batchingGuidance, false)
   assert.equal(resolveModeConfig({ batchingGuidance: true }, 'ops-ptc').batchingGuidance, true)
   assert.throws(() => resolveModeConfig({ batchingGuidance: 'yes' }, 'ops-ptc'), /batchingGuidance must be boolean/)
   // The switch rides the consumer gate; a row that drops it cannot deliver.
@@ -65,6 +68,23 @@ await test('the ops-ptc row is the one row configured to deliver the guidance', 
   assert.throws(() => resolveModeConfig({ batchingTelemetry: 'yes' }), /batchingTelemetry must be boolean/)
   assert.equal(modeGate({}, 'ops-ptc', true, true).telemetry, true)
   assert.equal(modeGate({}, 'ops-ptc', true).telemetry, false, 'an absent switch never turns observation on')
+})
+
+await test('a legacy whole-row profile override retains ops-ptc guidance without enabling telemetry', async () => {
+  const { resolveMergedConfig } = await import('../lib/settings/merged.js')
+  const { modeGate } = await import('../lib/presets/builtin.js')
+  const legacy = { global: { bash: true, hidePwsh: true, hideOfficialTools: true, dynamicTools: true },
+    ptc: { enabled: true, residentTools: true } }
+  for (const config of [legacy, { ...legacy, 'ops-ptc': {} }, { ...legacy, 'ops-ptc': { enabled: true, residentTools: true } }]) {
+    const resolved = resolveMergedConfig(config)
+    const row = resolved['ops-ptc']
+    assert.equal(row.enabled, true)
+    assert.equal(row.config.batchingGuidance, true)
+    assert.equal(row.config.batchingTelemetry, false)
+    assert.equal(modeGate({}, 'ops-ptc', row.config.batchingGuidance).batching, true)
+    for (const mode of ['minimal', 'standard', 'ptc', 'cordis']) assert.equal(resolved[mode].config.batchingGuidance, false, mode)
+  }
+  assert.equal(resolveMergedConfig({ ...legacy, 'ops-ptc': { batchingGuidance: false } })['ops-ptc'].config.batchingGuidance, false)
 })
 
 await test('the teacher trajectory pins the first-line plan and a runnable load step', () => {
