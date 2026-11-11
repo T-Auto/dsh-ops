@@ -7,8 +7,11 @@ export interface TextField { text?: string | null; chars?: number | null; trunca
 export type CoreBucket = 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheWriteTokens'
 export type UsageBucket = CoreBucket | 'reasoningTokens' | 'totalTokens'
 export type Usage = Partial<Record<UsageBucket, number>>
+/** A host surface replacement: the event at `startSeq` is superseded by the row carrying it. */
+export interface SurfaceOp { op?: string; startSeq?: number; endSeq?: number }
 export interface CaptureEvent {
   seq: number; time: number; type: string; role?: string; source?: unknown; turn?: unknown; step?: unknown
+  surfaceOp?: SurfaceOp | null; sourceEventSeqs?: number[]
   callId?: string; name?: string; reason?: string; errorCode?: string; interrupted?: unknown; isError?: unknown
   payload?: TextField | null; reasoning?: TextField | null; arguments?: TextField | null
   toolCalls?: unknown[]; usage?: Usage | null; usageReported?: unknown; usageBuckets?: string[]
@@ -53,6 +56,13 @@ export function foldEvent(value: Row): value is Row & CaptureEvent {
   if (!['insertedCount', 'removedCount'].every(key => value[key] === undefined
     || (Number.isSafeInteger(value[key]) && (value[key] as number) >= 0))) return false
   if (value.usageBuckets !== undefined && (!Array.isArray(value.usageBuckets) || !value.usageBuckets.every(item => typeof item === 'string'))) return false
+  if (value.surfaceOp != null) {
+    const op = value.surfaceOp
+    if (!object(op) || Array.isArray(op) || typeof op.op !== 'string' || op.op === '') return false
+    if (!['startSeq', 'endSeq'].every(key => Number.isSafeInteger(op[key]) && (op[key] as number) >= 0)) return false
+  }
+  if (value.sourceEventSeqs !== undefined
+    && (!Array.isArray(value.sourceEventSeqs) || !value.sourceEventSeqs.every(seq => Number.isSafeInteger(seq) && seq >= 0))) return false
   if (value.usage != null) {
     if (!object(value.usage) || Array.isArray(value.usage)) return false
     for (const key of ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens', 'totalTokens']) {

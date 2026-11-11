@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Draw a host-pruned tool result once: capture keeps the host's single-target `surfaceOp` replacement, the fold withdraws the row it superseded, and `toolErrors`/`droppedChars` stop counting the same result twice. Event counts still report every event the host emitted, and `limits.pruneReplacements` names how many withdrawals happened. A capture written before this metadata existed keeps both rows: a repeated call id alone is not proof of a replacement (#700).
+- 宿主裁剪过的工具结果只显示一条：采集保留宿主针对单个事件给出的 `surfaceOp` 替换，折叠时撤回被替换的原行，`toolErrors`／`droppedChars` 不再把同一结果算两次。事件计数仍是宿主实际发出的数量，`limits.pruneReplacements` 标明发生了多少次撤回。该元数据存在之前写下的采集保留两行：只凭重复的 callId 不能证明发生过替换，旧日志由使用者自行清理（#700）。
+
 - Keep panel capture gaps observable after failed or partial appends and across recovery; isolate unterminated WAL tails so resumed events are not lost. Failed marker writes retain the WAL and use the existing report as an integrity fallback.
 - 面板追加零写或部分写失败后保留采集缺口，并在恢复后继续报告不完整；隔离未换行 WAL 残尾，避免吞掉恢复后的新事件。缺口标记写入失败时保留 WAL，并用既有报告兜底保存完整性状态。
 - Show partial disk measurements, skipped reasons and sampled omissions in text diagnostics. Only the latest panel load may update the selected report, including local-file and network races.
