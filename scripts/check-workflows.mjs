@@ -21,9 +21,7 @@ const check = (ok, message) => (ok ? notes.push(message) : failures.push(message
 // that set. `v0.5.0` shipped a red Windows leg because the leg could opt out of the gate; there is
 // deliberately no way to add such a leg without failing this lint.
 const EXPECTED_BLOCKING = [
-  'validate-posix',
-  'validate-macos-intel',
-  'validate-windows',
+  'validate',
   'tools-trial',
   'node-floor',
   'workflow-lint',
@@ -82,19 +80,52 @@ for (const file of files) {
   }
 }
 
-// One toolchain version, stated once: `native/rust-toolchain.toml` is the source and every
-// workflow's `rustup toolchain install` must name the same channel.
+// One toolchain version, stated once: `native/rust-toolchain.toml` is the source. Workflows never
+// name a version; they install Rust through the setup action, which reads the channel from that
+// file. A hand-written `rustup toolchain install` or `cargo +<version>` is how the copies drifted.
 const toolchain = await readFile(join(root, 'native', 'rust-toolchain.toml'), 'utf8').catch(() => '')
 const channel = /channel\s*=\s*"([^"]+)"/.exec(toolchain)?.[1]
 check(channel !== undefined, 'native/rust-toolchain.toml pins a channel')
 check(/"rustfmt"/.test(toolchain) && /"clippy"/.test(toolchain), 'native/rust-toolchain.toml installs rustfmt and clippy')
-if (channel !== undefined) {
-  for (const [file, { text }] of workflows) {
-    for (const install of text.matchAll(/rustup toolchain install\s+(\S+)/g)) {
-      check(install[1] === channel, `${file}: rustup installs the toolchain pinned by native/rust-toolchain.toml (${channel})`)
-    }
-  }
+const setupPath = join('.github', 'actions', 'setup', 'action.yml')
+const setupText = await readFile(join(root, setupPath), 'utf8').catch(() => '')
+let setup
+try { setup = parse(setupText) } catch (error) { check(false, `${setupPath}: not valid YAML (${error.message})`) }
+const setupRuns = (setup?.runs?.steps ?? []).map(step => String(step.run ?? '')).join('\n')
+check(setup?.runs?.using === 'composite', `${setupPath}: is a composite action`)
+check(/native\/rust-toolchain\.toml/.test(setupRuns) && channel !== undefined && !setupText.includes(channel),
+  `${setupPath}: reads the Rust channel from native/rust-toolchain.toml and never spells the version`)
+for (const [file, { text }] of workflows) {
+  check(!/rustup toolchain install/.test(text), `${file}: installs Rust through the setup action, not rustup directly`)
+  check(!/cargo \+\d/.test(text), `${file}: does not pin a cargo version by hand`)
 }
+// The cache is where a wrong key silently serves the wrong bytes, so its shape is pinned. The
+// property that matters most is that the saving and the restore-only step agree on everything but
+// their action and condition: if they drift, pull requests silently miss what `main` saved.
+const cacheSteps = (setup?.runs?.steps ?? []).filter(step => /^actions\/cache(\/restore)?@/.test(String(step.uses ?? '')))
+const saver = cacheSteps.find(step => /^actions\/cache@/.test(step.uses))
+const restorer = cacheSteps.find(step => /^actions\/cache\/restore@/.test(step.uses))
+check(cacheSteps.length === 2 && saver !== undefined && restorer !== undefined, `${setupPath}: has exactly one saving and one restore-only cache step`)
+check(JSON.stringify(saver?.with) === JSON.stringify(restorer?.with), `${setupPath}: the saving and the restore-only step use the same path, key and restore-keys`)
+check(/github\.event_name == 'push'/.test(saver?.if) && /github\.event_name != 'push'/.test(restorer?.if),
+  `${setupPath}: only a push saves the cache; every other event restores without writing`)
+check(/github\.job/.test(saver?.with?.key) && /runner\.os/.test(saver?.with?.key) && /runner\.arch/.test(saver?.with?.key),
+  `${setupPath}: the cache key is scoped by job, OS and architecture`)
+const prefixHash = "${{ hashFiles('native/rust-toolchain.toml', '.github/actions/setup/action.yml') }}"
+check(String(saver?.with?.key).endsWith(`${prefixHash}-\${{ hashFiles('native/Cargo.lock') }}`)
+  && String(saver?.with?.['restore-keys']).trim().endsWith(`${prefixHash}-`)
+  && !String(saver?.with?.['restore-keys']).includes('Cargo.lock'),
+  `${setupPath}: the toolchain and this action are in the fixed key prefix; only the lockfile may fall back`)
+// Workspace artifacts are rebuilt after every checkout, so storing them is dead weight. The
+// exclusions match crate names by prefix, so every local crate must fall under one of them.
+const excluded = ['incremental', '.fingerprint/ops-*', '.fingerprint/dsh-ops-*', 'deps/ops_*', 'deps/libops_*', 'deps/dsh_ops*', 'deps/libdsh_ops*']
+const missing = excluded.filter(pattern => !String(saver?.with?.path).includes(`!native/target/**/${pattern}`))
+check(missing.length === 0, `${setupPath}: the cache excludes incremental state and workspace artifacts (missing: ${missing.join(', ') || 'none'})`)
+const lock = await readFile(join(root, 'native', 'Cargo.lock'), 'utf8').catch(() => '')
+const localCrates = [...lock.matchAll(/name = "((?:dsh-)?ops[^"]*)"/g)].map(match => match[1])
+const strays = localCrates.filter(name => !/^(dsh-)?ops-/.test(name) && name !== 'ops')
+check(localCrates.length > 0 && strays.length === 0,
+  `native/Cargo.lock: every local crate matches a cache exclusion prefix (ops-*, dsh-ops-*; outside: ${strays.join(', ') || 'none'})`)
 
 // The validation workflow is the one branch protection points at, so its shape is pinned here.
 const ci = workflows.get('ci.yml')
@@ -113,7 +144,21 @@ if (!ci) {
   check(triggers?.pull_request?.paths === undefined && triggers?.pull_request?.['paths-ignore'] === undefined,
     'ci.yml: pull_request has no path filter')
   const jobs = ci.doc.jobs ?? {}
-  checkPluginBuild('ci.yml', jobs, ['validate-posix', 'validate-macos-intel', 'validate-windows', 'node-floor', 'tools-trial'])
+  checkPluginBuild('ci.yml', jobs, ['validate', 'node-floor', 'tools-trial'])
+  // Dropping a leg from the matrix would silently shrink what "green" means, so the shipped
+  // targets are pinned here. Each leg also hands its own name to the gate, which refuses a runner
+  // of another platform (the old standalone identity step).
+  const legs = jobs.validate?.strategy?.matrix?.include ?? []
+  check(sameSet(legs.map(leg => leg.target), ['linux-x64', 'darwin-arm64', 'darwin-x64', 'win32-x64']),
+    `ci.yml: validate covers exactly the four shipped targets (has: ${legs.map(leg => leg.target).join(', ') || 'none'})`)
+  check(legs.every(leg => Number(leg.timeout) > 0), 'ci.yml: every validate leg bounds its own runtime')
+  const gateRun = (jobs.validate?.steps ?? []).map(step => String(step.run ?? '')).find(run => /verify-gate\.mjs/.test(run)) ?? ''
+  check(/--target \$\{\{ matrix\.target \}\}/.test(gateRun), 'ci.yml: validate hands its matrix target to the gate, which refuses a mismatched runner')
+  check(legs.find(leg => leg.target === 'linux-x64')?.worker_target === 'x86_64-unknown-linux-musl',
+    'ci.yml: the Linux leg tests the musl worker that is published')
+  const lint = (jobs['rust-lint']?.steps ?? []).map(step => String(step.run ?? '')).join('\n')
+  check(['x86_64-unknown-linux-gnu', 'x86_64-pc-windows-msvc', 'aarch64-apple-darwin'].every(triple => lint.includes(`--target ${triple}`)),
+    'ci.yml: clippy covers the Linux, Windows and macOS code paths')
   const entry = Object.entries(jobs).find(([, job]) => job?.name === 'CI required')
   check(entry !== undefined, 'ci.yml: exposes one aggregate check named "CI required"')
   if (entry) {
@@ -134,16 +179,15 @@ if (!ci) {
     check(escaped.length === 0, `ci.yml: every non-blocking job sets continue-on-error: true explicitly (implicit: ${escaped.join(', ') || 'none'})`)
     const needs = [].concat(job.needs ?? [])
     check(sameSet(needs, EXPECTED_BLOCKING), `ci.yml: "CI required" waits on exactly the blocking jobs (waits on: ${needs.join(', ') || 'none'})`)
-    // Depending on a job is not judging it: a blocking job left in `needs` but dropped from the
-    // failure loop would let the aggregate report success without reading its result. The loop's
-    // job list must therefore be exactly the blocking set, in both directions.
-    const scripts = (job.steps ?? []).map((step) => String(step.run ?? '')).join('\n')
-    const loops = [...scripts.matchAll(/\bfor\s+job\s+in\s+([^\n;]+?)\s*;\s*do\b/g)]
-    const loopJobs = loops.length === 1 ? loops[0][1].trim().split(/\s+/).filter(Boolean) : []
-    check(loops.length === 1, 'ci.yml: "CI required" judges the blocking jobs in exactly one loop')
-    const unjudged = EXPECTED_BLOCKING.filter((name) => !loopJobs.includes(name))
-    const phantom = loopJobs.filter((name) => !EXPECTED_BLOCKING.includes(name))
-    check(unjudged.length === 0 && phantom.length === 0, `ci.yml: "CI required" failure loop covers exactly the blocking jobs (unjudged: ${unjudged.join(', ') || 'none'}; not blocking: ${phantom.join(', ') || 'none'})`)
+    // Depending on a job is not judging it. The verdict is therefore computed from the whole of
+    // `needs` rather than from a second hand-written list that could drift from it: every entry
+    // must be `success`.
+    const verdict = (job.steps ?? []).find((step) => /toJSON\(needs\)/.test(JSON.stringify(step.env ?? {})))
+    check(verdict !== undefined, 'ci.yml: "CI required" reads every result from toJSON(needs), not from a separate job list')
+    const verdictRun = String(verdict?.run ?? '')
+    check(/all\(\.\[\]; \.result == "success"\)/.test(verdictRun),
+      'ci.yml: "CI required" fails unless every result is "success" (skipped and cancelled fail too)')
+    check(!/\$\{\{\s*needs\./.test(verdictRun), 'ci.yml: "CI required" never interpolates a result into the script')
     check(job.if === 'always()', 'ci.yml: "CI required" runs even when a dependency fails, so the result is reported')
   }
 }

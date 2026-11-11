@@ -73,20 +73,13 @@ jobs:
       # both files share one upgrade path instead of drifting apart.
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v7
+      # Deliberately `cache: 'false'`, unlike ci.yml: a release binary is built from the tag's own
+      # source in a cold target directory, so nothing that ships can be a restored artifact from
+      # an earlier run.
+      - uses: ./.github/actions/setup
         with:
-          node-version: '24'
-
-      # Deliberately no `actions/cache` restore here, unlike ci.yml: a release binary
-      # is built from the tag's own source in a cold target directory, so nothing that
-      # ships can be a restored artifact from an earlier run.
-      - name: Set up pinned Rust
-        shell: bash
-        run: rustup toolchain install 1.97.1 --profile minimal && rustup default 1.97.1
-
-      - name: Add the release target
-        shell: bash
-        run: rustup target add ${{ matrix.triple }}
+          cache: 'false'
+          rust-targets: ${{ matrix.triple }}
 
       - name: Install locked dependencies
         # Every target builds the host JS consumed by the runtime staging CLI.
@@ -162,9 +155,11 @@ jobs:
           # compares the tag's resolved commit with the commit this run builds.
           fetch-depth: 0
 
-      - uses: actions/setup-node@v7
+      # The gate job's own host build is test-only (the staged release runtimes stay the cold
+      # matrix artifacts), but it still builds cold so the closure check never sees a cached binary.
+      - uses: ./.github/actions/setup
         with:
-          node-version: '24'
+          cache: 'false'
 
       - name: Refuse a moved tag
         # Publishing is immutable: the tag must still point at the commit this run builds.
@@ -244,10 +239,7 @@ jobs:
         # Boundary suites intentionally resolve their checkout-local host build.
         # This build is test-only; the staged release runtimes remain the cold matrix artifacts.
         shell: bash
-        run: |
-          rustup toolchain install 1.97.1 --profile minimal
-          rustup default 1.97.1
-          cargo build --release --locked --manifest-path native/Cargo.toml
+        run: cargo build --release --locked --manifest-path native/Cargo.toml
 
       - name: Build plugin and acquire explicit legacy Bash fixture
         shell: pwsh
