@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Preserve explicit JSON `null` in captured PTC arguments and filter result blocks by their text type. Add a real NodePtc-to-collector persistence regression, capture-off coverage for the added categories, and production-viewer DOM safety checks (#700).
+- 捕获 PTC 参数时保留显式 JSON `null`，结果块只采集 text 类型。补充真实 NodePtc 到采集器落盘回归、新增类别关闭采集验证，以及产品查看器的 DOM 安全检查（#700）。
+
 - Record the fields four host events already carry instead of keeping their type alone: `tool/ptc-dispatch(-start)` keeps the dispatched tool name, arguments and outcome, `job/registered`/`job/settled` keep the job id, its kind, its status and the call id the panel resolves back to the tool name, `agent/inbox/spliced` keeps its target, splice counts and merged text, and `todo/write` keeps the written todos. Like `turn` on `tool/call`, this only widens what a reader can see in the capture; no tool behaviour changes (#698).
 - 四种宿主事件不再只记类型，改为保留宿主已经给出的字段：`tool/ptc-dispatch(-start)` 保留内层工具名、参数与结果，`job/registered`/`job/settled` 保留 job id、类别、状态以及供面板回溯工具名的 call id，`agent/inbox/spliced` 保留目标、增删计数与被并入的文本，`todo/write` 保留写入的待办。与 `tool/call` 上的 `turn` 一样，这只扩大采集里能看见的内容，工具行为不变（#698）。
 - What these categories add is plain text, and clamping is not redaction: an inner PTC call's arguments and result, an inbox splice and a todo write are stored verbatim up to `textLimit`, including input a later batch withdrew or cancelled before admission. Turn `capture` off where that text must not be retained, and treat the capture directory like the session log it mirrors.

@@ -94,11 +94,14 @@ await test('ptc dispatch arguments keep the JSON value the host sends, not only 
   const arrayArgs = project('tool/ptc-dispatch-start', { subCallId: 'sub-4', name: 'ops_batch', arguments: [1, 'two'] })
   assert.equal(arrayArgs.arguments.text, '[1,"two"]', 'an array argument keeps its order')
   const nullArgs = project('tool/ptc-dispatch-start', { subCallId: 'sub-5', name: 'ops_ping', arguments: null })
-  assert.equal(nullArgs.arguments.text, '', 'a null argument records empty text rather than the word null')
+  assert.equal(nullArgs.arguments.text, 'null', 'an explicit JSON null is not a missing argument')
+  assert.equal(nullArgs.arguments.chars, 4)
+  const missingArgs = project('tool/ptc-dispatch-start', { subCallId: 'missing', name: 'ops_ping' })
+  assert.equal(missingArgs.arguments.text, '')
   const stringArgs = project('tool/ptc-dispatch-start', { subCallId: 'sub-6', name: 'ops_bash', arguments: 'ls -la' })
   assert.equal(stringArgs.arguments.text, 'ls -la', 'a string argument stays verbatim')
   const long = JSON.stringify({ script: 'y'.repeat(400) })
-  const mixed = project('tool/ptc-dispatch', { subCallId: 'sub-9', name: 'ops_inspect', content: [{ type: 'image', url: 'file:///x.png' }, { type: 'text', text: 'seen' }] })
+  const mixed = project('tool/ptc-dispatch', { subCallId: 'sub-9', name: 'ops_inspect', content: [{ type: 'image', url: 'file:///x.png', text: 'non-text metadata' }, { type: 'text', text: 'seen' }] })
   assert.equal(mixed.payload.text, 'seen', 'non-text blocks never reach the captured text')
   const limited = projectEvent({ type: 'tool/ptc-dispatch-start', seq: 1, time: 1_000, data: { subCallId: 'sub-7', name: 'ops_bash', arguments: { script: 'y'.repeat(400) } } }, { capture: true, textLimit: 64, maxSessionBytes: 1 << 20 })
   assert.equal(limited.arguments.text.length, 64, 'a long argument is clamped to textLimit')
@@ -134,8 +137,8 @@ await test('the call name index is bounded: duplicates overwrite and the oldest 
   assert.equal(jobs[1].name, 'ops_bash', 'a repeated start overwrites the name instead of adding an entry')
 })
 
-await test('a dispatched object argument reaches the folded trace as JSON text end to end', () => {
-  // projector → collector (append-log line) → parser → fold, the path a reader actually takes.
+await test('a dispatched object argument reaches the folded trace through an in-memory append-log fixture', () => {
+  // Pure projection/parser/fold unit test; panel-ptc-host.test.mjs exercises actual collector I/O.
   const events = [
     { type: 'tool/ptc-dispatch-start', seq: 1, time: 10, data: { subCallId: 'sub-1', name: 'ops_write', arguments: { path: 'a.txt', content: 'x' } } },
     { type: 'tool/ptc-dispatch', seq: 2, time: 20, data: { subCallId: 'sub-1', name: 'ops_write', arguments: { path: 'a.txt', content: 'x' }, content: [{ type: 'text', text: '{"written":true}' }] } },
@@ -153,11 +156,11 @@ await test('captured text stays text: markup is kept verbatim, never interpreted
   const projected = project('tool/ptc-dispatch', { subCallId: 'sub-x', name: 'ops_bash', arguments: { cmd: markup }, content: [{ type: 'text', text: markup }] })
   assert.equal(projected.payload.text, markup, 'the captured result keeps the markup verbatim as text')
   assert.equal(JSON.parse(projected.arguments.text).cmd, markup, 'the serialised argument round-trips unchanged')
-  // Rendering is guarded separately: test/bench-panel.test.mjs:79 asserts every value reaches
-  // the page through textContent and that innerHTML/outerHTML/insertAdjacentHTML are unused.
+  // This checks capture fidelity, not DOM execution. The production viewer is exercised by
+  // panel-view-observability.test.mjs; ops-panel-collect.test.mjs checks its unsafe sinks.
 })
 
-await test('a sample of real host events folds to the fields the panel reads', () => {
+await test('a fixture based on observed host event shapes folds to the fields the panel reads', () => {
   // Shapes copied from a live DSH 0.2.2-rc.1 session (agentPreset=ptc): the dispatch carries the
   // value itself plus `content` blocks, and a job names no tool — only the sub call id, which is
   // the same `call_…:ptc:N` string the dispatch used. 10 of 117 sampled jobs resolved that way and
@@ -175,6 +178,21 @@ await test('a sample of real host events folds to the fields the panel reads', (
   assert.equal(document.trace[2].name, 'ops_bash', 'the sub call id resolves the inner tool on registration')
   assert.equal(document.trace[3].name, 'ops_bash', 'and again on settlement')
   assert.equal(document.trace[3].jobKind, 'bash', 'the kind stays visible next to the resolved name')
+})
+
+await test('repeated old dispatch ids do not refresh FIFO age or consume extra capacity', () => {
+  const events = []
+  const add = (type, data) => events.push({ record: 'event', ...projectEvent({ type, data, seq: events.length, time: events.length }) })
+  for (let index = 0; index < 2048; index++) add('tool/ptc-dispatch-start', { subCallId: 'sub-' + index, name: 'tool_' + index })
+  add('tool/ptc-dispatch-start', { subCallId: 'sub-0', name: 'changed' })
+  add('job/registered', { jobId: 'before', kind: 'fixture', toolCall: { callId: 'sub-0' } })
+  add('tool/ptc-dispatch-start', { subCallId: 'sub-new', name: 'new_tool' })
+  add('job/registered', { jobId: 'evicted', kind: 'fixture', toolCall: { callId: 'sub-0' } })
+  add('job/registered', { jobId: 'retained', kind: 'fixture', toolCall: { callId: 'sub-1' } })
+  add('tool/ptc-dispatch-start', { subCallId: 'nameless' })
+  add('job/registered', { jobId: 'unnamed', kind: 'fixture', toolCall: { callId: 'nameless' } })
+  assert.deepEqual(foldRecords(events).trace.filter(row => row.kind === 'job_registered').map(row => row.name),
+    ['changed', 'fixture', 'tool_1', 'fixture'])
 })
 
 report('panel-event-fields')

@@ -20,7 +20,7 @@ function clamp(value: unknown, limit: number) {
  */
 function argumentText(value: unknown): string {
   if (typeof value === 'string') return value
-  if (value === undefined || value === null) return ''
+  if (value === undefined) return ''
   try {
     const text = JSON.stringify(value)
     return typeof text === 'string' ? text : ''
@@ -52,6 +52,7 @@ function contentText(value: unknown): string {
   if (!Array.isArray(value)) return ''
   const text: string[] = []
   for (const block of value) {
+    if (field(block, 'type') !== 'text') continue
     const part = field(block, 'text')
     if (typeof part === 'string') text.push(part)
   }
