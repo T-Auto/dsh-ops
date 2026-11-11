@@ -54,7 +54,8 @@ await test('the merged row declares per-preset replacement preferences without a
   const document = parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'cordis.patch.yml'), 'utf8'), {
     customTags: [{ tag: 'tag:yaml.org,2002:js', resolve: value => value }],
   })
-  const rows = document.flatMap(item => item.insert)
+  // Id-targeted overrides of other bundles' rows carry no insert block.
+  const rows = document.flatMap(item => item.insert ?? [])
   // The legacy hide-official row is no longer inserted; Compatibility is one
   // switch, so the bundle must not carry a per-tool replacement selection.
   assert.equal(rows.some(row => row.name === 'dsh-ops/hide-official'), false)

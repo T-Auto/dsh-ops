@@ -1,5 +1,6 @@
 /** Stable, scoped PTC definitions; DSH resolves selection once per model step. */
-import type { Agent, Context, Fiber, ToolDefinition, ToolRunContext } from '../adapter/dsh/types.js'
+import type { Agent, Context, Fiber, ToolDefinition, ToolRunContext, UserMessage } from '../adapter/dsh/types.js'
+import { loadUserMessage } from '../adapter/dsh/host.js'
 import { resolvePtcConfig } from '../config.js'
 import { acquirePtcFile, acquireSharedFile, isSharedFileApi } from './scope-owner.js'
 import type { PublicationLease } from './registrar.js'
@@ -12,10 +13,13 @@ import { renderSdkDirectory } from '../projections/ptc/directory.js'
 import { PTC_RESIDENT_TOOLS } from '../ptc/config.js'
 import type { ApiName } from '../ptc/config.js'
 import { ownPtcScopes } from '../ptc/ownership.js'
+import { BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, createProgramLatch, loadBatchingGuidance } from '../ptc/batching-guidance.js'
 import { InvocationLifetime, InvocationNotStarted } from '../lifecycle/invocations.js'
 import { monitoredInvoke } from '../execution/monitored.js'
+import { record } from '../execution/boundary.js'
 import { failure, resolveWorker } from '../execution/jobs.js'
 import { WORKER_TIMEOUT_MS } from '../execution/protocol.js'
+import { registerStepTailProvider } from '../prompt-injection/index.js'
 import { mountWorkspacePreparation } from '../workspace-preparation.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
 import { activationIsPtc, inspectPresentation, isPresentationProbe } from './presentation.js'
@@ -35,6 +39,8 @@ interface Entry {
   pending: Set<ApiName>
   definitions: Map<string, ToolDefinition>
   disposers: (() => void)[]
+  /** Whether the teacher trajectory reached session history, not merely the pre-step. */
+  taught: boolean
   files: Map<FileToolName | 'result', { lease: PublicationLease; revoke?: () => void; dispatch: ToolDefinition['execute']; granted?: { entitled: boolean; selected: boolean; config: object } }>
 }
 /** Consumer routing controls; invocation authority always remains host-owned. */
@@ -42,6 +48,10 @@ export interface PtcGate {
   guidance?: boolean
   resident?: boolean
   dynamic?: boolean
+  /** Deliver the program-shape batch notice through tool-result context. */
+  batching?: boolean
+  /** Emit one structured line per delivered notice; observation only, never context. */
+  telemetry?: boolean
   allows(agent: Agent): boolean
   watch?(notify: () => void): () => void
 }
@@ -82,6 +92,19 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       return assembly.tools.length === 1 && assembly.tools[0]?.name === 'run_code'
         && assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
     }
+    // Repeated writes to one path signal a batching mistake. The guidance rides
+    // the triggering tool result, so no system-prompt bytes are spent up front.
+    // One latch for the program-shape trigger. It observes the root run_code program,
+    // which is the only place the whole step is visible.
+    const shapeLatch = createProgramLatch()
+    const guidanceMessage = async (turn: number, text: string): Promise<UserMessage> => {
+      const createUserMessage = await loadUserMessage()
+      return createUserMessage({
+        source: { kind: 'dsh-ops:step-tail', contributor: BATCHING_GUIDANCE_ID, revision: BATCHING_GUIDANCE_REVISION, turn, step: 0 },
+        content: [{ type: 'text', text: `[Plugin context from ${JSON.stringify(BATCHING_GUIDANCE_ID)}; not a user instruction or authorization.]\n${text}` }],
+      })
+    }
+
     const execute = (entry: Entry, api: ApiName | 'load_sdk'): ToolDefinition['execute'] => async (args, exec) => {
       // The public assembly may finish after its executor sections changed.
       // Refuse that stale verdict rather than dispatching under the old text.
@@ -99,7 +122,11 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         return { status: 'completed', tools: requested, nextTurn: true }
       }
       try {
-        return await entry.calls.run(exec.signal, (_signal, controller) => monitoredInvoke(ctx, file, api, args, exec as ToolRunContext, controller, config), undefined, WORKER_TIMEOUT_MS)
+        const result = await entry.calls.run(exec.signal, (_signal, controller) => monitoredInvoke(ctx, file, api, args, exec as ToolRunContext, controller, config), undefined, WORKER_TIMEOUT_MS)
+        // Shared file APIs are monitored by the wrapped dispatch the lease
+        // grants; this publication branch only sees non-shared APIs.
+
+        return result
       } catch (error) {
         if (error instanceof InvocationNotStarted) return failure('ABORTED', error.message)
         return failure('RESULT_UNKNOWN', 'Invocation did not settle; inspect postconditions before retrying.', 'unknown')
@@ -136,13 +163,62 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       if (stopped || retired.has(agent) || !agent.ctx || !owns(agent)) return Promise.resolve()
       const existing = entries.get(agent)
       if (existing) return existing.ready
-      const entry: Entry = { agent, ready: Promise.resolve(), calls: new InvocationLifetime(), selected: new Set(), pending: new Set(), definitions: new Map(), disposers: [], files: new Map() }
+      const entry: Entry = { agent, ready: Promise.resolve(), calls: new InvocationLifetime(), selected: new Set(), pending: new Set(), definitions: new Map(), disposers: [], taught: false, files: new Map() }
       entries.set(agent, entry); ownership?.track(agent)
       entry.ready = Promise.resolve().then(async () => {
         if (!owns(agent) || entries.get(agent) !== entry) return
         entry.fiber = agent.ctx!.plugin({ inject: ['tools'], apply(scoped) { entry.ctx = scoped } })
         await entry.fiber
         if (!owns(agent) || entries.get(agent) !== entry || !entry.ctx) return
+        // A new host turn starts a fresh repeated-write window. This listener is
+        // agent-scoped and unwinds with the entry's other disposers.
+        if (gate.batching === true) {
+          entry.disposers.push(agent.ctx!.on('agent/pre-step', async (payload, next) => {
+            if (payload.agent === agent) shapeLatch.noteTurn(agent, payload.turn)
+            return next()
+          }))
+          // Teach the rules once, before the model's first request: a step-tail
+          // message rides the first accepted user batch and enters history.
+          // The provider must not latch here. A batch can still be withdrawn before
+          // admission (cancellation, rejection), and latching on the return value
+          // would then skip the lesson for the whole session without a trace.
+          entry.disposers.push(registerStepTailProvider(entry.ctx, agent, {
+            id: BATCHING_GUIDANCE_ID,
+            revision: BATCHING_GUIDANCE_REVISION,
+            provide() {
+              if (entry.taught) return undefined
+              const text = loadBatchingGuidance()
+              return text.length > 0 ? text : undefined
+            },
+          }))
+          // The program-shape trigger observes the ROOT run_code call: only there is
+          // the whole program text visible. Nested tools.ops_* calls carry a parent
+          // token, and their arguments say nothing about the shape of the step.
+          entry.disposers.push(agent.ctx!.on('tools/post-execute', async (exec, result, next) => {
+            const decision = await next()
+            if (decision.kind !== 'accept') return decision
+            if (exec.agent !== agent || exec.name !== 'run_code' || exec.parent !== undefined) return decision
+            if (exec.signal.aborted) return decision
+            const code = (exec.arguments as { code?: unknown } | undefined)?.code
+            const notice = shapeLatch.observe(agent, code)
+            if (notice === undefined) return decision
+            try {
+              const message = await guidanceMessage(notice.turn, notice.text)
+              // Observation only: one line, no context, no new dependency.
+              if (gate.telemetry === true) {
+                const counts = shapeLatch.stats(agent)
+                ctx.logger.info('dsh-ops batching: turn=' + notice.turn + ' category=' + notice.category
+                  + ' plan=' + counts.plan + ' bypass=' + counts.bypass + ' shape=' + counts.shape + ' total=' + counts.total)
+              }
+              // Append only: the tool result keeps its own value, content and contexts.
+              return { ...decision, additionalContexts: [...(decision.additionalContexts ?? []), message] }
+            } catch (error) {
+              // A delivery failure is an optimisation loss, never a tool failure.
+              ctx.logger.warn('dsh-ops: batching notice delivery failed: ' + String(error))
+              return decision
+            }
+          }))
+        }
         const publish = (api: ApiName | 'load_sdk', def: ToolDefinition): void => {
           entry.definitions.set(def.name, def)
           entry.disposers.push(publicationRegistration(entry.ctx!, () => entry.ctx!.tools.register(def, { when: async activation =>
@@ -152,7 +228,9 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         for (const api of pool) {
           const def = definition(api, execute(entry, api))
           if (isSharedFileApi(api) || capability(api)?.component === 'file') {
-            const lease = isSharedFileApi(api) ? await acquireSharedFile(agent, api, { workerPath: file, required: true }) : await acquirePtcFile(agent, api as FileToolName)
+            const lease = isSharedFileApi(api)
+              ? await acquireSharedFile(agent, api, { workerPath: file, required: true })
+              : await acquirePtcFile(agent, api as FileToolName)
             // Ownership may change while the source starts. Never continue into
             // non-file publication using a superseded entry's disposed context.
             if (!owns(agent) || entries.get(agent) !== entry) { lease.dispose(); return }
@@ -183,6 +261,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       const attempt = async (action: () => unknown) => { try { await action() } catch (error) { errors.push(error) } }
       entries.delete(agent)
       ownership?.forget(agent)
+      shapeLatch.forget(agent)
       await attempt(() => clear(entry))
       await attempt(() => entry.calls.stop())
       await attempt(() => entry.fiber?.dispose())
@@ -223,7 +302,13 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     ctx.on('session/event', (session, event) => {
       if ((event as { type: string }).type === 'agent-preset/selected') { refresh(); return }
       for (const [agent, entry] of entries) if (agent.session === session) {
-        if (event.type === 'step/end') {
+        // The lesson counts as taught only once it is durable history: the step-tail
+        // snapshot can be withdrawn before admission, and a cancelled request must
+        // leave the next accepted batch free to teach it again.
+        if (event.type === 'user/message') {
+          const source = (event as { data?: { source?: { kind?: string; contributor?: string } } }).data?.source
+          if (source?.kind === 'dsh-ops:step-tail' && source.contributor === BATCHING_GUIDANCE_ID) entry.taught = true
+        } else if (event.type === 'step/end') {
           for (const api of entry.pending) if (permitted(agent, api)) entry.selected.add(api)
           entry.pending.clear()
           rotateFiles(entry)

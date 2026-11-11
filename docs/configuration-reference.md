@@ -10,10 +10,12 @@ Plugin authors can also mount the [public integration API](integration-api.md) i
 
 | Section | Defaults and behavior |
 | --- | --- |
-| `global` | `bash`, `hidePwsh`, `hideOfficialTools`, `dynamicTools` all true; each gates the corresponding row-managed consumer choice |
+| `global` | `bash`, `hidePwsh`, `hideOfficialTools`, `dynamicTools` all true; each gates the corresponding row-managed consumer choice. The same section also carries `forceDefaultOpsPtc`, see the next row |
+| `global.forceDefaultOpsPtc` | true by default; while the `ops-ptc` preset is registered, forces the default preset to `ops-ptc` at runtime by writing `selectedDefault` through the host settings service (the settings-page mechanism, overriding a manual choice). Turning it off, disabling or unloading the row restores the captured pre-force default, or the host `config.default` (the official default) when nothing was captured or the captured value is `ops-ptc`; forcing only happens after successful registration; a failed registration never forces, best-effort restores a leftover `ops-ptc` default and only warns |
 | `minimal` | Enabled; no resident file surface; optional Bash and dynamic selection |
 | `standard`, `cordis` | Enabled; resident Native inspect/glob/grep profile, optional Bash, replacement and discovery |
 | `ptc` | Enabled; typed resident APIs and progressive SDK loading under actual host PTC presentation |
+| `ops-ptc` | Enabled; the fifth enhanced built-in mode, same surface as PTC, preset registered at plugin runtime, plus opt-in batch-call context guidance (`batchingGuidance`, code default false, packaged `ops-ptc` section true) |
 | `presets` | Empty by default; map of exact preset ids to explicit consumer options |
 | `discovery` | Enabled; default built-in Native pool, maxResults 3, no always-loaded selections |
 | `panel`, `tui` | Disabled by default; opt-in capture and read-only sidebar |
@@ -25,7 +27,7 @@ Plugin authors can also mount the [public integration API](integration-api.md) i
 the resource inventory, the read-only `dsh-ops disk status` report and what it deliberately never scans.
 
 The page uses native Switch controls. Built-in cards start collapsed. Disabling a card greys its
-switches without erasing saved values. Standard/PTC/Cordis have `residentTools` (default true),
+switches without erasing saved values. Standard/PTC/OPS PTC/Cordis have `residentTools` (default true),
 independent of dynamic loading. Minimal retains its intentionally non-resident default; an explicit
 consumer for `minimal` can select a different profile. Bash has an independent publication switch.
 File replacement and Windows host-PowerShell hiding are independent.
@@ -38,10 +40,91 @@ that installed this package, so it also answers in the host process, where no `D
 set.
 These are publication choices, not filesystem permissions. No switch bypasses host authorization.
 
+**Force the default agent preset to OPS (PTC)** (`global.forceDefaultOpsPtc`) only decides which preset new
+sessions use; it changes no tool publication surface or permission. It writes the same `selectedDefault` field
+as the Agent presets settings page: while on, it forces `ops-ptc` after a successful preset registration (so a
+manual choice is overridden); while off, it restores the value captured before forcing, or the official
+`config.default` when none was captured. The write persists through the host settings layer into the profile's `cordis.patch.yml` (an `agent-preset-registry` override that also writes the `default` field) and survives a restart; a remount caused by saving another switch re-registers the preset and re-confirms the default. A missing host settings service or a failed write only logs a warning.
+
 Saves use exact nested paths and the revision read by the page. Unchanged fields are not written;
 conflicts retain the draft. Reset reloads current saved values. The runtime status section shows
 actual host platform, managed/Git Bash, PowerShell and companion facts. Installation/removal needs
 a preview and explicit execution; configuration saves do not deploy binaries or alter PATH.
+
+## OPS PTC mode (`ops-ptc`)
+
+`ops-ptc` is the fifth enhanced built-in mode (both the preset id and the single-row section are named
+`ops-ptc`). Its publication surface matches the official PTC preset: under real host PTC presentation only
+`run_code` is visible and this plugin publishes the same-stack typed SDK file tools. Compaction stays the
+official `compaction-basic`; `dsh-compress-codex` is not introduced. It accepts the same keys as the `ptc`
+section; the only behavioral difference is `batchingGuidance`. The plugin registers this preset at apply
+time through the host `agentPresets.register`, using the shipped `presets/ops-ptc.patch.yml` fragment parsed by
+the host's `loadOverlayPatches`; there is no matching preset row in the plugin manager, and disabling the
+`dsh-ops` row removes the preset with it. In the host picker it is named `OPS (PTC)` and described as
+"代码驱动的 PTC 工具面，由 dsh-ops 的 ops_* 工具扩展。"; whether it is the default is controlled by
+`global.forceDefaultOpsPtc` (on by default). Generation and the forced/manual default paths are covered in
+[Presets and the default mode](presets.md).
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `enabled` | true | Publish this surface for sessions of the `ops-ptc` preset; page switch, also settable in YAML |
+| `residentTools` | true | Publish the startup APIs. The PTC resident surface is only `ops_inspect_local_file`; everything else loads on demand through `ops_load_sdk` |
+| `bash` | true | Allow publishing `ops_bash` on Windows; POSIX sessions keep the host bash |
+| `hidePwsh` | true | Hide the official Windows shell while Bash is available; disabled entirely when `global.hidePwsh` is false |
+| `hideOfficialTools` | true | Hide the official file tools this mode replaces; disabled entirely when `global.hideOfficialTools` is false |
+| `dynamicTools` | true | Publish the progressive SDK loader `ops_load_sdk`; effective only while `global.dynamicTools` is also on (AND gate) |
+| `batchingGuidance` | false | Teach once at session start (logged history, system prompt untouched), then correct the shape of root `run_code` programs: `bypass`, `plan` and `shape` each latch once per turn and re-arm when the program complies; the notice rides the triggering result as `additionalContexts` and never blocks or rewrites the program. Text lives in the editable `prompts/batching-guidance.md`. YAML-only; the packaged `ops-ptc` section sets true |
+| `spillRetentionDays` | 30 | Host subprocess spill retention window; `0` reports only and never deletes |
+| `spillTotalBudgetMiB` | 256 | Total retained spill budget in MiB; `0` disables the budget |
+| `spillSweepEnabled` | true | Run one bounded sweep on activation and every 256 settlements |
+
+The remaining keys (`binaryPath`, `required`, `denyCredentialReads`, `promptPolicy`, `extraGuidance`,
+`allowSystemShellFallback`, `allowedTools`, `alwaysLoaded`) keep the PTC meaning (`extraGuidance` only feeds
+Native guidance; `allowedTools`/`alwaysLoaded` accept loadable raw API names only, see
+[Progressive PTC SDK loading](ptc-sdk-loading.md)). The three `spill*` keys bound host subprocess spill
+retention, described under built-in advanced configuration below.
+
+### Batch-call guidance (`batchingGuidance`)
+
+Off (the code default) contributes no extra context. On, the guidance is delivered in two places, from an
+external English Markdown file:
+
+- **Once at session start**: one plugin-context message joins the session's first accepted non-empty
+  user-message batch (step-tail, source `dsh-ops:step-tail` / `batching-guidance`). It enters logged history,
+  so the model's first request already sees the whole procedure: the first-line `// plan:` comment, the
+  dependency split, the load-before-call step and four copyable trajectories.
+- **On a thin program**: when a **root** `run_code` program breaks one of three latched categories, a short
+  notice is appended to that call's own result as `additionalContexts`. The tool result keeps its value, its
+  content and its existing contexts; the program is never blocked or rewritten.
+- The three categories are `bypass` (file work through the shell or `node:fs`), `plan` (no `// plan:` on the
+  first physical line) and `shape` (a single operation in its own round trip). Each is latched once per turn,
+  and a program that complies with a category re-arms it, so a regression inside the same turn speaks again;
+  there is no per-turn cap.
+- Delivery priority is `bypass`, then `plan`, then `shape`: one program earns at most one notice.
+- Only the root call is inspected (`exec.parent === undefined`). Nested `tools.ops_*` calls belong to the PTC
+  execution and say nothing about the shape of the step.
+- The analysis is a literal heuristic over the program text: a loop or `map` counts one dispatch site, not its
+  runtime fan-out, and strings or comments can mislead it. Notices say so, nothing claims a measured dispatch
+  count, and a cancelled or never-dispatched call is not analysed.
+- Everything is plugin-context history and the tool schema is untouched, so the system prompt and its cache
+  survive. The lesson counts as spent only once it appears as a durable `user/message`; a batch withdrawn
+  before admission (cancellation, rejection) leaves the next accepted batch free to teach it again.
+
+`batchingTelemetry` (same row, YAML-only, default `false`) emits one structured log line per delivered
+notice, for example `dsh-ops batching: turn=3 category=plan plan=1 bypass=0 shape=2 total=3`. It is
+observation only: no context, no message, no extra dependency.
+
+The text file is `prompts/batching-guidance.md` (shipped with the package, English, editable). It is read
+once per path and cached in the process, so restart to apply edits; an unreadable file logs one warning and
+skips delivery, an empty file also skips, and a failed delivery only logs a warning without rewriting the
+tool result.
+
+**Contrast-arm usage.** To compare the guidance on one shared PTC surface, keep `ptc` and `ops-ptc` on the same
+API configuration and set `batchingGuidance: true` only on the `ops-ptc` section (the packaged default), or
+set it on the `ptc` section as well to verify the guidance itself; set the `ops-ptc` section to false to return
+to the no-guidance baseline. Both keys are YAML-only: the plugin page has no switch, and a saved `dsh-ops` row
+override replaces the packaged config as a whole, so add them explicitly after upgrading (see
+[Presets and the default mode](presets.md#risks-and-rollback)).
 
 ## Explicit custom consumers
 
@@ -198,3 +281,4 @@ old executor. `configUpdateVersion` is a migration marker, not a capability swit
 
 - [Integration API](integration-api.md), [external providers](external-provider.md), [diagnostics](diagnostics.md)
 - [Internal architecture](internal-architecture.md), [usage](usage.md), [troubleshooting](troubleshooting.md)
+- [Presets and the default mode](presets.md), [dynamic tool directory](dynamic-tool-directory.md)

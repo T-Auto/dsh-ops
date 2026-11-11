@@ -33,10 +33,18 @@ Supported: Windows x64, Linux x64, and macOS 13+ on Apple Silicon or Intel
 > `dsh-ops` row. Commands using `@latest` below select the published package; build and pack this
 > checkout to evaluate the candidate. See the [changelog](docs/CHANGELOG.md).
 
-- The single row enables the four built-in preset consumers: Standard and Cordis publish resident
-  Native file tools, PTC publishes typed APIs, and Minimal has no resident file baseline. Native
-  discovery and typed SDK loading are independently configured. Advanced selections activate in
-  the owning agent's next provider request, never by executing a discovery action.
+- The single row enables the five built-in preset consumers: Standard and Cordis publish resident
+  Native file tools, PTC publishes typed APIs, and Minimal has no resident file baseline. OPS PTC is
+  the fifth enhanced preset, registered by the plugin at runtime (no plugin-manager preset row): it
+  keeps the PTC surface and delivers the English batch-call guidance from `prompts/batching-guidance.md`:
+  one lesson at session start, then short `additionalContexts` notices when a root `run_code` program
+  breaks the `bypass`/`plan`/`shape` shape categories (each latched once per turn), without touching the
+  system prompt and without blocking or rewriting the program. Native discovery and typed SDK loading are
+  independently configured.
+  Advanced selections activate in the owning agent's next provider request, never by executing a
+  discovery action. The default preset is forced by the `global.forceDefaultOpsPtc` switch (on by
+  default; turning it off or disabling the row restores the previous or official default). See
+  [presets](docs/presets.md).
 - The PTC SDK catalogue has 18 APIs: 15 file/document tools, batch, result references and its loader.
   Only the configured resident or selected APIs are exposed. Native and PTC use separate outputs.
 - Discover bounded CSV/TSV, DOCX main-body paragraphs and a restricted PDF text layer. Binary DOC,
@@ -132,7 +140,7 @@ Enable `tui.enabled` on the `dsh-ops` row in dsh-TUI and restart to add the OPS 
 
 - [Third-party preset integration API](docs/integration-api.md) · [External Native providers](docs/external-provider.md) · [Scoped diagnostics](docs/diagnostics.md)
 
-- [Usage](docs/usage.md) · [Troubleshooting](docs/troubleshooting.md) · [Component reference](docs/component-reference.md) · [Configuration reference](docs/configuration-reference.md)
+- [Usage](docs/usage.md) · [Troubleshooting](docs/troubleshooting.md) · [Component reference](docs/component-reference.md) · [Configuration reference](docs/configuration-reference.md) · [Presets](docs/presets.md)
 - [Windows runtime evidence](docs/windows-runtime-evidence.md): payload compatibility, Low integrity, MSYS startup and antivirus/approval diagnostics.
 - [Native PTC](docs/native-ptc.md) · [Manual validation](docs/manual-validation.md)
 - [Contributing](docs/CONTRIBUTING.md) · [Roadmap](docs/roadmap.md) · [Changelog](docs/CHANGELOG.md) · [Provenance](docs/PROVENANCE.md)

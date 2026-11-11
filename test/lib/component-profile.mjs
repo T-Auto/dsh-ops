@@ -12,6 +12,9 @@ export function componentProfile(label, bundleText, patches = []) {
   fs.mkdirSync(packageDir, { recursive: true }); fs.mkdirSync(install, { recursive: true })
   fs.copyFileSync(path.join(PACKAGE_ROOT, 'package.json'), path.join(packageDir, 'package.json'))
   fs.symlinkSync(path.join(PACKAGE_ROOT, 'lib'), path.join(packageDir, 'lib'), process.platform === 'win32' ? 'junction' : 'dir')
+  // The plugin registers the ops-ptc preset from its shipped fragment at runtime,
+  // resolving `presets/` beside the installed `lib/`: mirror the shipped directory.
+  fs.cpSync(path.join(PACKAGE_ROOT, 'presets'), path.join(packageDir, 'presets'), { recursive: true })
   const bundlePath = path.join(packageDir, 'cordis.patch.yml')
   fs.writeFileSync(bundlePath, bundleText)
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'fixture-profile', private: true, dsh: { profile: { bundles: ['dsh-ops'] } } }))

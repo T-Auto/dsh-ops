@@ -44,6 +44,13 @@ interface Source {
   definitions: Map<SharedApi, { canonical: Canonical; dispatch: ToolDefinition['execute'] }>
 }
 const runtimes = new WeakMap<Agent, Source>()
+/**
+ * Acquire one shared Native/PTC file publication lease.
+ * @param agent - the agent scope the lease belongs to.
+ * @param api - the shared file API to publish.
+ * @param config - the worker/runtime configuration of the shared source.
+ * @returns the publication lease.
+ */
 export async function acquireSharedFile(agent: Agent, api: SharedApi, config: NativeRuntimeConfig): Promise<PublicationLease> {
   if (!agent.ctx) throw new Error('Shared file source requires an agent scope')
   const { scopeChainOf } = await loadScopes()

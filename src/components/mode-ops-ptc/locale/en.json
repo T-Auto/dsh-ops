@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Optimize the built-in OPS PTC preset",
+    "description": "Add useful OPS tools to the built-in OPS PTC preset and replace some built-in tools. Replaces pwsh with bash when running on Windows."
+  }
+}

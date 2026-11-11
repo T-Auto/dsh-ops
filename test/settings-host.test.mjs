@@ -176,7 +176,7 @@ await test('merged row persists and clears the Git Bash selection through the re
     const selected = path.join(TEST_HOME, 'selected', 'bash.exe')
     await mutate(executorOps(snapshot().value, { clear: false, file: selected }), snapshot().revision)
     await ctx.loader.await()
-    for (const mode of ['minimal', 'standard', 'ptc', 'cordis']) {
+    for (const mode of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis']) {
       assert.equal(observed[mode].bashPath, selected)
       assert.equal(snapshot().value[mode].bashPath, selected)
     }
@@ -184,7 +184,7 @@ await test('merged row persists and clears the Git Bash selection through the re
     assert.equal(observed.standard.hidePwsh, true)
     await mutate(executorOps(snapshot().value, { clear: true }), snapshot().revision)
     await ctx.loader.await()
-    for (const mode of ['minimal', 'standard', 'ptc', 'cordis']) assert.equal(observed[mode].bashPath, undefined)
+    for (const mode of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis']) assert.equal(observed[mode].bashPath, undefined)
     assert.doesNotMatch(fs.readFileSync(patchPath, 'utf8'), /bashPath:/)
     assert.equal(observed.standard.hidePwsh, true)
   } finally { await shutdown(ctx) }

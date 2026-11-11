@@ -10,12 +10,14 @@
     - id: dsh-ops
       name: dsh-ops
       config:
-        # Four bundle switches (one per preset switch), then each preset; all default on.
+        # Four bundle switches that gate the same-named preset switch, plus the
+        # default-preset force switch; then each preset. All default on.
         global:
           bash: true
           hidePwsh: true
           hideOfficialTools: true
           dynamicTools: true
+          forceDefaultOpsPtc: true
         minimal:
           enabled: true
           spillRetentionDays: 30
@@ -30,6 +32,15 @@
         ptc:
           enabled: true
           residentTools: true
+          spillRetentionDays: 30
+          spillTotalBudgetMiB: 256
+          spillSweepEnabled: true
+        # The batching-guidance arm: its preset inherits the PTC tool surface and
+        # turns the guidance on. Other modes keep the key absent (default false).
+        ops-ptc:
+          enabled: true
+          residentTools: true
+          batchingGuidance: true
           spillRetentionDays: 30
           spillTotalBudgetMiB: 256
           spillSweepEnabled: true

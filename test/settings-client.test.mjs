@@ -142,7 +142,7 @@ await test('browser package declares its client facet and the bundle keeps the s
   // The bundle inserts one row named like the package, so the browser half mounts
   // there and no carrier bundle is needed.
   assert.match(fs.readFileSync(path.join(PACKAGE_ROOT, 'cordis.patch.yml'), 'utf8'), /- id: dsh-ops\s+name: dsh-ops\s/)
-  for (const component of ['mode-minimal', 'mode-standard', 'mode-ptc', 'mode-cordis']) {
+  for (const component of ['mode-minimal', 'mode-standard', 'mode-ptc', 'mode-ops-ptc', 'mode-cordis']) {
     assert.equal(pkg.exports[`./${component}`].default, `./lib/components/${component}/index.js`, component)
   }
   // A saved legacy row stays loadable even though the bundle no longer inserts it.

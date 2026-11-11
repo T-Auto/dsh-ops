@@ -1,7 +1,7 @@
 /**
  * What each mode contributes to a session of its preset.
  *
- * This table is the product contract between the four mode rows and the shared
+ * This table is the product contract between the five mode rows and the shared
  * publication controllers: resident OPS tools, official tools replaced once
  * their OPS counterpart is visible, and whether the mode consumes the advanced
  * file tools through the discovery entry.
@@ -38,6 +38,9 @@ export const MODE_PLANS: Readonly<Record<ModeId, ModePlan>> = Object.freeze({
   minimal: Object.freeze({ nativeFiles: false, replacements: [], shell: true, ptc: false, discovery: 'all', section: null }),
   standard: Object.freeze({ nativeFiles: true, replacements: NATIVE_REPLACEMENTS, shell: true, ptc: false, discovery: 'advanced', section: 'standard' }),
   ptc: Object.freeze({ nativeFiles: false, replacements: [], shell: true, ptc: true, discovery: 'none', section: 'ptc' }),
+  // OPS PTC keeps the PTC surface and adds batching guidance to tool results;
+  // it publishes no native routing text and no resident file tools.
+  'ops-ptc': Object.freeze({ nativeFiles: false, replacements: [], shell: true, ptc: true, discovery: 'none', section: 'ops-ptc' }),
   cordis: Object.freeze({ nativeFiles: true, replacements: NATIVE_REPLACEMENTS, shell: true, ptc: false, discovery: 'advanced', section: 'cordis' }),
 })
 

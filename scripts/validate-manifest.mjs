@@ -247,7 +247,7 @@ if (typeof patch === 'string' && fs.existsSync(path.join(PACKAGE_ROOT, patch))) 
       const defaults = resolveMergedConfig({})
       const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
       check(same(resolved.global, defaults.global), 'the bundle switches written in the patch match their code defaults')
-      for (const section of ['minimal', 'standard', 'ptc', 'cordis', 'discovery', 'panel', 'tui']) {
+      for (const section of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis', 'discovery', 'panel', 'tui']) {
         check(resolved[section].enabled === defaults[section].enabled, `${section} enabled matches its code default`)
       }
     } catch (error) { check(false, 'the row config is valid', String(error?.message ?? error)) }

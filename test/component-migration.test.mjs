@@ -56,7 +56,7 @@ await test('a fresh profile composes the one row with the bundle defaults', asyn
     assert.deepEqual(host.entries().map(entry => entry.options.id), ['dsh-ops'])
     assert.equal(fs.readFileSync(fixture.profile.patchPath, 'utf8'), '[]', 'startup does not write a composed tree')
     const config = host.entries()[0].options.config
-    for (const feature of ['minimal', 'standard', 'ptc', 'cordis', 'discovery']) assert.equal(config[feature].enabled, true, feature)
+    for (const feature of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis', 'discovery']) assert.equal(config[feature].enabled, true, feature)
     for (const feature of ['panel', 'tui']) assert.equal(config[feature].enabled, false, feature)
   } finally { await shutdown(host.ctx) }
 })
