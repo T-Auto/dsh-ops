@@ -200,6 +200,7 @@ dependencies = [
  "cap-fs-ext",
  "cap-std",
  "ops-batch",
+ "ops-cradle",
  "ops-documents",
  "ops-files",
  "ops-protocol",
@@ -560,6 +561,14 @@ dependencies = [
  "ops-results",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "ops-cradle"
+version = "0.5.4"
+dependencies = [
+ "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

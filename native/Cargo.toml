@@ -13,6 +13,7 @@ name = "dsh-ops-worker"
 path = "src/main.rs"
 
 [dependencies]
+ops-cradle = { path = "crates/ops-cradle" }
 cap-std = "3.4"
 cap-fs-ext = "3.4"
 serde_json = "1.0"

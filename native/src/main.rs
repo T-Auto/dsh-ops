@@ -31,6 +31,15 @@ fn may_mutate(request: &Request) -> bool {
                 == Some("page"))
 }
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|arg| arg == "--cradle") {
+        let result = args.get(2).and_then(|pid| pid.parse::<u32>().ok())
+            .zip(args.get(3).cloned())
+            .ok_or_else(|| std::io::Error::other("cradle parent and nonce required"))
+            .and_then(|(parent, nonce)| ops_cradle::run(parent, nonce));
+        if let Err(error) = result { eprintln!("OPS cradle: {error}"); std::process::exit(125); }
+        return;
+    }
     if std::env::args().any(|a| a == "--version") {
         println!("dsh-ops-worker {}", env!("CARGO_PKG_VERSION"));
         return;
