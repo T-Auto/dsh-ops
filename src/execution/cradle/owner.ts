@@ -18,11 +18,13 @@ class KernelCradle {
     this.environment ??= cradleEnvironment(this.ctx)
     await this.environment
     signal.throwIfAborted()
+    if (this.stopped) throw new Error('EXECUTOR_UNAVAILABLE: cradle owner disposed')
     if (!this.connection?.available) {
       this.binary ??= resolveWorker({ binaryPath: this.binaryPath })
       this.connection = new CradleConnection(this.binary)
     }
     const connection = this.connection
+    if (signal.aborted) throw signal.reason
     let abort!: () => void
     const cancelled = new Promise<never>((_, reject) => {
       abort = () => reject(signal.reason)
