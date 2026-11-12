@@ -1,24 +1,32 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
-import { verifiedNiubash } from '../lib/niubash/runtime.js'
+import { selectNiubash } from '../lib/niubash/runtime.js'
 import { resolveShells } from '../lib/shells/resolve.js'
-import { confinedBash } from '../lib/bash-ipc.js'
+import { confinedBash, restrictedCompatibility } from '../lib/bash-ipc.js'
+import { syntheticNiubashTree } from './lib/niubash-distribution-fixture.mjs'
 
-await test('untrusted bytes and receipt cannot authorize a Niubash executable', async () => {
+await test('a local receipt cannot stand in for the pinned inventory', async () => {
   await withTempDir('niu-inventory', async root => {
     const file = path.join(root, 'niu.exe')
     fs.writeFileSync(file, 'untrusted')
     fs.writeFileSync(path.join(root, 'provenance.json'), JSON.stringify({ files: { 'niu.exe': 'fake' } }))
-    assert.throws(() => verifiedNiubash(file), /checksum/)
-    assert.throws(() => confinedBash(file, { platform: 'win32' }), /checksum/)
+    assert.throws(() => selectNiubash(file), /EXECUTOR_UNAVAILABLE:.*(Incomplete|size mismatch)/)
+    assert.equal(restrictedCompatibility(file, { platform: 'win32' }).compatible, false)
+  })
+})
+await test('Niubash never reaches the MSYS IPC runtime, even when complete', async () => {
+  await withTempDir('niu-ipc', async root => {
+    const file = path.join(syntheticNiubashTree(path.join(root, 'niubash')), 'niu.exe')
+    assert.equal(restrictedCompatibility(file, { platform: 'win32' }).compatible, true)
+    assert.throws(() => confinedBash(file, { platform: 'win32' }), error => error.code === 'bash-runtime-incompatible' && /runs natively/.test(error.message))
   })
 })
 await test('linked tree ancestors are rejected', async () => {
   await withTempDir('niu-links', async root => {
     const tree = path.join(root, 'tree'); fs.mkdirSync(tree)
     const alias = path.join(root, 'alias'); fs.symlinkSync(tree, alias, 'junction')
-    assert.throws(() => verifiedNiubash(path.join(alias, 'niu.exe')), /link/)
+    assert.throws(() => selectNiubash(path.join(alias, 'niu.exe')), /link/)
   })
 })
 await test('a selected incomplete Niubash cannot silently fall back; custom Bash remains authoritative', async () => {

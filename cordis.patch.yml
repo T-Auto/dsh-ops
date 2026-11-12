@@ -10,23 +10,46 @@
     - id: dsh-ops
       name: dsh-ops
       config:
-        # Four bundle switches (one per preset switch), then each preset; all default on.
+        # Four bundle switches that gate the same-named preset switch, plus the
+        # default-preset force switch; then each preset. All default on.
         global:
           bash: true
           hidePwsh: true
           hideOfficialTools: true
           dynamicTools: true
+          forceDefaultOpsPtc: true
         minimal:
           enabled: true
+          spillRetentionDays: 30
+          spillTotalBudgetMiB: 256
+          spillSweepEnabled: true
         standard:
           enabled: true
           residentTools: true
+          spillRetentionDays: 30
+          spillTotalBudgetMiB: 256
+          spillSweepEnabled: true
         ptc:
           enabled: true
           residentTools: true
+          spillRetentionDays: 30
+          spillTotalBudgetMiB: 256
+          spillSweepEnabled: true
+        # The batching-guidance arm: its preset inherits the PTC tool surface and
+        # turns the guidance on. Other modes keep the key absent (default false).
+        ops-ptc:
+          enabled: true
+          residentTools: true
+          batchingGuidance: true
+          spillRetentionDays: 30
+          spillTotalBudgetMiB: 256
+          spillSweepEnabled: true
         cordis:
           enabled: true
           residentTools: true
+          spillRetentionDays: 30
+          spillTotalBudgetMiB: 256
+          spillSweepEnabled: true
         discovery:
           enabled: true
         # Inert until template is set; off by default so an install that never
@@ -35,7 +58,26 @@
           enabled: false
           downloadGuard:
             template: ""
+        # Result-cache retention. The aggregate budgets stay 0 (report only): the default sweep
+        # only reclaims roots whose cache data is already gone. maxAgeMs is the idle grace that
+        # protects another live host sharing the temp directory.
+        resultCache:
+          enabled: true
+          maxRoots: 0
+          maxTotalBytes: 0
+          maxAgeMs: 3600000
+          sweepEnabled: true
         panel:
           enabled: false
         tui:
           enabled: false
+        # Read-only disk ownership reporting. The retention block is a validated
+        # contract only: this release evicts nothing.
+        disk:
+          status:
+            includeRepository: false
+            maxEntries: 5000
+          retention:
+            enabled: false
+            maxAgeDays: 0
+            maxBytes: 0

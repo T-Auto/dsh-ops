@@ -1,4 +1,5 @@
-/** Real host/PTC loader integration; no native file operation is exercised by this suite. */
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
+/** Real host/PTC loader integration; no native file operation is exercised here. */
 import { createScope } from '@deepseek-ai/dsh-scope'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
@@ -6,7 +7,6 @@ import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
 import FileSystem from '@deepseek-ai/dsh-fs-local'
 import { mountPtc } from '../lib/publication/ptc.js'
 import { publicToolName } from '../lib/policy.js'
-import { isPresentationProbe } from '../lib/publication/presentation.js'
 import { renderSdkDirectory } from '../lib/projections/ptc/directory.js'
 import { assert, test, report, waitFor, withTempDir } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
@@ -14,14 +14,12 @@ import { bootHost, shutdown } from './lib/host.mjs'
 let sequence = 0
 const loader = publicToolName('load_sdk')
 const section = 'dsh-ops:repository-tooling:mode-ptc'
-const step = (ctx, agent) => ctx.waterfall('agent/pre-step', {
-  agent, messages: [], turn: 1, step: ++sequence, signal: new AbortController().signal,
-}, () => Promise.resolve({ kind: 'continue' }))
-const text = async (ctx, agent) => (await ctx.get('systemPrompt').assemble({ scope: agent })).sections
-  .filter(row => row.name.startsWith(section)).map(row => row.text).join('\n')
-const hasEntry = (text, raw) => text.includes(`- ${raw}: `)
+const step = (ctx, agent) => ctx.serial('session/event', agent.session, { type: 'step/end' })
+async function assemblyFor(ctx, agent) { const step = await prepareStep(ctx, agent); try { return step.assembly } finally { step.dispose() } }
+const text = async (ctx, agent) => (await assemblyFor(ctx, agent)).sections.filter(row => row.name.startsWith(section)).map(row => row.text).join('\n')
+const configured = (ctx, agent) => ctx.get('tools').get(loader, agent)?.description.split('): ')[1]?.replace(/\.$/, '').split(', ') ?? []
 async function setup(root, config = {}, gate = { allows: () => true }) {
-  const { ctx } = await bootHost({ withWorkingDirectory: true })
+  const { ctx } = await bootHost()
   const agents = []; ctx.provide('agents', { list: () => agents })
   const state = { available: true }
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem)
@@ -30,198 +28,141 @@ async function setup(root, config = {}, gate = { allows: () => true }) {
     return { mode: session?.mode ?? 'danger-full-access', workspaceRoot: root, sessionId: session?.id }
   } }))
   await ctx.plugin(NodePtc)
-  // Explicit existing executable only satisfies publication resolution. Native
-  // work is never dispatched: these tests assert the real Node loader/snapshot.
   const mount = () => ctx.plugin({ name: 'ptc-directory-fixture', apply(inner) {
     mountPtc(inner, { binaryPath: process.execPath, required: true, ...config }, gate)
   } })
   const component = await mount()
+  // Cordis publishes asynchronous injected scopes after the plugin mount resolves.
+  await new Promise(resolve => setImmediate(resolve))
   const mint = async (mode = 'ptc') => {
     const id = 'directory-' + ++sequence
     const agent = { id, session: { id, mode: 'danger-full-access', header: { cwd: root }, append() {}, read() { return [] } } }
     agent.ctx = createScope(ctx, agent).ctx
-    agent.presentation = await agent.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.presentAs(mode) } })
-    agents.push(agent)
-    await ctx.serial('agent/created', { agent })
+    agent.presentation = await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, mode) } })
+    agents.push(agent); await ctx.serial('agent/created', { agent })
     return agent
   }
   return { ctx, component, mint, mount, state }
 }
 async function code(ctx, agent, body) {
-  const result = await ctx.get('tools').execute({ name: 'run_code', callId: 'directory-call-' + ++sequence,
-    agent, signal: new AbortController().signal, arguments: { description: 'Exercise PTC SDK selection', code: body } })
+  const result = await executeCall(ctx, { name: 'run_code', callId: 'directory-call-' + ++sequence,
+    agent, arguments: { description: 'Exercise PTC SDK selection', code: body } })
   assert.equal(result.isError, false, JSON.stringify(result))
   return result.value.result
 }
+const callable = (ctx, agent, raw) => code(ctx, agent, `return typeof tools.${publicToolName(raw)}==='function';`)
+const load = (ctx, agent, tools) => code(ctx, agent, `return await tools.${loader}({tools:${JSON.stringify(tools)}});`)
 
-await test('directory derives PTC metadata, omits callable entries and names only actual loader APIs', () => {
+await test('resident directory is at most one pointer; the loader schema owns names and selection semantics', () => {
   assert.equal(renderSdkDirectory([], new Set()), '')
   assert.equal(renderSdkDirectory(['grep'], new Set([publicToolName('grep')])), '')
   const value = renderSdkDirectory(['grep', 'batch'], new Set())
-  assert.ok(hasEntry(value, 'grep')); assert.ok(hasEntry(value, 'batch'))
-  assert.match(value, /tools\.ops_load_sdk\(\{tools:/)
-  assert.match(value, /next model step/); assert.match(value, /resident\/callable/)
-  assert.match(value, /No matching entry/); assert.match(value, /grants no permission/)
-  assert.doesNotMatch(value, /discover_tools|select:|authorize\(/)
+  assert.match(value, /tools\.ops_load_sdk/)
+  assert.equal(value.split('\n').length, 1)
+  assert.doesNotMatch(value, /- grep:|- batch:|discover_tools|select:/)
 })
-await test('actual assembly and Node PTC dispatch preserve next-step selection and two-agent isolation', () => withTempDir('ptc-directory', async root => {
+await test('loader names replace the directory; Node dispatch preserves next-step selection and isolation', () => withTempDir('ptc-directory', async root => {
   const { ctx, mint } = await setup(root, { allowedTools: ['grep', 'stat'], alwaysLoaded: ['stat'] })
   try {
     const a = await mint(), b = await mint(), native = await mint('native')
-    const prompt = ctx.get('systemPrompt'), assemble = prompt.assemble.bind(prompt)
-    let probes = 0, events = 0, spawns = 0
-    prompt.assemble = context => { if (isPresentationProbe(context)) probes++; return assemble(context) }
-    ctx.on('tools/change', () => { events++ })
-    const subprocess = ctx.get('subprocess'), spawn = subprocess.spawn
-    subprocess.spawn = function (...args) { spawns++; return spawn.apply(this, args) }
-    try {
-      const first = await text(ctx, a)
-      assert.ok(hasEntry(first, 'grep')); assert.equal(hasEntry(first, 'stat'), false)
-      assert.equal(hasEntry(first, 'batch'), false); assert.equal(hasEntry(first, 'inspect_local_file'), false)
-      assert.equal(await text(ctx, native), '')
-      const frozen = { probes, events, spawns }
-      for (let i = 0; i < 6; i++) await text(ctx, a)
-      assert.deepEqual({ probes, events, spawns }, frozen, 'directory assembly adds no probes, registry feedback or process work')
-      const selected = await code(ctx, a, `const invalid = await tools.${loader}({tools:['batch']});
-        const loaded = await tools.${loader}({tools:['grep']});
-        return {invalid,loaded,callable:typeof tools.${publicToolName('grep')}==='function'};`)
-      assert.equal(selected.invalid.error.code, 'INVALID_ARGUMENT')
-      assert.equal(selected.loaded.status, 'completed'); assert.equal(selected.loaded.data.nextTurn, true)
-      assert.equal(selected.callable, false)
-      assert.ok(hasEntry(await text(ctx, a), 'grep'), 'assembly cannot commit the pending request')
-      await ctx.serial('session/event', a.session, { type: 'step/end' })
-      const after = await text(ctx, a)
-      assert.equal(hasEntry(after, 'grep'), false)
-      assert.doesNotMatch(after, /On-demand PTC SDK directory/, 'all eligible names already callable: no directory')
-      assert.ok(hasEntry(await text(ctx, b), 'grep'))
-      assert.equal(await code(ctx, a, `return typeof tools.${publicToolName('grep')}==='function';`), true)
-      assert.equal(await code(ctx, b, `return typeof tools.${publicToolName('grep')}==='function';`), false)
-      assert.equal(Object.hasOwn(ctx.get('tools'), 'register'), false)
-    } finally { prompt.assemble = assemble; subprocess.spawn = spawn }
+    assert.deepEqual(configured(ctx, a), ['grep', 'stat', 'result'])
+    assert.match(await text(ctx, a), /tools\.ops_load_sdk/)
+    assert.equal(await text(ctx, native), '')
+    assert.equal(await callable(ctx, a, 'stat'), true)
+    assert.equal(await callable(ctx, a, 'result'), false)
+    assert.equal((await load(ctx, a, ['batch'])).error.code, 'INVALID_ARGUMENT')
+    const selected = await load(ctx, a, ['grep', 'result'])
+    assert.equal(selected.status, 'completed'); assert.equal(selected.data.nextTurn, true)
+    assert.equal(await callable(ctx, a, 'grep'), false)
+    assert.equal(await callable(ctx, a, 'result'), false)
+    await text(ctx, a) // assembly cannot commit pending requests
+    assert.equal(await callable(ctx, a, 'grep'), false)
+    await step(ctx, a)
+    assert.equal(await callable(ctx, a, 'grep'), true)
+    assert.equal(await callable(ctx, a, 'result'), true)
+    assert.equal(await callable(ctx, b, 'grep'), false)
+    assert.equal(await callable(ctx, b, 'result'), false)
+    assert.doesNotMatch(await text(ctx, a), /For on-demand APIs/)
+    assert.match(await text(ctx, b), /For on-demand APIs/)
+    const sdk = (await assemblyFor(ctx, a)).sections.find(row => row.name === 'tools:sdk').text
+    assert.match(sdk, /ops_result/); assert.match(sdk, /ttlMs/); assert.match(sdk, /maxBytes/)
   } finally { await shutdown(ctx) }
 }))
-for (const allowedTools of [[], ['stat'], ['read_files']]) {
-  await test('resident=false honors configured pool ' + JSON.stringify(allowedTools) + ' plus result only', () => withTempDir('ptc-directory-nonresident', async root => {
-    const { ctx, mint } = await setup(root, { allowedTools }, { allows: () => true, resident: false })
+for (const resident of [true, false]) for (const allowedTools of [[], ['stat'], ['read_files']]) {
+  await test(`resident=${resident} preserves configured pool ${JSON.stringify(allowedTools)} plus deferred result`, () => withTempDir('ptc-directory-pool', async root => {
+    const { ctx, mint } = await setup(root, { allowedTools }, { allows: () => true, resident })
     try {
       const agent = await mint(), eligible = [...allowedTools, 'result']
-      const blocked = ['inspect_local_file', 'read_files', 'grep'].filter(raw => !allowedTools.includes(raw))
-      const directory = await text(ctx, agent)
-      assert.deepEqual([...directory.matchAll(/^- (\w+): /gm)].map(match => match[1]), eligible)
-      const def = ctx.get('tools').get(loader, agent)
-      assert.ok(def.description.endsWith('Allowed raw names: ' + eligible.join(', ') + '.'))
-      for (const raw of [...eligible, ...blocked]) assert.equal(ctx.get('tools').get(publicToolName(raw), agent), undefined)
-      const selected = await code(ctx, agent, `const rejected = [];
-        for (const raw of ${JSON.stringify(blocked)}) rejected.push(await tools.${loader}({tools:[raw]}));
-        const loaded = await tools.${loader}({tools:${JSON.stringify(eligible)}});
-        return {rejected,loaded,callable:${JSON.stringify(eligible.map(publicToolName))}.map(name=>typeof tools[name]==='function')};`)
-      for (const rejection of selected.rejected) assert.equal(rejection.error.code, 'INVALID_ARGUMENT')
-      assert.equal(selected.loaded.status, 'completed'); assert.equal(selected.loaded.data.nextTurn, true)
-      assert.deepEqual(selected.loaded.data.tools, eligible)
-      assert.deepEqual(selected.callable, eligible.map(() => false), 'selection does not change the current SDK snapshot')
-      assert.deepEqual(await text(ctx, agent), directory, 'assembly does not commit selection')
+      assert.deepEqual(configured(ctx, agent), eligible)
+      assert.equal(await callable(ctx, agent, 'inspect_local_file'), resident)
+      assert.equal(await callable(ctx, agent, 'result'), false)
+      for (const raw of eligible) assert.equal(await callable(ctx, agent, raw), false)
+      assert.equal((await load(ctx, agent, ['grep'])).error.code, 'INVALID_ARGUMENT')
+      assert.equal((await load(ctx, agent, eligible)).status, 'completed')
       await step(ctx, agent)
-      assert.doesNotMatch(await text(ctx, agent), /On-demand PTC SDK directory/)
-      assert.deepEqual(await code(ctx, agent, `return ${JSON.stringify(eligible.map(publicToolName))}.map(name=>typeof tools[name]==='function');`), eligible.map(() => true))
-      for (const raw of blocked) assert.equal(ctx.get('tools').get(publicToolName(raw), agent), undefined, raw + ' stays unpublished')
+      for (const raw of eligible) assert.equal(await callable(ctx, agent, raw), true)
+      assert.doesNotMatch(await text(ctx, agent), /For on-demand APIs/)
     } finally { await shutdown(ctx) }
   }))
 }
-await test('resident-on empty dynamic pool preserves ordinary resident SDK baseline', () => withTempDir('ptc-directory-resident', async root => {
-  const { ctx, mint } = await setup(root, { allowedTools: [] })
-  try {
-    const agent = await mint()
-    assert.doesNotMatch(await text(ctx, agent), /On-demand PTC SDK directory/)
-    assert.deepEqual(await code(ctx, agent, `return ${JSON.stringify(['inspect_local_file', 'result', 'read_files'].map(publicToolName))}.map(name=>typeof tools[name]==='function');`), [true, true, false])
-    const rejected = await code(ctx, agent, `return await tools.${loader}({tools:['read_files']});`)
-    assert.equal(rejected.error.code, 'INVALID_ARGUMENT')
-  } finally { await shutdown(ctx) }
-}))
-await test('disabled and empty pools do not advertise loading; availability and read-only filter the real allowed pool', () => withTempDir('ptc-directory-policy', async root => {
+await test('current authority narrows configured names; unavailable policy does not publish a stale SDK', () => withTempDir('ptc-directory-policy', async root => {
   const { ctx, mint, state } = await setup(root, { allowedTools: ['grep', 'write_file', 'batch'] })
   try {
     const agent = await mint()
-    assert.ok(hasEntry(await text(ctx, agent), 'write_file'))
-    agent.session.mode = 'read-only'
-    await ctx.serial('session/event', agent.session, { type: 'sandbox/mode' })
-    const readonly = await text(ctx, agent)
-    assert.ok(hasEntry(readonly, 'grep')); assert.equal(hasEntry(readonly, 'write_file'), false); assert.equal(hasEntry(readonly, 'batch'), false)
-    const def = ctx.get('tools').get(loader, agent)
-    assert.doesNotMatch(def.description, /Allowed raw names:.*write_file/)
-    const denied = await def.execute({ tools: ['write_file'] }, { agent, signal: new AbortController().signal })
-    assert.equal(denied.error.code, 'INVALID_ARGUMENT')
+    agent.session.mode = 'read-only'; await ctx.serial('session/event', agent.session, { type: 'sandbox/mode' })
+    assert.equal((await load(ctx, agent, ['write_file'])).error.code, 'INVALID_ARGUMENT')
+    assert.equal((await load(ctx, agent, ['batch'])).error.code, 'INVALID_ARGUMENT')
+    assert.equal((await load(ctx, agent, ['grep', 'result'])).status, 'completed')
     state.available = false
-    assert.doesNotMatch(await text(ctx, agent), /On-demand PTC SDK directory/)
+    await assert.rejects(() => text(ctx, agent), error => error.name === 'ToolActivationError' && error.cause?.message === 'policy unavailable')
     state.available = true
-    assert.ok(hasEntry(await text(ctx, agent), 'grep'))
+    await step(ctx, agent)
+    assert.equal(await callable(ctx, agent, 'grep'), true)
   } finally { await shutdown(ctx) }
-  for (const [config, gate] of [[{ allowedTools: [] }, { allows: () => true }], [{}, { allows: () => true, dynamic: false }]]) {
-    const host = await setup(root, config, gate)
-    try {
-      const agent = await host.mint()
-      assert.doesNotMatch(await text(host.ctx, agent), /On-demand PTC SDK directory/)
-      if (gate.dynamic === false) assert.equal(host.ctx.get('tools').get(loader, agent), undefined)
-    } finally { await shutdown(host.ctx) }
-  }
 }))
-await test('permission revocation before commit removes pending mutations, ownership withdrawal and reload refresh the directory', () => withTempDir('ptc-directory-lifecycle', async root => {
+await test('revocation before commit and ownership withdrawal discard pending selections; reload resets result', () => withTempDir('ptc-directory-life', async root => {
   let permitted = true, notify
   const gate = { allows: () => permitted, watch(callback) { notify = callback; return () => { notify = undefined } } }
-  const { ctx, component, mint, mount } = await setup(root, { allowedTools: ['grep', 'write_file'] }, gate)
+  const { ctx, component, mint, mount } = await setup(root, { allowedTools: ['write_file'] }, gate)
   try {
-    const agent = await mint(), sibling = await mint()
-    const retained = ctx.get('tools').get(loader, agent)
-    await retained.execute({ tools: ['write_file'] }, { agent, signal: new AbortController().signal })
-    agent.session.mode = 'read-only' // revocation even without a sandbox event
-    await step(ctx, agent)
-    assert.equal(ctx.get('tools').get(publicToolName('write_file'), agent), undefined)
-    assert.equal(hasEntry(await text(ctx, agent), 'write_file'), false)
+    const agent = await mint()
+    await load(ctx, agent, ['write_file', 'result'])
+    agent.session.mode = 'read-only'; await step(ctx, agent)
+    assert.equal(await callable(ctx, agent, 'write_file'), false)
+    assert.equal(await callable(ctx, agent, 'result'), true)
     permitted = false; notify()
     assert.equal(await text(ctx, agent), '')
     await waitFor(() => ctx.get('tools').get(loader, agent) === undefined)
-    assert.equal((await retained.execute({ tools: ['grep'] }, { agent, signal: new AbortController().signal })).error.code, 'POLICY_DENIED')
-    permitted = true; notify(); await step(ctx, sibling)
-    assert.ok(hasEntry(await text(ctx, sibling), 'grep'))
-    await sibling.presentation.dispose()
-    sibling.presentation = await sibling.ctx.plugin({ inject: ['tools'], apply(inner) { inner.tools.presentAs('native') } })
-    assert.equal(await text(ctx, sibling), '', 'withdrawal assembly must remove stale PTC guidance')
     await component.dispose()
-    assert.equal(await text(ctx, agent), '')
+    permitted = true
     const reloaded = await mount()
     await waitFor(() => ctx.get('tools').get(loader, agent) !== undefined)
-    assert.ok(hasEntry(await text(ctx, agent), 'grep'))
-    const assembly = await ctx.get('systemPrompt').assemble({ scope: agent })
-    assert.equal(assembly.sections.filter(row => row.name.startsWith(section) && row.text).length, 1)
-    await ctx.serial('agent/disposed', { agent })
-    assert.equal(await text(ctx, agent), '')
+    assert.equal(await callable(ctx, agent, 'result'), false)
     await reloaded.dispose()
   } finally { await shutdown(ctx) }
 }))
-await test('nearer scoped config replaces only its agents directory and unload restores the outer pool', () => withTempDir('ptc-directory-scope', async root => {
+await test('nearer scoped loader replaces only its agent pool and unload restores outer names', () => withTempDir('ptc-directory-scope', async root => {
   const { ctx, mint } = await setup(root, { allowedTools: ['grep'] })
   try {
     const owner = await mint(), other = await mint()
     const nearer = await owner.ctx.plugin({ name: 'scoped-directory-fixture', apply(inner) {
       mountPtc(inner, { binaryPath: process.execPath, required: true, allowedTools: ['stat'] })
     } })
-    await waitFor(() => ctx.get('tools').get(loader, owner)?.description.includes('Allowed raw names: stat.'))
-    assert.ok(hasEntry(await text(ctx, owner), 'stat'))
-    assert.equal(hasEntry(await text(ctx, owner), 'grep'), false)
-    assert.ok(hasEntry(await text(ctx, other), 'grep'))
-    assert.equal(hasEntry(await text(ctx, other), 'stat'), false)
-    await nearer.dispose()
-    await waitFor(() => ctx.get('tools').get(loader, owner)?.description.includes('Allowed raw names: grep.'))
-    assert.ok(hasEntry(await text(ctx, owner), 'grep'))
-    assert.equal(hasEntry(await text(ctx, owner), 'stat'), false)
+    await waitFor(() => configured(ctx, owner).includes('stat'))
+    assert.deepEqual(configured(ctx, owner), ['stat', 'result'])
+    assert.deepEqual(configured(ctx, other), ['grep', 'result'])
+    await nearer.dispose(); await waitFor(() => configured(ctx, owner).includes('grep'))
+    assert.deepEqual(configured(ctx, owner), ['grep', 'result'])
   } finally { await shutdown(ctx) }
 }))
-await test('unavailable worker and guidance-disabled row cannot advertise a directory', () => withTempDir('ptc-directory-unavailable', async root => {
-  for (const [config, gate] of [[{ binaryPath: root + '/missing-worker', required: false }, { allows: () => true }], [{}, { allows: () => true, guidance: false }]]) {
+await test('disabled guidance, dynamic selection and unavailable worker publish no directory', () => withTempDir('ptc-directory-off', async root => {
+  for (const [config, gate] of [[{ binaryPath: root + '/missing', required: false }, { allows: () => true }], [{}, { allows: () => true, guidance: false }], [{}, { allows: () => true, dynamic: false }]]) {
     const { ctx, mint } = await setup(root, config, gate)
     try {
       const agent = await mint()
-      assert.equal(await text(ctx, agent), '')
-      if (config.required === false) assert.equal(ctx.get('tools').get(loader, agent), undefined)
+      assert.doesNotMatch(await text(ctx, agent), /For on-demand APIs/)
+      if (gate.guidance === false) assert.equal(await text(ctx, agent), '')
+      else assert.equal(ctx.get('tools').get(loader, agent), undefined)
     } finally { await shutdown(ctx) }
   }
 }))

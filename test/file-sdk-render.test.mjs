@@ -1,6 +1,7 @@
 /** File schemas and model rendering use the actual pinned host contract. */
 import fs from 'node:fs'
-import { assertSupportedJsonSchema, jsonSchemaToTs } from '@deepseek-ai/dsh-tools'
+import { assertSupportedJsonSchema } from '@deepseek-ai/dsh-tools'
+import { jsonSchemaToTs } from '@deepseek-ai/dsh-tool-executor-ptc'
 import { FILE_TOOLS, PARAMETERS, definition, DESCRIPTIONS } from '../lib/file/contract.js'
 import { capNativeText, NATIVE_OUTPUT_BYTES } from '../lib/file/native/render.js'
 import { renderToolingPolicy, publicToolName } from '../lib/policy.js'
@@ -179,7 +180,7 @@ await test('control separators in source text cannot break a numbered physical l
 
 await test('routing and native guide distinguish aggregate totals and errors-as-values', () => {
   const policy = renderToolingPolicy({ published: FILE_TOOLS.map(publicToolName) })
-  assert.match(policy, /summary for aggregate file\/match totals; count for per-file counts/)
+  assert.doesNotMatch(policy, /summary for aggregate file\/match totals/, 'aggregate semantics live in the grep description')
   assert.doesNotMatch(policy, /use count for totals/)
   assert.equal(renderToolingPolicy({ published: ['ops_stat'] }).includes('ops_grep:'), false)
   assert.match(DESCRIPTIONS.grep, /summary for aggregate file\/match totals, count for per-file counts/)

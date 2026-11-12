@@ -122,6 +122,61 @@ Restricted calls run the pinned Bash from a private, verified copy under `<DSH_H
 
 An interrupted staging leaves a `stage-*` directory in the cache. Confined calls reclaim copies older than one hour automatically (the reported reclaimable bytes include them), `clean-cache --yes --all-hosts-stopped` removes all of them, and deleting them by hand while no confined shell is running is equally safe.
 
+### Windows Niubash preparation is slow or old execution trees remain
+
+Payload bytes are hashed against the frozen manifest once, where they enter the machine: the
+package build and `dsh-ops provision-shells --bash`. Selecting Niubash (mount, the settings page,
+`ops_status`) only checks that every pinned file is present with its pinned size; it reads no
+contents and writes nothing. The first Bash call in a process prepares one runtime per manifest
+hash at `<DSH_HOME>/dsh-ops/shells/niubash-prepared/<manifest hash>`, asynchronously: it copies the
+payload without source hardlinks, materializes the command faces and six startup directories, and
+publishes the completed tree with an atomic sibling rename. Later calls check only that the
+prepared `niu.exe` still exists; they do not clone, hash, seal, write an execution receipt or
+dispose a per-call tree. Files the shell writes into its state directories are never inspected.
+
+The prepared runtime must be **outside the session workspace**. Every call checks that boundary
+and still uses the host's subprocess service and sandbox `confine` in restricted modes. In read-only and
+workspace-write modes, the host denies writes to both the source and prepared payload outside the
+workspace. Full-access mode keeps its normal host policy; the prepared directory is not a separate
+security boundary against the account or an administrator.
+
+- On first preparation only, Windows scanner/indexer handles can delay the atomic publication
+  rename. Only `EPERM`/`EACCES`/`EBUSY` rename refusals are backed off, asynchronously, for up to 10 seconds;
+  a persistent failure names the rename in `EXECUTOR_UNAVAILABLE`. Commands are never retried.
+- Put `DSH_HOME` outside the workspace before starting DSH. A workspace containing the prepared
+  runtime is refused rather than silently moving the runtime or running without confinement.
+- `DSH_OPS_EXEC_ROOT` and `NIUBASH_VERIFY=deep` are deprecated and ignored for new calls. Antivirus
+  allow-list rules should target the fixed prepared location, not a per-call temporary directory.
+- For leftovers from older releases, stop **every OPS host and Bash job**, then use the installed
+  package's CLI with the original `DSH_HOME` and, if set, `DSH_OPS_EXEC_ROOT`:
+  `dsh-ops cache status --kind exec-tree`, then
+  `dsh-ops cache reclaim --kind exec-tree --all-hosts-stopped --yes`.
+  `DSH_OPS_EXEC_ROOT` remains relevant only for discovering those legacy trees. Reclamation clears
+  legacy seals before deletion and does not reinstall a corrupt source. Do not recursively delete
+  trees by wildcard or remove them while jobs are running.
+- The first successful preparation in a process retires obsolete prepared versions, broken/retired leftovers, and staging
+  leftovers of its own hash only. Other hashes' staging directories may still be building and are
+  left for offline `cache reclaim --kind exec-tree --all-hosts-stopped --yes`.
+  Each matching sibling is renamed once to `.retired-<uuid>` before best-effort deletion; a
+  sibling already named `.retired-` is out of use and is removed where it is, so two hosts
+  cleaning up at once never split one tree across two names. On Windows an in-use version whose rename is refused stays for the next
+  host start; cleanup does not retry or fail the selected runtime. Unrelated names and links are
+  untouched. The same `cache status/reclaim --kind exec-tree` commands include these leftovers
+  while always excluding the current plain manifest hash.
+- Profiles sharing one `DSH_HOME` can run dsh-ops versions with different Niubash pins. Starting
+  one can retire the other's prepared version between commands. The other profile's next call
+  re-prepares its selected pin once from its selected payload and continues through normal host
+  confinement. This recovery does not retire anything belonging to another pin, so both versions
+  can continue; ordinary calls still do no deployment work.
+- If a prepared version is missing a pinned file, face or state directory, or a file has the wrong
+  size, preparation moves it to a `.broken-<random>` sibling and makes one fresh preparation from
+  the selected payload. Removal of the broken sibling is best-effort. If repair fails, the error
+  reports both causes; there is no rebuild loop. To force a rebuild after suspected byte damage,
+  stop every host and delete the prepared directory.
+- A missing or corrupt source needs the complete pinned payload restored. Repeated calls or
+  switching sessions do not repair it. Selecting an arbitrary Git Bash is not a restricted-mode
+  workaround: only a compatible pinned MSYS build may run restricted, never an unconfined fallback.
+
 ### A second restricted Bash fails while another Bash is still running
 
 The `CreateFileMapping S-<user SID>.<version>, Win32 error 5` failure in #363 came

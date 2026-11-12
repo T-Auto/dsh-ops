@@ -8,9 +8,11 @@ import type { WorkerStorage } from '../execution/protocol.js'
 import { workerEnvelope } from '../execution/protocol.js'
 import { CAPABILITIES } from '../capabilities/registry.js'
 import { publicToolName } from '../policy.js'
+import { sameAuthority } from '../authority-paths.js'
 import { prepareWorkspace } from '../workspace-preparation.js'
 import { resultSessionNonce, registerResultCleanup } from './result-lifecycle.js'
 import type { ResultSession } from './result-lifecycle.js'
+import { markCleanupRootLive, registerCleanupRoot, releaseCleanupRootLive } from './result-cleanup-registry.js'
 
 interface Subprocess {
   spawn(spec: { argv: string[]; cwd: string; stdio: { stdin: { data: string }; stdout: { maxBytes: number }; stderr: { maxBytes: number } }; graceMs: number; signal: AbortSignal }): {
@@ -79,7 +81,7 @@ async function purge(ctx: StorageHost, session: ResultSession, file: string, sto
   original: SandboxExecutionPolicy): Promise<void> {
   const policyService = ctx.get('sandboxPolicy'), subprocess = ctx.get('subprocess')
   const policy = policyService?.resolve({ session })
-  if (!policy || !subprocess || policy.mode === 'read-only' || policy.workspaceRoot !== original.workspaceRoot
+  if (!policy || !subprocess || policy.mode === 'read-only' || !sameAuthority(policy, original)
     || (process.platform === 'win32' && policy.sessionId !== session.id)) throw new Error('Cleanup authority unavailable')
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 5000)
   timer.unref?.()
@@ -98,7 +100,7 @@ async function purge(ctx: StorageHost, session: ResultSession, file: string, sto
       argv = exposePosixCache(confined.argv, storage)
     }
     const latest = policyService?.resolve({ session })
-    if (latest?.mode !== policy.mode || latest?.workspaceRoot !== policy.workspaceRoot
+    if (!latest || !sameAuthority(latest, policy)
       || (process.platform === 'win32' && latest?.sessionId !== session.id)) throw new Error('Cleanup authority changed')
     const envelope = workerEnvelope('ptc', { root: policy.workspaceRoot, scope: session.id, tool: 'result', args: { action: 'purge' }, read_only: false }, 5000, storage)
     const handle = subprocess.spawn({ argv, cwd: policy.workspaceRoot, stdio: { stdin: { data: JSON.stringify(envelope) }, stdout: { maxBytes: 4096 }, stderr: { maxBytes: 4096 } }, graceMs: 1000, signal: controller.signal })
@@ -110,7 +112,8 @@ async function purge(ctx: StorageHost, session: ResultSession, file: string, sto
 }
 export async function resultStorage(ctx: StorageHost, session: ResultSession, scope: unknown, file: string,
   tool: string, policy: SandboxExecutionPolicy, denyRoots: string[], denyNames: boolean,
-  signal?: AbortSignal, confined?: ConfinedArgv): Promise<WorkerStorage | undefined> {
+  signal?: AbortSignal, confined?: ConfinedArgv, admission?: () => boolean): Promise<WorkerStorage | undefined> {
+  if (admission && !admission()) return undefined
   const nonce = resultSessionNonce(ctx, session), key = digest([session.id, policy.workspaceRoot, nonce])
   const owner = ctx.root ?? ctx
   let cache = locations.get(owner)
@@ -125,27 +128,49 @@ export async function resultStorage(ctx: StorageHost, session: ResultSession, sc
       if (!confined) {
         const sandbox = ctx.get('sandbox')
         if (!sandbox) return undefined
+        if (admission && !admission()) return undefined
         if (sandbox.prepareResultStorage) confined = await sandbox.prepareResultStorage([file], cachePolicy, signal)
-        else { // Legacy hosts do not expose cache-only preparation.
-          if (policy.mode === 'danger-full-access') return undefined
+        else {
+          // DSH 0.2.2 exposes session temp grants through confine(), not a cache-only API.
+          // Never narrow a full-access request merely to acquire cache storage.
+          if (policy.mode === 'danger-full-access' || (policy.additionalWritableRoots?.length ?? 0) > 0) return undefined
           await prepareWorkspace(cachePolicy)
+          if (admission && !admission()) return undefined
           confined = await sandbox.confine([file], cachePolicy, signal)
         }
+        if (admission && !admission()) return undefined
       }
       if (!['full', 'partial'].includes(confined.enforcement)) return undefined
       location = windowsCacheLocation(confined.argv)
     }
-  } else location ??= posixCacheLocation(key, policy.mode !== 'read-only')
+  } else {
+    if (admission && !admission()) return undefined
+    // An external reclaimer or the result-cache sweep may have removed the root since the last
+    // call; never hand a stale path to the worker. A read-only call simply loses the cache.
+    if (location !== undefined && !fs.existsSync(location.root)) { location = undefined; cache.delete(key) }
+    location ??= posixCacheLocation(key, policy.mode !== 'read-only')
+  }
+  if (admission && !admission()) return undefined
   if (!location) return undefined
   if (process.platform === 'win32' && confined && policy.mode !== 'read-only') {
     const current = windowsCacheLocation(confined.argv)
     if (current?.root !== location.root || current?.windowsWriteSid !== location.windowsWriteSid) throw new Error('Session cache grant changed')
   }
+  const known = cache.has(key)
   cache.set(key, location)
-  const storage: WorkerStorage = { ...location, authorityId: digest([nonce, policy.mode, policy.workspaceRoot, denyRoots, denyNames]), allowedTools: currentTools(ctx, scope, tool) }
+  const root = location.root
+  // Register the root in the durable ledger before any caller can use it: a crash between the
+  // create above and this write would still leave a reclaimable directory, and a cleanup that
+  // fails later must not lose the only name that can address it (#714 mechanism 3). A root that
+  // was recreated after an external removal is registered again.
+  if (!known) {
+    registerCleanupRoot(root, { sessionHeading: digest(session.id), workspaceRoot: policy.workspaceRoot })
+    markCleanupRootLive(root)
+  }
+  const storage: WorkerStorage = { ...location, authorityId: digest([nonce, policy.mode, policy.workspaceRoot, policy.additionalWritableRoots ?? [], denyRoots, denyNames]), allowedTools: currentTools(ctx, scope, tool) }
   registerResultCleanup(ctx, session, key, async () => {
     try { await purge(ctx, session, file, storage, policy) }
-    finally { cache.delete(key) }
-  })
+    finally { cache.delete(key); releaseCleanupRootLive(root) }
+  }, root)
   return storage
 }

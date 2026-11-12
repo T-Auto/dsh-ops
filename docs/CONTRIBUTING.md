@@ -46,7 +46,7 @@ conventions a pull request is reviewed against. 中文版：[贡献指南.md](�
 | --- | --- |
 | Node.js | `^22.19` or `>=24` (`package.json#engines`; CI uses 24) |
 | Rust | `1.97.1` (the toolchain CI pins); needed to build the native worker |
-| Target host | DSH `0.2.0-rc.2` |
+| Target host | DSH `0.2.2-rc.1` (0.5 series; older hosts are unsupported) |
 | Linux only | the `acl` package for the POSIX ACL checks |
 
 ```console
@@ -130,8 +130,26 @@ What a skip means locally:
 - `node test/run.mjs <filter>` runs only the suites whose file names contain `<filter>`, e.g.
   `node test/run.mjs mount file-operations`.
 
+The four full-payload suites (`niubash-payload-integration`, `niubash-preparation`,
+`niubash-security-host`, `niubash-consumer`) default to a 300-second suite watchdog; other suites
+keep 120 seconds. A positive finite `DSH_OPS_SUITE_TIMEOUT_MS` overrides either default. The release gate
+passes 300 seconds explicitly; the clean consumer reserves 60 seconds for packing/installing,
+leaving 240 seconds for its real host checks. Bash commands retain their production 120-second default, but the
+descendant timeout/cancellation test uses an explicit 5-second command deadline. Version-level
+Niubash preparation happens once per process at the first Bash call, not on each call; the suite watchdog is a separate outer
+limit. The descendant test proves that a child starts before its deadline and cannot write afterward.
+Reference Windows validation after removing per-call staging measured 37 seconds for
+`niubash-security-host` and 69 seconds for the clean `niubash-consumer`; these observations are
+not command timeout settings. On a loaded host, provide a larger explicit outer budget without
+changing command deadlines:
+
+```powershell
+$env:DSH_OPS_SUITE_TIMEOUT_MS = '1800000'
+node test/run.mjs niubash
+```
+
 How to read the gate and the expected numbers per host: [verify-locally.md](verify-locally.md).
-CI runs on every pull request and every push to `main`, `0.3.2` and `release/0.4.0`. The two blocking POSIX legs (`validate-posix`: Linux x64, macOS arm64) block a merge. The Windows x64 leg (`validate-windows`) and the macOS Intel leg (`validate-macos-intel`) still run on every event but are non-blocking — a red run there is a defect to fix, not a reason to hold the merge (#316; the Intel leg measured 318 s).
+CI runs on every pull request and every push to `main`, `0.3.2` and `release/0.4.0`. **Every job in `ci.yml` is a merge gate**: Linux x64, macOS arm64, macOS Intel and Windows x64 (the four legs of `validate`), the Node floor, the tools trial, Rust formatting and lints (clippy runs for the Linux, Windows and macOS targets), workflow lint and the source-size check. The Rust version lives only in `native/rust-toolchain.toml`; workflows install it through `.github/actions/setup`. A red leg anywhere blocks the merge; there is no `continue-on-error` leg left.
 
 ## One CI run per pull request
 
@@ -139,9 +157,9 @@ All target branches are covered, including stacked feature branches. Repository 
 
 Every pull request must show one run of the [Cross-platform validation](https://github.com/T-Auto/dsh-ops/blob/main/.github/workflows/ci.yml)
 workflow that its **own `pull_request` event** triggered. The aggregate job **`CI required`**
-summarises the two blocking POSIX legs (Linux x64, macOS arm64); the non-blocking Windows x64 and
-macOS Intel legs run alongside it and are deliberately not waited on. That job's run URL is what the
-pull request template asks for.
+summarises every gate in the workflow — Linux x64 and macOS arm64, macOS Intel, Windows x64, the
+Node floor, the tools trial, Rust lint, workflow lint and the source-size check. That job's run URL
+is what the pull request template asks for.
 
 - **What triggers it.** `ci.yml` runs on `pull_request` targeting `main`, `0.3.2` and
   `release/0.4.0` (and on `push` to the same branches, plus `merge_group`). GitHub reads the
@@ -251,19 +269,19 @@ The credential fence, trusted path anchors and permission helpers are strict Typ
 `src/index.ts` types the component entry against the public Cordis `Context` and `Agent` contracts. Raw configuration remains `unknown` until validation; callbacks and tool-denial decisions retain their public host signatures. Runtime imports remain `.js`, and host dependencies remain type-only at module load. `node test/run.mjs kernel-types mount bundle-startup progressive-loop` checks the type boundary, scoped startup/disposal and next-step publication.
 
 The settings integration tests use exact development-only host settings, profile boot and config
-editor packages at `0.2.0-rc.2`, with matching Cordis loader/group/include, CosmoKit and Schemastery
+editor packages at `0.2.2-rc.1`, with matching Cordis loader/group/include, CosmoKit and Schemastery
 patch versions. They exercise the real profile writer and component reload instead of substituting
 an in-memory save. These packages are not production dependencies or host runtime imports.
 
 Browser settings are strict TSX. The build uses the existing TypeScript compiler to produce the
 host's lazy `./client` factory, with React supplied by the host. Exact development-only React 18.3.1,
-React type packages, jsdom 26.1.0 and the pinned `0.2.0-rc.2` client contracts support compilation,
+React type packages, jsdom 26.1.0 and the pinned `0.2.2-rc.1` client contracts support compilation,
 DOM interactions and the real host slot lifecycle tests. No browser bundler or production dependency
 is added. `settings-ui`, `settings-client`, `settings-host` and `settings-runtime` suites cover the
 form-to-profile and reviewed-action boundaries.
 
 The browser-page regression also uses development-only `@deepseek-ai/dsh-client-modules`
-`0.2.0-rc.2` (published 2026-09-29) to assert actual client registry activation, teardown and
+`0.2.2-rc.1` to assert actual client registry activation, teardown and
 restart against temporary installed profiles. `settings-client` covers exact composition,
 backups and atomic rollback; it never migrates a developer profile.
 

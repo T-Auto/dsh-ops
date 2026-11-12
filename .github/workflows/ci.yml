@@ -13,20 +13,9 @@ on:
   # whose required checks passed there. Without this trigger the workflow simply never runs for a
   # queued group, so enabling a merge queue would silently un-gate every merge.
   merge_group:
-  # An **opt-in** bench smoke. `inputs` is populated only for `workflow_dispatch`, and the job below
-  # also names the event, so `push`, `pull_request` and `merge_group` runs skip it and stay exactly
-  # as they were. Even when a human turns it on it is informational: `CI required` reports it and
-  # never blocks on it, and the model-driven sweep is not run here at all.
+  # The bench smoke lives in `benchmark-gates.yml`: it is a measurement, never a merge gate, so it
+  # is dispatched (or scheduled monthly) there instead of riding along on every PR.
   workflow_dispatch:
-    inputs:
-      bench:
-        # Same-binary versus same-binary, so a green run means "the harness still drives a real
-        # worker and the worker answers the same way twice" — never a performance verdict. The
-        # comparison's state machine reads output hashes, error codes and harness failures only;
-        # medians are printed and uploaded, never asserted.
-        description: 'Also smoke the bench harness: the same staged worker on both sides, deterministic outcomes only'
-        type: boolean
-        default: false
 permissions:
   contents: read
 concurrency:
@@ -34,48 +23,45 @@ concurrency:
   # A pull request that gets a new push supersedes its own earlier run; `main` never cancels,
   # because a half-built release branch is worse than a queued one.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+# Every job in this file is a gate: each one is in `ci-required`'s `needs`, and
+# `scripts/check-workflows.mjs` asserts that no job can opt out (`EXPECTED_NON_BLOCKING` is
+# empty). A job that is not deterministic enough to gate a merge does not belong in this workflow —
+# the benchmark smoke is the one such job and it lives in `benchmark-gates.yml`.
+#
+# Toolchains come from `.github/actions/setup`: the Rust version is read from
+# `native/rust-toolchain.toml`, so no workflow states it.
 jobs:
-  # The blocking POSIX legs are Linux x64 and macOS arm64: a red one fails `ci-required`.
-  # macOS Intel and Windows are separate non-blocking signals below (#316).
-  validate-posix:
+  # One gate, four shipped targets. Per-leg budgets are measured, not guessed: Windows and Intel
+  # take 9-14 minutes, the others about 4. A red leg is a real defect (DACL handling, Niubash
+  # execution, the pack consumer), so every leg blocks the merge.
+  validate:
+    name: validate (${{ matrix.target }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-24.04, target: linux-x64 }
-          - { runner: macos-latest, target: darwin-arm64 }
+          # The published Linux x64 worker is a musl static-pie binary so it carries no GLIBC_*
+          # floor from the build runner. The gate stages it over the host worker before the suites,
+          # so the suites exercise the binary users receive, not only a glibc build next to it.
+          - { runner: ubuntu-24.04, target: linux-x64, timeout: 20, worker_target: x86_64-unknown-linux-musl }
+          - { runner: macos-latest, target: darwin-arm64, timeout: 20 }
+          - { runner: macos-15-intel, target: darwin-x64, timeout: 30 }
+          - { runner: windows-latest, target: win32-x64, timeout: 30 }
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 35
+    timeout-minutes: ${{ matrix.timeout }}
     env:
-      CARGO_BUILD_JOBS: '3'
-      # Runners are shared and sometimes loaded: give each suite more headroom than a workstation
-      # needs, and let a deadline be retried once — a timeout is the environment answering, and the
-      # retry prints, so a green summary still shows it happened.
+      # Loaded runners get explicit deadline headroom; failures are never retried. The clean
+      # Windows consumer includes cold artifact setup and frozen payload preparation, so this
+      # matches the full-payload suite watchdog; production command limits remain unchanged.
       DSH_OPS_SUITE_TIMEOUT_MS: '300000'
-      DSH_OPS_RETRY_TIMEOUTS: '1'
     steps:
       - uses: actions/checkout@v7
         with:
           # The provenance regression verifies exact blobs from the pinned 0.3.1 commit.
           fetch-depth: 0
-      - uses: actions/setup-node@v7
+      - uses: ./.github/actions/setup
         with:
-          node-version: '24'
-      - name: Verify runner identity
-        run: node -e "if(process.platform+'-'+process.arch!=='${{ matrix.target }}')throw Error('Unexpected runner'); console.log(process.platform,process.arch)"
-      - name: Set up pinned Rust
-        shell: bash
-        run: rustup toolchain install 1.97.1 --profile minimal && rustup default 1.97.1
-      - name: Reuse exact locked Rust build cache
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            native/target
-          key: ops-031-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/Cargo.lock') }}
-          # A changed lockfile must not throw the whole cache away: fall back to the previous one.
-          restore-keys: ops-031-${{ runner.os }}-${{ runner.arch }}-
+          rust-targets: ${{ matrix.worker_target }}
       - name: Linux ACL test dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y acl
@@ -83,159 +69,34 @@ jobs:
         run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
       # The gate, not `npm run verify`: it runs the same suites with `DSH_OPS_REQUIRE_RUNTIME=1`
       # on POSIX (a runtime-absence skip is a failure, not a pass), refuses any skip outside this
-      # platform's known set, fails when a suite file on disk was never collected, and checks the
-      # packed artifact. It builds the plugin before its CLI, then builds/tests the worker and
-      # Windows IPC proxies using the pinned Bash payload installed by npm ci (or DSH_OPS_TEST_BASH). Build success is not behaviour.
+      # platform's known set, fails when a suite file on disk was never collected, checks the
+      # staged and packed runtime closure, and refuses to run when the runner is not `--target`.
+      # It builds the plugin before its CLI, then builds/tests the worker and Windows IPC proxies
+      # using the pinned Bash payload installed by npm ci (or DSH_OPS_TEST_BASH).
+      # Build success is not behaviour.
       - name: Functional gate (skips, suite inventory, packed artifact)
         shell: bash
-        run: node scripts/verify-gate.mjs --skip-install
-      # The published Linux x64 worker is a musl static-pie binary so it carries no
-      # GLIBC_* floor from the build runner. Build it here, stage it over the host
-      # worker, and keep the same shape the release job ships.
-      - name: Add the static Linux target
-        if: runner.os == 'Linux'
-        shell: bash
-        run: rustup target add x86_64-unknown-linux-musl
-      - name: Build and stage the static Linux worker
-        if: runner.os == 'Linux'
-        shell: bash
-        run: node bin/dsh-ops.mjs build-ptc --target x86_64-unknown-linux-musl
+        env:
+          WORKER_TARGET: ${{ matrix.worker_target }}
+        run: node scripts/verify-gate.mjs --skip-install --target ${{ matrix.target }} ${WORKER_TARGET:+--worker-target "$WORKER_TARGET"}
       - name: Assert the Linux worker is statically linked
         if: runner.os == 'Linux'
         shell: bash
         run: file runtime/linux-x64/dsh-ops-worker | grep -Eq 'statically linked|static-pie linked'
-      - name: Verify native staged closure
-        run: node bin/native-runtime.mjs check --platform ${{ matrix.target }}
-      - name: Check shell payload platform filtering
-        shell: bash
-        run: node -e "const fs=require('fs');if(process.platform!=='win32'){for(const n of ['bash','pwsh'])if(fs.existsSync('node_modules/@dsh-ops/'+n+'-win32-x64'))throw Error('Windows shell installed on POSIX')}"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: native-${{ matrix.target }}
-          path: runtime/${{ matrix.target }}/
-          if-no-files-found: error
-          retention-days: 7
-
-  # macOS Intel is a signal, not a gate: this leg measured 318 s on the PR run that added
-  # it, past the approved ">300 s -> non-blocking" line (#316). It still runs on every push,
-  # pull request and merge group, and uploads the darwin-x64 artifact for the release job.
-  validate-macos-intel:
-    runs-on: macos-15-intel
-    continue-on-error: true
-    timeout-minutes: 35
-    env:
-      CARGO_BUILD_JOBS: '3'
-      DSH_OPS_SUITE_TIMEOUT_MS: '300000'
-      DSH_OPS_RETRY_TIMEOUTS: '1'
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          # The provenance regression verifies exact blobs from the pinned 0.3.1 commit.
-          fetch-depth: 0
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-      - name: Verify runner identity
-        run: node -e "if(process.platform+'-'+process.arch!=='darwin-x64')throw Error('Unexpected runner'); console.log(process.platform,process.arch)"
-      - name: Set up pinned Rust
-        shell: bash
-        run: rustup toolchain install 1.97.1 --profile minimal && rustup default 1.97.1
-      - name: Reuse exact locked Rust build cache
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            native/target
-          key: ops-031-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/Cargo.lock') }}
-          restore-keys: ops-031-${{ runner.os }}-${{ runner.arch }}-
-      - name: Install locked dependencies
-        run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
-      - name: Functional gate (skips, suite inventory, packed artifact)
-        shell: bash
-        run: node scripts/verify-gate.mjs --skip-install
-      - name: Verify native staged closure
-        run: node bin/native-runtime.mjs check --platform darwin-x64
-      - name: Check shell payload platform filtering
-        shell: bash
-        run: node -e "const fs=require('fs');if(process.platform!=='win32'){for(const n of ['bash','pwsh'])if(fs.existsSync('node_modules/@dsh-ops/'+n+'-win32-x64'))throw Error('Windows shell installed on POSIX')}"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: native-darwin-x64
-          path: runtime/darwin-x64/
-          if-no-files-found: error
-          retention-days: 7
-
-  # Windows still runs on every push, pull request and merge group — it is never skipped — but its
-  # result is a **signal, not a gate**. The job is `continue-on-error: true`, and `ci-required` does
-  # not list it in `needs`, so the aggregate neither waits for it nor fails with it. That is what
-  # makes the gate non-blocking end to end: a job that is merely `continue-on-error` but still in
-  # `needs` keeps the required check pending until it finishes. On `main` after #307 this leg took
-  # 527 / 529 s (482 s before #307, because `npm ci` now downloads the 411 MB Windows Bash payload);
-  # the POSIX legs took 136–139 s (Linux) and 168–182 s (macOS). Splitting it into shards was
-  # measured at 1.5–2.4× the runner minutes and still stayed above 300 s on a slow runner (#316). A
-  # red Windows leg is still a defect to fix — see docs/ci.md.
-  validate-windows:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { runner: windows-latest, target: win32-x64 }
-    runs-on: ${{ matrix.runner }}
-    continue-on-error: true
-    timeout-minutes: 35
-    env:
-      CARGO_BUILD_JOBS: '3'
-      # Runners are shared and sometimes loaded: give each suite more headroom than a workstation
-      # needs, and let a deadline be retried once — a timeout is the environment answering, and the
-      # retry prints, so a green summary still shows it happened.
-      DSH_OPS_SUITE_TIMEOUT_MS: '300000'
-      DSH_OPS_RETRY_TIMEOUTS: '1'
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          # The provenance regression verifies exact blobs from the pinned 0.3.1 commit.
-          fetch-depth: 0
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-      - name: Verify runner identity
-        run: node -e "if(process.platform+'-'+process.arch!=='${{ matrix.target }}')throw Error('Unexpected runner'); console.log(process.platform,process.arch)"
-      - name: Set up pinned Rust
-        shell: bash
-        run: rustup toolchain install 1.97.1 --profile minimal && rustup default 1.97.1
-      - name: Reuse exact locked Rust build cache
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            native/target
-          key: ops-031-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/Cargo.lock') }}
-          # A changed lockfile must not throw the whole cache away: fall back to the previous one.
-          restore-keys: ops-031-${{ runner.os }}-${{ runner.arch }}-
-      - name: Install locked dependencies
-        run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
-      # The gate stages and verifies the complete frozen Niubash archive before tests/pack,
-      # and acquires a separate explicit legacy MSYS fixture for compatibility tests.
-      - name: Functional gate (skips, suite inventory, packed artifact)
-        shell: bash
-        run: node scripts/verify-gate.mjs --skip-install
       # The UNC enumeration path needs a real UNC share. The Windows runner's
       # system drive is reachable through the C$ administrative share, so the
       # otherwise opt-in Rust regression runs in CI instead of staying local-only.
       - name: UNC directory regression
-        if: matrix.target == 'win32-x64'
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path 'C:\dsh-ops-unc' | Out-Null
           $env:DSH_OPS_UNC_TEST_ROOT = '\\localhost\C$\dsh-ops-unc'
           cargo test --locked --manifest-path native/Cargo.toml -p ops-search unc_directory -- --ignored --nocapture
-      - name: Verify native staged closure
-        run: node bin/native-runtime.mjs check --platform ${{ matrix.target }}
       - name: Check shell payload platform filtering
+        if: runner.os != 'Windows'
         shell: bash
-        run: node -e "const fs=require('fs');if(process.platform!=='win32'){for(const n of ['bash','pwsh'])if(fs.existsSync('node_modules/@dsh-ops/'+n+'-win32-x64'))throw Error('Windows shell installed on POSIX')}"
+        run: node -e "const fs=require('fs');for(const n of ['bash','pwsh'])if(fs.existsSync('node_modules/@dsh-ops/'+n+'-win32-x64'))throw Error('Windows shell installed on POSIX')"
       - uses: actions/upload-artifact@v7
         with:
           name: native-${{ matrix.target }}
@@ -244,33 +105,13 @@ jobs:
           retention-days: 7
 
   # The tools trial: one platform is enough, because it exercises the tool surface itself rather
-  # than the platform. It is deliberately **not** required — `continue-on-error` keeps the run green
-  # — so a tool that breaks shows up in its own job and in the uploaded report without blocking a
-  # merge, while `validate-posix` above stays the gate.
+  # than the platform. It is a gate: a published tool that cannot be called is a broken release.
   tools-trial:
     runs-on: ubuntu-24.04
-    continue-on-error: true
-    timeout-minutes: 20
-    env:
-      CARGO_BUILD_JOBS: '3'
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '24'
-      - name: Set up pinned Rust
-        shell: bash
-        run: rustup toolchain install 1.97.1 --profile minimal && rustup default 1.97.1
-      - name: Reuse exact locked Rust build cache
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            native/target
-          key: ops-031-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/Cargo.lock') }}
-          # A changed lockfile must not throw the whole cache away: fall back to the previous one.
-          restore-keys: ops-031-${{ runner.os }}-${{ runner.arch }}-
+      - uses: ./.github/actions/setup
       - name: Install locked dependencies
         run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
       - name: Build the plugin
@@ -291,101 +132,30 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  # The bench smoke: `workflow_dispatch` only, off by default, and informational (like `tools-trial`
-  # above). Three host platforms exercise the portable harness; the
-  # `validate-posix` matrix is the gate, with `validate-windows` and `validate-macos-intel` as
-  # non-blocking counterparts. Both
-  # sides are the *same* staged worker, so the run
-  # proves only what a harness self-check can prove: the corpus builds and is removed, the worker
-  # answers identically twice, and every query lands on `MATCH` or a declared `EXPECTED_*`. It cannot
-  # produce a performance verdict: `compare()` derives its state from output hashes, error codes and
-  # harness failures, and the timings are printed as evidence. A real sweep drives a model and is
-  # **never** run in CI.
-  bench-smoke:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.bench }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            target: linux-x64
-            worker: dsh-ops-worker
-          - os: windows-latest
-            target: win32-x64
-            worker: dsh-ops-worker.exe
-          - os: macos-latest
-            target: darwin-arm64
-            worker: dsh-ops-worker
-    runs-on: ${{ matrix.os }}
-    continue-on-error: true
-    timeout-minutes: 30
+  # `package.json` promises `^22.19 || >=24`, but the legs above only ever run 24, so the lower
+  # bound would never be exercised. The floor is a JavaScript-runtime property, so one host is
+  # enough: the platform-specific behaviour is covered by the four validating legs on 24. Windows
+  # on 22.19 is tracked separately (#774) because `niubash-consumer`, `pwsh-upgrade` and
+  # `release-tar-modes` fail there (ETIMEDOUT / EPERM on npm-pack renames) while the same suites
+  # pass on 24; adding that leg back is a follow-up, not a silent omission.
+  node-floor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     env:
-      CARGO_BUILD_JOBS: '3'
+      DSH_OPS_SUITE_TIMEOUT_MS: '300000'
     steps:
       - uses: actions/checkout@v7
         with:
-          # Included benchmark tests verify the pinned historical baseline.
+          # The provenance regression verifies exact blobs from the pinned 0.3.1 commit.
           fetch-depth: 0
-      - uses: actions/setup-node@v7
+      - uses: ./.github/actions/setup
         with:
-          node-version: '24'
-      - name: Set up pinned Rust
-        shell: bash
-        run: rustup toolchain install 1.97.1 --profile minimal && rustup default 1.97.1
-      - name: Reuse exact locked Rust build cache
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            native/target
-          key: ops-031-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/Cargo.lock') }}
-          restore-keys: ops-031-${{ runner.os }}-${{ runner.arch }}-
+          node-version: '22.19'
       - name: Install locked dependencies
         run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
-      - name: Build the plugin
-        run: npm run build
-      - name: Build the native worker
+      - name: Functional gate (skips, suite inventory, packed artifact)
         shell: bash
-        run: npm run build:ptc
-      # The harness's deterministic half on its own: pure functions, node stand-ins and the
-      # comparison's state machine. No model and no timing, so it is safe on a shared runner.
-      - name: Harness deterministic suites
-        run: node test/run.mjs bench
-      # One binary on both sides, through the single cross-platform entry point (`bench/cli.mjs`).
-      # The evidence lands under `bench/runs/` — the ignored evidence directory — so a hand-run of the
-      # same command leaves the working tree clean too. `--scale 0.01` shrinks the file *counts* only:
-      # the 33 MiB rejection, the 8 MiB hex window and the 1 MiB line boundaries are always present,
-      # so a smoke still exercises every boundary. The watchdog is generous because a shared runner is
-      # slow, not wrong.
-      - name: Tool-level comparison, one binary on both sides
-        shell: bash
-        run: |
-          worker="runtime/${{ matrix.target }}/${{ matrix.worker }}"
-          mkdir -p bench/runs/smoke/fixtures
-          node bench/cli.mjs tools \
-            --baseline "$worker" --candidate "$worker" \
-            --out bench/runs/smoke/tools.json \
-            --temp-dir bench/runs/smoke/fixtures \
-            --scale 0.01 --timeout-ms 180000
-      # Evidence, not a gate: `report.md` / `run.json` / `panel.html` are uploaded **when they exist**
-      # (a tools-only smoke produces the comparison JSON and nothing else), so a dispatch that later
-      # runs more of the harness still gets its report without failing on the files it did not make.
-      # A comparison writes its default artifact into the sweep's group folder, named
-      # `DSH-OPS Benchmark Report <UTC>.md`; the stamped name is globbed here as well as `report.md`
-      # so an archive produced by either naming reaches the artifact.
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: bench-smoke-${{ matrix.target }}-report
-          path: |
-            bench/runs/smoke/**
-            bench/runs/*/run.json
-            bench/runs/*/report.md
-            bench/runs/*/DSH-OPS Benchmark Report*.md
-            bench/runs/*/panel.html
-          if-no-files-found: warn
-          retention-days: 7
+        run: node scripts/verify-gate.mjs --skip-install
 
   # Static checks on the workflows themselves. Cheap, no Rust, nothing beyond the repository's own
   # dependencies: a workflow that quietly stops triggering — or stops blocking — is otherwise
@@ -395,9 +165,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: ./.github/actions/setup
         with:
-          node-version: '24'
+          rust: 'false'
       - name: Install locked dependencies
         run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
       - name: Check workflow structure
@@ -413,74 +183,59 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: ./.github/actions/setup
         with:
-          node-version: '24'
+          rust: 'false'
       - name: Check that every code file is at or under 1000 lines
         run: node scripts/check-file-size.mjs
 
-  # `package.json` promises `^22.19 || >=24`, but the matrix above only ever runs 24, so the lower
-  # bound was never exercised. One job on the declared floor keeps that promise honest without
-  # tripling the platform matrix.
-  node-floor:
+  # Rust formatting and lints on every shipped OS family. The crates behind `#![cfg(windows)]` and
+  # `cfg(target_os = "macos")` compile to nothing on Linux, so a Linux-only clippy never saw them
+  # (it missed an `unreachable_code` error that only exists on macOS). `cargo clippy --target`
+  # type-checks without linking, so the foreign targets need no extra runners and no C toolchain.
+  rust-lint:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
-    env:
-      CARGO_BUILD_JOBS: '3'
-      DSH_OPS_SUITE_TIMEOUT_MS: '300000'
-      DSH_OPS_RETRY_TIMEOUTS: '1'
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
         with:
-          # The provenance regression verifies exact blobs from the pinned 0.3.1 commit.
-          fetch-depth: 0
-      - uses: actions/setup-node@v7
-        with:
-          node-version: '22.19'
-      - name: Set up pinned Rust
+          rust-components: rustfmt,clippy
+          rust-targets: x86_64-pc-windows-msvc,aarch64-apple-darwin
+      - name: rustfmt
         shell: bash
-        run: rustup toolchain install 1.97.1 --profile minimal && rustup default 1.97.1
-      - name: Install locked dependencies
-        run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
-      - name: Functional gate (skips, suite inventory, packed artifact)
+        run: cargo fmt --all --check --manifest-path native/Cargo.toml
+      - name: clippy (linux, windows, macos)
         shell: bash
-        run: node scripts/verify-gate.mjs --skip-install
+        run: >-
+          cargo clippy --workspace --all-targets --locked --manifest-path native/Cargo.toml
+          --target x86_64-unknown-linux-gnu --target x86_64-pc-windows-msvc --target aarch64-apple-darwin
+          -- -D warnings
 
-  # One check for a maintainer to require. Branch protection names individual job results, and each
-  # matrix above expands into one check per platform, so requiring the gate by hand means keeping the
-  # names in sync — and silently losing the gate when a runner label changes. This job collapses them.
+  # One check for a maintainer to require. Branch protection names individual job results, and the
+  # `validate` matrix expands into one check per platform, so requiring the gate by hand means
+  # keeping the names in sync — and silently losing the gate when a runner label changes. This job
+  # collapses them.
   #
-  # It waits **only** on blocking jobs. Every `continue-on-error: true` job — `validate-windows`,
-  # `validate-macos-intel`, `tools-trial`, `bench-smoke` — is deliberately absent from `needs` and
-  # from the loop below:
-  # listing one here would keep the required check pending until that job finished, which is a gate
-  # in everything but name. `scripts/check-workflows.mjs` enforces both halves of that rule.
+  # The verdict is computed from `needs` itself, so a job listed there is judged by construction:
+  # it cannot be waited on and then forgotten in a second list. `scripts/check-workflows.mjs`
+  # asserts `needs` against `EXPECTED_BLOCKING`, so a new job cannot be added without being
+  # classified.
   ci-required:
     name: CI required
     if: always()
-    needs: [validate-posix, workflow-lint, source-size, node-floor]
+    needs: [validate, tools-trial, node-floor, workflow-lint, source-size, rust-lint]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Fail unless every blocking job succeeded
         shell: bash
+        env:
+          NEEDS: ${{ toJSON(needs) }}
         run: |
           set -euo pipefail
-          failed=0
-          for job in validate-posix workflow-lint source-size node-floor; do
-            case "$job" in
-              validate-posix) result='${{ needs.validate-posix.result }}' ;;
-              workflow-lint) result='${{ needs.workflow-lint.result }}' ;;
-              source-size) result='${{ needs.source-size.result }}' ;;
-              node-floor) result='${{ needs.node-floor.result }}' ;;
-            esac
-            echo "${job}: ${result}"
-            [ "$result" = success ] || failed=1
-          done
-          # Not in `needs` on purpose: this check must never wait for them, so their result is not
-          # available here. Read them on their own jobs; a red one is a signal, not a merge blocker.
-          echo "validate-windows, validate-macos-intel, tools-trial, bench-smoke: non-blocking (continue-on-error), not waited on by this check"
-          if [ "$failed" != 0 ]; then
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "$NEEDS"
+          if ! jq -e 'all(.[]; .result == "success")' <<< "$NEEDS" >/dev/null; then
             echo "::error::a blocking job did not succeed; read the failing job above"
             exit 1
           fi

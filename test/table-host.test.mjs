@@ -1,7 +1,8 @@
 /** Document tools share live authority while preserving separate Native/PTC projections. */
 import fs from 'node:fs'
 import path from 'node:path'
-import { assertSupportedJsonSchema, jsonSchemaToTs } from '@deepseek-ai/dsh-tools'
+import { assertSupportedJsonSchema } from '@deepseek-ai/dsh-tools'
+import { jsonSchemaToTs } from '@deepseek-ai/dsh-tool-executor-ptc'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { shutdown } from './lib/host.mjs'
 import { requireWorker } from './lib/boundary.mjs'
@@ -37,15 +38,15 @@ await test('Native table activation is next-step and owner-only; relative cwd an
   try {
     const owner = await agent('native', { cwd }), sibling = await agent(), child = await agent('native', { parent: owner })
     assert.equal(documentNames(ctx, owner).includes(TOOL), false)
-    const assembly = await ctx.get('systemPrompt').assemble({ scope: owner })
+    const assembly = await ctx.get('systemPrompt').assemble({ scope: owner, toolSet: owner.prepared.toolSet })
     assert.equal(assembly.tools.some(tool => tool.name === TOOL), false)
     await activateDocument(ctx, owner, 'read_table')
     for (const other of [sibling, child]) assert.equal(documentNames(ctx, other).includes(TOOL), false)
     const data = await documentCall(ctx, owner, 'read_table', { path: 'data.csv' })
-    assert.equal(data.status, 'completed', JSON.stringify(data)); assert.equal(data.complete, true)
-    assert.deepEqual(data.columns, ['name', 'name', '']); assert.deepEqual(data.items[0].cells, ['中,文', 'two\nlines', '0001'])
-    assert.equal(data.path, path.join(cwd, 'data.csv'))
-    const text = rendered({ path: 'data.csv' }, data)
+    assert.equal(data.status, 'completed', JSON.stringify(data)); assert.equal(data.data.complete, true)
+    assert.deepEqual(data.data.columns, ['name', 'name', '']); assert.deepEqual(data.data.items[0].cells, ['中,文', 'two\nlines', '0001'])
+    assert.equal(data.data.path, path.join(cwd, 'data.csv'))
+    const text = rendered({ path: 'data.csv' }, data.data)
     assert.match(text, /Row 1 \(LF lines 2-3\)/); assert.match(text, /"two\\nlines"/); assert.match(text, /scanComplete=true/)
     assert.doesNotMatch(text, /Mutation|receipt/)
   } finally { await shutdown(ctx) }
@@ -76,9 +77,9 @@ await test('malformed late records retain safe prefix data in both projections w
     const native = await agent(), code = await agent('ptc')
     await activateDocument(ctx, native, 'read_table'); await activateDocument(ctx, code, 'read_table', 'ptc')
     const raw = await documentCall(ctx, native, 'read_table', { path: 'bad.csv' })
-    const text = rendered({ path: 'bad.csv' }, raw)
+    const text = rendered({ path: 'bad.csv' }, raw.data)
     assert.match(text, /TABLE_PARSE_ERROR/); assert.match(text, /Row 1.*"safe"/); assert.match(text, /not exhaustive/)
-    assert.equal(raw.scanComplete, false); assert.equal(raw.total, undefined)
+    assert.equal(raw.data.scanComplete, false); assert.equal(raw.data.total, undefined)
     const typed = await documentCall(ctx, code, 'read_table', { path: 'bad.csv' })
     assert.equal(typed.status, 'error'); assert.equal(typed.error.code, 'TABLE_PARSE_ERROR'); assert.equal(typed.error.effectState, 'none')
     assert.equal(typed.error.retry, 'after-input-change'); assert.equal(typed.continuation, undefined)
@@ -92,7 +93,7 @@ await test('read-only table calls create no files and current credentials remain
   try {
     const owner = await agent('native', { policy: 'read-only' }); await activateDocument(ctx, owner, 'read_table')
     const ok = await documentCall(ctx, owner, 'read_table', { path: 'ok.csv' })
-    assert.equal(ok.complete, true); assert.deepEqual(ok.items[0].cells, ['value'])
+    assert.equal(ok.data.complete, true); assert.deepEqual(ok.data.items[0].cells, ['value'])
     const denied = await documentCall(ctx, owner, 'read_table', { path: '.ssh/id_ed25519.csv' })
     assert.equal(denied.error.code, 'CREDENTIAL_DENIED'); assert.equal(denied.error.effectState, 'none'); assert.doesNotMatch(JSON.stringify(denied), /SECRET/)
     const invalid = await documentCall(ctx, owner, 'read_table', { path: 'ok.csv', limit: 0 })
@@ -106,15 +107,15 @@ await test('large Native table rows spill with original coverage and recoverable
   try {
     const owner = await agent(); await activateDocument(ctx, owner, 'read_table'); await activateDocument(ctx, owner, 'result')
     const data = await documentCall(ctx, owner, 'read_table', { path: 'big.csv' })
-    assert.equal(data.reference.producerTool, 'read_table'); assert.equal(data.scanComplete, true)
-    assert.equal(data.complete, false); assert.equal(data.rowsObserved, 1)
-    assert.equal(fs.realpathSync.native(data.referenceRoot), fs.realpathSync.native(root))
-    const content = [{ type: 'text', text: rendered({ path: 'big.csv' }, data) }]
+    assert.equal(data.data.reference.producerTool, 'read_table'); assert.equal(data.data.scanComplete, true)
+    assert.equal(data.data.complete, false); assert.equal(data.data.rowsObserved, 1)
+    assert.equal(fs.realpathSync.native(data.data.referenceRoot), fs.realpathSync.native(root))
+    const content = [{ type: 'text', text: rendered({ path: 'big.csv' }, data.data) }]
     assert.ok(Buffer.byteLength(JSON.stringify(content)) <= 65536); assert.match(content[0].text, /ref:\/\//)
-    const page = await documentCall(ctx, owner, 'result', { action: 'page', id: data.reference.refId, root: data.referenceRoot, limit: 1 })
-    assert.equal(page.source.rowsObserved, 1); assert.equal(page.source.scanComplete, true)
-    assert.equal(page.source.captureComplete, true); assert.equal(page.source.capturedItems, 1)
-    assert.equal(page.items[0].kind, 'item-json-chunk'); assert.equal(page.items[0].index, 0); assert.equal(page.items[0].byteOffset, 0)
+    const page = await documentCall(ctx, owner, 'result', { action: 'page', id: data.data.reference.refId, root: data.data.referenceRoot, limit: 1 })
+    assert.equal(page.data.source.rowsObserved, 1); assert.equal(page.data.source.scanComplete, true)
+    assert.equal(page.data.source.captureComplete, true); assert.equal(page.data.source.capturedItems, 1)
+    assert.equal(page.data.items[0].kind, 'item-json-chunk'); assert.equal(page.data.items[0].index, 0); assert.equal(page.data.items[0].byteOffset, 0)
   } finally { await shutdown(ctx) }
 }))
 report('table-host')

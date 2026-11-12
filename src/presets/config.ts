@@ -17,7 +17,7 @@ export interface ModeConfig extends ResolvedConfig {
   alwaysLoaded: PtcConfig['alwaysLoaded']
   /** Publish Bash for this preset's sessions. */
   bash: boolean
-  /** Opt in to hiding the official Windows shell while Bash is available. */
+  /** Hide the official Windows shell by default while Bash is available. */
   hidePwsh: boolean
   /** Hide the official file tools this mode replaces (gated by the bundle switch). */
   hideOfficialTools: boolean
@@ -25,6 +25,10 @@ export interface ModeConfig extends ResolvedConfig {
   dynamicTools: boolean
   /** Publish baseline file tools independently of progressive discovery. */
   residentTools: boolean
+  /** Append batching guidance to PTC tool results (YAML-only; defaults on for OPS PTC). */
+  batchingGuidance: boolean
+  /** Emit one structured line per delivered batching notice (YAML-only diagnostics). */
+  batchingTelemetry: boolean
 }
 
 /** Every key a mode row accepts: the settings each enhanced preset really reads. */
@@ -32,13 +36,15 @@ export const MODE_CONFIG_KEYS: readonly string[] = Object.freeze([
   ...LEGACY_FASTCTX_KEYS,
   'binaryPath', 'required', 'denyCredentialReads', 'promptPolicy', 'extraGuidance',
   'bashPath', 'publishBashTool', 'allowSystemShellFallback', 'configUpdateVersion',
+  'spillRetentionDays', 'spillTotalBudgetMiB', 'spillSweepEnabled',
   'allowedTools', 'alwaysLoaded',
   'bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools', 'residentTools',
+  'batchingGuidance', 'batchingTelemetry',
 ])
 
 const PTC_KEYS = new Set(['allowedTools', 'alwaysLoaded'])
-/** Mode publication switches; enhanced presets default to on. */
-const SWITCH_KEYS = new Set(['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools', 'residentTools'])
+/** Boolean switches and gates, each supplying its own default below. */
+const SWITCH_KEYS = new Set(['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools', 'residentTools', 'batchingGuidance', 'batchingTelemetry'])
 
 /**
  * Validate one mode row's config.
@@ -70,9 +76,10 @@ export function resolveModeConfig(rawConfig?: unknown, mode?: ModeId): ModeConfi
   const resolved = resolveConfig({ ...core, publishBashTool: bash })
   const api = parsePtcConfig(ptc)
   return { ...resolved, allowedTools: api.allowedTools, alwaysLoaded: api.alwaysLoaded,
-    bash, hidePwsh: sw('hidePwsh', false),
+    bash, hidePwsh: sw('hidePwsh', true),
     hideOfficialTools: sw('hideOfficialTools', true), dynamicTools: sw('dynamicTools', true),
-    residentTools: mode !== 'minimal' && sw('residentTools', true) }
+    residentTools: mode !== 'minimal' && sw('residentTools', true),
+    batchingGuidance: sw('batchingGuidance', mode === 'ops-ptc'), batchingTelemetry: sw('batchingTelemetry', false) }
 }
 
 /**
@@ -86,7 +93,7 @@ export function modeFields(mode: ModeId): Record<string, Field> {
   return {
     ...(mode === 'minimal' ? {} : { residentTools: editable('boolean', 'Publish baseline file tools independently of dynamic loading.') }),
     bash: editable('boolean', 'Publish Bash for authorized sessions.'),
-    hidePwsh: editable('boolean', 'Opt in to hiding the official Windows shell while Bash is available.'),
+    hidePwsh: editable('boolean', 'Hide the official Windows shell while Bash is available; enabled by default.'),
     hideOfficialTools: editable('boolean', 'Hide the official file tools this mode replaces.'),
     dynamicTools: editable('boolean', 'Publish the discovery entry to this mode.'),
   }

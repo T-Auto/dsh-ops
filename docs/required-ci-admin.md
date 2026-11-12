@@ -25,3 +25,18 @@ After applying, inspect Settings → Rules and the active branch rules. With a d
 工作流现已覆盖所有 PR 目标分支，包括堆叠的功能分支；代码合入和本地校验都不会自动启用仓库规则。管理员需检查现有 ruleset，再审阅并应用上面的 JSON。它仅对三个维护分支要求 PR、来自 GitHub Actions 的最新基线 `CI required`，并禁止强推；无绕过名单，不额外规定审阅人数或合并方式。
 
 如已有同等规则，保留并审阅其完整设置后更新，不要直接覆盖。应用后用可丢弃 PR 验证缺失、等待和失败检查确实阻止合并，记录规则 URL、PR 和 head；无需真正合并测试 PR。绿灯或 JSON 文件不等于保护已生效。Dependabot 红灯同样应修复或关闭；fork 的 `action_required` 仍可能需要维护者批准。#303 的管理员验收在这些证据到位前保持未完成。
+
+## 2026-11-07 更新：一键脚本与 merge queue
+
+规则集现在由 `scripts/apply-ruleset.mjs` 幂等下发，模板同时包含 merge queue 规则（required check
+全绿才成组合并）。旧的 `gh api --method POST .../rulesets --input ...` 手工步骤已被脚本取代：脚本会先做
+只读指纹比对（dry run），`--apply` 才写，并在写后回读校验 enforcement/ref/required check/merge queue
+与模板一致。
+
+```console
+node scripts/apply-ruleset.mjs                  # 只读：desired vs live 指纹
+GH_ADMIN_TOKEN=… node scripts/apply-ruleset.mjs --apply
+```
+
+token 只从环境读取，不落仓库、不进 Actions secrets。下面的历史记录保留，用于说明为什么这件事必须由
+admin 执行、以及 2026-10-25 审计时看到的空规则集状态。

@@ -1,6 +1,7 @@
 {
   "meta": {
     "title": "dsh-ops",
-    "description": "为 DSH 提供可选 Bash 和原生 Rust 工具以提高 token 效率；PowerShell 继续由宿主管理"
+    "description": "为 DSH 提供可选 Bash 和原生 Rust 工具以提高 token 效率；PowerShell 继续由宿主管理",
+    "detail": "docs/plugin-detail.zh.md"
   }
 }

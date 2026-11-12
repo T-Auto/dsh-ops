@@ -34,7 +34,8 @@ await test('the browser seam exports the native controls and nothing else', () =
 await test('the adapter keeps scope discovery lazy', () => {
   const text = fs.readFileSync(path.join(adapter, 'host.ts'), 'utf8')
   assert.match(text, /async function loadScopes/u)
-  assert.match(text, /return import\('@deepseek-ai\/dsh-scope'\)/u)
+  assert.match(text, /import\.meta\.resolve\('@deepseek-ai\/dsh-scope'\)/u)
+  assert.match(text, /export function chooseScopeSource/u)
   assert.doesNotMatch(text, /^import .*dsh-scope/m)
 })
 

@@ -15,9 +15,10 @@ import { ConfigError } from '../config.js'
 import { resolveModeConfig, type ModeConfig } from '../presets/config.js'
 import { MODE_IDS } from '../presets/types.js'
 import { resolveDiscoveryConfig } from '../discovery/config.js'
-import { resolveConfig, type DownloadGuardConfig } from '../config.js'
+import { resolveConfig, resolveResultCacheConfig, type DownloadGuardConfig, type ResultCacheConfig } from '../config.js'
 import { resolvePanelConfig } from '../panel/collect.js'
 import { resolveActivityConfig } from '../tui/activity.js'
+import { resolveDiskConfig, type DiskConfig } from '../disk/ownership.js'
 import { PRESET_SETTINGS } from './preset-schema.js'
 import { customPresets, type CustomPreset } from './presets.js'
 import { editable, settingsConfig, type Field } from './schema.js'
@@ -30,7 +31,7 @@ type ActivityConfig = ReturnType<typeof resolveActivityConfig>
 export const MODES = MODE_IDS
 export type ModeKey = typeof MODES[number]
 /** Every section the row accepts. */
-export const FEATURES = [...MODES, 'discovery', 'download-guard', 'panel', 'tui', 'other'] as const
+export const FEATURES = [...MODES, 'discovery', 'download-guard', 'resultCache', 'panel', 'tui', 'disk', 'other'] as const
 export type Feature = typeof FEATURES[number]
 
 /** Bundle-wide switches; resident publication is deliberately mode-local. */
@@ -39,6 +40,8 @@ export interface GlobalSwitches {
   readonly hidePwsh: boolean
   readonly hideOfficialTools: boolean
   readonly dynamicTools: boolean
+  /** Force this plugin's ops-ptc preset as the profile's default agent preset. */
+  readonly forceDefaultOpsPtc: boolean
 }
 
 /** One section as the row runs it. */
@@ -56,19 +59,22 @@ export interface MergedConfig {
   readonly minimal: FeatureState<ModeConfig>
   readonly standard: FeatureState<ModeConfig>
   readonly ptc: FeatureState<ModeConfig>
+  readonly 'ops-ptc': FeatureState<ModeConfig>
   readonly cordis: FeatureState<ModeConfig>
   readonly discovery: FeatureState<DiscoveryConfig>
   readonly 'download-guard': FeatureState<DownloadGuardConfig>
+  readonly resultCache: FeatureState<ResultCacheConfig>
   readonly panel: FeatureState<PanelConfig>
   readonly tui: FeatureState<ActivityConfig>
+  readonly disk: FeatureState<DiskConfig>
   readonly other: FeatureState<{ pwsh7Link: boolean }>
 }
 
 const ENABLED_BY_DEFAULT: Readonly<Record<Feature, boolean>> = Object.freeze({
-  minimal: true, standard: true, ptc: true, cordis: true, discovery: true,
+  minimal: true, standard: true, ptc: true, 'ops-ptc': true, cordis: true, discovery: true,
   // The download guard is off until an operator names a downloader: mounting it
   // against an empty template would register a listener that can never act.
-  'download-guard': false, panel: false, tui: false, other: false,
+  'download-guard': false, resultCache: true, panel: false, tui: false, disk: true, other: false,
 })
 
 function object(name: string, value: unknown): Record<string, unknown> {
@@ -117,7 +123,7 @@ export function resolveMergedConfig(raw?: unknown): MergedConfig {
   }
   const globalRaw = object('global', input.global)
   for (const key of Object.keys(globalRaw)) {
-    if (!['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools'].includes(key)) throw new ConfigError(`unknown global key ${JSON.stringify(key)}`)
+    if (!['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools', 'forceDefaultOpsPtc'].includes(key)) throw new ConfigError(`unknown global key ${JSON.stringify(key)}`)
   }
   const normalized = Object.hasOwn(input, 'presets') && Object.values(object('presets', input.presets)).every(value =>
     value && typeof value === 'object' && Object.keys(value).length === 1 && Object.hasOwn(value, 'options'))
@@ -133,15 +139,19 @@ export function resolveMergedConfig(raw?: unknown): MergedConfig {
       hidePwsh: flag(globalRaw, 'hidePwsh', true),
       hideOfficialTools: flag(globalRaw, 'hideOfficialTools', true),
       dynamicTools: flag(globalRaw, 'dynamicTools', true),
+      forceDefaultOpsPtc: flag(globalRaw, 'forceDefaultOpsPtc', true),
     },
     minimal: modeState('minimal', input.minimal),
     standard: modeState('standard', input.standard),
     ptc: modeState('ptc', input.ptc),
+    'ops-ptc': modeState('ops-ptc', input['ops-ptc']),
     cordis: modeState('cordis', input.cordis),
     discovery: discoveryState(input.discovery),
     'download-guard': downloadGuardState(input['download-guard']),
+    resultCache: resultCacheState(input.resultCache),
     panel: panelState(input.panel),
     tui: tuiState(input.tui),
+    disk: diskState(input.disk),
     other: otherState(input.other),
   }
 }
@@ -167,11 +177,25 @@ function downloadGuardState(value: unknown): FeatureState<DownloadGuardConfig> {
     : { enabled, config: resolved as DownloadGuardConfig }
 }
 
+function resultCacheState(value: unknown): FeatureState<ResultCacheConfig> {
+  const { enabled, rest, resolved } = split('resultCache', value)
+  return resolved === undefined
+    ? { enabled, config: resolveResultCacheConfig(rest), raw: rest }
+    : { enabled, config: resolved as ResultCacheConfig }
+}
+
 function panelState(value: unknown): FeatureState<PanelConfig> {
   const { enabled, rest, resolved } = split('panel', value)
   return resolved === undefined
     ? { enabled, config: resolvePanelConfig(rest), raw: rest }
     : { enabled, config: resolved as PanelConfig }
+}
+
+function diskState(value: unknown): FeatureState<DiskConfig> {
+  const { enabled, rest, resolved } = split('disk', value)
+  return resolved === undefined
+    ? { enabled, config: resolveDiskConfig(rest), raw: rest }
+    : { enabled, config: resolved as DiskConfig }
 }
 
 function otherState(value: unknown): FeatureState<{ pwsh7Link: boolean }> {
@@ -205,7 +229,7 @@ export function effectiveMode(state: FeatureState<ModeConfig>, global: GlobalSwi
     residentTools: state.config.residentTools,
     bash: flag(raw, 'bash', true) && global.bash,
     // The companion plugin replaces pwsh 5.1 only while the host shell stays visible.
-    hidePwsh: flag(raw, 'hidePwsh', false) && global.hidePwsh && !pwsh7Link,
+    hidePwsh: flag(raw, 'hidePwsh', state.config.hidePwsh) && global.hidePwsh && !pwsh7Link,
     hideOfficialTools: flag(raw, 'hideOfficialTools', true) && global.hideOfficialTools,
     dynamicTools: flag(raw, 'dynamicTools', true) && global.dynamicTools,
   }
@@ -228,6 +252,7 @@ const MODE_SWITCHES: Record<string, Field> = {
 function modeSection(mode: ModeKey): Field {
   return { type: 'object', dict: { enabled: boolean('Apply this mode to its sessions.'),
     ...(mode === 'minimal' ? {} : { residentTools: boolean('Publish baseline file tools independently of dynamic loading.') }),
+    bashPath: editable('string', 'Optional explicit Bash executable selected on the runtime page.'),
     ...MODE_SWITCHES } }
 }
 
@@ -258,8 +283,10 @@ export const Config = settingsConfig(hostConfig, {
     hidePwsh: boolean('Bundle switch: allow presets to hide the official Windows shell.'),
     hideOfficialTools: boolean('Bundle switch: allow presets to hide the official file tools.'),
     dynamicTools: boolean('Bundle switch: allow presets to publish the discovery entry.'),
+    forceDefaultOpsPtc: boolean('Bundle switch: make new sessions default to the OPS (PTC) preset; off restores the previous or official default.'),
   } },
-  minimal: modeSection('minimal'), standard: modeSection('standard'), ptc: modeSection('ptc'), cordis: modeSection('cordis'),
+  minimal: modeSection('minimal'), standard: modeSection('standard'), ptc: modeSection('ptc'),
+  'ops-ptc': modeSection('ops-ptc'), cordis: modeSection('cordis'),
   // Only the switch is editable; capture limits, PTC pools, routing text, worker
   // paths and the credential fence stay YAML-only by design.
   panel: { type: 'object', dict: { enabled: boolean('Capture OPS activity for developer diagnosis.') } },

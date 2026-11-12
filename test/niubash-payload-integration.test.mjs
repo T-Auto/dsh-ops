@@ -51,12 +51,21 @@ await test('default provision uses fixed Niubash home, verifies reuse, rejects c
   verifyNiubashTree(target)
   const inventory = managedBashInventory()
   assert.equal(inventory.find(entry => entry.backend === 'niubash')?.owned, true)
-  const selected = selectBashRuntime('managed', { platform: 'win32', arch: 'x64' })
-  assert.equal(selected.file, path.join(target, 'niu.exe')); assert.equal(selected.restricted.compatible, true)
+  const selected = selectBashRuntime('niubash', { platform: 'win32', arch: 'x64' })
+  assert.equal(selected.clear, true)
+  assert.equal(selected.engine, 'niubash')
+  assert.equal(selected.file, path.join(target, 'niu.exe'), 'managed selection names the provisioned payload')
+  assert.equal(fs.existsSync(path.join(process.env.DSH_HOME, 'dsh-ops/shells/niubash-prepared')), false, 'selection prepares nothing')
+  assert.match(selected.restriction, /verified|sandbox/i)
   assert.equal(removeManagedBash().action, 'preview'); assert.equal(fs.existsSync(target), true)
   removeManagedBash({ yes: true })
   assert.equal(fs.existsSync(target), false); assert.deepEqual(managedBashInventory(), [])
-  assert.throws(() => selectBashRuntime('managed', { platform: 'win32', arch: 'x64' }), /install/)
+  // The choice itself never throws: with no copy left it either reports the packaged
+  // payload or states that none is installed, instead of pinning a stale path.
+  const afterRemoval = selectBashRuntime('niubash', { platform: 'win32', arch: 'x64' })
+  assert.equal(afterRemoval.clear, true)
+  assert.ok(afterRemoval.file === undefined || /niu\.exe$/i.test(afterRemoval.file))
+  if (afterRemoval.file === undefined) assert.match(afterRemoval.detail, /bash-runtime install/)
   } finally {
     if (savedHome === undefined) delete process.env.DSH_HOME
     else process.env.DSH_HOME = savedHome
@@ -67,24 +76,40 @@ await test('npm pack carries every frozen file; consumer verifies and runs Niuba
   stageNiubashArchive(archive, runtime)
   fs.writeFileSync(path.join(source, 'package.json'), JSON.stringify({ name: 'niubash-payload-test', version: '1.0.0', files: ['runtime'] }))
   const result = npm(['pack', '--ignore-scripts', '--json', '--pack-destination', root], { cwd: source })
-  const packed = JSON.parse(result.stdout)[0]
-  checkNiubashTarball(path.join(root, packed.filename))
-  const listed = new Set(packed.files.map(entry => entry.path))
+  assert.equal(result.status, 0, result.stderr)
+  // npm's JSON report differs across versions. Inspect the one fresh artifact
+  // and its actual members, retaining the full frozen-byte verification.
+  const artifacts = fs.readdirSync(root).filter(name => name.endsWith('.tgz'))
+  assert.equal(artifacts.length, 1, result.stdout)
+  const artifact = path.join(root, artifacts[0])
+  checkNiubashTarball(artifact)
+  const listed = new Set()
+  tar.list({ file: artifact, sync: true, strict: true, onentry(entry) { listed.add(entry.path.replace(/^package\//u, '')) } })
   for (const name of Object.keys(NIUBASH_PIN.files)) assert(listed.has(`${NIUBASH_PACKAGE_PATH}/${name}`), name)
   const consumer = path.join(root, 'consumer'); fs.mkdirSync(consumer)
-  await tar.x({ file: path.join(root, packed.filename), cwd: consumer, strict: true })
+  await tar.x({ file: artifact, cwd: consumer, strict: true })
   const deployed = path.join(consumer, 'package', NIUBASH_PACKAGE_PATH)
   const executable = verifyNiubashTree(deployed)
   if (process.platform === 'win32') {
-    const { prepareNiubash } = await import('../lib/niubash/runtime.js')
+    const { prepareNiubash, selectNiubash } = await import('../lib/niubash/runtime.js')
+    const sourceLinks = fs.statSync(executable).nlink
+    assert.equal(selectNiubash(executable), executable)
+    const selected = await prepareNiubash(executable, '', new AbortController().signal)
+    assert.notEqual(selected.file, executable, 'the package source is not executed directly')
+    assert.equal(fs.statSync(executable).nlink, sourceLinks, 'preparation does not hardlink the source executable')
+    const before = fs.statSync(selected.file)
     for (let n = 0; n < 2; n++) {
       const execution = await prepareNiubash(executable, '', new AbortController().signal)
-      try {
-        const run = spawnSync(execution.file, ['-c', "printf 'niu-ok\n'; printf '2\n' | awk '{print $1+1}'; printf packed | cat"], { cwd: root, env: { ...process.env, ...execution.env }, encoding: 'utf8', timeout: 30000, windowsHide: true })
-        assert.equal(run.status, 0, `${run.stdout}
+      assert.equal(execution.file, selected.file, 'consecutive calls reuse one prepared runtime')
+      assert.deepEqual(Object.keys(execution).sort(), ['env', 'file'], 'execution has no per-call lifecycle')
+      const run = spawnSync(execution.file, ['-c', "printf 'niu-ok\n'; printf '2\n' | awk '{print $1+1}'; printf packed | cat"], { cwd: root, env: { ...process.env, ...execution.env }, encoding: 'utf8', timeout: 30000, windowsHide: true })
+      assert.equal(run.status, 0, `${run.stdout}
 ${run.stderr}`)
-        assert.match(run.stdout, /niu-ok/); assert.match(run.stdout, /3/); assert.match(run.stdout, /packed/)
-      } finally { await execution.dispose() }
+      assert.match(run.stdout, /niu-ok/); assert.match(run.stdout, /3/); assert.match(run.stdout, /packed/)
+      const after = fs.statSync(selected.file)
+      assert.equal(after.size, before.size)
+      assert.equal(after.mtimeMs, before.mtimeMs)
+      assert.equal(fs.existsSync(selected.file), true, 'settlement retains the prepared runtime')
     }
     verifyNiubashTree(deployed)
   }

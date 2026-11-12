@@ -48,9 +48,10 @@ export const SETTINGS_CSS = `
 .ops-input:disabled { color:var(--dsw-alias-label-tertiary); cursor:default; }
 .ops-input[aria-invalid=true] { border-color:var(--dsw-alias-state-error-primary); }
 .ops-list { border:0; margin:0; padding:12px 0; display:flex; flex-direction:column; gap:6px; min-width:0; }
-.ops-choice { display:flex; align-items:center; gap:10px; min-height:28px; cursor:pointer; font-size:13px; }
-.ops-choice input { width:16px; height:16px; accent-color:var(--dsw-alias-button-primary-fill); }
+.ops-choice { display:flex; align-items:flex-start; gap:10px; min-height:28px; padding:6px 0; cursor:pointer; font-size:13px; }
+.ops-choice input { width:16px; height:16px; margin-top:2px; flex:none; accent-color:var(--dsw-alias-button-primary-fill); }
 .ops-choice code { overflow-wrap:anywhere; font-size:12px; color:var(--dsw-alias-label-secondary); }
+.ops-candidate { overflow-wrap:anywhere; max-width:100%; text-align:left; }
 .ops-inline { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
 .ops-text-button { appearance:none; border:0; background:none; padding:0; font:inherit; font-size:12px; line-height:1.5; color:var(--dsw-alias-label-secondary); cursor:pointer; text-align:left; }
 .ops-text-button:hover:not(:disabled) { color:var(--dsw-alias-label-primary); }

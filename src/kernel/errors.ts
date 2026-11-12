@@ -11,6 +11,7 @@ const unknown = policy('unknown', 'never')
 /** Stable native/host codes retain their spelling. This table does not change current wire errors. */
 export const ERROR_POLICIES: Readonly<Record<string, ErrorPolicy>> = Object.freeze({
   POLICY_DENIED: rejected,
+  PUBLICATION_DENIED: rejected,
   CREDENTIAL_DENIED: rejected,
   PATH_RESTRICTED: rejected,
   REVISION_CONFLICT: policy('conflict', 'after-state-change'),

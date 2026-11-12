@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9e4a6bd8aa3788c8b9e4d195cefb77ed09a33a36fe1628b9036a7f61157bb4c6 # shrinks to creates = [(0, 40, 0, false), (0, 0, 0, false), (0, 0, 0, false), (0, 0, 0, false), (0, 0, 0, false), (0, 0, 0, false), (0, 0, 0, false), (0, 0, 0, false), (0, 0, 0, false), (0, 0, 0, false)], seed = 2558110409079425490, enrich_after = false
+cc 1cb8b09d8f7fac6f077f9e6fd89286a99eee1b517a5a375328e3a46defc2e58a # shrinks to actions = [Rename { record: 1, parent: 0, name: 0 }, Delete { record: 0 }, Rename { record: 0, parent: 40, name: 0 }]
+cc a5ad4dc4ec12be7bbb152e7d4dd3f40c78981c6340a39d9bec1fb1eb937e523f # shrinks to actions = [Rename { record: 24, parent: 37, name: 0 }, Create { record: 0, parent: 24, name: 0, is_dir: false }, Delete { record: 37 }, Rename { record: 24, parent: 40, name: 0 }]

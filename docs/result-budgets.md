@@ -28,24 +28,50 @@ references retain their separate contract.
 Session disposal immediately expires references, cancels queued/running work, awaits settlement,
 then purges validated snapshot/staging blobs through the current host authority. The stable lock
 and unknown names remain; audit data is never purged. Read-only mode or unavailable host services
-can prevent physical cleanup, with a diagnostic. No automatic retry is scheduled; up to the session
-quota can remain for host temporary-directory cleanup or operator removal. A fresh in-memory session nonce prevents reopening
-disk leftovers as valid references after a restart. Component owners share this lifetime; unloading
-the last Native/PTC owner expires its remaining sessions. Cleanup is an internal operation and
-cannot be requested through model tool arguments.
+can prevent physical cleanup; the root is then recorded in a private pending ledger under the
+temporary directory instead of being forgotten, together with the failure reason (read-only,
+changed authority, cache grant, timeout, EPERM) and its attempt count. A later workspace-write
+authorization, the next start-up or an operator command retries it with bounded exponential
+backoff; nothing is deleted while the host stays read-only. A fresh in-memory session nonce
+prevents reopening disk leftovers as valid references after a restart. Component owners share this
+lifetime; unloading the last Native/PTC owner expires its remaining sessions. Cleanup is an
+internal operation and cannot be requested through model tool arguments.
+
+The native purge deliberately keeps the root directory, its `s-<hash>/` scope directory and the
+stable lock inode, and the root is created eagerly on the first non-read-only call. A host-side
+sweep therefore reclaims roots at start-up and after the last owner unloads. It only touches a
+directory named `dsh-ops-results-<64 hex>` that is a private, current-user-owned, non-linked
+directory whose contents are limited to `s-<64 hex>/` scope directories holding `lock`,
+`<uuid>.json` and `<uuid>.tmp`; one unknown entry skips the whole root and is reported. Roots
+referenced by this process are excluded, a root must be idle for `resultCache.maxAgeMs` before it
+is touched (roots this process created skip that grace during shutdown), and one pass is bounded by
+a root count and a wall-clock budget and stops at the first failed removal. By default only roots
+that hold no snapshot data — an empty root, or scope directories with just their lock — are
+reclaimed. `MAX_SESSION_BYTES` stays a per-nonce quota for one cache root and is never used as a
+global budget: the aggregate limits are `resultCache.maxRoots` and `resultCache.maxTotalBytes`,
+both 0. They are reporting thresholds, not deletion budgets — a root that still holds snapshot data
+is classified as blocked (age, live set or over budget) and is never removed by the sweep; only the
+authorized session purge or its deferred retry may reclaim that data. `dsh-ops result-cache status`
+reports the inventory and `dsh-ops result-cache reclaim [--apply]` previews or performs the same
+bounded pass.
 
 ## Native and PTC reference pages
 
-The file row provides Native ops_result with page/release only, independently of the PTC row.
-The single result catalogue entry also supplies PTC put/page/release; PTC-only scopes retain the
-richer schema, and Native descendants receive the file row's page-only projection. Disabling
-file withdraws that projection while the PTC row remains independent. Advanced discovery owns
-its later on-demand publication; enabling the pager does not change any official tool.
+Native, discovery and PTC lease one canonical result definition, including inherited sources.
+The public input schema is put/page/release in every presentation; it is not write authority.
+Native permits owned ref:// page/release only, never audit IDs or purge. Put is rejected before IO
+unless a live root run_code execution token is its parent, with the same agent, root call and exact
+admitted toolSet, and the current presentation admits PTC. The public events prove this live nested
+call and current PTC admission, not cryptographic executor attestation. Native nested calls and
+invented/stale parent tokens do not authorize put. Put writes only the session-private cache and
+retains the normal size, format, credential and sandbox authority checks.
 
-Native accepts only ref:// handles, never legacy audit IDs or put/purge. Omit root to use the
-current session cwd; after changing cwd, pass the original referenceRoot. PTC defaults to the
-workspace root. The locator grants no authority: a different session/root, changed permissions,
-or a hidden producer denies access. Release removes cached observations, never business files.
+Omit root to use the current session cwd in both projections; after changing cwd, pass the original
+referenceRoot. This replaces PTC's former workspace-root default for the shared result capability;
+pass root explicitly when paging a workspace-bound batch audit. The locator grants no authority:
+a different session/root, changed permissions or hidden producer denies access. Release removes
+cached observations, never business files. Unloading one consumer leaves other grants intact;
+a new resolve is required after real source/grant changes.
 
 Pages default to offset=0, limit=64 and maxBytes=16384 (bounds: 1-512 rows, 512-65536 bytes).
 equals filters top-level exact values before fields projection; offsets count filtered stored rows.

@@ -18,7 +18,7 @@ await test('real Native loop exposes discovery at startup and activates exactly 
     host.ctx.on('tools/execute', async (exec, next) => {
       const result = await next()
       if (exec.name === 'ops_discover_tools') {
-        const assembly = await host.ctx.get('systemPrompt').assemble({ scope: owner })
+        const assembly = await host.ctx.get('systemPrompt').assemble({ scope: owner, toolSet: exec.toolSet })
         assert.equal(assembly.tools.some(tool => tool.name === 'ops_stat'), false, 'current-step diagnostic assembly cannot activate pending tools')
         diagnostic = true
       }
@@ -30,12 +30,12 @@ await test('real Native loop exposes discovery at startup and activates exactly 
       return [{ name: 'ops_discover_tools', args: { query: 'select:ops_stat' } }]
     }, request => {
       assert.ok(names(request).includes('ops_stat'), 'the second request must already include the selected schema')
-      assert.equal(host.ctx.get('tools').get('ops_stat', sibling), undefined)
+      assert.equal(host.ctx.get('tools').executable('ops_stat', sibling), undefined)
       return [{ name: 'ops_stat', args: { path: 'note' } }]
     }, []])
     assert.equal(diagnostic, true); assert.equal(run.requests.length, 3)
     const stat = run.results.find(value => value.exec.name === 'ops_stat').result
-    assert.equal(stat.isError, false); assert.equal(stat.value.exists, true, JSON.stringify(stat.value))
+    assert.equal(stat.isError, false); assert.equal(stat.value.data.exists, true, JSON.stringify(stat.value))
   } finally { await host.close() }
 }))
 
@@ -49,7 +49,7 @@ await test('real PTC loop keeps the current run_code snapshot fixed and publishe
       return [sdkCall("const selected = await tools.ops_load_sdk({tools:['stat']}); let unavailable = false; try { await tools.ops_stat({path:'note'}); } catch { unavailable = true; } return {selected,unavailable};")]
     }, request => {
       assert.deepEqual(names(request), ['run_code']); assert.match(text(request), /ops_stat:/)
-      assert.equal(host.ctx.get('tools').get('ops_stat', sibling), undefined)
+      assert.equal(host.ctx.get('tools').executable('ops_stat', sibling), undefined)
       return [sdkCall("return await tools.ops_stat({path:'note'});")]
     }, []])
     const calls = run.results.filter(value => value.exec.name === 'run_code')

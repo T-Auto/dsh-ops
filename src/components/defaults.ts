@@ -1,5 +1,5 @@
 /** Package defaults only. Saved Loader overrides take precedence over this layer. */
-export const COMPONENTS = ['mode-minimal', 'mode-standard', 'mode-ptc', 'mode-cordis', 'discovery', 'download-guard', 'panel', 'tui'] as const
+export const COMPONENTS = ['mode-minimal', 'mode-standard', 'mode-ptc', 'mode-ops-ptc', 'mode-cordis', 'discovery', 'download-guard', 'panel', 'tui'] as const
 export type Component = typeof COMPONENTS[number]
 export function componentEnabled(component: Component, _platform: string): boolean {
   // Enhanced presets and progressive discovery start enabled. The download

@@ -1,6 +1,8 @@
 /** Real pinned settings/profile writer: persistence, validation and component reload. */
 import fs from 'node:fs'
 import path from 'node:path'
+import { Config as MergedConfig } from '../lib/settings/merged.js'
+import { executorOps } from '../lib/client/row-schema.js'
 import { parse } from 'yaml'
 import { profileFixture } from './lib/settings-profile.mjs'
 // These suites exercise the pre-merge component modules directly.
@@ -165,4 +167,27 @@ await test('real Cordis adapters preserve legacy null file/root/shell configurat
     } finally { await shutdown(ctx) }
   }
 })
+await test('merged row persists and clears the Git Bash selection through the real host writer', async () => {
+  let observed
+  const { ctx, snapshot, mutate, patchPath } = await profileFixture('ops-merged-executor', {
+    Config: MergedConfig, apply(_ctx, config) { observed = config },
+  }, { standard: { enabled: true, hidePwsh: true }, global: { bash: true } })
+  try {
+    const selected = path.join(TEST_HOME, 'selected', 'bash.exe')
+    await mutate(executorOps(snapshot().value, { clear: false, file: selected }), snapshot().revision)
+    await ctx.loader.await()
+    for (const mode of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis']) {
+      assert.equal(observed[mode].bashPath, selected)
+      assert.equal(snapshot().value[mode].bashPath, selected)
+    }
+    assert.match(fs.readFileSync(patchPath, 'utf8'), /bashPath:/)
+    assert.equal(observed.standard.hidePwsh, true)
+    await mutate(executorOps(snapshot().value, { clear: true }), snapshot().revision)
+    await ctx.loader.await()
+    for (const mode of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis']) assert.equal(observed[mode].bashPath, undefined)
+    assert.doesNotMatch(fs.readFileSync(patchPath, 'utf8'), /bashPath:/)
+    assert.equal(observed.standard.hidePwsh, true)
+  } finally { await shutdown(ctx) }
+})
+
 report('settings-host')

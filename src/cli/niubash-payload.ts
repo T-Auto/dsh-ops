@@ -1,5 +1,6 @@
 /** Frozen complete Niubash distribution. Receipts describe bytes; only this manifest authorizes them. */
-import { NIUBASH_FACES, NIUBASH_FACE_RULE } from '../niubash/faces.js'
+import { NIUBASH_FACES, NIUBASH_WINUXCMD, niubashFacePath } from '../niubash/faces.js'
+import { unsealDirectorySync } from '../niubash/seal.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
@@ -13,10 +14,17 @@ export const NIUBASH_PIN = Object.freeze(manifest)
 export const NIUBASH_RECEIPT = 'provenance.json'
 export const NIUBASH_PACKAGE_PATH = 'runtime/win32-x64/niubash'
 export const NIUBASH_HOME_PATH = 'dsh-ops/shells/niubash'
+/** One message from an unknown throwable; this module stays inside the release module closure, so it
+ * borrows no host-side helper. */
+const errorText = (error: unknown): string => (error instanceof Error && typeof error.message === 'string' ? error.message : String(error))
 const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex')
 export const niubashFileHash = (file: string) => digest(fs.readFileSync(file))
 const files: Readonly<Record<string, string>> = manifest.files
 const sizes: Readonly<Record<string, number>> = manifest.sizes
+
+/** Digest of the compiled inventory, also the version key of the prepared runtime. */
+export const NIUBASH_MANIFEST_SHA256 = createHash('sha256')
+  .update(JSON.stringify({ directories: manifest.directories, files, sizes })).digest('hex')
 
 type TarEntry = { name: string; type: string; bytes: Buffer; link: string }
 const text = (bytes: Buffer) => bytes.toString('utf8').replace(/\0.*$/su, '')
@@ -103,112 +111,77 @@ function noLinks(directory: string) {
 
 export const NIUBASH_EXECUTION_DIRECTORIES = ['winuxcmd/usr/local', 'winuxcmd/usr/local/bin', 'winuxcmd/etc', 'winuxcmd/var', 'winuxcmd/dev', 'winuxcmd/dev/shm']
 
-/** Rehash a tree against the compiled inventory, not the untrusted local receipt. */
-function verifyTree(directory: string, allowExecutionState: boolean) {
+/** The local receipt must restate the compiled inventory; it never authorizes bytes itself. */
+function assertProvenanceReceipt(value: unknown) {
+  const receipt = (value !== null && typeof value === 'object' ? value : {}) as Record<string, unknown>
+  if (receipt.version !== 1 || receipt.archiveSha256 !== manifest.archiveSha256
+    || receipt.executableSha256 !== manifest.executableSha256 || receipt.upstreamVersion !== manifest.upstreamVersion
+    || JSON.stringify(receipt.files) !== JSON.stringify(files)
+    || JSON.stringify(receipt.sizes) !== JSON.stringify(sizes)) throw Error('Invalid Niubash provenance receipt')
+}
+
+/** One regular file of the expected size, judged by metadata alone. */
+export function expectNiubashFile(directory: string, name: string, size: number): void {
+  let stat: fs.Stats
+  try { stat = fs.lstatSync(path.join(directory, name)) } catch { throw Error(`Incomplete Niubash payload: ${name} is missing`) }
+  if (!stat.isFile()) throw Error(`Unsafe Niubash payload member: ${name}`)
+  if (stat.size !== size) throw Error(`Niubash payload size mismatch: ${name}`)
+}
+
+/**
+ * Selection check: the pinned inventory is present with its pinned sizes. Reads metadata only.
+ * Bytes are trusted at the point they enter this machine ({@link stageNiubashArchive} and the
+ * package build); every later writer is the same account that could equally edit this module,
+ * so rehashing here would add cost, not protection. Paths outside the inventory are not inspected.
+ * @returns the absolute `niu.exe` path.
+ */
+export function inspectNiubashTree(directory: string): string {
   noLinks(directory)
-  const expected = { ...files }
-  if (allowExecutionState) for (const face of NIUBASH_FACES) {
-    if (!/^(?:[a-z0-9][a-z0-9-]*|\[)$/u.test(face)) throw Error('Unsafe compiled Niubash face')
-    const name = `winuxcmd/usr/bin/${face}.exe`
-    if (!Object.hasOwn(expected, name)) expected[name] = files['winuxcmd/usr/bin/winuxcmd.exe']
-  }
+  for (const [name, size] of Object.entries(sizes)) expectNiubashFile(directory, name, size)
+  return path.join(directory, manifest.executable)
+}
+
+/**
+ * Installation verification: rehash every byte of a pristine tree against the compiled inventory
+ * and reject anything the inventory does not name. Used where bytes enter or leave this machine,
+ * never on the mount or command path (see {@link inspectNiubashTree}).
+ */
+export function verifyNiubashTree(directory: string) {
+  noLinks(directory)
   const seenFiles = new Set<string>()
   const walk = (relative: string) => {
     for (const entry of fs.readdirSync(path.join(directory, relative), { withFileTypes: true })) {
       const name = relative ? `${relative}/${entry.name}` : entry.name
       const file = path.join(directory, name)
       if (entry.isDirectory()) {
-        if (!manifest.directories.includes(name)
-          && !(allowExecutionState && NIUBASH_EXECUTION_DIRECTORIES.some(allowed => allowed === name || allowed.startsWith(`${name}/`)))) {
-          throw Error(`Unknown Niubash directory: ${name}`)
-        }
+        if (!manifest.directories.includes(name) && !NIUBASH_EXECUTION_DIRECTORIES.includes(name)) throw Error(`Unknown Niubash directory: ${name}`)
         walk(name)
       }
-      // pnpm may hardlink immutable package members into its store. Rehash every
-      // source byte; only disposable execution trees must have exclusive file links.
-      else if (!entry.isFile() || fs.lstatSync(file).isSymbolicLink() || (allowExecutionState && fs.lstatSync(file).nlink !== 1)) throw Error(`Unsafe Niubash tree member: ${name}`)
-      else if (name === NIUBASH_RECEIPT || (allowExecutionState && name === 'execution-provenance.json')) continue
+      // pnpm may hardlink package members into its store; byte hashes remain the trust anchor.
+      else if (!entry.isFile() || fs.lstatSync(file).isSymbolicLink()) throw Error(`Unsafe Niubash tree member: ${name}`)
+      else if (name === NIUBASH_RECEIPT) continue
       else {
-        if (!Object.hasOwn(expected, name) || fs.statSync(file).size !== (sizes[name] ?? sizes['winuxcmd/usr/bin/winuxcmd.exe']) || niubashFileHash(file) !== expected[name]) throw Error(`Niubash tree checksum mismatch: ${name}`)
-        seenFiles.add(name)
+        // Trees older releases ran in place may still carry faces; they hash as winuxcmd.exe.
+        const original = Object.hasOwn(files, name) ? name : NIUBASH_FACES.some(face => name === niubashFacePath(face)) ? NIUBASH_WINUXCMD : undefined
+        if (original === undefined || fs.statSync(file).size !== sizes[original] || niubashFileHash(file) !== files[original]) throw Error(`Niubash tree checksum mismatch: ${name}`)
+        if (Object.hasOwn(files, name)) seenFiles.add(name)
       }
     }
   }
   walk('')
   // npm omits empty directories; required parents are enforced by the complete file inventory.
-  if (seenFiles.size !== Object.keys(expected).length) throw Error('Incomplete Niubash payload tree')
-  const receipt = JSON.parse(fs.readFileSync(path.join(directory, NIUBASH_RECEIPT), 'utf8')) as Record<string, unknown>
-  if (receipt.version !== 1 || receipt.archiveSha256 !== manifest.archiveSha256
-    || receipt.executableSha256 !== manifest.executableSha256 || receipt.upstreamVersion !== manifest.upstreamVersion
-    || JSON.stringify(receipt.files) !== JSON.stringify(files)
-    || JSON.stringify(receipt.sizes) !== JSON.stringify(sizes)) throw Error('Invalid Niubash provenance receipt')
-  if (allowExecutionState) {
-    const derived = JSON.parse(fs.readFileSync(path.join(directory, 'execution-provenance.json'), 'utf8'))
-    if (JSON.stringify(derived) !== JSON.stringify(niubashExecutionReceipt())) throw Error('Invalid Niubash execution receipt')
-  }
+  if (seenFiles.size !== Object.keys(files).length) throw Error('Incomplete Niubash payload tree')
+  assertProvenanceReceipt(JSON.parse(fs.readFileSync(path.join(directory, NIUBASH_RECEIPT), 'utf8')))
   return path.join(directory, manifest.executable)
 }
-
-/** Cancellable per-invocation validation; selection retains the synchronous fail-closed check. */
-export async function verifyNiubashTreeAsync(directory: string, allowExecutionState: boolean, signal: AbortSignal) {
-  signal.throwIfAborted()
-  noLinks(directory)
-  const expected = { ...files }
-  if (allowExecutionState) for (const face of NIUBASH_FACES) {
-    if (!/^(?:[a-z0-9][a-z0-9-]*|\[)$/u.test(face)) throw Error('Unsafe compiled Niubash face')
-    const name = `winuxcmd/usr/bin/${face}.exe`
-    if (!Object.hasOwn(expected, name)) expected[name] = files['winuxcmd/usr/bin/winuxcmd.exe']
-  }
-  const seenFiles = new Set<string>()
-  const walk = async (relative: string): Promise<void> => {
-    for (const entry of await fs.promises.readdir(path.join(directory, relative), { withFileTypes: true })) {
-      const name = relative ? `${relative}/${entry.name}` : entry.name
-      signal.throwIfAborted()
-      const file = path.join(directory, name)
-      if (entry.isDirectory()) {
-        if (!manifest.directories.includes(name)
-          && !(allowExecutionState && NIUBASH_EXECUTION_DIRECTORIES.some(allowed => allowed === name || allowed.startsWith(`${name}/`)))) {
-          throw Error(`Unknown Niubash directory: ${name}`)
-        }
-        await walk(name)
-      }
-      else if (!entry.isFile() || fs.lstatSync(file).isSymbolicLink() || (allowExecutionState && fs.lstatSync(file).nlink !== 1)) throw Error(`Unsafe Niubash tree member: ${name}`)
-      else if (name === NIUBASH_RECEIPT || (allowExecutionState && name === 'execution-provenance.json')) continue
-      else {
-        if (!Object.hasOwn(expected, name) || fs.statSync(file).size !== (sizes[name] ?? sizes['winuxcmd/usr/bin/winuxcmd.exe']) || digest(await fs.promises.readFile(file, { signal })) !== expected[name]) throw Error(`Niubash tree checksum mismatch: ${name}`)
-        seenFiles.add(name)
-      }
-    }
-  }
-  await walk('')
-  // npm omits empty directories; required parents are enforced by the complete file inventory.
-  if (seenFiles.size !== Object.keys(expected).length) throw Error('Incomplete Niubash payload tree')
-  const receipt = JSON.parse(await fs.promises.readFile(path.join(directory, NIUBASH_RECEIPT), { encoding: 'utf8', signal })) as Record<string, unknown>
-  if (receipt.version !== 1 || receipt.archiveSha256 !== manifest.archiveSha256
-    || receipt.executableSha256 !== manifest.executableSha256 || receipt.upstreamVersion !== manifest.upstreamVersion
-    || JSON.stringify(receipt.files) !== JSON.stringify(files)
-    || JSON.stringify(receipt.sizes) !== JSON.stringify(sizes)) throw Error('Invalid Niubash provenance receipt')
-  if (allowExecutionState) {
-    const derived = JSON.parse(await fs.promises.readFile(path.join(directory, 'execution-provenance.json'), { encoding: 'utf8', signal }))
-    if (JSON.stringify(derived) !== JSON.stringify(niubashExecutionReceipt())) throw Error('Invalid Niubash execution receipt')
-  }
-  return path.join(directory, manifest.executable)
-}
-
-export function niubashExecutionReceipt() {
-  return { rule: NIUBASH_FACE_RULE, sourceArchiveSha256: manifest.archiveSha256,
-    sourceExecutableSha256: files['winuxcmd/usr/bin/winuxcmd.exe'], faces: NIUBASH_FACES }
-}
-
-export function verifyNiubashTree(directory: string) { return verifyTree(directory, false) }
-
-/** Validate a mutable execution copy while allowing only directories created by Niubash itself. */
-export function verifyNiubashExecutionTree(directory: string) { return verifyTree(directory, true) }
 
 /** Build in a fresh sibling, verify before rename, and preserve the previous payload on failure. */
 export function stageNiubashArchive(archive: string, target: string) {
   const contents = verifiedNiubashArchive(archive)
   noLinks(target)
+  // A previous execution sealed the shared inodes read-only; clear that before the
+  // target is replaced or its previous tree is removed.
+  unsealDirectorySync(target)
   fs.mkdirSync(path.dirname(target), { recursive: true })
   const scratch = fs.mkdtempSync(`${target}.stage-`)
   const previous = `${target}.previous-${randomUUID()}`
@@ -231,6 +204,156 @@ export function stageNiubashArchive(archive: string, target: string) {
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true })
   }
-  if (moved) fs.rmSync(previous, { recursive: true, force: true })
+  // Cleanup is diagnostic only: a refused removal must never turn a completed
+  // install into a reported failure, and the sibling it leaves behind is
+  // reclaimed by the next provision after the tree verifies.
+  if (moved) {
+    try {
+      unsealDirectorySync(previous)
+      fs.rmSync(previous, { recursive: true, force: true })
+    } catch (error) {
+      console.error('dsh-ops: could not remove the previous Niubash tree ' + previous + ': ' + errorText(error))
+    }
+  }
   return path.join(target, manifest.executable)
+}
+
+/** What one staged sibling of the fixed Niubash target is, and what a reclaim did with it. */
+export interface NiubashSiblingDecision {
+  /** The decision, in the order a reclaim applies it. */
+  action: 'reused' | 'restored' | 'removed' | 'kept'
+  /** The sibling this decision is about. */
+  path: string
+  /** Bytes the sibling occupies. */
+  bytes: number
+  /** Why it was kept; absent for a decision that changed the filesystem. */
+  detail?: string
+}
+
+/** Bytes and files below one tree, without following links out of it. */
+function treeSize(directory: string): { bytes: number, files: number } {
+  let bytes = 0, files = 0
+  const walk = (current: string): void => {
+    let entries
+    try { entries = fs.readdirSync(current, { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      const file = path.join(current, entry.name)
+      let stat
+      try { stat = fs.lstatSync(file) } catch { continue }
+      if (stat.isSymbolicLink()) continue
+      if (entry.isDirectory()) walk(file)
+      else { bytes += stat.size; files += 1 }
+    }
+  }
+  walk(directory)
+  return { bytes, files }
+}
+
+/**
+ * Reclaim the siblings an interrupted or failed Niubash install left beside the
+ * fixed target: "niubash.stage-*" and "niubash.previous-*".
+ *
+ * The target is the only authority on what may be reused, restored or removed:
+ *  - a complete staged tree is renamed into place when the target is missing
+ *    (reuse, which also saves another 108 MiB copy) and removed when it is not;
+ *  - a complete previous tree is renamed back when the target is missing
+ *    (restore after a failed replacement) and removed when it is not;
+ *  - anything that does not verify stays where it is and is reported as kept.
+ *
+ * Only direct children of the target's own directory are considered, links are
+ * never followed, and every deletion is a rename to an aside name first so a
+ * refused remove can be retried. A dry run reports the same decisions without
+ * changing the filesystem.
+ * @param target - the fixed Niubash tree path the sibling names extend.
+ * @param options - verification, filesystem and clock injection for tests.
+ * @returns one decision per sibling, newest first.
+ */
+export function reclaimNiubashSiblings(target: string, {
+  dryRun = false,
+  verify = verifyNiubashTree,
+  rename = (from: string, to: string): void => { fs.renameSync(from, to) },
+  remove = (aside: string): void => { fs.rmSync(aside, { recursive: true, force: true }) },
+  now = Date.now(),
+  log = (message: string): void => { console.error(message) },
+}: {
+  dryRun?: boolean
+  verify?: (directory: string) => string
+  rename?: (from: string, to: string) => void
+  remove?: (aside: string) => void
+  now?: number
+  log?: (message: string) => void
+} = {}): NiubashSiblingDecision[] {
+  const parent = path.dirname(target)
+  const base = path.basename(target)
+  let entries
+  try { entries = fs.readdirSync(parent, { withFileTypes: true }) } catch { return [] }
+  const stages: { path: string, bytes: number }[] = []
+  const previous: { path: string, bytes: number }[] = []
+  const decisions: NiubashSiblingDecision[] = []
+  for (const entry of entries) {
+    if (entry.name === base) continue
+    const full = path.join(parent, entry.name)
+    if (entry.name.startsWith(base + '.stage-') || entry.name.startsWith(base + '.previous-')) {
+      let stat
+      try { stat = fs.lstatSync(full) } catch { continue }
+      if (!stat.isDirectory() || stat.isSymbolicLink()) {
+        decisions.push({ action: 'kept', path: full, bytes: 0, detail: 'the sibling is not a plain directory' })
+        continue
+      }
+      const size = treeSize(full)
+      if (entry.name.startsWith(base + '.stage-')) stages.push({ path: full, bytes: size.bytes })
+      else previous.push({ path: full, bytes: size.bytes })
+    }
+  }
+  const verifyQuietly = (directory: string): boolean => {
+    try { verify(directory); return true } catch { return false }
+  }
+  const moveAsideAndRemove = (full: string, bytes: number): NiubashSiblingDecision => {
+    if (dryRun) return { action: 'removed', path: full, bytes }
+    const aside = full + '.reclaim-' + now.toString(36)
+    try { rename(full, aside) } catch (error) {
+      return { action: 'kept', path: full, bytes, detail: 'could not move it aside: ' + errorText(error) }
+    }
+    try { remove(aside) } catch (error) {
+      return { action: 'kept', path: aside, bytes, detail: 'could not remove it: ' + errorText(error) }
+    }
+    return { action: 'removed', path: full, bytes }
+  }
+  for (const staged of stages) {
+    if (!verifyQuietly(staged.path)) {
+      decisions.push({ action: 'kept', path: staged.path, bytes: staged.bytes, detail: 'the staged tree does not verify' })
+      continue
+    }
+    if (!fs.existsSync(target)) {
+      if (!dryRun) {
+        try { rename(staged.path, target) } catch (error) {
+          decisions.push({ action: 'kept', path: staged.path, bytes: staged.bytes, detail: 'could not reuse it: ' + errorText(error) })
+          continue
+        }
+      }
+      decisions.push({ action: 'reused', path: staged.path, bytes: staged.bytes })
+      log('dsh-ops: reused a complete staged Niubash tree as ' + target)
+      continue
+    }
+    decisions.push(moveAsideAndRemove(staged.path, staged.bytes))
+  }
+  for (const kept of previous) {
+    if (!verifyQuietly(kept.path)) {
+      decisions.push({ action: 'kept', path: kept.path, bytes: kept.bytes, detail: 'the previous tree does not verify' })
+      continue
+    }
+    if (!fs.existsSync(target)) {
+      if (!dryRun) {
+        try { rename(kept.path, target) } catch (error) {
+          decisions.push({ action: 'kept', path: kept.path, bytes: kept.bytes, detail: 'could not restore it: ' + errorText(error) })
+          continue
+        }
+      }
+      decisions.push({ action: 'restored', path: kept.path, bytes: kept.bytes })
+      log('dsh-ops: restored the previous Niubash tree to ' + target)
+      continue
+    }
+    decisions.push(moveAsideAndRemove(kept.path, kept.bytes))
+  }
+  return decisions
 }

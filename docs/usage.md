@@ -8,14 +8,14 @@ for stopping the host, registry-policy failures and the 0.4.x-to-0.5.x migration
 ## 0.5.0 candidate and component defaults
 
 Native file paths (including copy/move destinations), omitted search paths and Bash's default or
-relative `workdir` follow the live `working_directory` service. Each call resolves its base once;
+relative `workdir` follow the live `workingDirectory` service. Each call resolves its base once;
 `resolvedFrom` and `cwdSource` identify that base in structured and rendered file/Bash results
 (credential refusals remain path-free).
-Hosts without this service fall back to `session.header.cwd` and label that source. Service errors
+The DSH 0.2.2 `workingDirectory` service is required. Missing services, service errors
 or cancellation stop the call rather than silently using an old directory. Changing cwd never
 widens `sandboxPolicy.workspaceRoot` write authority. Native `ops_result` defaults to the live cwd;
 after changing directories, pass the original returned `referenceRoot` as `root` to page or release
-an older reference. PTC's explicit/default workspace-root contract is unchanged.
+an older reference. The shared PTC result capability also defaults to the live cwd; use an explicit root for workspace-bound batch audits.
 
 This checkout is an unreleased candidate. The bundle declares one enabled `dsh-ops` row. Its
 built-in preset consumers, explicit `presets` map, Native discovery, panel, TUI and companion link
@@ -23,12 +23,19 @@ are configured on the same page. Panel and TUI start off. Migrate saved legacy-r
 this row before removing obsolete overrides; OPS does not rewrite profiles automatically.
 
 Standard and Cordis publish resident Native tools; Minimal has no file baseline; PTC publishes
-typed APIs with a separate SDK loader. Residency, dynamic loading, Bash, file replacement and
+typed APIs with a separate SDK loader; OPS PTC (`ops-ptc`) is registered at plugin runtime and keeps
+that surface, adding the batch-call guidance from the editable `prompts/batching-guidance.md` once at
+session start, then shape notices for root `run_code` programs (`bypass`/`plan`/`shape`, each latched per
+ turn) appended as `additionalContexts` (on in the packaged bundle; see [presets](presets.md)).
+The default preset is forced by `global.forceDefaultOpsPtc` (on by default).
+Residency, dynamic loading, Bash, file replacement and
 Windows host-shell hiding are independently controlled. Global gates preserve saved per-preset
 intent. Explicit consumers use the same assembler; unlisted presets remain unchanged.
 [Configuration](configuration-reference.md) describes native Switch controls and exact custom ids;
 see the [upgrade notes](upgrading.md#moving-from-04x-to-05x) for migration.
 
+
+In 0.5, enabling official-tool replacement does not guarantee that a conditional official tool disappears from the model's tool table. When the OPS counterpart has conditional admission, OPS keeps the official registration visible and guards its dispatch only when the same captured step toolSet admits the counterpart and the consumer still has current authority. An absent, revoked or not-yet-ready counterpart cannot disable the official tool as well. Safe unconditional resident replacements may still use host restrictions. OPS never wraps official definitions or hides tools from inside admission conditions or prompt assembly.
 
 ---
 
@@ -41,7 +48,7 @@ aggregates bounded PR, claim, CI and base-head facts without adding resident too
 | --- | --- |
 | OS | Windows x64, Linux x64 or macOS 13+ (arm64 or Intel x64); OPS Bash is on by default on all of them (pinned payload on Windows, distribution Bash on POSIX) |
 | Node.js | `^22.19 \|\| >=24` (the `engines` field in `package.json`) |
-| Host | DSH `0.2.0-rc.2` |
+| Host | DSH `0.2.2-rc.1` or later in the 0.2.2 series |
 | Target application | Initialized |
 
 ### macOS (arm64 and Intel)
@@ -89,15 +96,23 @@ On Windows the pinned Bash payload arrives with the install; `bash-runtime` rema
 ```console
 dsh-ops bash-runtime status
 dsh-ops bash-runtime install
-dsh-ops bash-runtime git
-dsh-ops bash-runtime managed
+dsh-ops bash-runtime git [--path <exe>]
+dsh-ops bash-runtime niubash
 dsh-ops bash-runtime remove            # preview only
 dsh-ops bash-runtime remove --yes      # remove receipt-marked managed versions
 ```
 
-`git` and `managed` print an absolute `bashPath` configuration for the host config editor; they do not edit a profile or PATH. Reload the mode row after applying the selection or installing/removing its runtime. Stop running Bash jobs before removal. Removal refuses links in the managed path and preserves unmarked versions, system Git and PowerShell. `install` reuses the pinned download and checksum checks from `provision-shells --bash`; `--dry-run` makes no download or change. Windows restricted modes still require the pinned MSYS IPC compatibility match. A different Git Bash remains a full-access choice; approval never repairs an incompatible restricted runtime. Linux/macOS continue using host Bash.
+`niubash` reports the default executor the deployment resolves and states that the mode rows' `bashPath` must be removed for it; `git` prints an absolute `bashPath` for the host config editor (the first scanned installation when `--path` is omitted). Neither edits a profile or PATH. The settings page's **Bash executor** card is the same choice with a UI: switch to Niubash, click a scanned Git Bash, or type a path; the host validates it before the save is written. Reload the mode row after applying the selection or installing/removing its runtime. Stop running Bash jobs before removal. Removal refuses links in the managed path and preserves unmarked versions, system Git and PowerShell. `install` reuses the pinned download and checksum checks from `provision-shells --bash`; `--dry-run` makes no download or change. Windows restricted modes still require the pinned MSYS IPC compatibility match. A different Git Bash remains a full-access choice; approval never repairs an incompatible restricted runtime. Linux/macOS continue using host Bash.
 
 Windows confined calls stage a private MSYS tree under `<DSH_HOME>/dsh-ops/bash-ipc`. Identical verified payloads share a content-addressed generation across profiles using the same DSH home; separate homes remain isolated. Lifecycle locking and durable process leases protect selected runtimes, including the interval before a child starts. Automatic reclamation retains the current generation and one predecessor, plus leased, legacy or uncertain entries. `bash-runtime status` and `ladder` expose observed cache usage. To reclaim historical copies, first run `dsh-ops bash-runtime clean-cache` to preview. Stop **all** OPS hosts and Bash jobs, then run `dsh-ops bash-runtime clean-cache --yes --all-hosts-stopped` against the intended `DSH_HOME`; `--dry-run` never removes anything. Only recognized marker-owned generations are eligible; unrelated directories and linked paths are not removed. The selected generation and one predecessor remain. Removed caches are rebuilt on demand. Do not manually delete caches while any OPS host or shell may still use them.
+
+Long command output that overflows the in-memory tail is spilled by the host subprocess service to `<tmpdir>/dsh-subprocess-*`, and DSH itself keeps those files until an external cleanup that does not exist. OPS therefore records every spill path it settles in `<DSH_HOME>/ops-spill-ledger.jsonl` and reclaims only those recorded files: files older than `spillRetentionDays` (default 30), then the oldest files while the retained total exceeds `spillTotalBudgetMiB` (default 256 MiB), at most 64 files per bounded pass. `spillRetentionDays: 0` reports without deleting and `spillSweepEnabled: false` stops the automatic passes. `dsh-ops bash-runtime spill-report` shows the ledger count, existing and expired bytes, skipped non-local entries and the last failure; add `--json` for the raw report or `--sweep --yes` to delete the eligible files. `bash-runtime status` includes a one-line summary. OPS never removes a `dsh-subprocess-*` directory, never scans a directory for files to delete, and never touches a path no settlement recorded.
+
+### Reclaiming OPS temporary state
+
+`dsh-ops cache status` reports every temporary resource OPS itself can reproduce, with its ownership evidence and the bytes it occupies: kept provision downloads under `<DSH_HOME>/dsh-ops/pending`, Niubash staging and previous siblings beside the fixed payload, quarantined Bash IPC generations, audit-store writer temporaries under `<root>/.dsh-ops`, legacy Niubash execution trees from 0.5.0–0.5.2, and non-current prepared Niubash versions plus broken/stage/retired leftovers. New calls reuse one prepared runtime, not temporary trees. Nothing is deleted on a name pattern: ownership evidence must verify inside a known root and no live lease may name it. Legacy execution trees may be incomplete or lack receipts, but every existing payload member must match the frozen bytes. Prepared directories instead belong to the exact manifest-hash namespace under the known prepared root; old manifests need not be installed. The current plain hash, unrelated names and links are excluded. Prepared reclamation renames a live name once before best-effort deletion, removes an already `.retired-` name in place, and keeps a refused rename for a later host start/reclaim.
+
+`dsh-ops cache reclaim` is the same report with a decision. It previews by default, deletes only with `--yes`, and refuses outright without `--all-hosts-stopped`, because several of these roots belong to processes that may still be running — stop every OPS host and Bash job first. Each row reports `deleted`, `kept` or `unverified` plus bytes; a removal that fails is moved aside for the next run. `--kind` narrows the run to one class, `--root` names an audit-store root explicitly, and `--json` prints the same facts as data. Kept provision downloads are also reclaimed automatically, under a count/byte/age budget, by the next `provision-shells` run.
 
 ### One-command npm installation
 
@@ -137,7 +152,7 @@ refused — and the manifest gate fails if one appears. See
 
 ### Host compatibility and display metadata
 
-The package declares the bounded DSH compatibility range `>=0.2.0-rc.2 <0.2.2-0` in both `engines.dsh` and the legacy DSH peer dependency. This includes `0.2.0-rc.2`, `0.2.1-rc.2`, `0.2.1-rc.3`, `0.2.1-rc.4`, `0.2.1-rc.5` and the `0.2.1` stable line, while rejecting `0.2.0-rc.1`, `0.2.2` prereleases and `0.3.0`. The range is checked against the Host's own evaluator on every run, and the whole suite is validated twice over the same source — on `0.2.0-rc.2` and on `0.2.1-rc.5` — so one shipped build serves both the older and the newest supported Host; the plugin's native adapter preserves the existing Cordis tool, prompt, policy, subprocess, PTC and UI behavior.
+The 0.5 series declares `>=0.2.2-rc.1 <0.2.3-0` in `engines.dsh` and the DSH peer dependency. DSH 0.2.0/0.2.1 and earlier 0.2.2 previews are unsupported; use an older OPS release with those hosts. The adapter architecture remains, but its host APIs and development dependencies target 0.2.2-rc.1 natively. Version-range tests check metadata, not runtime coverage of future releases. Discovery and PTC definitions remain stable while the host captures each step's admitted tool set; selections commit at step end and cannot expand the current request. The live working-directory service is required, with no session-header execution fallback.
 
 The bundle icon comes from the root manifest. Each component exports its own
 `dsh-ops/<component>/icon` and `locale/*.json`; DSH 0.2.1 does not use a component's
@@ -299,8 +314,7 @@ This version starts no long-lived server process: the native file worker is owne
 
 Native file tools present readable text: `=== FILE: path (Lines a-b of n) ===`
 followed by `N | text`; fully returned multi-file ranges use compact `N|text` and may share one JSON-quoted parent path. Paths, observed revisions and paging notices remain visible. See [compact ranges](native-ranges.md).
-PTC execution values remain structured objects; inspect `status` and completeness
-before using them. Grep context labels use the physical source line, while glob
+Native execution values and PTC SDK values share the typed `Outcome` contract: inspect `status`, then `data` for canonical facts, and preserve coverage/continuation on partial results. Native text stays independently rendered and compact. Grep context labels use the physical source line, while glob
 path mode lists one path per line. Stat retains size, revision and metadata facts;
 diff shows removed/added lines. Mutation tools return short receipts without
 repeating file contents.

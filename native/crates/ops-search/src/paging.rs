@@ -1,75 +1,195 @@
 //! Stateless cursors revalidate one bounded snapshot; they never grant authority.
+use super::scan::{Scan, SourceKind};
 use super::*;
-use super::scan::Scan;
 use cap_fs_ext::MetadataExt;
 use ops_protocol::search::{SearchCoverage, SearchExecutionReport, TruncatedBy};
 
-fn digest(bytes: &[u8]) -> String { format!("{:x}", Sha256::digest(bytes)) }
-pub struct Cursor { pub offset: usize, binding: String, snapshot: Option<String> }
+fn digest(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+pub struct Cursor {
+    pub offset: usize,
+    binding: String,
+    snapshot: Option<String>,
+    source: SourceKind,
+}
 impl Cursor {
+    /// A cursor bound to the live walk, the pre-index default.
     pub fn new(request: &Request, offset: usize, token: Option<&str>) -> Result<Self> {
+        Self::new_for(request, SourceKind::Walk, offset, token)
+    }
+    /// A cursor bound to one traversal kind.
+    ///
+    /// The kind is part of the binding domain: a continuation minted by the walk
+    /// cannot be replayed against an indexed page, and the reverse, because the
+    /// two paths stamp different snapshots and a mixed page would claim a
+    /// consistency it cannot have. Walk tokens keep the existing `s1` spelling
+    /// byte for byte; indexed tokens use `s2`.
+    pub fn new_for(
+        request: &Request,
+        source: SourceKind,
+        offset: usize,
+        token: Option<&str>,
+    ) -> Result<Self> {
         let mut query = request.args.clone();
-        if let Some(fields) = query.as_object_mut() { fields.remove("offset"); fields.remove("continuation"); }
+        if let Some(fields) = query.as_object_mut() {
+            fields.remove("offset");
+            fields.remove("continuation");
+        }
         let root = file_path::checked(&request.root)?;
         let identity = root.parent.symlink_metadata(&root.name)?;
-        let mut authority = json!([request.tool, query, request.scope, request.root,
-            identity.dev(), identity.ino(), request.read_only, request.write_roots, request.deny_roots, request.deny_credential_names]);
+        let mut authority = json!([
+            request.tool,
+            query,
+            request.scope,
+            request.root,
+            identity.dev(),
+            identity.ino(),
+            request.read_only,
+            request.write_roots,
+            request.deny_roots,
+            request.deny_credential_names
+        ]);
         // Preserve the existing s1 domain exactly unless delegated Windows checks are active.
-        if request.windows_paths { authority.as_array_mut().unwrap().push(json!("wsl-windows-paths-v1")); }
+        if request.windows_paths {
+            authority
+                .as_array_mut()
+                .unwrap()
+                .push(json!("wsl-windows-paths-v1"));
+        }
+        // Only the indexed kind extends the domain, so every existing walk token
+        // and every recorded s1 binding stays identical.
+        if source == SourceKind::Index {
+            authority
+                .as_array_mut()
+                .unwrap()
+                .push(json!("index-source-v1"));
+        }
         let binding = digest(&serde_json::to_vec(&authority)?);
-        let mut cursor = Self { offset, binding, snapshot: None };
+        let mut cursor = Self {
+            offset,
+            binding,
+            snapshot: None,
+            source,
+        };
         if let Some(token) = token {
             let parts: Vec<_> = token.split(':').collect();
-            let valid = token.len() <= 256 && parts.len() == 5 && parts[0] == "s1"
-                && parts[1] == cursor.binding && parts[2].len() == 64
+            let valid = token.len() <= 256
+                && parts.len() == 5
+                && parts[0] == source.token_prefix()
+                && parts[1] == cursor.binding
+                && parts[2].len() == 64
                 && parts[2].bytes().all(|byte| byte.is_ascii_hexdigit())
                 && digest(parts[..4].join(":").as_bytes()) == parts[4];
-            if !valid { return Err(stale()); }
+            if !valid {
+                return Err(stale());
+            }
             let next = parts[3].parse::<usize>().map_err(|_| stale())?;
-            if offset != 0 && offset != next { return Err(stale()); }
-            cursor.offset = next; cursor.snapshot = Some(parts[2].into());
+            if offset != 0 && offset != next {
+                return Err(stale());
+            }
+            cursor.offset = next;
+            cursor.snapshot = Some(parts[2].into());
         }
         Ok(cursor)
     }
+    /// Rejects a cursor whose page was produced by another traversal kind.
+    ///
+    /// `finish` calls this with the scan kind: a continuation minted by the walk
+    /// and replayed against an indexed scan (or the reverse) would compare two
+    /// snapshot domains, so it is `SEARCH_STALE` instead.
+    pub fn ensure_kind(&self, source: SourceKind) -> Result<()> {
+        if self.source == source {
+            return Ok(());
+        }
+        Err(stale())
+    }
     fn token(&self, snapshot: &str, next: usize) -> String {
-        let body = format!("s1:{}:{snapshot}:{next}", self.binding);
+        let body = format!(
+            "{}:{}:{snapshot}:{next}",
+            self.source.token_prefix(),
+            self.binding
+        );
         format!("{body}:{}", digest(body.as_bytes()))
     }
 }
 fn stale() -> Failure {
-    let mut error = Failure::new("SEARCH_STALE", "Search continuation does not match the current query, authority or filesystem observation");
-    error.next_action = "Discard the continuation and start a fresh bounded query; the cursor grants no authority.".into();
+    let mut error = Failure::new(
+        "SEARCH_STALE",
+        "Search continuation does not match the current query, authority or filesystem observation",
+    );
+    error.next_action =
+        "Discard the continuation and start a fresh bounded query; the cursor grants no authority."
+            .into();
     error
 }
 pub struct Page {
-    pub items: Vec<Value>, pub offset: usize, limit: usize, bytes: usize,
-    pub output_cut: bool, partial_item: bool, capture: Option<std::rc::Rc<ops_protocol::capture::OutputSink>>,
+    pub items: Vec<Value>,
+    pub offset: usize,
+    limit: usize,
+    bytes: usize,
+    pub output_cut: bool,
+    partial_item: bool,
+    capture: Option<std::rc::Rc<ops_protocol::capture::OutputSink>>,
 }
 impl Page {
-    pub fn new(offset: usize, limit: usize, capture: Option<std::rc::Rc<ops_protocol::capture::OutputSink>>) -> Self {
-        Self { items: Vec::new(), offset, limit, bytes: 0, output_cut: false, partial_item: false, capture }
+    pub fn new(
+        offset: usize,
+        limit: usize,
+        capture: Option<std::rc::Rc<ops_protocol::capture::OutputSink>>,
+    ) -> Self {
+        Self {
+            items: Vec::new(),
+            offset,
+            limit,
+            bytes: 0,
+            output_cut: false,
+            partial_item: false,
+            capture,
+        }
     }
     pub fn wants(&self, ordinal: usize) -> bool {
-        (!self.output_cut || self.capture.as_ref().is_some_and(|sink| !sink.exhausted())) && ordinal >= self.offset && ordinal < self.offset.saturating_add(self.limit)
+        (!self.output_cut || self.capture.as_ref().is_some_and(|sink| !sink.exhausted()))
+            && ordinal >= self.offset
+            && ordinal < self.offset.saturating_add(self.limit)
     }
     pub fn push(&mut self, mut item: Value, ordinal: usize) -> Result<()> {
-        if !self.wants(ordinal) { return Ok(()); }
-        if let Some(sink) = &self.capture { sink.push(&item); }
-        if self.output_cut { return Ok(()); }
+        if !self.wants(ordinal) {
+            return Ok(());
+        }
+        if let Some(sink) = &self.capture {
+            sink.push(&item);
+        }
+        if self.output_cut {
+            return Ok(());
+        }
         let remaining = MAX_OUTPUT_BYTES.saturating_sub(8192 + self.bytes);
         let size = ops_protocol::capture::json_size(&item) + 1;
-        if size <= remaining { self.items.push(item); self.bytes += size; return Ok(()); }
+        if size <= remaining {
+            self.items.push(item);
+            self.bytes += size;
+            return Ok(());
+        }
         self.output_cut = true;
-        if let Some(sink) = &self.capture { sink.clipped(); }
+        if let Some(sink) = &self.capture {
+            sink.clipped();
+        }
         // Preserve a useful first prefix without pretending the remaining line was delivered.
         if let Some(text) = item.get("text").and_then(Value::as_str).map(str::to_owned) {
-            let length = text.len(); let mut end = length.min(remaining);
+            let length = text.len();
+            let mut end = length.min(remaining);
             while end > 0 {
-                while !text.is_char_boundary(end) { end -= 1; }
-                item["text"] = json!(&text[..end]); item["truncatedInLine"] = json!(true);
-                item["bytesTotal"] = json!(length); item["bytesOmitted"] = json!(length - end);
-                if ops_protocol::capture::json_size(&item) + 1 <= remaining {
-                    self.items.push(item); self.partial_item = true; break;
+                while !text.is_char_boundary(end) {
+                    end -= 1;
+                }
+                item["text"] = json!(&text[..end]);
+                item["truncatedInLine"] = json!(true);
+                item["bytesTotal"] = json!(length);
+                item["bytesOmitted"] = json!(length - end);
+                if ops_protocol::capture::json_size(&item) < remaining {
+                    self.items.push(item);
+                    self.partial_item = true;
+                    break;
                 }
                 end /= 2;
             }
@@ -77,41 +197,112 @@ impl Page {
         Ok(())
     }
 }
-pub fn finish(mut scan: Scan, cursor: Cursor, page: Page, observed: usize, item_total: usize, extra: Value) -> Result<Value> {
+pub fn finish(
+    mut scan: Scan,
+    cursor: Cursor,
+    page: Page,
+    observed: usize,
+    item_total: usize,
+    extra: Value,
+) -> Result<Value> {
     scan.running(); // Account for time spent in the final read/match/output step too.
+    cursor.ensure_kind(scan.source)?;
     let snapshot = format!("{:x}", scan.hash.clone().finalize());
     let complete = scan.complete();
-    if cursor.snapshot.as_ref().is_some_and(|expected| !complete || *expected != snapshot) { return Err(stale()); }
-    let next = page.offset.saturating_add(page.items.len()).saturating_sub(usize::from(page.partial_item));
+    if cursor
+        .snapshot
+        .as_ref()
+        .is_some_and(|expected| !complete || *expected != snapshot)
+    {
+        return Err(stale());
+    }
+    let next = page
+        .offset
+        .saturating_add(page.items.len())
+        .saturating_sub(usize::from(page.partial_item));
     let more = next < item_total;
-    let continuation = (complete && more && !page.partial_item && next > page.offset).then(|| cursor.token(&snapshot, next));
-    let truncated_by = scan.stopped.unwrap_or(if page.output_cut { TruncatedBy::OutputBudget }
-        else if more { TruncatedBy::RowLimit } else { TruncatedBy::None });
-    let report = SearchExecutionReport { coverage: if complete { SearchCoverage::Complete { matched_total: observed } } else { SearchCoverage::Incomplete },
-        page_complete: !page.output_cut, scanned_files: scan.scanned, skipped_files: scan.skipped,
-        skip_reasons: scan.reasons, matched_observed: observed, truncated_by, continuation };
+    let continuation = (complete && more && !page.partial_item && next > page.offset)
+        .then(|| cursor.token(&snapshot, next));
+    let truncated_by = scan.stopped.unwrap_or(if page.output_cut {
+        TruncatedBy::OutputBudget
+    } else if more {
+        TruncatedBy::RowLimit
+    } else {
+        TruncatedBy::None
+    });
+    let report = SearchExecutionReport {
+        coverage: if complete {
+            SearchCoverage::Complete {
+                matched_total: observed,
+            }
+        } else {
+            SearchCoverage::Incomplete
+        },
+        page_complete: !page.output_cut,
+        scanned_files: scan.scanned,
+        skipped_files: scan.skipped,
+        skip_reasons: scan.reasons,
+        matched_observed: observed,
+        truncated_by,
+        continuation,
+    };
     let mut output = json!({"status":"completed","phase":"verify","changed":0,"matched":observed,
         "skipped":page.offset,"failed":scan.failed,"complete":complete && !more && !page.output_cut,
         "truncated":!complete || more || page.output_cut,"items":page.items,"nextOffset":next});
-    if complete { output["total"] = json!(item_total); output["omitted"] = json!(item_total.saturating_sub(next)); }
-    if !complete { output["nextAction"] = json!(if scan.stopped == Some(TruncatedBy::RowLimit) {
-        "Stopped at the requested row limit (exactTotal=false). matchedObserved is a lower bound; no stable continuation is available. Start a fresh query with exactTotal=true for totals, resolving any reported scan gaps. If a line is only partly displayed, inspect its file with bounded text/hex ranges."
-    } else { "Narrow path/glob or resolve the reported scan gaps, then start a fresh query. No stable continuation is available for an incomplete traversal." }); }
-    else if page.partial_item { output["nextAction"] = json!("A matching line is only partially displayed. Inspect that file with bounded text/hex ranges; nextOffset does not skip the undisplayed suffix."); }
-    output.as_object_mut().unwrap().extend(serde_json::to_value(report)?.as_object().unwrap().clone());
-    if let Some(extra) = extra.as_object() { output.as_object_mut().unwrap().extend(extra.clone()); }
+    if complete {
+        output["total"] = json!(item_total);
+        output["omitted"] = json!(item_total.saturating_sub(next));
+    }
+    if !complete {
+        output["nextAction"] = json!(if scan.stopped == Some(TruncatedBy::RowLimit) {
+            "Stopped at the requested row limit (exactTotal=false). matchedObserved is a lower bound; no stable continuation is available. Start a fresh query with exactTotal=true for totals, resolving any reported scan gaps. If a line is only partly displayed, inspect its file with bounded text/hex ranges."
+        } else {
+            "Narrow path to a smaller readable subdirectory and start a fresh query. Check skipReasons for exclusions and scan gaps. No stable continuation is available for an incomplete traversal."
+        });
+        if !scan.gap_examples.is_empty() {
+            output["nextAction"] = json!(format!(
+                "{} Gap examples: {}",
+                output["nextAction"].as_str().unwrap(),
+                json!(scan.gap_examples)
+            ));
+        }
+    } else if page.partial_item {
+        output["nextAction"] = json!(
+            "A matching line is only partially displayed. Inspect that file with bounded text/hex ranges; nextOffset does not skip the undisplayed suffix."
+        );
+    }
+    output
+        .as_object_mut()
+        .unwrap()
+        .extend(serde_json::to_value(report)?.as_object().unwrap().clone());
+    if let Some(extra) = extra.as_object() {
+        output.as_object_mut().unwrap().extend(extra.clone());
+    }
     if let Some(sink) = page.capture {
-        let mut source = output.clone(); source.as_object_mut().unwrap().remove("items");
-        let source_next = page.offset.saturating_add(page.limit).min(item_total).max(page.offset);
+        let mut source = output.clone();
+        source.as_object_mut().unwrap().remove("items");
+        let source_next = page
+            .offset
+            .saturating_add(page.limit)
+            .min(item_total)
+            .max(page.offset);
         let more = source_next < item_total;
-        source["nextOffset"] = json!(source_next); source["pageComplete"] = json!(true);
-        source["complete"] = json!(complete && !more); source["truncated"] = json!(!complete || more);
-        source["truncatedBy"] = serde_json::to_value(scan.stopped.unwrap_or(if more { TruncatedBy::RowLimit } else { TruncatedBy::None }))?;
+        source["nextOffset"] = json!(source_next);
+        source["pageComplete"] = json!(true);
+        source["complete"] = json!(complete && !more);
+        source["truncated"] = json!(!complete || more);
+        source["truncatedBy"] = serde_json::to_value(scan.stopped.unwrap_or(if more {
+            TruncatedBy::RowLimit
+        } else {
+            TruncatedBy::None
+        }))?;
         source.as_object_mut().unwrap().remove("continuation");
         if complete {
             source["omitted"] = json!(item_total.saturating_sub(source_next));
             source.as_object_mut().unwrap().remove("nextAction");
-            if more && source_next > page.offset { source["continuation"] = json!(cursor.token(&snapshot, source_next)); }
+            if more && source_next > page.offset {
+                source["continuation"] = json!(cursor.token(&snapshot, source_next));
+            }
         }
         sink.source(source);
     }
@@ -123,19 +314,41 @@ mod tests {
     use super::*;
     #[test]
     fn cursors_bind_the_delegated_path_policy_without_weakening_native_validation() {
-        let root = fs::canonicalize(std::env::temp_dir()).unwrap().join(format!("dsh-wsl-cursor-{}", std::process::id()));
+        let root = fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!("dsh-wsl-cursor-{}", std::process::id()));
         fs::create_dir(&root).unwrap();
         let mut request: Request = serde_json::from_value(json!({"root":root,"scope":"wsl-cursor","tool":"glob","args":{"path":root,"pattern":["**"]}})).unwrap();
-        let original = Cursor::new(&request, 0, None).unwrap().token(&"a".repeat(64), 5);
+        let original = Cursor::new(&request, 0, None)
+            .unwrap()
+            .token(&"a".repeat(64), 5);
         let target = file_path::checked(root.to_str().unwrap()).unwrap();
         let metadata = target.parent.symlink_metadata(&target.name).unwrap();
-        let legacy = digest(&serde_json::to_vec(&json!(["glob", request.args, "wsl-cursor", root,
-            metadata.dev(), metadata.ino(), false, null, [], false])).unwrap());
-        assert!(original.starts_with(&format!("s1:{legacy}:")), "ordinary s1 bindings must remain byte-compatible");
+        let legacy = digest(
+            &serde_json::to_vec(&json!([
+                "glob",
+                request.args,
+                "wsl-cursor",
+                root,
+                metadata.dev(),
+                metadata.ino(),
+                false,
+                null,
+                [],
+                false
+            ]))
+            .unwrap(),
+        );
+        assert!(
+            original.starts_with(&format!("s1:{legacy}:")),
+            "ordinary s1 bindings must remain byte-compatible"
+        );
         assert!(Cursor::new(&request, 0, Some(&original)).is_ok());
         request.windows_paths = true;
         assert!(Cursor::new(&request, 0, Some(&original)).is_err());
-        let delegated = Cursor::new(&request, 0, None).unwrap().token(&"a".repeat(64), 5);
+        let delegated = Cursor::new(&request, 0, None)
+            .unwrap()
+            .token(&"a".repeat(64), 5);
         assert!(Cursor::new(&request, 0, Some(&delegated)).is_ok());
         assert!(Cursor::new(&request, 6, Some(&delegated)).is_err());
         fs::remove_dir(root).unwrap();

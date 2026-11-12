@@ -8,9 +8,10 @@ import { createScope } from '@deepseek-ai/dsh-scope'
 import { publicToolName } from '../../lib/policy.js'
 import * as Discovery from '../../lib/components/discovery/index.js'
 import { DISCOVERABLE_TOOLS } from '../../lib/discovery/config.js'
-import { assert, withTempDir } from './harness.mjs'
+import { assert, waitFor, withTempDir } from './harness.mjs'
 import { bootHost, mountPlugin, shutdown } from './host.mjs'
 import { legacyComponent } from './legacy-component.mjs'
+import { prepareStep, executeCall } from './executor.mjs'
 
 export const READ = publicToolName('inspect_local_file')
 export const text = result => result.content.map(block => block.type === 'text' ? block.text : '').join('\n')
@@ -48,6 +49,8 @@ export async function fixture(run) {
       await ctx.plugin(inner => inner.provide('sandboxPolicy', {
         resolve: ({ session }) => { policyReads.count++; return { mode: modes.get(session) ?? 'danger-full-access', workspaceRoot: session.header.cwd, sessionId: session.id } },
       }))
+      const agents = []
+      ctx.provide('agents', { list: () => [...agents] })
       const { fiber: fileFiber } = await mountPlugin({ ctx, config: { required: true } })
       const discoveryFiber = await ctx.plugin(legacyComponent(Discovery), { enabled: false, required: true,
         alwaysLoaded: ['inspect_local_file', 'read_files'].filter(name => DISCOVERABLE_TOOLS.includes(name)) })
@@ -58,7 +61,6 @@ export async function fixture(run) {
       let sequence = 0
       const mint = id => {
         const agent = { id, session: ctx.get('sessions').create(id, { meta: { cwd: dir } }) }
-        agent.ctx = createScope(ctx, agent).ctx
         return agent
       }
       const agent = mint('read-session')
@@ -67,18 +69,28 @@ export async function fixture(run) {
         for await (const chunk of ctx.get('llm').stream({ provider: 'fixture', model: 'fixture', sessionId: agent.session.id, messages, ...options })) chunks.push(chunk)
         return chunks
       }
-      const read = async ({ args = { path: file }, owner = agent, parent, commit = true, callId = `read-${++sequence}`, name = READ } = {}) => {
+      const read = async ({ args = { path: file }, owner = agent, commit = true, callId = `read-${++sequence}`, name = READ } = {}) => {
         if (!admitted.has(owner)) {
-          owner.ctx ??= createScope(ctx, owner).ctx
+          if (!owner.ctx) await ctx.plugin({ inject: ['tools'], apply(inner) { owner.ctx = createScope(inner, owner).ctx } })
+          // Discovery's injected mount may still be awaiting provider/ownership setup.
+          // Its real agent inventory lets the initialization refresh attach missed events.
+          agents.push(owner)
           await ctx.serial('agent/created', { agent: owner })
+          await waitFor(() => ctx.get('tools').definitions(owner).some(tool => tool.name === READ), {
+            timeoutMs: 5_000, what: 'context-read discovery registration and scope ownership',
+          })
           admitted.add(owner)
         }
-        await ctx.waterfall('agent/pre-step', { agent: owner, signal: new AbortController().signal }, async () => {})
+        const prepared = await prepareStep(ctx, owner)
+        assert.ok(ctx.get('tools').executable(name, owner, prepared.toolSet), `${name} registered but not admitted in resolved toolSet`)
         const assistant = createAssistantMessage({ source: { provider: 'fixture', model: 'fixture' }, content: [{ type: 'tool-call', id: callId, name, arguments: JSON.stringify(args) }] })
         if (commit && owner.session.append) owner.session.append('assistant/message', { turn: 1, step: sequence, message: assistant, stream: [] }, { surfaceOp: 'append' })
-        const result = await ctx.get('tools').execute({ agent: owner, callId, name, arguments: args, signal: new AbortController().signal, ...(parent ? { parent } : {}) })
+        let result
+        try { result = await executeCall(ctx, { agent: owner, toolSet: prepared.toolSet, callId, name, arguments: args }) }
+        finally { prepared.dispose() }
         const message = createToolResultMessage({ callId, content: result.content, isError: result.isError })
         const event = commit && owner.session.append ? owner.session.append('tool/result', { turn: 1, step: sequence, message }, { surfaceOp: 'append' }) : undefined
+        ctx.emit('session/event', owner.session, { type: 'step/end' })
         assert.equal(result.isError, false, text(result))
         return { ...result, message, assistant, event }
       }
@@ -89,7 +101,12 @@ export async function fixture(run) {
           { surfaceOp: { op: 'replace', startSeq: nodes[0], endSeq: nodes.at(-1) }, sourceEventSeqs: nodes })
         assert.ok(agent.session.surface.contentGeneration > before)
       }
-      await run({ ctx, dir, file, agent, adapter, modes, mint, request, read, compact, fiber, policyReads })
+      const call = async (input) => {
+        const prepared = await prepareStep(ctx, input.agent)
+        try { return await executeCall(ctx, { ...input, toolSet: prepared.toolSet }) }
+        finally { prepared.dispose() }
+      }
+      await run({ call, ctx, dir, file, agent, adapter, modes, mint, request, read, compact, fiber, policyReads })
     } finally { await shutdown(ctx) }
   })
 }

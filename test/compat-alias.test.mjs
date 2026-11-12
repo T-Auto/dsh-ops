@@ -25,8 +25,8 @@ await test('saved discovery pools accept old names, deduplicate, and still rejec
   const config = resolveDiscoveryConfig({ allowedTools: ['table_read', 'edit_many', 'glob'] })
   assert.deepEqual(config.allowedTools, ['read_table', 'edit_file', 'glob'])
   assert.deepEqual(resolveDiscoveryConfig({ alwaysLoaded: ['doc_read', 'read_docx'] }).alwaysLoaded, ['read_docx'])
-  // read_many was never discoverable: it is resident, and migration must not turn it into one.
-  assert.throws(() => resolveDiscoveryConfig({ allowedTools: ['read_many'] }), /unavailable capability/)
+  // read_files is now discoverable; old and current spellings select one capability.
+  assert.deepEqual(resolveDiscoveryConfig({ allowedTools: ['read_many', 'read_files'] }).allowedTools, ['read_files'])
   assert.throws(() => resolveDiscoveryConfig({ allowedTools: ['definitely_not_a_tool'] }), /unavailable capability/)
 })
 

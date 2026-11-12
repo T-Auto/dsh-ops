@@ -1,0 +1,42 @@
+[package]
+name = "ops-mac-index"
+version = "0.5.0-alpha3"
+edition = "2024"
+license = "MIT"
+rust-version = "1.88"
+publish = false
+
+[dependencies]
+ops-index = { path = "../ops-index" }
+
+# The crate body starts with `#![cfg(target_os = "macos")]`, so the walk
+# dependencies are target-gated as well: Linux and Windows workspace builds
+# never resolve them into a compile unit. Keeping them out of `[dependencies]`
+# is what makes that true for every target, not just the one this branch runs on.
+[target.'cfg(target_os = "macos")'.dependencies]
+# Sibling-directory recursion and per-entry stat fan-out for the cold path:
+# #423 measured `symlink_metadata` at 71–87 % of a walk, which is the part
+# worth parallelising. The traversal itself is `std::fs` only, by design.
+rayon = "=1.12.0"
+# FSEvents bindings for the incremental half (M2). The Apple framework C API is
+# only reachable through `objc2-core-services`' generated bindings; writing the
+# extern declarations by hand would duplicate a maintained ABI surface. Exact
+# pins: 0.3.2 is the newest release in the 0.3 line (published 2025-10-04, well
+# past the seven-day rule) and its MSRV is 1.71, below this workspace's floor.
+# Only the `FSEvents` framework feature is enabled, not the crate's default
+# "every framework" set, so the lockfile gains the binding crate plus the
+# CoreFoundation crate it needs and nothing else.
+objc2-core-services = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "FSEvents",
+] }
+# CoreFoundation types the FSEvents API takes and returns: `CFString` for
+# path strings, `CFDictionary`/`CFNumber` for the extended per-event data.
+# `CFArray`, `CFDate`, `CFRunLoop` and `CFUUID` arrive through the
+# `FSEvents` feature above. Same pin and same licence reasoning as above.
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "CFString",
+  "CFDictionary",
+  "CFNumber",
+] }

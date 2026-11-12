@@ -81,8 +81,8 @@ tool.
 
 ## Verification evidence
 
-- CI runs the full gate on `macos-latest` (arm64, blocking) and `macos-15-intel` (x64,
-  non-blocking because the leg measured 318 s > 300 s; see [CI](ci.md)).
+- CI runs the full gate on `macos-latest` (arm64) and `macos-15-intel` (x64); both are blocking
+  legs (see [CI](ci.md)).
 - The Intel leg builds and stages `darwin-x64`, runs all suites, checks the Mach-O x86_64 worker
   and its receipt, and packs/unpacks the artifact.
 - The contributor reports an Intel macOS 12.7.6 run with 42 Rust unit tests passing and one

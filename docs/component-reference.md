@@ -5,7 +5,7 @@ What the single `dsh-ops` row publishes for built-in and explicit consumers, wit
 ## Components at a glance
 
 Third-party presets should use [`dsh-ops/integration`](integration-api.md) rather than mounting
-one of the four built-in identities. It adds independently configured tools and `ops_status`
+one of the five built-in identities. It adds independently configured tools and `ops_status`
 diagnostics, while external Native plugins may use the [provider contract](external-provider.md).
 
 | Row `name` | Description | Default | Published tools |
@@ -13,10 +13,13 @@ diagnostics, while external Native plugins may use the [provider contract](exter
 | `dsh-ops` | Single-row bundle: built-in Standard/Cordis Native tools, PTC typed APIs, Minimal dynamic surface, and optional custom consumers | On | Depends on the selected preset and presentation |
 | `dsh-ops/panel` | Legacy entry retained for old profiles; use `panel.enabled` in the merged row | Off | None; see the [configuration reference](configuration-reference.md) |
 | `dsh-ops/tui` | Legacy entry retained for old profiles; use `tui.enabled` in the merged row | Off | None; see the [sidebar guide](tui-panel.md) |
+| `dsh-ops/mode-ops-ptc` | Legacy mode row retained for old profiles; use the merged row's `ops-ptc` section | On (inert and warns under the merged bundle) | Typed PTC APIs for `ops-ptc` sessions only; publishes nothing under the merged bundle |
 
 The `dsh-ops` row owns built-in and explicitly configured consumer plans. Native discovery and the PTC SDK loader are independent publication choices; file replacement and host-shell hiding are independent masks. Legacy entries remain only so old profiles can load; new configuration belongs to the single row. The former
 `dsh-ops/shell`, `dsh-ops/file`, `dsh-ops/ptc` and `dsh-ops/hide-official` modules remain as
 unsupported legacy exports for old profiles and are not part of the bundle.
+
+`ops-ptc` is the merged row's fifth built-in mode: the plugin registers the preset at runtime through the host `agentPresets.register` (definition from the shipped `presets/ops-ptc.patch.yml` fragment parsed by the host's `loadOverlayPatches`), so the plugin manager has no matching preset row; disabling or unloading the plugin row removes the preset together with the tool surface. The default preset is forced at runtime by `global.forceDefaultOpsPtc` (on by default) and restored when the switch is turned off or the row is disabled; see [Presets and the default mode](presets.md). It publishes the same surface as `ptc` and adds the YAML-only `batchingGuidance`: the English lesson arrives once in the session's first user-message batch (from `prompts/batching-guidance.md`, into history, never the system prompt), and a **root** `run_code` program that breaks one of the three latched shape categories — `bypass`, `plan` or `shape` — gets one short notice appended to its own result as `additionalContexts`; each category latches once per turn, a compliant program re-arms it, priority is `bypass` → `plan` → `shape`, and the program is never blocked or rewritten. A legacy profile that still names `dsh-ops/mode-ops-ptc` loads that module; under the merged bundle it only warns and stays inert, and its configuration belongs in the merged row's `ops-ptc` section.
 
 The former `dsh-ops/background` component (FastCtx background jobs: `ops_run`, `ops_run_background`, `ops_job_output`, `ops_job_list`, `ops_job_kill`) has been removed. A profile row that still names it loads as a no-op: it accepts any config, publishes nothing, and logs one warning that the row can be deleted.
 
@@ -49,8 +52,8 @@ The shared catalogue has 20 entries. The generated PTC SDK contains 18 APIs: 15 
 
 ## Preset modes — file tools
 
-Standard and Cordis publish the resident OPS file surface: `ops_read_files`,
-`ops_inspect_local_file`, `ops_glob`, `ops_grep` and `ops_result`. The Minimal preset publishes
+Standard and Cordis publish the resident OPS file surface: `ops_inspect_local_file`, `ops_glob`
+and `ops_grep`. Load `ops_read_files` and `ops_result` through discovery when needed. The Minimal preset publishes
 no resident file tool; its sessions receive the dynamic-loading entry and activate advanced contracts
 through [tool discovery](discovery.md). PTC mode exposes the same capabilities through the typed SDK.
 Routing lists only the tools currently published in that scope.
@@ -94,7 +97,7 @@ Find regular files below `path`. `pattern` is an **array** of globs matched segm
 
 Search UTF-8 files below `path` with Rust regex, bounded output, paging and optional line context. `pattern` is **one** regex string; filter files with `glob`, an array in the same syntax as `ops_glob`. **There is no `include` field.** `glob` may contain only exclusions ("everything except"); when `path` is a single file, `glob` is ignored.
 
-Use `summary` for aggregate file/match totals, `count` for per-file counts, `content` for matching text (default). Each item page defaults to 100 entries. By default (`exactTotal: true`), each call scans candidates to count global totals while materializing only the requested window. Set `exactTotal: false` for a first-prefix query that stops at `offset + limit` matching rows; content stops within a file, while count/file modes finish that file so per-file counts remain exact. An early stop reports `scanComplete: false`, `truncatedBy: row-limit` and `matchedObserved` as a lower bound, with no `matchedTotal`, `total` or stable continuation. Start a fresh exact query for complete totals. Summary mode and requests with a continuation always scan fully.
+Use `summary` for aggregate file/match totals, `count` for per-file counts, `content` for matching text (default), or `definitions` for only the lines where the matched identifier is declared: function, method, class/interface/type, variable and macro positions, including function-valued declarations. The classification is lexical — it recognises declaration keywords, modifiers and line shape, skips comment and string bodies, and is not a parser, so a miss does not prove absence; use `content` for the exhaustive set. `definitions` searches individual lines only, so `multiline`, `beforeContext` and `afterContext` are rejected. On a complete scan, `matched` counts every matching line the walk saw and `total` counts the returned declaration lines, so `matched - total` is the reference count it did not return; each item adds `kind`. Each item page defaults to 100 entries. By default (`exactTotal: true`), each call scans candidates to count global totals while materializing only the requested window. Set `exactTotal: false` for a first-prefix query that stops at `offset + limit` matching rows; content stops within a file, while count/file modes finish that file so per-file counts remain exact. An early stop reports `scanComplete: false`, `truncatedBy: row-limit` and `matchedObserved` as a lower bound, with no `matchedTotal`, `total` or stable continuation. Start a fresh exact query for complete totals. Summary mode and requests with a continuation always scan fully.
 
 Follow a returned continuation for stable remaining pages, keeping query options unchanged; incomplete scans must not be blindly retried. Non-UTF-8 and oversized files are coverage gaps counted in `skippedFiles`, so they prevent exact totals even when `failed` is zero. Invalid UTF-8 can contain matching ASCII bytes or other encoded text; skipping it does not establish absence. Filter out unwanted files explicitly with `glob`. Read failures also increment `failed`. Traversal/file-size bounds still apply, and repeated pages rescan rather than use a persistent cursor.
 
@@ -103,7 +106,7 @@ Follow a returned continuation for stable remaining pages, keeping query options
 | `pattern` | string (required) | Rust regex |
 | `path` | string | Search root |
 | `glob` | string[] | Restrict files |
-| `outputMode` | `files_with_matches` \| `content` \| `count` \| `summary` | Output shape |
+| `outputMode` | `files_with_matches` \| `content` \| `count` \| `summary` \| `definitions` | Output shape; `definitions` returns declaration lines only (lexical, no multiline/context) |
 | `caseInsensitive` | boolean | Ignore case |
 | `lineNumbers` | boolean | Show line numbers |
 | `beforeContext` / `afterContext` | integer ≤ 32 | Context lines |
@@ -145,7 +148,10 @@ Each reader separates scan, page, display and reference-capture completeness. A 
 ## PTC mode — native batches and result references
 
 The `dsh-ops/mode-ptc` row is on by default and publishes these tools only in sessions composed from
-the PTC preset. Its host row switch preserves explicit disablement and its configured pool.
+the PTC preset. Its host row switch preserves explicit disablement and its configured pool. The merged
+row describes it with the `ptc` section; the `ops-ptc` section publishes the same surface and only adds the
+batch-call guidance by default (its preset is registered at plugin runtime). See the OPS PTC mode section of
+the [configuration reference](configuration-reference.md).
 
 ### `ops_batch`
 
@@ -186,7 +192,7 @@ Routing: **toolkit → bash → host PowerShell**. Every enabled mode replaces t
 (`pwsh`/`pwsh_persistent`) with `ops_bash` while that counterpart is visible; POSIX sessions already
 run the host's own bash.
 
-On Windows x64 the package embeds the complete official Niubash v1.5.0 portable payload (rubash and WinuxCmd plus all upstream bundled tools/licenses). Each invocation verifies the immutable source and uses a fresh verified execution copy. `dsh-ops bash-runtime install` installs this same pinned archive into DSH_HOME; `status`, `managed` and confirmed `remove --yes` manage that copy. `bashPath` may explicitly select Git Bash; missing or corrupt Niubash never falls back to ambient Bash, even with `allowSystemShellFallback: true`. Restricted calls still require the host sandbox (Windows reports partial enforcement); incompatible custom MSYS is rejected. POSIX hosts execute the system Bash. PowerShell stays host-selected. This is a staged distribution choice, not a claim that rubash-only is unusable.
+On Windows x64 the package embeds the complete official Niubash v1.5.0 portable payload (rubash and WinuxCmd plus all upstream bundled tools/licenses). Each invocation verifies the immutable source and uses a fresh verified execution copy. `dsh-ops bash-runtime install` installs this same pinned archive into DSH_HOME; `status`, `niubash` and confirmed `remove --yes` manage that copy. The settings page's **Bash executor** card switches to Niubash, picks a scanned Git Bash or accepts an absolute path, and writes `bashPath` on save; a `bashPath` naming a Niubash tree counts as the default executor. `bashPath` may explicitly select Git Bash; missing or corrupt Niubash never falls back to ambient Bash, even with `allowSystemShellFallback: true`. Restricted calls still require the host sandbox (Windows reports partial enforcement); incompatible custom MSYS is rejected. POSIX hosts execute the system Bash. PowerShell stays host-selected. This is a staged distribution choice, not a claim that rubash-only is unusable.
 
 - `ops_bash`: the preferred general command executor. Use `command` for short commands and `script_path` for long scripts.
   Cancellation also stops pending sandbox preparation; a late preparation result cannot start the command. When cancellation races a timeout, the first cause is reported.
@@ -264,7 +270,7 @@ current state. When a request was assembled before its replacement became visibl
 name it still carries is not refused, so a session is never told to call a tool that request was
 never given (#578).
 
-The resident `ops_read_files` is not the counterpart for `read`; Standard and Cordis publish
+The on-demand `ops_read_files` is not the counterpart for `read`; Standard and Cordis publish
 `ops_inspect_local_file`, `ops_glob` and `ops_grep` as the reviewed counterparts.
 
 The single row exports StandardSchemaV1 validation and public JSON schema descriptors. Its browser

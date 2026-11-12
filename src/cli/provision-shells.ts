@@ -9,9 +9,11 @@
  * @module dsh-ops/cli/provision-shells
  */
 
-import { NIUBASH_PIN, NIUBASH_HOME_PATH, stageNiubashArchive, verifyNiubashTree } from './niubash-payload.js'
+import { NIUBASH_PIN, NIUBASH_HOME_PATH, reclaimNiubashSiblings, stageNiubashArchive, verifyNiubashTree } from './niubash-payload.js'
+import type { NiubashSiblingDecision } from './niubash-payload.js'
+import { discardPendingRecord, pendingRoot, recordPendingScratch, sweepPendingScratch } from './pending-scratch.js'
 import { spawnSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import { errorMessage } from '../shells/types.js'
 import os from 'node:os'
@@ -395,6 +397,32 @@ export function readShellReceipt(file: string): Record<string, unknown> | undefi
  * @param {boolean} options.dryRun - report what would happen, and download nothing.
  * @returns {boolean} whether this shell is provisioned (or already was).
  */
+/**
+ * The receipt one provisioned version carries: what pin produced these bytes.
+ * @param {object} pin - the validated pin.
+ * @returns {string} the JSON document, with a trailing newline.
+ */
+export function shellReceiptText(pin: ShellPin) {
+  return JSON.stringify({
+    schemaVersion: SHELL_RECEIPT_VERSION,
+    name: pin.name,
+    version: pin.version,
+    releaseTag: pin.releaseTag ?? null,
+    upstreamRepo: pin.upstreamRepo ?? null,
+    url: pin.url,
+    assetFile: pin.assetFile,
+    bytes: pin.bytes,
+    sha256: pin.sha256,
+    extractor: pin.extractor,
+    extractTo: pin.extractTo,
+    executable: pin.executableRelativePath,
+    executableSha256: pin.executableSha256 ?? null,
+    provisionedBy: 'dsh-ops provision-shells',
+    provisionedAt: new Date().toISOString(),
+    dshHome: dshHome(),
+  }, null, 2) + '\n'
+}
+
 export function provisionShell(pin: ShellPin, { force, dryRun }: { force: boolean; dryRun: boolean }) {
   const target = provisionedShellVersionDir({ kind: pin.name, version: pin.version })
   const executable = path.join(target, pin.executableRelativePath)
@@ -419,89 +447,128 @@ export function provisionShell(pin: ShellPin, { force, dryRun }: { force: boolea
   }
 
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), `dsh-ops-${pin.name}-`))
+  const pending = pendingRoot(dshHome())
+  /** Keep the bytes an operator needs to act on a failed install, and register them. */
+  const keepForDiagnosis = (reason: string, reported: string = scratch): false => {
+    const record = recordPendingScratch({ root: pending, kind: pin.name, pinSha256: pin.sha256, scratch, reason })
+    if (record.bytes === 0) {
+      fs.rmSync(scratch, { recursive: true, force: true })
+      console.error('  nothing kept: the download left no bytes in ' + scratch)
+      return false
+    }
+    console.error(`  kept for diagnosis: ${reported}`)
+    console.error(`  registered for reclamation: ${formatBytes(record.bytes)} under ${pending}`)
+    return false
+  }
   console.log(`${pin.name}: downloading ${pin.url}`)
   const downloaded = curlAsset({ pin, into: scratch, env: process.env })
   if (!('file' in downloaded)) {
     console.error(`${pin.name}: ${downloaded.error} — ${downloaded.detail}`)
     for (const line of downloaded.stderr) console.error(`  curl: ${line}`)
-    console.error(`  kept for diagnosis: ${scratch}`)
-    return false
+    return keepForDiagnosis('the download did not complete: ' + downloaded.error)
   }
 
   const actual = sha256File(downloaded.file)
   if (actual !== pin.sha256) {
     console.error(`${pin.name}: ${pin.assetFile} hashed to ${actual}, not the pinned ${pin.sha256}`)
     console.error('  refusing to install bytes this distribution did not pin')
-    console.error(`  kept for diagnosis: ${downloaded.file}`)
-    return false
+    return keepForDiagnosis('the downloaded archive did not match the pinned sha256', downloaded.file)
   }
   console.log(`${pin.name}: verified sha256 ${actual}`)
 
-  if (force) fs.rmSync(target, { recursive: true, force: true })
-  fs.mkdirSync(path.resolve(target, pin.extractTo), { recursive: true })
-  const unpacked = unpackAsset({ pin, asset: downloaded.file, target })
-  if (!('ok' in unpacked)) {
-    console.error(`${pin.name}: ${unpacked.error}`)
-    for (const line of unpacked.stderr) console.error(`  ${line}`)
-    console.error(`  kept for diagnosis: ${downloaded.file}`)
-    return false
-  }
-
-  if (!fs.existsSync(executable)) {
-    console.error(`${pin.name}: the archive unpacked without ${pin.executableRelativePath}`)
-    console.error(`  expected it at ${executable}`)
-    console.error(`  kept for diagnosis: ${downloaded.file}`)
-    return false
-  }
-  if (pin.executableSha256 !== undefined) {
-    const executableActual = sha256File(executable)
-    if (executableActual !== pin.executableSha256) {
-      console.error(`${pin.name}: the provisioned ${pin.executableRelativePath} hashed to ${executableActual}, `
-        + `not the pinned ${pin.executableSha256}`)
-      console.error(`  kept for diagnosis: ${downloaded.file}`)
-      return false
+  // Unpack and verify inside a staging sibling first: the version directory is
+  // only ever replaced by a rename of a complete, receipt-carrying tree, so an
+  // interrupted or failed install leaves the previous version usable.
+  const staged = `${target}.stage-${randomUUID()}`
+  let installed = false
+  try {
+    fs.mkdirSync(path.resolve(staged, pin.extractTo), { recursive: true })
+    const unpacked = unpackAsset({ pin, asset: downloaded.file, target: staged })
+    if (!('ok' in unpacked)) {
+      console.error(`${pin.name}: ${unpacked.error}`)
+      for (const line of unpacked.stderr) console.error(`  ${line}`)
+      return keepForDiagnosis('the archive did not unpack: ' + unpacked.error, downloaded.file)
     }
+    const stagedExecutable = path.join(staged, pin.executableRelativePath)
+    if (!fs.existsSync(stagedExecutable)) {
+      console.error(`${pin.name}: the archive unpacked without ${pin.executableRelativePath}`)
+      console.error(`  expected it at ${stagedExecutable}`)
+      return keepForDiagnosis('the archive unpacked without the pinned executable', downloaded.file)
+    }
+    if (pin.executableSha256 !== undefined) {
+      const executableActual = sha256File(stagedExecutable)
+      if (executableActual !== pin.executableSha256) {
+        console.error(`${pin.name}: the provisioned ${pin.executableRelativePath} hashed to ${executableActual}, `
+          + `not the pinned ${pin.executableSha256}`)
+        return keepForDiagnosis('the provisioned executable did not match the pinned sha256', downloaded.file)
+      }
+    }
+    fs.writeFileSync(path.join(staged, SHELL_RECEIPT_FILE), shellReceiptText(pin))
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    const previous = `${target}.previous-${randomUUID()}`
+    let displaced = false
+    try {
+      if (fs.existsSync(target)) {
+        fs.renameSync(target, previous)
+        displaced = true
+      }
+      fs.renameSync(staged, target)
+      installed = true
+    } catch (error) {
+      if (displaced) {
+        try {
+          fs.renameSync(previous, target)
+          displaced = false
+        } catch (restoreError) {
+          console.error(`${pin.name}: could not restore the previous version ${previous}: ${errorMessage(restoreError)}`)
+        }
+      }
+      console.error(`${pin.name}: could not move the verified copy into place: ${errorMessage(error)}`)
+      return keepForDiagnosis('the verified copy could not be moved into place', downloaded.file)
+    }
+    if (displaced) {
+      try {
+        fs.rmSync(previous, { recursive: true, force: true })
+      } catch (error) {
+        console.error(`  warning:    could not remove the previous version ${previous}: ${errorMessage(error)}`)
+      }
+    }
+  } finally {
+    fs.rmSync(staged, { recursive: true, force: true })
   }
-
-  fs.writeFileSync(receiptFile, `${JSON.stringify({
-    schemaVersion: SHELL_RECEIPT_VERSION,
-    name: pin.name,
-    version: pin.version,
-    releaseTag: pin.releaseTag ?? null,
-    upstreamRepo: pin.upstreamRepo ?? null,
-    url: pin.url,
-    assetFile: pin.assetFile,
-    bytes: pin.bytes,
-    sha256: pin.sha256,
-    extractor: pin.extractor,
-    extractTo: pin.extractTo,
-    executable: pin.executableRelativePath,
-    executableSha256: pin.executableSha256 ?? null,
-    provisionedBy: 'dsh-ops provision-shells',
-    provisionedAt: new Date().toISOString(),
-    dshHome: dshHome(),
-  }, null, 2)}\n`)
   fs.rmSync(scratch, { recursive: true, force: true })
+  discardPendingRecord(pending, pin.name, pin.sha256)
+  if (!installed) return false
 
   // The store holds the version the pins name. A previous version is a copy this
   // distribution no longer vouches for — and one the resolution would still
   // consider, because it takes the greatest version name — so it is removed
-  // here, after a successful install and never before it.
+  // here, after a successful install and never before it. Staging and previous
+  // siblings are handled by their own rename above; they are never swept here,
+  // because a name pattern alone is not ownership evidence.
   const store = path.join(provisionedShellStore({ env: process.env }), pin.name)
   for (const entry of fs.readdirSync(store, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name === pin.version) continue
+    if (entry.name.includes('.stage-') || entry.name.includes('.previous-')) continue
     const stale = path.join(store, entry.name)
     try {
       fs.rmSync(stale, { recursive: true, force: true })
       console.log(`  removed:    ${stale} (a version this pin no longer names)`)
     } catch (error) {
-      console.error(`  warning:    could not remove the previous version ${stale}: ${errorMessage(error)}`)
+      console.error(`  warning:    could not remove the previous version ${stale}: ${errorMessage}`)
     }
   }
 
   console.log(`${pin.name}: provisioned ${executable}`)
   console.log(`  receipt:    ${receiptFile}`)
   return true
+}
+
+/** Print one sibling decision; a kept tree names why it stayed. */
+function reportNiubashSibling(decision: NiubashSiblingDecision) {
+  const bytes = formatBytes(decision.bytes)
+  if (decision.action === 'kept') console.log(`  kept:       ${decision.path} (${bytes}; ${decision.detail ?? 'unverified'})`)
+  else console.log(`  ${decision.action.padEnd(9)} ${decision.path} (${bytes})`)
 }
 
 /** Default Windows Bash provisioner; a custom --pin remains an explicit legacy operation. */
@@ -515,9 +582,11 @@ export function provisionNiubash({ force, dryRun }: { force: boolean; dryRun: bo
   if (!force && fs.existsSync(target)) {
     try {
       console.log(`bash: already provisioned — ${verifyNiubashTree(target)}`)
+      for (const decision of reclaimNiubashSiblings(target)) reportNiubashSibling(decision)
       return true
     } catch (error) {
       console.error(`bash: invalid Niubash payload: ${errorMessage(error)}; use --force to replace it`)
+      console.error('  staging siblings are kept until the target verifies again')
       return false
     }
   }
@@ -531,6 +600,7 @@ export function provisionNiubash({ force, dryRun }: { force: boolean; dryRun: bo
       archive = result.file
     }
     const executable = stageNiubashArchive(archive, target)
+    for (const decision of reclaimNiubashSiblings(target)) reportNiubashSibling(decision)
     console.log(`bash: provisioned complete Niubash ${NIUBASH_PIN.upstreamVersion} — ${executable}`)
     return true
   } catch (error) {
@@ -567,6 +637,14 @@ export function commandProvisionShells({ kinds, force, dryRun, pinFile }: { kind
     console.error(`dsh-ops provisions shells on Windows only; this host (${process.platform}-${process.arch}) already has its own bash,`
       + " and the shell component resolves it (PATH, then /bin/bash, /usr/bin/bash, /usr/local/bin/bash). Use config.bashPath to pin an explicit executable instead.")
     return 1
+  }
+  // Reclaim what earlier failed provisions registered: the registry, not a name
+  // pattern, decides what is eligible. A dry run changes nothing.
+  if (!dryRun) {
+    const swept = sweepPendingScratch({ log: (line: string) => { console.log(line) } })
+    if (swept.removed.length > 0) console.log(`provision-shells: reclaimed ${swept.removed.length} kept download(s), ${formatBytes(swept.bytes)}`)
+    const remaining = swept.kept.length + swept.unverified.length
+    if (remaining > 0) console.log(`provision-shells: ${remaining} kept download(s) remain under ${pendingRoot(dshHome())}`)
   }
   let pins
   try {

@@ -6,6 +6,27 @@ These checks separate plugin configuration from host presentation and provider
 transport failures. They do not establish that an unobserved Desktop freeze or
 an old conversation has been repaired.
 
+## DSH 0.2.2 publication migration
+
+All file reads/mutations and result share one scope-owned canonical source, not separate Native/PTC shadow definitions. Native retains its renderer and context-read evidence; values are Outcome.data. File operations retain the existing authoritative cwd, credential, CAS and sandbox bridge. PTC-only jobs and load_sdk remain separate.
+
+Conditions and prompt assembly never change registration. Pending selection commits at step/end. Unchanged entitlement preserves definition identity. A real grant/source change conservatively replaces the shared registration: **other agents sharing that source also lose their previously captured toolSet**. The host reports UNKNOWN_TOOL before dispatch; fresh resolve restores eligible agents. Distinct sources remain independent. This is an availability limit, not per-agent snapshot isolation. An old step never acquires a new grant. Never replay automatically.
+
+Late foreign ancestor sources retain their exact definitions, conditions and restrictions; fallback retires without copying into a child-owned layer. Cancellation vetoes any captured grant revoked during work. If a provider ignores abort, the bounded return is RESULT_UNKNOWN with unknown effects; inspect effects, never replay automatically. See [result budgets](result-budgets.md) for the shared result schema and PTC-only put fence.
+
+
+From 0.5.3, consumer replacements select the official fallback and the OPS counterpart mutually exclusively during the host's step resolution. A conditional OPS source and the official fallback share one admission decision; unconditional counterparts use the same fallback mechanism. If the counterpart is unavailable, the official tool remains declared and callable. The scoped fallback preserves the original schema and execution callbacks. Existing restrictions, including restrictions added after a step was resolved, still revoke the fallback; original source changes invalidate its captured definition. Prompt assembly never mutates registrations, and there is no replacement pre-execute refusal. Foreign same-scope or conditional official definitions are left untouched rather than discarding their policy. If the host cannot see the fallback probe's scope linkage, OPS warns once for that agent and leaves the official definitions untouched.
+
+Publication refusals distinguish `PUBLICATION_IDENTITY_MISMATCH` (stale definition or missing step admission) from `PUBLICATION_GRANT_UNAVAILABLE` (missing eligible grants or conflicting dispatch). Capture the exact code alongside the scoped request tools and toolSet when investigating #784; these diagnostics do not establish that report's root cause.
+
+The host can refuse a registry write while publishing a session append. OPS shares one cooldown per host root (25, 100, 400, then 1000 ms), stops at the first refusal, and keeps both pending registration and withdrawal work. Recovery does not require another session event. Deferred tools are unavailable until registered; current execution guards still reject withdrawn authority. Ordinary configuration errors are not retried. Warnings retain suppressed counts and report recovery; unloading a scope cancels its pending registration.
+
+The retained explicit `hide-official` row remains strict: each selected counterpart must be an exact live OPS definition admitted by that step. A same-name foreign definition cannot satisfy readiness. Deferred permanent initialization errors reject awaited readiness and trigger attachment rollback; they do not become retry loops.
+
+The shared result adapter preserves PTC's existing `j-` batch audit and legacy `r-` snapshot routes only under a verified live `run_code` parent. Worker checks still bind session, root and root identity; audit records cannot be released. Native permits only `ref://` page/release. A live admission ticket is rechecked across directory, confinement and cache preparation, and immediately before worker dispatch. Failed inspection or withdrawn admission refuses pre-dispatch work with no effects. Public prompt-change notices have no scope attribution, so another scope's prompt update can conservatively refuse an in-flight PTC preflight in the same host. No call is replayed.
+
+PTC guidance is filled only after the public text waterfall confirms the executor's `tools:ptc-only` section. Shared callable file names do not establish presentation. Enabling the PTC row must leave the complete Native prompt and wire tool list unchanged, while the PTC assembly keeps its admitted SDK.
+
 ## Source ownership
 
 `src/presets/` owns built-in preset defaults. `src/consumer/` assembles built-in and external
@@ -92,7 +113,7 @@ use the PTC SDK loader under the host's `run_code` presentation. Check the scope
 assembled tools and presentation, not just a global registry or a prompt section
 name. An empty discovery section alone does not identify the cause.
 
-Host support declarations and component resource exports are covered by the current adapter boundary. The package declares and tests the bounded range `>=0.2.0-rc.2 <0.2.2-0`, including rc2, rc3, rc4, rc5 and the 0.2.1 stable line. Compatibility is validated by running the whole suite twice over the same source: once on `0.2.0-rc.2` and once on `0.2.1-rc.5`. The version range itself is re-checked on every run by `test/host-metadata.test.mjs`. Where rc.5 removed a host feature, the source reads the surviving one — `presentations` names only `native` and `ptc`, a Client form is editable when it is ready and writable, and `run_code` finds its directory through the adapter's working-directory fallback. The text-only PTC hook adaptation is not used as the sole compatibility proof.
+The 0.5 adapter targets DSH `>=0.2.2-rc.1 <0.2.3-0`; earlier hosts are not supported. Host imports remain centralized in `src/adapter/dsh`, with type-only declarations and lazy runtime loading. The 0.2.2 host owns executor selection and captures a `ResolvedToolSet` before prompt assembly and pre-step. Stable conditional registrations expose committed discovery/PTC selection on the next step; prompt callbacks never publish tools. Request guidance reads the captured set, replacement fallbacks share step-time admission, and registry diagnostics use public `definitions()` without schema cloning. A missing live working-directory service is an infrastructure error, not permission to use the original session header as an execution directory. Runtime evidence must name the tested dependency graph and actual checks; version strings alone do not establish compatibility.
 
 The original #346 report also describes an enabled row and a stalled publication
 chain. The profile checks above do not prove that failure fixed. If the row is
@@ -100,3 +121,17 @@ enabled and the expected scoped tool remains absent, capture a minimal profile,
 exact versions, Native/PTC mode, affected scoped schemas, and a timed lifecycle
 trace showing the pending publication. Restart/new-session results are useful
 comparisons, not proof that an indefinite hot-mount stall cannot recur.
+
+## Host module instances
+
+`scopeOf` and `scopeChainOf` come from `@deepseek-ai/dsh-scope`, which tags a context with
+`Symbol('dsh.scope')` and keeps ancestry in a module-private `WeakMap`. A second copy therefore reads
+nothing: `scopeOf` returns `undefined`, every ancestor lookup collapses to the key itself, and
+creating a session fails with `Publication scope must match its registration context`. Two install
+shapes can resolve such a copy: a `link:`ed development checkout resolves the copy inside that
+checkout, and a profile install can resolve a copy another bundle hoisted into the profile tree
+before the host's interception layer runs. When the bare resolution starts inside either tree, the
+adapter re-points it at the copy the host's own entry (`process.argv[1]`) resolves, falling back to
+the profile layer; every other resolution already is the host's. A re-pointed URL that names the
+same file as the bare one is left alone, so a spelling difference cannot load the file twice. No
+scope check is relaxed by that choice; the wrong copy simply never loads.

@@ -17,11 +17,11 @@ await test('one merged row and manifest agree on every platform', () => {
   const resolved = resolveMergedConfig(rows[0].config)
   for (const feature of [...MODES, 'discovery']) assert.equal(resolved[feature].enabled, true, feature)
   for (const mode of MODES) {
-    assert.equal(resolved[mode].config.hidePwsh, false, `${mode} keeps host PowerShell by default`)
+    assert.equal(resolved[mode].config.hidePwsh, true, `${mode} hides host PowerShell by default when Bash is ready`)
     assert.equal(resolved[mode].config.bash, true, `${mode} independently enables Bash`)
   }
   for (const feature of ['panel', 'tui', 'other']) assert.equal(resolved[feature].enabled, false, feature)
-  assert.deepEqual(resolved.global, { bash: true, hidePwsh: true, hideOfficialTools: true, dynamicTools: true })
+  assert.deepEqual(resolved.global, { bash: true, hidePwsh: true, hideOfficialTools: true, dynamicTools: true, forceDefaultOpsPtc: true })
   for (const platform of ['win32', 'linux', 'darwin']) assert.equal(platformSurface(platform).shellDefaultEnabled, true)
 })
 for (const platform of ['win32', 'linux', 'darwin']) await test('real Loader applies fresh single-row ' + platform + ' defaults', async () => {

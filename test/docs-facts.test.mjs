@@ -11,7 +11,7 @@ const read = name => fs.readFileSync(path.join(PACKAGE_ROOT, name), 'utf8')
 const docs = fs.readdirSync(path.join(PACKAGE_ROOT, 'docs'))
   .filter(name => name.endsWith('.md') && name !== 'CHANGELOG.md')
   .map(name => 'docs/' + name)
-const CURRENT_DOCS = [...docs, 'README.md', 'README.en.md', 'README.zh.md']
+const CURRENT_DOCS = [...docs, 'README.md', 'README.en.md']
 // Derived from the catalogue, never hand-copied: a renamed or added tool must move these numbers.
 const PTC_MEMBERS = CAPABILITIES.filter(entry => 'parameters' in entry && entry.presentations.includes('ptc')).length
 const DISCOVERABLE = Object.keys(DISCOVERY_TERMS).sort()
@@ -32,7 +32,6 @@ await test('the catalogue counts in the current docs match the registry', () => 
   assert.match(read('docs/ptc-sdk-loading.md'), new RegExp(`${PTC_MEMBERS} APIs`))
   assert.match(read('docs/PTC按需加载.md'), new RegExp(`${PTC_MEMBERS} 个 API`))
   assert.match(read('README.md'), new RegExp(`${FILE_TOOLS.length} 个文件/文档工具`))
-  assert.match(read('README.zh.md'), new RegExp(`${FILE_TOOLS.length} 个文件/文档工具`))
   assert.match(read('README.en.md'), new RegExp(`${FILE_TOOLS.length} file/document tools`))
 })
 

@@ -247,7 +247,7 @@ if (typeof patch === 'string' && fs.existsSync(path.join(PACKAGE_ROOT, patch))) 
       const defaults = resolveMergedConfig({})
       const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
       check(same(resolved.global, defaults.global), 'the bundle switches written in the patch match their code defaults')
-      for (const section of ['minimal', 'standard', 'ptc', 'cordis', 'discovery', 'panel', 'tui']) {
+      for (const section of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis', 'discovery', 'panel', 'tui']) {
         check(resolved[section].enabled === defaults[section].enabled, `${section} enabled matches its code default`)
       }
     } catch (error) { check(false, 'the row config is valid', String(error?.message ?? error)) }
@@ -541,7 +541,7 @@ const REQUIRED_ENTRIES = [
   'NOTICE',
   'licenses',
   'README.md',
-  'README.zh.md',
+  'README.en.md',
   'docs/PROVENANCE.md',
   'docs/CHANGELOG.md',
 ]
@@ -585,10 +585,10 @@ check(
   typeof pkg.engines?.dsh === 'string' && pkg.engines.dsh === pkg.peerDependencies?.['@deepseek-ai/dsh'],
   'engines.dsh and the legacy DSH peer declare the same compatibility range',
 )
-for (const version of ['0.2.0-rc.2', '0.2.1-rc.2', '0.2.1-rc.3', '0.2.1-rc.4', '0.2.1-rc.5', '0.2.1']) {
+for (const version of ['0.2.2-rc.1', '0.2.2-rc.2', '0.2.2']) {
   check(evaluatePluginCompatibility(pkg, {}, version) === undefined, `the declared range accepts DSH ${version}`)
 }
-for (const version of ['0.2.0-rc.1', '0.2.2-rc.1', '0.3.0']) {
+for (const version of ['0.2.0-rc.2', '0.2.1-rc.5', '0.2.1', '0.2.2-alpha.2', '0.2.2-rc.0', '0.2.3-0', '0.3.0']) {
   check(evaluatePluginCompatibility(pkg, {}, version) !== undefined, `the declared range rejects DSH ${version}`)
 }
 for (const component of [...COMPONENTS, 'background']) {

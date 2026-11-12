@@ -1,7 +1,7 @@
 /** Installation-relative, verified private MSYS runtime for confined Windows calls.
  * Original payloads remain untouched. Full access does not select this runtime.
  */
-import { isNiubashExecutable, verifiedNiubash } from './niubash/runtime.js'
+import { isNiubashExecutable, selectNiubash } from './niubash/runtime.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
@@ -36,6 +36,8 @@ export const bashIpcRoot=(home: string): string=>path.join(home,'dsh-ops','bash-
  *  A cooperating staging process holds the lifecycle lock, so nothing can be staging while a sweep
  *  runs; the age bound keeps even a crashed sibling's tree untouched for a while (#512). */
 export const STAGING_TTL_MS=60*60*1000
+/** How many quarantined copies offline cleanup keeps beside the current generation. */
+export const QUARANTINE_RETAIN=2
 const proxies=path.join(packageRoot,'runtime/win32-x64/bash-ipc')
 const SOURCES: Record<string, string>={config:'configured bashPath',path:'system bash on PATH','well-known':'system Git for Windows install',bundled:'bundled bash',provisioned:'provisioned bash'}
 // Resolve both PortableGit's bin wrapper and its real usr/bin executable.
@@ -57,7 +59,7 @@ export function restrictedRemedy(file: string, source: string | undefined, why: 
 export function restrictedCompatibility(file: string, {platform=process.platform}: { platform?: NodeJS.Platform }={}) {
   if(platform!=='win32')return {compatible:true,reason:'no MSYS IPC compatibility layer is needed on this platform'}
   if(isNiubashExecutable(file)) {
-    try { verifiedNiubash(file); return {compatible:true,reason:'verified native Niubash; the host sandbox provides confinement'} }
+    try { selectNiubash(file); return {compatible:true,reason:'complete native Niubash; the host sandbox provides confinement'} }
     catch(error) { return {compatible:false,reason:errorMessage(error)} }
   }
   const dll=path.join(msysRoot(file),'usr/bin/msys-2.0.dll')
@@ -263,7 +265,9 @@ function directoryUsage(directory: string): { bytes: number; files: number } {
  * except the one retained for the previous deployment are reclaimable.
  */
 export function bashIpcInventory({home=process.env.DSH_HOME ?? path.join(os.homedir(),'.dsh'), current=null,
-  stagingTtlMs=STAGING_TTL_MS, now=Date.now}: { home?: string; current?: string | null; stagingTtlMs?: number; now?: ()=>number }={}): BashIpcInventory {
+  stagingTtlMs=STAGING_TTL_MS, confirmedStopped=false, retainQuarantine=QUARANTINE_RETAIN, now=Date.now}: {
+    home?: string; current?: string | null; stagingTtlMs?: number; confirmedStopped?: boolean; retainQuarantine?: number; now?: ()=>number
+  }={}): BashIpcInventory {
   const root=bashIpcRoot(home)
   let names: string[]=[]
   try{ if(noLinks(root))names=fs.readdirSync(root) }catch{ /* a missing cache is an empty one */ }
@@ -286,11 +290,20 @@ export function bashIpcInventory({home=process.env.DSH_HOME ?? path.join(os.home
   // no lease, and the sweep that removes it runs under the lifecycle lock (#512).
   const staleStaging=entries.filter(entry=>entry.kind==='staging'
     && now()-entry.mtimeMs>=Math.max(0,stagingTtlMs) && plainTree(path.join(root,entry.name)))
+  // Quarantined copies are diagnosis artifacts for a generation that did not verify. An online
+  // sweep never touches them; offline cleanup (confirmedStopped) may reclaim all but the newest
+  // `retainQuarantine`, and only when the tree has no live lease.
+  const quarantines=confirmedStopped
+    ? entries.filter(entry=>entry.kind==='quarantine')
+      .filter(entry=>plainTree(path.join(root,entry.name))&&!hasLiveLease(path.join(root,entry.name)))
+      .slice(Math.max(0,retainQuarantine))
+    : []
   // One previous generation is retained on purpose: a second profile or a process that is still
   // running the old payload may need it, and a directory that cannot be moved aside is kept.
   const reclaimable=[
     ...[...stale.slice(1),...entries.filter(entry=>entry.kind==='retired')].filter(entry=>idleGeneration(path.join(root,entry.name))),
     ...staleStaging,
+    ...quarantines,
   ]
   return {
     root, current,
@@ -314,12 +327,12 @@ export interface BashIpcReclaimResult { removed: string[]; kept: string[]; bytes
  * 412 MB payload, and without waiting for Windows to release a directory.
  */
 export function reclaimBashGenerations(root: string, current: string, {
-  retain=1, confirmedStopped=false, dryRun=false, stagingTtlMs=STAGING_TTL_MS,
+  retain=1, confirmedStopped=false, dryRun=false, stagingTtlMs=STAGING_TTL_MS, retainQuarantine=QUARANTINE_RETAIN,
   rename=(from: string,to: string): void=>{ fs.renameSync(from,to) },
   remove=(target: string): void=>{ fs.rmSync(target,{recursive:true,force:true}) },
   now=Date.now,
   log=(message: string)=>console.error(message),
-}: { retain?: number; confirmedStopped?: boolean; dryRun?: boolean; stagingTtlMs?: number; rename?: (from: string,to: string)=>void; remove?: (target: string)=>void; now?: ()=>number; log?: (message: string)=>void }={}): BashIpcReclaimResult {
+}: { retain?: number; confirmedStopped?: boolean; dryRun?: boolean; stagingTtlMs?: number; retainQuarantine?: number; rename?: (from: string,to: string)=>void; remove?: (target: string)=>void; now?: ()=>number; log?: (message: string)=>void }={}): BashIpcReclaimResult {
   assertNoLinks(root)
   if(!fs.existsSync(root))return {removed:[],kept:[],bytes:0}
   const run=()=>{
@@ -383,6 +396,33 @@ export function reclaimBashGenerations(root: string, current: string, {
       log(`dsh-ops: removed an interrupted bash runtime staging copy: ${entry.name} (${(usage.bytes/1048576).toFixed(0)} MB)`)
     }catch{ /* held by a scanner; a later sweep retries */ }
   }
+  // Quarantined generations (a runtime copy that did not verify) are kept while any shell may
+  // still use them, so only the explicit offline `confirmedStopped` assertion reclaims all but the
+  // newest `retainQuarantine`. Rename-then-delete keeps a refused removal for the next sweep.
+  if(confirmedStopped){
+    const quarantines=entries.filter(entry=>entry.isDirectory()&&QUARANTINE_NAME.test(entry.name))
+      .map(entry=>{
+        let mtimeMs=0
+        try{ mtimeMs=fs.lstatSync(path.join(root,entry.name)).mtimeMs }catch{ /* raced with a sweep */ }
+        return {name:entry.name,mtimeMs}
+      })
+      .sort((a,b)=>b.mtimeMs-a.mtimeMs||(a.name<b.name?-1:1))
+    const quarantineBudget=Math.max(0,retainQuarantine)
+    result.kept.push(...quarantines.slice(0,quarantineBudget).map(entry=>entry.name))
+    for(const entry of quarantines.slice(quarantineBudget)){
+      const source=path.join(root,entry.name), retired=`${source}.stale-${now().toString(36)}`
+      if(!plainTree(source)||hasLiveLease(source)){result.kept.push(entry.name);continue}
+      const usage=directoryUsage(source)
+      if(dryRun){result.removed.push(entry.name);result.bytes+=usage.bytes;continue}
+      try{ rename(source,retired) }catch{ result.kept.push(entry.name); continue }
+      try{
+        remove(retired)
+        result.removed.push(entry.name)
+        result.bytes+=usage.bytes
+        log(`dsh-ops: reclaimed a quarantined bash runtime copy: ${entry.name} (${(usage.bytes/1048576).toFixed(0)} MB)`)
+      }catch{ /* renamed but not deleted: the next sweep retries the .stale- copy */ }
+    }
+  }
   return result
   }
   return dryRun ? run() : withLifecycleLock(root,run)
@@ -397,15 +437,16 @@ export function currentBashIpcIdentity(file: string | undefined, {platform=proce
   try{ return sourceState(root,path.join(root,'usr/bin/msys-2.0.dll')).identity }catch{ return null }
 }
 /** The inventory plus the identity of the resolved bash, for the CLI reports. */
-export function bashIpcReport(file: string | undefined, {home, platform=process.platform, stagingTtlMs, now}: { home?: string; platform?: NodeJS.Platform; stagingTtlMs?: number; now?: ()=>number }={}): BashIpcInventory {
+export function bashIpcReport(file: string | undefined, {home, platform=process.platform, stagingTtlMs, confirmedStopped, now}: { home?: string; platform?: NodeJS.Platform; stagingTtlMs?: number; confirmedStopped?: boolean; now?: ()=>number }={}): BashIpcInventory {
   return bashIpcInventory({home,current:currentBashIpcIdentity(file,{platform}),
-    ...(stagingTtlMs!==undefined?{stagingTtlMs}:{}),...(now!==undefined?{now}:{})})
+    ...(stagingTtlMs!==undefined?{stagingTtlMs}:{}),...(confirmedStopped!==undefined?{confirmedStopped}:{}),...(now!==undefined?{now}:{})})
 }
 /** @param {string} file
  * @param {{home?: string, platform?: NodeJS.Platform, source?: string}} options */
 export function confinedBash(file: string, {home=process.env.DSH_HOME ?? path.join(os.homedir(),'.dsh'), platform=process.platform, source}: { home?: string; platform?: NodeJS.Platform; source?: string }={}): Runtime {
   if(platform!=='win32')return {file}
-  if(isNiubashExecutable(file))return verifiedNiubash(file)
+  // Niubash runs natively under host confinement (shells/session-execution.ts); it has no IPC runtime.
+  if(isNiubashExecutable(file))throw bashRuntimeFailure('bash-runtime-incompatible',restrictedRemedy(file,source,'Niubash runs natively and has no MSYS IPC runtime.'))
   const root=msysRoot(file)
   const check=restrictedCompatibility(file,{platform})
   if(!check.compatible)throw bashRuntimeFailure('bash-runtime-incompatible',restrictedRemedy(file,source,check.reason))

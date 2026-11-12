@@ -33,10 +33,18 @@ Supported: Windows x64, Linux x64, and macOS 13+ on Apple Silicon or Intel
 > `dsh-ops` row. Commands using `@latest` below select the published package; build and pack this
 > checkout to evaluate the candidate. See the [changelog](docs/CHANGELOG.md).
 
-- The single row enables the four built-in preset consumers: Standard and Cordis publish resident
-  Native file tools, PTC publishes typed APIs, and Minimal has no resident file baseline. Native
-  discovery and typed SDK loading are independently configured. Advanced selections activate in
-  the owning agent's next provider request, never by executing a discovery action.
+- The single row enables the five built-in preset consumers: Standard and Cordis publish resident
+  Native file tools, PTC publishes typed APIs, and Minimal has no resident file baseline. OPS PTC is
+  the fifth enhanced preset, registered by the plugin at runtime (no plugin-manager preset row): it
+  keeps the PTC surface and delivers the English batch-call guidance from `prompts/batching-guidance.md`:
+  one lesson at session start, then short `additionalContexts` notices when a root `run_code` program
+  breaks the `bypass`/`plan`/`shape` shape categories (each latched once per turn), without touching the
+  system prompt and without blocking or rewriting the program. Native discovery and typed SDK loading are
+  independently configured.
+  Advanced selections activate in the owning agent's next provider request, never by executing a
+  discovery action. The default preset is forced by the `global.forceDefaultOpsPtc` switch (on by
+  default; turning it off or disabling the row restores the previous or official default). See
+  [presets](docs/presets.md).
 - The PTC SDK catalogue has 18 APIs: 15 file/document tools, batch, result references and its loader.
   Only the configured resident or selected APIs are exposed. Native and PTC use separate outputs.
 - Discover bounded CSV/TSV, DOCX main-body paragraphs and a restricted PDF text layer. Binary DOC,
@@ -48,10 +56,10 @@ Supported: Windows x64, Linux x64, and macOS 13+ on Apple Silicon or Intel
   capture and TUI start off. Custom presets use the same assembler as built-ins, while unlisted
   presets remain unchanged. Move legacy row overrides into the single row; the Compatibility row
   is removed. See [settings](docs/configuration-reference.md) and [architecture](docs/internal-architecture.md).
-- Built-in preset consumers are enabled by default: Windows uses the pinned Bash payload
-  declared by the main package — `@dsh-ops/bash-win32-x64@0.2.1` in `optionalDependencies`, so npm
-  installs the independent **bash 5.3.15** (PortableGit `v2.56.0.windows.2`) that ships with ops,
-  and `bashPath` can point `ops_bash` at Git Bash instead; Linux/macOS use the distribution's own
+- Built-in preset consumers are enabled by default: on Windows the package embeds the pinned
+  **official Niubash 1.5.0 portable payload** and downloads no Git Bash optional package; the
+  settings page's **Bash executor** card switches between that payload and a Git Bash/MSYS
+  executable you scan or type in (saved as `bashPath`). Linux/macOS use the distribution's own
   Bash, overridable with `config.bashPath`. `dsh-ops bash-runtime install` remains the path for
   installing, repairing and selecting a managed copy. PowerShell stays host-managed; its upgrade
   command previews the standard installation and requires `--yes` to execute.
@@ -105,7 +113,7 @@ Direct `git+https` installation and unbuilt source checkouts lack the complete r
 
 #### Update
 
-Host compatibility is declared for DSH **0.2.0-rc.2 and 0.2.1-rc.2**. See
+The 0.5 series supports DSH **from 0.2.2-rc.1**, not 0.2.0/0.2.1 or earlier 0.2.2 previews. The DSH adapter remains; integration uses the native 0.2.2 tool-admission and executor APIs. See
 [host versions and display metadata](docs/usage.md#host-compatibility-and-display-metadata)
 for component icon exports, profile refresh and config/schema checks.
 
@@ -132,10 +140,11 @@ Enable `tui.enabled` on the `dsh-ops` row in dsh-TUI and restart to add the OPS 
 
 - [Third-party preset integration API](docs/integration-api.md) · [External Native providers](docs/external-provider.md) · [Scoped diagnostics](docs/diagnostics.md)
 
-- [Usage](docs/usage.md) · [Troubleshooting](docs/troubleshooting.md) · [Component reference](docs/component-reference.md) · [Configuration reference](docs/configuration-reference.md)
+- [Usage](docs/usage.md) · [Troubleshooting](docs/troubleshooting.md) · [Component reference](docs/component-reference.md) · [Configuration reference](docs/configuration-reference.md) · [Presets](docs/presets.md)
 - [Windows runtime evidence](docs/windows-runtime-evidence.md): payload compatibility, Low integrity, MSYS startup and antivirus/approval diagnostics.
 - [Native PTC](docs/native-ptc.md) · [Manual validation](docs/manual-validation.md)
 - [Contributing](docs/CONTRIBUTING.md) · [Roadmap](docs/roadmap.md) · [Changelog](docs/CHANGELOG.md) · [Provenance](docs/PROVENANCE.md)
+- [CI troubleshooting](docs/ci-troubleshooting.md) · [CI 排错说明](docs/ci-troubleshooting.zh.md)
 
 ## Windows Bash diagnostics
 

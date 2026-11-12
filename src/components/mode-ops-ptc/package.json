@@ -1,0 +1,6 @@
+{
+  "name": "dsh-ops-mode-ops-ptc",
+  "description": "Add useful OPS tools to the built-in OPS PTC preset, replace some built-in tools, and use bash instead of pwsh on Windows.",
+  "icon": "./icon.png",
+  "type": "module"
+}

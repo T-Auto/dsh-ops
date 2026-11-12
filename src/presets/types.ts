@@ -5,13 +5,13 @@
  * sessions composed from that preset and, unless Compatibility mode is on, hide
  * the official tools that surface replaces.
  */
-export const MODE_IDS = Object.freeze(['minimal', 'standard', 'ptc', 'cordis'] as const)
+export const MODE_IDS = Object.freeze(['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis'] as const)
 /** One enhanced built-in preset. */
 export type ModeId = typeof MODE_IDS[number]
 
 /** The agent-preset id each mode enhances; the preset ids are the built-in ids. */
 export const MODE_PRESET: Readonly<Record<ModeId, string>> = Object.freeze({
-  minimal: 'minimal', standard: 'standard', ptc: 'ptc', cordis: 'cordis',
+  minimal: 'minimal', standard: 'standard', ptc: 'ptc', 'ops-ptc': 'ops-ptc', cordis: 'cordis',
 })
 
 /** The preset a minimal-mode session uses even when the Minimal row is off. */

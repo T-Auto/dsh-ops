@@ -1,3 +1,4 @@
+import { Context } from '@deepseek-ai/cordis'
 /** Registry migration preserves the complete previously published host definitions. */
 import { createHash } from 'node:crypto'
 import { CAPABILITIES, NATIVE_FILE_TOOLS, NATIVE_RESIDENT_FILE_TOOLS, FILE_CAPABILITIES, PTC_CAPABILITIES, SHELL_CAPABILITIES, capability, capabilitiesFor } from '../lib/capabilities/registry.js'
@@ -35,7 +36,7 @@ await test('metadata separates the Native resident core from discoverable capabi
   for (const entry of PTC_CAPABILITIES) assert.deepEqual(entry.presentations, entry.rawName === 'result' ? ['native', 'ptc'] : ['ptc'])
   assert.deepEqual(NATIVE_RESIDENT_FILE_TOOLS, ['read_files'])
   assert.equal(capability('result').nativeProjection.availability, 'discoverable')
-  assert.deepEqual(FILE_CAPABILITIES.filter(entry => entry.availability === 'discoverable').map(entry => entry.rawName).sort(), DISCOVERABLE_TOOLS.filter(name => name !== 'result').sort())
+  assert.deepEqual(FILE_CAPABILITIES.filter(entry => entry.availability === 'discoverable').map(entry => entry.rawName).sort(), DISCOVERABLE_TOOLS.filter(name => name !== 'result' && !NATIVE_RESIDENT_FILE_TOOLS.includes(name)).sort())
   for (const entry of CAPABILITIES) {
     assert.equal(entry.availability, entry.component === 'file' && entry.rawName !== 'read_files' ? 'discoverable' : 'resident')
     assert.equal(entry.concurrencySafe, entry.component === 'file' && !entry.mutates)
@@ -56,19 +57,19 @@ const snapshot = (names, definition) => names.map(name => {
   return { name: d.name, description: d.description, parameters: withoutDescriptions(d.parameters), output: d.output.schema,
     concurrent: d.isConcurrencySafe?.({}) ?? false, timeoutMs: d.timeoutMs ?? null }
 })
-await test('business file and batch definitions retain their original serialized contracts', () => {
-  // Structural contracts stay pinned below; #419 clarifies the create-only literal in write_file help.
+await test('business file and batch definitions retain their reviewed serialized contracts', () => {
+  // Structural contracts stay pinned separately below; #866 removes the misleading directory-read routing hint.
   const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
-  assert.equal(hash(snapshot(FILE_TOOLS.filter(name => !['glob', 'grep', 'read_files', 'edit_file', 'read_table', 'read_docx', 'read_pdf'].includes(name)), fileDefinition)), '7fa3aa6a22f54cf65f4ce0d243197a8ffef12949d4d6c4591ad996d853a39cdc')
+  assert.equal(hash(snapshot(FILE_TOOLS.filter(name => !['glob', 'grep', 'read_files', 'edit_file', 'read_table', 'read_docx', 'read_pdf'].includes(name)), fileDefinition)), 'a59d153dcb83555d4b9c724d0569a55b9cbea5ab87127a5c03ceeccf9b3eafb5')
   const batch = ptcDefinition('batch', async () => null)
   assert.equal(batch.parameters, ptcParameters.batch); assert.ok(batch.description.startsWith(ptcDescriptions.batch)); assert.match(batch.description, /PTC returns Outcome/)
   assert.ok(batch.output.schema.oneOf.every(branch => branch.properties.status))
 })
 
 await test('file parameter schemas preserve their reviewed structural constraints', () => {
-  // #384 intentionally adds the optional exactTotal boolean; all other constraints remain pinned.
+  // #865 adds only optional glob kind: file/directory/all; every other structural constraint stays pinned.
   const hash = createHash('sha256').update(JSON.stringify(withoutDescriptions(fileParameters))).digest('hex')
-  assert.equal(hash, '637df1383940fa6fdb2d65a68e67ce1e333a7e2ecbfceff5ffef7a4c1133ea8b')
+  assert.equal(hash, '6edcefb072fbd07b3a79bc989b1957dbe5ad1d290cdd56125c7e625830d118cd')
 })
 
 await test('create-only help names the required literal instead of suggesting an omitted revision', () => {
@@ -83,9 +84,9 @@ await test('create-only help names the required literal instead of suggesting an
 
 await test('native registration consumes the catalogue while execute values stay unchanged', async () => {
   const registered = [], disposed = []
-  const runtime = new NativeFileTools({ ctx: { tools: { register(definition) {
+  const runtime = new NativeFileTools({ ctx: Object.assign(new Context(), { tools: { register(definition) {
     registered.push(definition); return () => disposed.push(definition.name)
-  } } }, config: { workerPath: 'fixture-worker' } })
+  } } }), config: { workerPath: 'fixture-worker' } })
   assert.deepEqual(await runtime.start(), NATIVE_FILE_TOOLS.map(publicToolName))
   assert.deepEqual(registered.map(item => item.name), NATIVE_FILE_TOOLS.map(publicToolName))
   const canonical = { status: 'completed', items: [{ path: '/file', line: 1, text: 'text' }], complete: false }
@@ -104,7 +105,7 @@ await test('native registration consumes the catalogue while execute values stay
   assert.deepEqual(disposed.sort(), registered.map(item => item.name).sort())
 })
 await test('unstarted Native runtimes return an unavailable value before creating call state', async () => {
-  const runtime = new NativeFileTools({ ctx: {}, config: { workerPath: 'fixture-worker' } })
+  const runtime = new NativeFileTools({ ctx: new Context(), config: { workerPath: 'fixture-worker' } })
   const value = await runtime.call('stat', { path: '.' }, {})
   assert.equal(value.error.code, 'EXECUTOR_UNAVAILABLE')
   assert.match(value.error.message, /worker path is unavailable/)

@@ -7,6 +7,204 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Glob accepts `kind: file | directory | all` (default `file`), including empty directories in shallow listings without following links or changing hidden-item policy. Partial Native searches retain paths, scan counters, skip reasons and bounded diagnostic examples; directory read refusals give usable guidance.
+- Glob 新增 `kind: file | directory | all`（默认 `file`），浅层列举可见空目录，仍不跟随链接，也不改变隐藏项策略。Native 搜索不完整时保留路径、扫描计数、跳过原因与有界诊断样例；目录读取拒绝给出可执行指引。
+- Correct the model-visible glob/grep/read-files result shapes and the ops-ptc batching examples. Bypass reminders distinguish command-output filters from definite file access. On-demand integration diagnostics report the host-selected runtime version or `unknown`, without adding version text to prompts or SDKs. Shared SDK declaration deduplication remains a documented host dependency.
+- 修正模型可见的 glob/grep/read-files 结果类型与 ops-ptc 批量示例。绕过提醒区分命令输出过滤与明确的文件操作。按需集成诊断返回宿主选定的运行时版本或 `unknown`，不向提示词或 SDK 注入版本文字。公共 SDK 声明去重仍作为宿主依赖记录。
+- Native output omits only proven duplicate summaries and successful read-only zero-change counts, preserving scan/page/display completeness and failure facts. The Native naming audit identifies the host-owned stale `read` instruction separately from OPS routing; no aliases or additional tools are published.
+- Native 输出仅合并已确认重复的摘要，并省略成功只读操作的零变更计数，保留扫描、分页、显示完整性与失败事实。Native 名称审计将宿主自有的过期 `read` 指引与 OPS 路由区分记录，不发布别名或额外工具。
+
+## [0.5.4] — 2026-11-11 — Patch release
+
+- Fix `ops-ptc` silently losing batching guidance when an older profile replaces the whole bundle row config and omits the new mode section. The code now defaults `batchingGuidance` to true for `ops-ptc` only; explicit false still disables it, other modes remain off, and telemetry remains opt-in.
+- 修复旧 profile 整行覆盖 bundle 配置且缺少新模式配置节时，`ops-ptc` 静默失去批量引导的问题。代码现在仅对 `ops-ptc` 默认开启 `batchingGuidance`；显式 false 仍可关闭，其它模式仍默认关闭，遥测仍需主动开启。
+
+- CI: the three `validate-*` jobs are one `validate` matrix over the four shipped targets, and the Rust version is read from `native/rust-toolchain.toml` by a shared `.github/actions/setup` action instead of being written in eight places. The cargo cache is scoped per job, OS and architecture, holds dependencies only (no incremental state or workspace artifacts), is invalidated by a new toolchain or flags instead of accumulating old trees, and is saved only by pushes. `CI required` now judges `toJSON(needs)` directly instead of a second hand-kept list. The Linux leg stages the published musl worker before the suites run (`verify-gate.mjs --worker-target`), and `rust-lint` runs clippy for the Linux, Windows and macOS targets, which exposed an `unreachable_code` error in `ops-files` that only exists on macOS (fixed without a behaviour change). The three macOS FSEvents idle-stream tests, which failed on cold runners because they asserted an empty batch that FSEvents does not promise, now assert that no event lies inside the tree and that `recovery()` still answers caught-up.
+- CI：三个 `validate-*` job 合并为覆盖四个发布目标的 `validate` 矩阵，Rust 版本由共享的 `.github/actions/setup` 从 `native/rust-toolchain.toml` 读取，不再在八处手写。cargo 缓存按 job、系统与架构隔离，只存依赖（不含增量状态与工作区产物），工具链或编译参数变化时整体失效而不是堆叠旧产物，且仅由 push 保存。`CI required` 直接对 `toJSON(needs)` 判定，不再维护第二份名单。Linux 腿在跑 suite 之前先 stage 发布用的 musl worker（`verify-gate.mjs --worker-target`），`rust-lint` 对 Linux、Windows、macOS 三个 target 跑 clippy，并因此发现 `ops-files` 里一处只在 macOS 上存在的 `unreachable_code` 错误（已修复，行为不变）。三个 macOS FSEvents 空闲流测试此前断言“batch 必须为空”，而 FSEvents 并不承诺这一点，冷启动的 runner 上会失败；现改为断言树内没有任何事件，且 `recovery()` 仍判定为已追平。
+
+## [0.5.3] — 2026-11-11 — Patch release
+
+- The batch trigger now analyses the **root `run_code` program text** instead of counting repeated writes. Three independently latched categories — `bypass` (file work through the shell or `node:fs`), `plan` (no `// plan:` on the first physical line) and `shape` (a single operation in its own round trip) — each speak once per turn; a program that complies re-arms its category, so a regression inside the same turn speaks again, with no per-turn cap. Only the root call is inspected, delivery priority is `bypass` → `plan` → `shape`, and the notice rides the triggering result as `additionalContexts` without changing the tool value, its content or the system prompt.
+- 批量触发器改为分析**根 `run_code` 的程序文本**，不再统计重复写路径。三类独立锁——`bypass`（用 shell 或 `node:fs` 做文件工作）、`plan`（第一物理行没有 `// plan:`）、`shape`（一次往返只做一件事）——每类每轮各发言一次；某类一旦合规即解锁，同一轮内先改对再退回仍可再次提醒，且不设每轮条数上限。只检查根调用，投递优先级为 `bypass` → `plan` → `shape`，提醒以 `additionalContexts` 附在触发调用自身的结果上，不改工具值、正文与系统提示词。
+- The teacher trajectory is now a full procedure: the first-line `// plan:` directive with both `;` and the full-width `；` as separators, the dependency split, the load-before-call step (`ops_load_sdk` takes effect on the next program), four copyable trajectories that use the OPS file APIs instead of the shell, the 128-dispatch ceiling and the common-mistake table.
+- 教师轨迹补全为完整流程：首行 `// plan:` 指令（`;` 与全角 `；` 均可作分隔符）、按依赖拆分、先加载再调用（`ops_load_sdk` 在下一个程序生效）、四条改用 OPS 文件 API 而非 shell 的可照抄轨迹、单程序 128 次派发上限，以及常见错误表。
+- Fix the one-time teaching latch: the lesson is spent only once it appears as a durable `user/message`. The step-tail provider no longer latches on its own return value, so a batch withdrawn before admission (cancellation, rejection, failed request preparation) leaves the next accepted batch free to teach it again instead of silently skipping the lesson for the whole session.
+- 修复一次性教学闩锁：教学只有在真正出现持久 `user/message` 时才算兑现。step-tail provider 不再在自己的返回值上置位，因此因取消、拒绝或请求准备失败而撤回的批次不会消耗它，下一个被接受的批次仍会教学，不会整会话静默跳过。
+- Add the YAML-only `batchingTelemetry` row switch (default `false`): one structured log line per delivered notice, e.g. `dsh-ops batching: turn=3 category=plan plan=1 bypass=0 shape=2 total=3`. Observation only — no context, no message, no new dependency.
+- 新增 YAML-only 模式行开关 `batchingTelemetry`（默认 `false`）：每投递一条提醒打印一行结构化日志，例如 `dsh-ops batching: turn=3 category=plan plan=1 bypass=0 shape=2 total=3`。只做观测——不产生上下文、不发消息、不引入新依赖。
+- Remove the repeated-write detector and the `wrapDispatch` interceptor it required on the shared file lease, so the shared dispatch identity is untouched again.
+- 移除重复写检测，以及它给共享文件租约加的 `wrapDispatch` 拦截器，共享派发的身份恢复原样。
+- Windows Niubash selection no longer hashes the payload. Each mode consumer, the settings page and `ops_status` hashed the source and the prepared copy (about 893 MiB, faces included) synchronously on the host thread, so one default mount of four modes stalled for seconds. Selection now checks only that each pinned file is present with its pinned size, reads no contents and writes nothing; bytes are still hashed where they enter the machine (package build and `provision-shells --bash`). The prepared runtime is built asynchronously at the first Bash call, once per process, and its publication backoff no longer blocks the event loop. Files the shell writes into its state directories no longer mark the prepared copy damaged and force a full rebuild.
+- Windows Niubash 选择阶段不再哈希载荷。此前每个模式消费者、设置页和 `ops_status` 都会在宿主线程上同步哈希源载荷与准备副本（含 face 约 893 MiB），默认四个模式挂载一次就卡数秒。选择现在只检查每个固定文件存在且大小一致，不读取内容、不写文件；字节仍在进入本机时哈希（打包构建与 `provision-shells --bash`）。准备运行时改为进程内第一次 Bash 调用时异步构建一次，发布退避不再阻塞事件循环。Shell 写入启动目录的文件不再使准备副本被判为损坏而整份重建。
+- Prepared-version retirement (online, and offline `cache reclaim --kind exec-tree`) removes an already `.retired-` sibling in place instead of renaming it again. Two hosts cleaning up at once could split one tree across two names, and `rmSync(force)` reported success for the half it no longer found, leaking the rest.
+- 准备版本退役（在线退役与离线 `cache reclaim --kind exec-tree`）对已是 `.retired-` 的兄弟目录改为原地删除，不再二次改名。两个宿主同时清理时可能把一棵树拆到两个名字下，而 `rmSync(force)` 对找不到的那一半照样报告成功，剩余部分因此泄漏。
+- Add the `global.forceDefaultOpsPtc` bundle switch (default true): while the `dsh-ops` row is enabled and the `ops-ptc` preset registered, it forces the profile's default preset to `ops-ptc` at runtime by writing `selectedDefault` through the host settings service (the settings-page mechanism, overriding a manual choice). Turning the switch off, disabling or unloading the row restores the value captured before forcing, or the host `config.default` (the official default) when nothing was captured or the captured value is `ops-ptc`. The forced default persists through the host settings layer into the profile patch and survives a restart; saving another switch on the row re-confirms it, and a failed registration never forces while best-effort restoring a leftover forced default. A missing settings service or a failed write only logs a warning.
+- 新增 bundle 总开关 `global.forceDefaultOpsPtc`（默认 true）：`dsh-ops` 行启用且 `ops-ptc` 预设注册成功时，在运行时通过宿主 settings 服务把 `selectedDefault` 写成 `ops-ptc`，强制新会话默认使用该预设（与设置页同一机制，会覆盖手动选择）。关闭开关、禁用或卸载插件行时恢复强制前捕获的值；未捕获或捕获值本身是 `ops-ptc` 时回退宿主 `config.default`（官方默认）。强制值经宿主设置层持久化到 profile patch，重启后保持；保存该行其它开关会重新确认；注册失败不强制，仅尽力回退残留默认。宿主 settings 服务缺失或写入失败只记 warning。
+- Describe the `OPS (PTC)` preset in Chinese: "代码驱动的 PTC 工具面，由 dsh-ops 的 ops_* 工具扩展。" The name stays `OPS (PTC)`; the generated fragment and its sync script carry the new description.
+- `OPS (PTC)` 预设描述改为中文「代码驱动的 PTC 工具面，由 dsh-ops 的 ops_* 工具扩展。」，名称仍为 `OPS (PTC)`；生成片段与同步脚本同步该描述。
+
+- Add the `ops-ptc` enhanced preset as the fifth built-in mode. `dsh-ops` registers it at apply time through the host agent preset registry from the shipped `presets/ops-ptc.patch.yml` loader fragment (parsed by the host's `loadOverlayPatches`), not from a bundle patch or a plugin-manager row; the merged row gains an `ops-ptc` section with the same typed PTC surface, and compaction stays the official `compaction-basic`.
+- 新增第五个内置增强模式 `ops-ptc`：`dsh-ops` 在 apply 时通过宿主预设注册表注册它，定义来自随包片段 `presets/ops-ptc.patch.yml`（由宿主 `loadOverlayPatches` 解析），不再是 bundle patch 或插件管理器行；单行配置新增 `ops-ptc` 分区并发布同一套类型化 PTC 工具面，压缩沿用官方 `compaction-basic`。
+- Fix `ops-ptc` preset ownership: drop the old bundle-layer wiring (the fragment is no longer a bundle patch and the default is no longer a static `agent-preset-registry` override), so the preset is a runtime registration that lives and dies with the `dsh-ops` row and a missing or rejected fragment only warns while the tools keep working. Default handling now lives in the explicit `global.forceDefaultOpsPtc` switch; with the switch off, a manually set `ops-ptc` default must be switched before disabling that row or new sessions cannot resolve the preset.
+- 修正 `ops-ptc` 预设归属：移除旧的 bundle 层接线（片段不再作为 bundle 补丁，默认也不再用静态 `agent-preset-registry` 覆盖），预设改为随 `dsh-ops` 行启停的运行时注册，片段缺失或注册被拒只告警、工具面照常工作。默认处理改由显式的 `global.forceDefaultOpsPtc` 开关负责；开关关闭时，手动设成 `ops-ptc` 的默认仍须先切换再禁用该行，否则新会话解析不到预设。
+- Move the batch-call guidance to the editable English `prompts/batching-guidance.md`, delivered from that one file: a lesson once in the session's first accepted user-message batch (logged history, visible to the first request, never the system prompt), plus the shape notices described by the entry above; the prompt prefix and tool schemas stay unchanged, and an unreadable file skips delivery instead of failing the call. Progressive disclosure under `ops-ptc` still follows `dynamicTools` (mode switch AND bundle switch), and loaded APIs appear only on the next model step.
+- 批量调用提示改为可编辑的英文外置文件 `prompts/batching-guidance.md`，统一从该文件投递：会话首个被接受的用户消息批次里教学一次（进入历史、模型第一条请求可见、不改系统提示词），另加上一条所述的形状提醒；系统提示词前缀与 tool schema 不变，文件读不到时跳过投递而不影响调用。`ops-ptc` 的渐进式披露仍由 `dynamicTools`（模式开关与 bundle 总开关的与门）控制，新加载的 API 只在下一模型步骤可见。
+
+- The package no longer ships the duplicate `README.zh.md`; `README.md` is the Chinese readme and `README.en.md` the English one.
+- 发行包不再包含重复的 `README.zh.md`：`README.md` 即中文说明，`README.en.md` 为英文说明。
+
+- Run Niubash preparation/security suites in the parallel pool using their private prepared copies; only the prepack consumer remains exclusive. Reduce the cold-payload watchdog and Windows release-gate budget from 600 to 300 seconds, retaining explicit overrides and ample headroom above the measured cold setup.
+- Niubash 准备与安全套件使用各自 prepared 副本进入并行池，仅 prepack consumer 保持独占；完整载荷看门狗与 Windows 发布门禁预算从 600 秒调为 300 秒，保留显式覆盖，并为实测冷启动保留充分余量。
+
+- Windows publication now distinguishes genuine sharing/lock conflicts from unsupported exFAT locks and preserves unrelated IO errors instead of fabricating `REVISION_CONFLICT`. Volumes without named-stream/ACL support preserve available basic metadata with `metadataWarnings`; source metadata that is present but unsupported still fails closed (#800).
+- Windows 发布错误现在区分真实的共享/锁冲突、exFAT 不支持的锁及其他 IO 错误，不再伪造 `REVISION_CONFLICT`。不支持命名流/ACL 的卷会保留可用基本元数据并返回 `metadataWarnings`；源文件确有不受支持的元数据时仍闭锁拒绝（#800）。
+- `stat`, `copy`, `move` and `remove` compute SHA-256 revisions by streaming, so revision checks no longer impose the 32 MiB whole-content buffer limit. Hex inspection seeks for its requested window instead of materializing the file; content-holding operations retain explicit size errors, and an unsupported inspect `encoding` is an `INVALID_ARGUMENT` naming that field.
+- `stat`、`copy`、`move` 与 `remove` 改为流式计算 SHA-256 revision，不再受 32 MiB 完整内容缓冲限制。hex 检查按请求窗口定位读取，不再物化整个文件；必须持有内容的操作保留明确的大小错误，不支持的 inspect `encoding` 改为指明该字段的 `INVALID_ARGUMENT`。
+- Search depth overflow now skips only the affected subtree and records `skipReasons`, while entry/file budget stops also record their cause. Blank glob entries name their index, grep pattern/limit errors are distinct, and directory replace records permission-denied reads and continues eligible neighbors while lock, staging and publication denials still fail (#796, #797).
+- 搜索深度超限现在只跳过对应子树并记录 `skipReasons`，目录项/文件预算停止也会记录原因。空白 glob 条目会指明索引，grep 的 pattern 与 limit 错误分别报告；目录 replace 会记录读取权限拒绝的路径并继续处理其他合格文件，更新锁、暂存与发布阶段的权限拒绝仍使调用失败（#796、#797）。
+- Read-only file/result worker deadlines, caller cancellation, lossy output and nonzero exits now report `effectState: none` with `TIMEOUT`, `ABORTED`, `OUTPUT_LIMIT` or `EXECUTOR_UNAVAILABLE` as appropriate; signal death remains `RESULT_UNKNOWN` without implying mutation. Mutating calls retain uncertainty. Bash preparation that never returned a process handle likewise reports no effects and keeps its failure-specific retry advice.
+- 只读文件/结果 worker 的真实截止、调用方取消、输出丢失与非零退出现在报告 `effectState: none`，分别使用 `TIMEOUT`、`ABORTED`、`OUTPUT_LIMIT` 或 `EXECUTOR_UNAVAILABLE`；信号死亡仍为 `RESULT_UNKNOWN`，但不暗示发生写入。写入调用仍保留不确定性。Bash 准备在返回进程句柄前失败时同样报告无效果，并保留按失败类别给出的重试建议。
+- `write_file`/`edit_file` descriptions and bilingual contracts now state the effective 2 MiB request budget, and oversized writes name `content` and advise splitting. Bash guidance requires background jobs for long-running/daemon starts and notes that `job_kill` terminates the job's process tree.
+- `write_file`/`edit_file` 说明及双语契约现在标明实际的 2 MiB 请求预算，超大写入错误会指明 `content` 并建议拆分。Bash 指引要求长时间运行进程/守护进程使用后台任务，并说明 `job_kill` 会终止该任务的进程树。
+
+- If another profile with a different Niubash pin retires the selected runtime, recover it once on the next call from its selected verified source without retiring other pins. Online retirement leaves other hashes' in-progress staging directories for offline cleanup.
+- 同一 DSH_HOME 的另一 profile 使用不同 Niubash pin 并退役所选运行时时，下次调用从原选定的已验证源恢复一次，不退役其他 pin；在线退役保留其他哈希构建中的 stage 目录，交由离线回收。
+
+- Retire obsolete prepared Niubash versions, broken/retired leftovers and same-hash staging leftovers after successful selection: rename each exact namespace directory once before best-effort deletion, leave busy versions for later, and keep unrelated paths untouched. `cache status/reclaim --kind exec-tree` also covers non-current prepared versions, never the current hash.
+- 成功选择 Niubash 后退役旧准备版本及 broken/retired 和同哈希 stage 残留：仅处理精确命名空间目录，先尝试改名一次再尽力删除，保留繁忙版本待后续清理，不碰无关路径；`cache status/reclaim --kind exec-tree` 同样覆盖非当前准备版本，绝不回收当前哈希。
+
+- Prepare Windows Niubash once per frozen manifest hash under `DSH_HOME`, copying the source without hardlinks and publishing command faces plus startup directories atomically. Calls reuse the prepared runtime outside the workspace and retain host confinement, without per-call execution trees, hashing, seals, receipts or disposal. `DSH_OPS_EXEC_ROOT` and `NIUBASH_VERIFY=deep` no longer configure execution; the former remains available only to discover legacy trees for offline reclamation (#817).
+- Windows Niubash 按冻结清单哈希在 `DSH_HOME` 中一次性准备：复制源载荷但不建立源硬链接，预生成命令 face 与启动目录后原子发布。每次调用复用工作区外的准备运行时、保留宿主约束，不再创建执行树、哈希、封印、写收据或释放副本。`DSH_OPS_EXEC_ROOT` 与 `NIUBASH_VERIFY=deep` 不再配置运行行为；前者仅为离线回收发现旧执行树保留（#817）。
+
+- Bound Windows first-preparation publication rename backoff to 10 seconds for temporary scanner sharing refusals only; preserve explicit publication diagnostics and never retry commands.
+- Windows 首次准备发布时，仅对扫描器临时共享拒绝的目录 rename 退避最多 10 秒，保留明确发布诊断，绝不重试命令。
+- Repair a damaged prepared Niubash version once at selection: move it aside, rebuild from the verified source, clean the old version best-effort, and report both causes if fresh preparation fails.
+- 准备后的 Niubash 版本损坏时，在选择阶段移走旧目录并从已验证源载荷重建一次，尽力清理旧版本；新准备仍失败时同时报告两次错误。
+- Reclaim incomplete legacy Niubash execution trees without requiring a completed execution receipt; verify every existing payload member, clear legacy deny ACEs/read-only attributes, and retain unknown contents. Offline confirmation is still required (#808).
+- 回收不完整的旧 Niubash 执行树时不再要求完整执行收据；核验每个现存载荷成员，解除旧 deny ACE/只读属性，保留未知内容，仍要求明确离线确认（#808）。
+- Official read/glob/grep declarations now yield to an admitted OPS replacement in the same model step, sharing the source's conditional admission rather than publishing both and refusing official calls with `MODE_REPLACEMENT`. When the counterpart is unavailable, official fallback keeps its schema and execution callbacks and respects existing restrictions; an unlinked host scope leaves the original official definitions untouched (#787).
+- 官方 read/glob/grep 与 OPS 替代工具现在按同一模型步骤的准入结果互斥声明，不再同时发布后以 `MODE_REPLACEMENT` 拒绝官方调用；替代工具不可用时，官方回退保留原 schema 和执行回调，并遵守已有工具限制；宿主作用域关联失效时保留官方原始定义（#787）。
+- Publication diagnostics distinguish stale or unadmitted definitions (`PUBLICATION_IDENTITY_MISMATCH`) from missing or conflicting dispatch grants (`PUBLICATION_GRANT_UNAVAILABLE`), without changing authorization boundaries or claiming a root-cause fix for #784.
+- 发布诊断区分过期或未准入的定义（`PUBLICATION_IDENTITY_MISMATCH`）与缺失或冲突的分派授权（`PUBLICATION_GRANT_UNAVAILABLE`）；不改变授权边界，也不将诊断改进宣称为 #784 根因修复。
+- Retain explicit create-only `expectedRevision: "absent"` guidance in compact tool help and refresh deferred-tool security/regression fixtures (#817).
+- 精简工具说明时保留 create-only 所需的 `expectedRevision: "absent"` 明示，并同步延迟加载工具的安全与回归测试夹具（#817）。
+
+- Reduce per-request tool overhead: Standard/Cordis keep only inspect/glob/grep resident, with read_files/result discovered on demand; PTC initially keeps inspect and load_sdk, with result loadable on demand even when allowedTools is empty. Replace always-resident capability directories with one-line loader pointers and remove prompt/schema repetition without changing argument defaults, limits, paging completeness or authority checks (#817).
+- 减少每请求固定工具开销：Standard/Cordis 仅常驻 inspect/glob/grep，read_files/result 按需发现；PTC 初始仅保留 inspect 与 load_sdk，即使 allowedTools 为空仍可按需加载 result。常驻能力目录改为一行加载器指引，删除提示词与 schema 的重复说明，不改变参数默认值、限额、分页完整性或权限检查（#817）。
+- Give CPU-bound test compilers, packers and fixture checks a shared 120-second subprocess budget so parallel-load contention is not mistaken for a hang; the CI suite watchdog remains in force and no failure is retried.
+- 测试中的编译器、打包器和 fixture 检查统一使用 120 秒子进程预算，避免把并行负载争用误判为挂死；保留 CI 套件 watchdog，失败不重试。
+
+- Run test suites in a bounded worker pool with isolated processes/homes, buffered output, per-suite timings and a slowest-ten summary; `DSH_OPS_TEST_JOBS=1` restores serial execution. Only the Niubash consumer stays exclusive because prepack rebuilds shared `lib/`; preparation and security suites use private prepared copies and run with the pool. Cache CLI fixtures use unique scratch directories across runs. Remove timeout retries and avoid repeating the plugin build and manifest validation inside the release gate.
+- 测试套件改为有界并行，保留独立进程与临时 home，整块输出每套结果、耗时和最慢十套；`DSH_OPS_TEST_JOBS=1` 可恢复串行。仅 Niubash consumer 因 prepack 重建共享 `lib/` 保持独占；准备与安全套件改用各自 prepared 副本，可进入并行池。缓存 CLI fixture 使用跨运行唯一的 scratch 目录；删除超时重试，并去掉发布门禁内重复的插件构建与 manifest 校验。
+
+- Unsealing an execution tree no longer skips a file whose Windows `dev:ino` matches another member's. That key is not unique on Windows, so a skipped file stayed read-only, could not be removed, and left the whole tree behind in the temp directory; a repeated `chmod` on a genuinely shared inode is harmless (#804).
+- 解封执行树时不再按 `dev:ino` 跳过文件：该键在 Windows 上并不唯一，被跳过的成员会一直只读、删不掉，进而把整棵树留在临时目录里。对真正共享的 inode 重复 `chmod` 无害（#804）。
+- A hardlink clone the filesystem refuses with `UNKNOWN` now rebuilds the tree as copies. Windows reports the per-inode link limit under that single code, so the five-code fallback gate never matched and every Bash call failed until the condition cleared on its own; the fallback now also records the payload's highest link count so the ceiling is visible next time (#804).
+- 硬链接克隆遇到 `UNKNOWN` 失败时改为重建为复制副本。Windows 把 inode 链接上限归到这一个错误码下，此前五码白名单永远匹配不到，复制兜底不触发，每次 Bash 调用都会失败，只能等外部条件自行消失；现在回退还会记录 payload 的最高链接数，下次能直接看出是否触顶（#804）。
+- A Bash/Niubash preparation failure now shows the link-count paragraph only when the failure itself carries a link-count signature, and that paragraph no longer tells an installation already on 0.5.2 to upgrade to 0.5.2. Every other unclassified failure keeps its own reason and falls through to the default text (#805).
+- Bash/Niubash 准备失败现在只在错误本身带 link-count 特征时才显示那段说明，且该段不再要求已经运行 0.5.2 的安装去升级到 0.5.2；其余未分类失败保留自身原因、走默认文案（#805）。
+- A Bash slot whose executor never resolved now says so in the prompt instead of rendering an empty section: the notice quotes the resolution `source` and `detail` (which already ends with the deployment remedy), points file work at the OPS file tools, and refuses to imply that swapping shells is a repair. Official PowerShell is still never hidden while Bash is unavailable.
+- Bash 执行器未能解析时，提示段落不再留空，而是明确说明不可用：引用解析结果的 `source` 与 `detail`（后者已含部署侧修复办法），指明文件读写应走 OPS 文件工具，并明确不得以换 shell 充当修复；Bash 不可用时官方 PowerShell 仍绝不被隐藏。
+- Load `@deepseek-ai/dsh-scope` from the copy the running host resolves. A bundle that hoists its own copy into the profile tree used to shadow the host's, so scope contexts read as unscoped and creating a session failed with `Publication scope must match its registration context` (#752). The adapter resolves the host entry's copy, then the profile layer, then the bare specifier.
+- 从宿主实际解析到的那份 `@deepseek-ai/dsh-scope` 加载 scope 助手。某个 bundle 把副本提升进 profile 目录树时会遮蔽宿主那份，作用域上下文读不到标签，新建会话报 `Publication scope must match its registration context`（#752）。adapter 依次从运行入口、profile 层、最后才是裸导入解析。
+
+## [0.5.2] — 2026-11-08 — Patch release
+
+- Fix concurrent Windows Niubash preparation by verifying stable file identities instead of shared hardlink counts; retain preparing trees through disposal without replacing the zero-copy path or reverting 0.5.1's bounded retention.
+- 修复 Windows Niubash 并发准备：以稳定文件身份而非共享硬链接计数校验，准备中的执行树参与释放协调；保留零拷贝路径和 0.5.1 的有界保留修复。
+- Allow the merged settings row to persist and clear the selected Git Bash path in all four built-in modes.
+- 合并设置行可在四种内置模式中保存、清除选定的 Git Bash 路径。
+- Offline execution-cache reclamation discovers configured/same-volume roots and clears the verified tree's read-only/deny-delete seal before removal; Niubash failures give specific recovery commands instead of promising a retry fixes every failure.
+- 离线执行缓存回收覆盖显式及同卷根目录，删除前解除已验证树的只读/拒绝删除封印；Niubash 故障提供具体恢复命令，不再笼统承诺重试可修复。
+
+## [0.5.1] — 2026-11-08 — Patch release
+
+- Bound temporary-resource growth through ownership ledgers, deferred result-cache cleanup and explicit cache reclamation; preserve data-bearing snapshots and user content. Host output spills now have bounded retention rather than accumulating indefinitely.
+- 通过归属台账、结果缓存延迟清理与显式缓存回收约束临时资源增长，保留含数据的快照与用户内容；宿主输出 spill 采用有界保留，不再无限积累。
+- Packing an installed package no longer requires repository-only build scripts; source checkouts still build and verify their payload before packing.
+- 从已安装包重新打包不再依赖仓库专用构建脚本；源码检出打包前仍执行构建与载荷校验。
+- Include the integrated cross-platform index/query work and its verified Windows, Linux and macOS correctness fixes; the Windows MFT source remains opt-in.
+- 包含已集成的跨平台索引/查询及经过验证的 Windows、Linux、macOS 正确性修复；Windows MFT 来源仍须显式开启。
+
+- `ops_grep` gains `outputMode: "definitions"`: it returns only the lines where the matched identifier is declared (function, method, type, variable, macro), classified lexically in the native worker — no parser, no new dependency, same no-follow/credential/limit boundaries. `matched` counts every matching line and `total` the returned declarations, so a complete scan reports how many references it withheld; `multiline` and context flags are refused in this mode.
+- Add `dsh-ops cache status|reclaim`: report every temporary resource OPS can reproduce — kept provision downloads, Niubash staging/previous siblings, quarantined Bash IPC generations, audit-store writer temporaries and per-call execution trees — with per-row ownership evidence, `deleted`/`kept`/`unverified` decisions and byte totals. It previews by default, refuses `--yes` without `--all-hosts-stopped`, and never deletes on a name pattern, mtime or dead PID.
+- Failed provision downloads are registered under `<DSH_HOME>/dsh-ops/pending/` and reclaimed under a count/byte/age budget; a shell version is unpacked and verified in a staging sibling and only then renamed into place, so a failed or interrupted install leaves the previous version usable and no half-unpacked tree.
+- Niubash staging and previous siblings are verified before use: a complete staged tree is reused, a complete previous tree is restored when the target is missing, and trees that do not verify are kept. A refused previous-tree removal no longer reports a completed install as failed.
+- Offline Bash IPC cleanup reclaims quarantined copies beyond the newest two; audit-store `.tmp` writer files are swept when the store is opened for writing.
+- `ops_grep` 新增 `outputMode: "definitions"`：只返回匹配标识符处于声明位置的行（函数、方法、类型、变量、宏），由 native worker 做词法判定——不引入解析器与新依赖，沿用 no-follow/凭证/限额边界。`matched` 计所有匹配行、`total` 计返回的声明行，完整扫描可据此知道略过了多少引用；该模式拒绝 `multiline` 与上下文参数。
+- 新增 `dsh-ops cache status|reclaim`：报告 OPS 可再生的全部临时资源（保留的 provision 下载、Niubash staging/previous 兄弟目录、被隔离的 Bash IPC generation、审计写入临时文件和每调用执行树），逐项给出来源证据、`deleted`/`kept`/`unverified` 决策与字节数。默认预览，缺少 `--all-hosts-stopped` 时拒绝 `--yes`，绝不按名字、mtime 或死 PID 删除。
+- 失败的 provision 下载登记到 `<DSH_HOME>/dsh-ops/pending/` 并按数量/字节/年龄预算回收；shell 版本先在 staging 兄弟目录中解包校验、再 rename 就位，失败或中断不再留下半解包目录，也不再破坏旧版本。
+- Niubash 的 staging/previous 兄弟目录先验证后使用：完整 staging 直接复用、target 缺失时用完整 previous 恢复、无法验证的保留；删除 previous 失败不再把已完成的安装报成失败。
+- 离线 Bash IPC 清理会回收最新两份之外被隔离的副本；审计存储以写模式打开时清扫 `.tmp` 写入残留。
+- The per-call Niubash execution root now follows the payload's volume on Windows. When `DSH_OPS_EXEC_ROOT` is unset and `os.tmpdir()` sits on another volume, the clone is created below `<payload volume>\dsh-ops-exec`, and the default configuration keeps the zero-copy hardlink path instead of silently falling back to copying 785 MiB per call. That directory must be a real directory the current account owns — a junction, a directory owned by another account, or a path overlapping the payload is refused and the call falls back to the temp directory with the reason reported; an explicit `DSH_OPS_EXEC_ROOT` is validated the same way but fails loudly instead of being silently replaced. POSIX paths always reduce to one volume root, so a tmpfs `/tmp` still needs an explicit `DSH_OPS_EXEC_ROOT`.
+- 每次调用的 Niubash 执行根在 Windows 上改为跟随载荷所在卷：未设置 `DSH_OPS_EXEC_ROOT` 且 `os.tmpdir()` 与之不同卷时，克隆改在 `<载荷所在卷>\dsh-ops-exec` 下创建，默认配置因此保持零拷贝硬链接路径，而不是静默回退为每次调用复制 785 MiB。该目录必须是当前账户拥有的真实目录——重解析点、被其他账户拥有的目录、或与载荷路径重叠时会被拒绝，调用回退到临时目录并报告原因；显式设置的 `DSH_OPS_EXEC_ROOT` 走同样校验，但会直接报错，不会被静默替换。POSIX 路径一律归约为同一个卷根，因此 tmpfs 上的 `/tmp` 仍需显式设置 `DSH_OPS_EXEC_ROOT`。
+- Fixed the stale `niubash-consumer` assertion that still expected `all 10 checks passed` after `niubash-security-host` grew to 11 checks, which failed every full-gate run.
+- 修正 `niubash-consumer` 中过时的断言：`niubash-security-host` 增至 11 项检查后，consumer 仍断言 `all 10 checks passed`，导致完整门禁必挂。
+- An execution root below the workspace now clones by copy instead of hard links. The host sandbox labels the workspace tree with an inheritable Low mandatory label; a hard-linked payload would export that label onto the shared file object, and every later `niu.exe` image would run at Low integrity — full access included, where an unconfined shell must be able to write a Medium directory.
+- 位于工作区之下的执行根改为复制克隆而不是硬链接：宿主沙箱会给工作区树打上可继承的 Low 强制标签，硬链接会把该标签带到共享文件对象上，之后每次 `niu.exe` 镜像都会以 Low 完整性运行——包括 full access，而不受限的 shell 本应能写 Medium 目录。
+
+- Every merge gate is now a real gate. `validate-windows`, `validate-macos-intel` and `tools-trial` lost `continue-on-error` and joined `CI required`'s `needs` and failure loop; the bench smoke moved to `benchmark-gates.yml` (dispatch + monthly schedule) so `ci.yml` has no non-blocking job; `node-floor` runs on Linux and Windows; a new `rust-lint` job gates `cargo fmt --check` and `clippy -D warnings` on the pinned 1.97.1 toolchain (`native/rust-toolchain.toml`). `scripts/check-workflows.mjs` now states the blocking topology in one place (`EXPECTED_BLOCKING`) and fails when a job is unclassified, when `needs` disagrees, or when a failure-loop entry is missing; timeouts are tightened from measured p99.
+- Publishing is immutable. The release `gate` refuses a tag that was force-moved away from the built commit, requires a successful `CI required` check on the tagged commit, runs the same `verify-gate.mjs` as CI (restoring the skip-is-not-a-pass assertions and running the Niubash payload suites instead of skipping them), and `publish` only appends missing assets — no `--clobber`. `v0.5.0`'s four tag moves and post-publication asset replacement are the accident this prevents. The ruleset template also carries a merge queue, applied by the idempotent `scripts/apply-ruleset.mjs`.
+- 每个合并门禁都成为真正的门禁：`validate-windows`、`validate-macos-intel`、`tools-trial` 去掉 `continue-on-error` 并加入 `CI required` 的 `needs` 与失败判定循环；bench smoke 移到 `benchmark-gates.yml`（手动 + 每月调度），`ci.yml` 不再有非阻塞 job；`node-floor` 覆盖 Linux 与 Windows；新增 `rust-lint`，用 `native/rust-toolchain.toml` 钉住的 1.97.1 门禁 `cargo fmt --check` 与 `clippy -D warnings`。`scripts/check-workflows.mjs` 用 `EXPECTED_BLOCKING` 单一事实源校验“job 已分类 / needs 与循环一致”，并按实测 p99 收紧超时。
+- 发布不可变：release `gate` 拒绝被 force-move 的 tag，要求 tag commit 的 `CI required` 为 success，并改用与 CI 相同的 `verify-gate.mjs`（恢复“skip 不是通过”的断言，Niubash 载荷套件真跑）；`publish` 只补缺失资产，不再 `--clobber`。规则集模板带上 merge queue，由幂等的 `scripts/apply-ruleset.mjs` 下发。
+
+## [0.5.0] — 2026-11-06 — Stable release
+
+- This stable release summarizes the user- and developer-facing changes since v0.4.0, including the 0.4.1-0.4.4 patch releases and the 0.5.0 previews. **Breaking:** the 0.5 series targets DSH 0.2.2-rc.1 and later 0.2.2 releases only; older hosts are no longer supported.
+- 本正式版汇总自 v0.4.0 起（含 0.4.1-0.4.4 补丁版与 0.5.0 预览版）的用户与开发者相关变更。**破坏性变更**：0.5 系列仅面向 DSH 0.2.2-rc.1 起的 0.2.2 发行线，不再支持旧宿主。
+
+- The built-in Minimal, Standard, PTC and Cordis presets now hide the host PowerShell by default, still only while their Bash replacement is callable, the global gate allows it and the dsh-win-pwsh7 link is off; saved explicit values, custom presets and the global veto are unchanged.
+- 内置极简、标准、PTC 与创造预设默认隐藏宿主 PowerShell，但仍要求其 Bash 替代工具可调用、总闸允许且未开启 dsh-win-pwsh7 联动；已保存的显式值、自定义预设与总闸否决保持不变。
+
+- Plugin detail pages now show a curated introduction through the locale meta.detail entry instead of the repository README.
+- 插件详情页通过 locale 的 meta.detail 展示专门编写的介绍，不再直接使用仓库 README。
+
+- Align the runtime settings surfaces with the shipped Niubash payload. The status card reports the executor the host actually resolves per mode (packaged payload, provisioned copy, explicit path, PATH or well-known install) instead of an install inventory, names each mode when they disagree, and no longer claims no Bash exists while the packaged payload is running. The install preview now names the pinned Niubash archive, its digest, and the DSH_HOME target it really writes, replacing the leftover Git for Windows facts.
+- 设置页运行时卡片与随包 Niubash 对齐：状态按宿主对各模式的实际解析（随包载荷、托管副本、显式路径、PATH 或标准安装位置）报告执行器，模式之间不一致时逐项列出，不再在随包载荷可用时声称没有 Bash；安装预览改为真正会下载的固定 Niubash 归档、摘要与 DSH_HOME 目标，替代遗留的 Git for Windows 数据。
+
+- Add a Bash executor card to the row page. It switches every mode between the packaged Niubash rung (removing `bashPath`) and one Git Bash/MSYS executable, offers the host's scanned installations, accepts a typed absolute path, and validates the choice through the host before the revision-checked save writes `bashPath`; the CLI exposes the same choice as `bash-runtime niubash` and `bash-runtime git --path`.
+- 配置页新增 Bash 执行器卡片：在所有模式之间切换随包 Niubash（移除 `bashPath`）或一个 Git Bash/MSYS 可执行文件，列出宿主扫描到的安装、允许输入绝对路径，并在带版本校验的保存写入 `bashPath` 之前由宿主校验；CLI 以 `bash-runtime niubash` 与 `bash-runtime git --path` 暴露同一选择。
+
+- 运行时状态卡片不再把随包载荷当作“未安装”：只有在 DSH_HOME 真的存在托管副本、或随包载荷缺失需要恢复时才显示该行；同时排除 Windows Store 的 `WindowsAppsash.exe`（WSL 别名），它不会被当作 Git Bash。
+- The runtime card no longer treats the packaged payload as a missing installation: the managed-copy row appears only when one exists or when installing is the recovery, and the Windows Store `WindowsAppsash.exe` alias (WSL) is never offered as Git Bash.
+- 插件详情页说明进入设置页的路径：向下翻页后点击“包含的组件”内的“dsh-ops>”进入设置界面。
+- The plugin detail now names the navigation: scroll down, then open the settings page through “dsh-ops>” inside “Included components”.
+- The Windows default shell is now the complete official Niubash v1.5.0 payload shipped inside the package: the archive, source tree and every per-call execution copy are verified, a missing payload never falls back implicitly to ambient Bash, and managed install, status, select and remove commands are provided.
+- Windows 默认 Shell 改为随主包携带的完整官方 Niubash v1.5.0 载荷：逐条校验归档、源树与每次调用的执行副本，缺少载荷时不隐式回退到环境 Bash，并提供托管安装、状态、选择与卸载命令。
+
+## [Unreleased]
+
+- Run `prepack` through `bin/prepack.mjs`: a checkout still builds and checks the payload, while packing an installed package without the repository `scripts/` directory no longer fails with `MODULE_NOT_FOUND`.
+- `prepack` 改由 `bin/prepack.mjs` 执行：仓库检出仍会构建并校验载荷，而从已安装包（没有仓库 `scripts/`）重新打包不再以 `MODULE_NOT_FOUND` 失败。
+
+- Add the read-only `dsh-ops disk status [--json]` report: an ownership registry for every disk family the plugin writes (R1–R13), a bounded measurement that never follows links, per-category default actions, reclaim evidence with blocked reasons, and a validated `disk.status`/`disk.retention` config skeleton (the retention keys are a contract only; this release deletes nothing).
+- 新增只读的 `dsh-ops disk status [--json]`：为插件写入的每个磁盘家族（R1–R13）建立归属清单，提供不跟随链接的有界测量、按类别的默认动作、带阻塞原因的回收证据，以及经校验的 `disk.status`/`disk.retention` 配置骨架（retention 键只是契约，本版不删除任何内容）。
+
+- Keep zero-byte ERROR_MORE_DATA completions incomplete instead of treating them as end-of-data.
+- ERROR_MORE_DATA 零字节完成保留不完整状态，不再误报数据结束。
+
+- Record deferred result-cache cleanup for a root before its first caller can use it, retry it with bounded exponential backoff when workspace-write authority returns or at the next start-up, and reclaim idle roots that no session references. The native purge deliberately keeps the root, its scope directory and the lock; the new host-side sweep reclaims empty and lock-only roots by default, validates the whole directory structure before deleting a name, skips and reports any root with an unknown entry, excludes this process's live roots, and reports aggregate root/byte budget violations as blocked roots without ever deleting a root that still holds snapshot data. A session whose cache root was removed externally now recreates it instead of failing. `dsh-ops result-cache status|reclaim [--apply]` exposes the same bounded pass (#721).
+- 在首个调用可使用结果缓存根之前登记该根的延迟清理；恢复 workspace-write 授权或下次启动时按有界指数退避重试，并回收已无会话引用的空闲根。native purge 有意保留根目录、作用域目录与锁，新的宿主侧清扫默认回收空根与只剩 lock 的根，删除任何名字前校验完整目录结构，遇未知条目整根跳过并报告，排除本进程活跃根，并把聚合根数/字节预算超限的根标为 blocked，永不删除仍含快照数据的根。缓存根被外部删除后，会话会重建它而不是报错。`dsh-ops result-cache status|reclaim [--apply]` 暴露同一次有界清扫（#721）。
+- Clone each Windows Niubash execution tree by hardlink, seal the shared payload inodes read-only for the duration of the command, and verify the clone stat-only before spawn. The execution receipt records the clone mode, the copy-fallback cause when hardlinks are refused, the source manifest digest and the seal level; `DSH_OPS_EXEC_ROOT` moves the execution root parent (physically resolved against the payload) and `NIUBASH_VERIFY=deep` restores the full per-call re-hash.
+- 每调用的 Windows Niubash 执行树改为硬链接克隆，命令运行期间把共享载荷 inode 封印为只读，spawn 前只做 stat 校验。执行收据记录克隆模式、硬链接被拒时的复制回退原因、源清单摘要与封印级别；`DSH_OPS_EXEC_ROOT` 移动执行根父目录（按载荷做物理路径解析），`NIUBASH_VERIFY=deep` 恢复每调用全量重哈希。
+- Preserve PTC paging of session-owned legacy snapshots and batch audits through the shared result adapter, while Native still accepts only ref:// references. Refuse result storage when the active PTC parent's presentation changes or its inspection fails before cache IO. Await shared publication readiness and roll back permanent delayed initialization failures.
+- 共享 result 适配器保留 PTC 对会话自有旧快照与 batch 审计的分页，Native 仍仅接受 ref:// 引用；活动 PTC 父调用的展示变化或检查失败时，在缓存 IO 前拒绝存储。等待共享发布就绪，并回滚延迟初始化的永久失败。
+
+- Share a bounded registry-refusal cooldown across publication rows, retaining refused withdrawals and recovering owed registrations without another session event. Include accepted PTC dispatch settlements in TUI attention badges.
+- 各发布行共享有界注册拒绝冷却，保留被拒绝的撤销操作，并在没有新会话事件时恢复待发布项；TUI 提醒徽章计入已接受的 PTC 分派结算。
+
+- Roll back rejected discovery attachments without leaving registrations or selection observers, observe background failures, and verify settings persistence with Cordis 4.1.0. Render PTC guidance only after the public presentation waterfall confirms PTC; Native prompt text and wire declarations remain unchanged when PTC is enabled.
+- discovery 挂载失败时回滚注册与选择观察器，接住后台失败，并验证 Cordis 4.1.0 设置持久化；仅在公开展示 waterfall 确认 PTC 后生成专属引导，启用 PTC 不改变 Native 提示词与 wire 声明。
+
+- Restore the previous scoped PTC SDK after overlapping rows unload; stop superseded asynchronous attachments before publishing through disposed contexts. Conditional official replacements may remain model-visible: dispatch is guarded only by same-step OPS admission and current consumer authority, so an unavailable counterpart cannot disable both tools.
+- 重叠行卸载后恢复原作用域 PTC SDK；异步挂载被取代后停止发布，避免使用已释放上下文。条件性原版替换可能仍对模型可见；仅同一步骤准入 OPS 对应项且消费者当前有权限时守卫分派，避免对应项不可用时两边同时禁用。
+
+- Unify Native/discovery/PTC file and result publication with typed Outcome values and separate compact Native rendering; preserve fresh-read evidence, CAS and authority. Result uses one put/page/release schema, rejects Native put before IO, and defaults root to live cwd in both projections. Real source/grant changes conservatively invalidate all old steps sharing that registration; resolve again, never automatically replay.
+- Native/发现/PTC 文件与 result 统一发布，执行值为类型化 Outcome，Native 文本独立紧凑渲染，保留新鲜读取证据、CAS 与权威检查。result 统一 put/page/release schema，Native put 在 IO 前拒绝，两投影 root 均默认实时 cwd；真实来源/grant 变化保守使共享注册旧步全部失效，须重新 resolve，禁止自动重放。
+
+- Make the 0.5 series native to DSH 0.2.2-rc.1 and later 0.2.2 releases, dropping older hosts while retaining the DSH adapter. Use stable conditional discovery/PTC definitions, captured step admission for replacement guards, required live working directories and complete writable-root authority checks.
+- 0.5 系列原生面向 DSH 0.2.2-rc.1 起的 0.2.2 发行线，停止支持旧宿主但保留 DSH adapter；发现/PTC 使用稳定条件注册，替换 guard 使用本步准入集，必须提供实时工作目录，并完整复核额外可写根权限。
+
 - Accept package-manager hardlinks only in rehashed Niubash source payloads while requiring exclusive execution copies; cover a real offline pnpm hardlink consumer and keep gate orchestration fixtures independent of a host Git Bash installation.
 - Niubash 源载荷逐字节校验后兼容包管理器硬链接，执行副本仍要求独占文件；增加真实离线 pnpm 硬链接消费者验证，并让门禁编排测试不依赖宿主 Git Bash 安装。
 
@@ -49,7 +247,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 作用域的可见名字改从视图条目读取，不再只认 `keys()`：只发布条目、不发布键的视图现在也能报出名字，替换计划不再把每个已选对应项当成缺失。
 - Refuse an install spec the Windows launcher line cannot carry: the profile installer quotes every argument it hands to `cmd.exe /s /c` and rejects the cmd metacharacters a `.cmd` expands again, so an `&` or `|` in `DSH_OPS_INSTALL_SPEC` can no longer become a second command. A `--dry-run` preview refuses the same input as the real run instead of reporting success.
 - 拒绝 Windows 启动器行承载不了的 install spec：配置档安装器给交给 `cmd.exe /s /c` 的每个参数加引号，并拒绝会被 `.cmd` 再次展开的 cmd 元字符，`DSH_OPS_INSTALL_SPEC` 里的 `&` 或 `|` 不再能变成第二条命令。`--dry-run` 预览与真跑拒绝同一批输入，不再报告成功。
-
+- Enforce zero-entry MFT result budgets before appending and report exact-fit results as complete.
+- MFT 结果预算在追加前检查，零预算不返回条目，恰好容纳的结果不再误报截断。
 - Preserve exact-head fork PR CI evidence with empty Actions associations, including approval-required runs, and report GitHub mergeability with its base identity separately from local merge probes (#495).
 - 保留 Actions 关联为空的 fork PR 准确 head CI 证据（含待批准运行），并将 GitHub 可合并性及其基线身份与本地合并预演分开报告（#495）。
 - Report PowerShell ConstrainedLanguage before workspace ACL preparation and preserve a named diagnostic without changing security policy (#458). / 工作区 ACL 准备前明确报告 PowerShell ConstrainedLanguage，并保留具名诊断，不改变安全策略（#458）。
@@ -155,6 +354,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 新增可选下载约束，由用户配置 Bash/PowerShell 替代下载命令，保守识别字面命令并覆盖真实 Native/PTC 派发。未配置、含歧义或流式输出的调用保持原状，绝不自动执行替代命令（#506）。
 - Inspect Windows Bash image and ancestor integrity labels in `ladder`, warn about Low labels, and keep unreadable labels and runtime health distinct from static payload compatibility (#446).
 - `ladder` 只读检查 Windows Bash 映像与祖先路径的完整性标签，告警 Low 标签，并区分不可读标签、运行时健康和静态载荷兼容性（#446）。
+- Record every host subprocess spill path the plugin settles in `$DSH_HOME/ops-spill-ledger.jsonl` and reclaim only those ledger-owned files: a TTL window (default 30 days), an oldest-first total byte budget (default 256 MiB), at most 64 files per bounded pass, plus `bash-runtime spill-report [--json] [--sweep --yes]` and a one-line `bash-runtime status` summary. The provider's `dsh-subprocess-*` directories are never removed, unrecorded files and other providers' paths are never touched, and a failed unlink keeps its entry with `lastError` for the next pass (#720).
+- 在结算点把宿主 subprocess 的每个 spill 路径登记到 `$DSH_HOME/ops-spill-ledger.jsonl`，并且只回收账本内的文件：TTL 窗口（默认 30 天）、最旧优先的总字节预算（默认 256 MiB）、单次有界 pass 最多 64 个文件，并提供 `bash-runtime spill-report [--json] [--sweep --yes]` 与 `bash-runtime status` 的一行摘要。永不删除宿主的 `dsh-subprocess-*` 目录，不触碰未登记文件与其它 provider 的路径，删除失败时保留条目与 `lastError` 供下一轮重试（#720）。
 
 ## [0.5.0-alpha3] — 2026-10-30 — Unstable development prerelease
 
@@ -291,7 +492,6 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 新建会话时只规划新 Agent，不再重读所有存活会话的工具视图；`tools/change` 只核对它实际触达的
   Agent，宿主未标注归属的变更合并为一次处理。新建会话不再随已开会话数线性扫描工具视图。
 
-
 ## [0.5.0] — 2026-10-27 — Preset-mode component roster
 
 ### Breaking changes
@@ -325,6 +525,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   refused for manual review instead of being rewritten.
 
 ## [Unreleased]
+
+- Unify Native/discovery/PTC file and result publication with typed Outcome values and separate compact Native rendering; preserve fresh-read evidence, CAS and authority. Result uses one put/page/release schema, rejects Native put before IO, and defaults root to live cwd in both projections. Real source/grant changes conservatively invalidate all old steps sharing that registration; resolve again, never automatically replay.
+- Native/发现/PTC 文件与 result 统一发布，执行值为类型化 Outcome，Native 文本独立紧凑渲染，保留新鲜读取证据、CAS 与权威检查。result 统一 put/page/release schema，Native put 在 IO 前拒绝，两投影 root 均默认实时 cwd；真实来源/grant 变化保守使共享注册旧步全部失效，须重新 resolve，禁止自动重放。
 
 - Embed the complete frozen official Niubash v1.5.0 Windows x64 payload as the default shell backend; verify source and per-call execution trees, include preparation in cancellation/deadlines, preserve results on cleanup failure, and integrate managed install/status/select/removal. Missing payloads never switch implicitly to ambient Bash; explicit Git Bash and POSIX system Bash remain supported. This full-package-first choice does not rule out rubash-only later.
 - Windows x64 默认 Shell 改为固定官方 Niubash v1.5.0 完整载荷；校验源树及每调用执行树，准备阶段纳入取消/超时，清理失败不覆盖结果，并接通托管安装/状态/选择/卸载。缺载荷不隐式切换环境 Bash，保留显式 Git Bash 与 POSIX 系统 Bash。这是先完整包的阶段选择，不否定后续 rubash-only。

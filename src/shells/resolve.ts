@@ -25,7 +25,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { PACKAGE_ROOT } from '../paths.js'
-import { isNiubashExecutable, niubashCandidates, verifiedNiubash } from '../niubash/runtime.js'
+import { isNiubashExecutable, niubashCandidates, selectNiubash } from '../niubash/runtime.js'
 import type { ResolvedConfig } from '../config.js'
 import type { BundledCause, ShellResolution } from './paths.js'
 import {
@@ -213,9 +213,8 @@ export function resolveShells(config: ShellConfig | undefined, options: ShellRes
     if (candidate) {
       try {
         if (arch !== 'x64') throw new Error('Niubash requires Windows x64')
-        const runtime = verifiedNiubash(candidate.file)
-        return { bash: { available: true, file: runtime.file, source: candidate.source,
-          detail: 'verified complete Niubash v1.5.0 portable runtime' }, pwsh }
+        return { bash: { available: true, file: selectNiubash(candidate.file), source: candidate.source,
+          detail: 'complete pinned Niubash v1.5.0 portable payload' }, pwsh }
       } catch (error) {
         return { bash: { available: false, source: candidate.source,
           detail: error instanceof Error ? error.message : String(error) }, pwsh }

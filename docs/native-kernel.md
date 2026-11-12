@@ -106,8 +106,30 @@ accepts no other arguments. It removes only validated snapshot/stage names for t
 the lock inode, directories and unknown/audit names. It returns `removed`, `retained`, `complete`
 and `effectState`; partial cleanup failures identify prior effects. Readonly purge is refused.
 The host must first invalidate references logically and await active calls; a denied or interrupted
-purge is deferred cleanup, never a reason to rerun business operations. Host lifecycle hooks are
-attached by the host integration slice.
+purge is deferred cleanup, never a reason to rerun business operations. A failed purge records the
+root in a private pending ledger under the temporary directory (bounded attempts, last reason, boot
+id) and is retried when workspace-write authority returns, at the next start-up or through
+`dsh-ops result-cache reclaim --apply`; nothing is removed while the host stays read-only. Because
+the purge keeps the root, the scope directory and the lock, a host-side sweep reclaims idle
+structural leftovers at start-up and after the last owner unloads: it validates the name, the owner,
+the private mode, single-link files and the complete content whitelist, skips and reports a root
+with an unknown entry, excludes this process's live roots, honors `resultCache.maxAgeMs` and stops
+at the first failed removal. Aggregate root/byte budgets (`resultCache.maxRoots`,
+`resultCache.maxTotalBytes`) default to 0 and only classify roots as blocked; the sweep never
+removes a root that still holds snapshot data, which only the authorized purge path may reclaim.
+Host lifecycle hooks are attached by the host integration slice.
+
+## Index cache directory (PS3, #601)
+
+The optional trusted request field `cache_dir` names the host-created directory where the worker may
+persist the platform-agnostic name-index snapshot. It is neither a tool argument nor the
+result-storage root above. Absent means the index is disabled and every caller keeps the existing
+walk. When present it must be an absolute path of 1..4096 bytes that the host created private to the
+user (0700 on POSIX, for example `<DSH_HOME>/dsh-ops/index-cache`); the worker never creates or
+widens it. A cache failure is never a request error: an unwritable, full or corrupt directory falls
+back to the walk, so output stays byte-identical to today's behaviour. Uninstall removes the
+snapshot store (`index.snapshot`, temporary files and the lock file) and leaves the host's
+`dsh-ops` directory in place.
 
 ## Automatic bounded output spill (6b/16)
 

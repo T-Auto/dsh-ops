@@ -8,18 +8,19 @@ import type { SandboxExecutionPolicy } from '../adapter/dsh/types.js'
 import type { EffectState } from '../kernel/outcome.js'
 import type { WorkerInvokeConfig } from './boundary.js'
 import { record, errorText } from './boundary.js'
-import { workerEnvelope } from './protocol.js'
+import { indexCacheRequest, workerEnvelope } from './protocol.js'
 import path from 'node:path'
 import { credentialPath, credentialRefusal, credentialRoots } from '../credential-policy.js'
 import { ensureSessionTemp, sessionTempDir } from '../session-temp.js'
 import { denied, authorityChanged, normalizeNativeDenial, credentialDenied } from '../permissions.js'
-import { inside, canonicalAnchor, anchoredPath, sessionAnchors } from '../authority-paths.js'
+import { inside, anchoredPath, sessionAnchors, sameAuthority, fileWriteRoots } from '../authority-paths.js'
 import { exchange } from './transport.js'
 import { resolveWorker } from './runtime.js'
 import { FILE_MUTATIONS } from '../policy.js'
 import { normalizeArguments } from '../capabilities/arguments.js'
 import { resolveReadFiles } from './read-files.js'
 import { withCallBudget, CallBudgetError } from '../kernel/call-budget.js'
+import { InvocationDeadlineError } from '../lifecycle/invocations.js'
 import { withResultSession } from '../kernel/result-lifecycle.js'
 import { resultStorage } from '../kernel/result-storage.js'
 import { resolveSessionDirectory } from '../adapter/dsh/working-directory.js'
@@ -146,10 +147,10 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
   const privateTemp = sessionTempDir(session.id)
   const anchors = sessionAnchors(policy, cwd)
   const trustedPath = (value: string): string => anchoredPath(value, anchors)
-  const writeRoots = [canonicalAnchor(policy.workspaceRoot), trustedPath(privateTemp)]
+  const writeRoots = fileWriteRoots(policy, privateTemp, cwd)
   const writeTargets = tool === 'copy' && destination ? [destination] : [operationPath, ...(destination ? [destination] : [])]
   const requiredMode = (current: SandboxExecutionPolicy): 'workspace-write' | 'danger-full-access' => {
-    const roots = [canonicalAnchor(current.workspaceRoot), anchoredPath(privateTemp, sessionAnchors(current, cwd))]
+    const roots = fileWriteRoots(current, privateTemp, cwd)
     return writeTargets.every(target => roots.some(root => inside(root, anchoredPath(target, sessionAnchors(current, cwd)))))
       ? 'workspace-write' : 'danger-full-access'
   }
@@ -158,7 +159,7 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
     for (const target of writeTargets) {
       const identity = trustedPath(target)
       if (!writeRoots.some(root => inside(root, identity))) {
-        return denied(policy, `${tool} outside the workspace or this session's temporary directory`, 'danger-full-access', 'The user authorized workspace writes only; no files were changed.')
+        return denied(policy, `${tool} outside the workspace, explicit writable roots or this session's temporary directory`, 'danger-full-access', 'The user authorized workspace writes only; no files were changed.')
       }
       if (inside(writeRoots[1], identity)) {
         const created = ensureSessionTemp(writeRoots[1])
@@ -177,9 +178,11 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
   const denyRoots = (config?.denyCredentialReads ?? true) !== false ? credentialRoots() : []
   const storage = await resultStorage(ctx, session, exec.agent, file, tool, policy, denyRoots,
     (config?.denyCredentialReads ?? true) !== false, signal).catch(() => undefined)
-  const envelope = workerEnvelope('file', { root: trustedPath(cwd), scope: String(session.id), tool, args: workerArgs, read_only: policy.mode === 'read-only', deny_roots: denyRoots, deny_credential_names: (config?.denyCredentialReads ?? true) !== false, ...(policy.mode === 'workspace-write' ? { write_roots: writeRoots } : {}) }, config?.toolCallTimeoutMs, storage)
+  const envelope = workerEnvelope('file', { root: trustedPath(cwd), scope: String(session.id), tool, args: workerArgs, read_only: policy.mode === 'read-only', deny_roots: denyRoots, deny_credential_names: (config?.denyCredentialReads ?? true) !== false, ...(policy.mode === 'workspace-write' ? { write_roots: writeRoots } : {}), ...indexCacheRequest({ enabled: config?.indexCache === true }) }, config?.toolCallTimeoutMs, storage)
   const input = JSON.stringify(envelope)
-  if (Buffer.byteLength(input) > 2 * 1024 * 1024) return failure('OUTPUT_LIMIT', 'Request exceeds the 2 MiB byte budget.')
+  if (Buffer.byteLength(input) > 2 * 1024 * 1024) return failure('OUTPUT_LIMIT', tool === 'write_file'
+    ? 'write_file content makes the request exceed the 2 MiB byte budget; split it into smaller writes.'
+    : 'Request exceeds the 2 MiB byte budget.')
   let spawned = false
   try {
     // Trusted, fixed file operations follow DSH fs-sandbox's policy fence,
@@ -193,7 +196,7 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
     const readObservations = reads ? await Promise.all(reads.files.map(file => hostObservation(fsService, file.path, cwd, signal))) : []
     signal?.throwIfAborted?.()
     const current = policyService.resolve({ session })
-    if (current.mode !== policy.mode || current.workspaceRoot !== policy.workspaceRoot) {
+    if (!sameAuthority(current, policy)) {
       if (!['read-only', 'workspace-write', 'danger-full-access'].includes(current?.mode) || !path.isAbsolute(current?.workspaceRoot ?? '')) return failure('EXECUTOR_UNAVAILABLE', 'Invalid authoritative DSH policy after preparation.')
       const required = mutates ? requiredMode(current) : undefined
       if (mutates && (current.mode === 'read-only' || (current.mode === 'workspace-write' && required === 'danger-full-access'))) return denied(current, tool, required, 'Authority changed during preparation; no files were changed.')
@@ -201,12 +204,12 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
     }
     const delegated = await tryWslRead(subprocess, file, envelope, cwd, signal, () => {
       const latest = policyService.resolve({ session })
-      return latest.mode === policy.mode && latest.workspaceRoot === policy.workspaceRoot
+      return sameAuthority(latest, policy)
     }, config)
     let transportInput = input
     if (signal.aborted) return failure('CANCELLED', 'The file call was cancelled before backend admission or result publication.')
     const latest = policyService.resolve({ session })
-    if (latest.mode !== policy.mode || latest.workspaceRoot !== policy.workspaceRoot) {
+    if (!sameAuthority(latest, policy)) {
       if (!['read-only', 'workspace-write', 'danger-full-access'].includes(latest?.mode) || !path.isAbsolute(latest?.workspaceRoot ?? '')) return failure('EXECUTOR_UNAVAILABLE', 'Invalid authoritative DSH policy after WSL preparation.')
       const required = mutates ? requiredMode(latest) : undefined
       if (mutates && (latest.mode === 'read-only' || (latest.mode === 'workspace-write' && required === 'danger-full-access'))) return denied(latest, tool, required, 'Authority changed during preparation; no files were changed.')
@@ -218,12 +221,17 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
     }
     const result = delegated.handled ? { readers: true, interrupted: false, lossy: false, exitCode: 0, stderr: '', value: delegated.value, invalid: undefined }
       : await exchange(subprocess, { argv, cwd, stdio: { stdin: { data: transportInput }, stdout: { maxBytes: envelope.budget.maxBytes }, stderr: { maxBytes: 16 * 1024 } }, graceMs: 1000, signal }, () => { spawned = true })
-    if (!result.readers) return failure('RESULT_UNKNOWN', 'Worker output readers are unavailable; inspect postconditions.', 'verify', 'unknown')
-    if (result.interrupted) return failure('RESULT_UNKNOWN', 'Worker interrupted; inspect postconditions.', 'execute', 'unknown')
-    if (result.lossy) return failure('OUTPUT_LIMIT', 'Worker output exceeded the byte budget; operation facts may have changed.', 'verify', 'unknown')
-    if (result.exitCode !== 0) return failure('RESULT_UNKNOWN', `Worker did not return a settled result: ${result.stderr.slice(0, 500)}`, 'execute', 'unknown')
-    if (result.invalid === 'json') return failure('RESULT_UNKNOWN', 'Worker returned invalid JSON; inspect postconditions.', 'verify', 'unknown')
-    if (!result.value) return failure('RESULT_UNKNOWN', 'Worker returned a non-object result; inspect postconditions.', 'verify', 'unknown')
+    if (!result.readers) return failure('RESULT_UNKNOWN', mutates ? 'Worker output readers are unavailable; inspect postconditions.' : 'Read-only worker output readers are unavailable; no files were changed.', 'verify', mutates ? 'unknown' : 'none')
+    if (result.interrupted) {
+      const code = mutates ? 'RESULT_UNKNOWN' : signal.reason instanceof InvocationDeadlineError ? 'TIMEOUT' : signal.aborted ? 'ABORTED' : 'RESULT_UNKNOWN'
+      const message = mutates ? 'Worker interrupted; inspect postconditions.' : code === 'TIMEOUT' ? 'Read-only worker deadline expired; no files were changed.'
+        : code === 'ABORTED' ? 'Read-only worker was cancelled; no files were changed.' : 'Read-only worker was interrupted; no files were changed.'
+      return failure(code, message, 'execute', mutates ? 'unknown' : 'none')
+    }
+    if (result.lossy) return failure('OUTPUT_LIMIT', mutates ? 'Worker output exceeded the byte budget; operation facts may have changed.' : 'Read-only worker output exceeded the byte budget; no files were changed.', 'verify', mutates ? 'unknown' : 'none')
+    if (result.exitCode !== 0) return failure(mutates ? 'RESULT_UNKNOWN' : 'EXECUTOR_UNAVAILABLE', `Worker did not return a settled result: ${result.stderr.slice(0, 500)}${mutates ? '' : '; no files were changed.'}`, 'execute', mutates ? 'unknown' : 'none')
+    if (result.invalid === 'json') return failure('RESULT_UNKNOWN', mutates ? 'Worker returned invalid JSON; inspect postconditions.' : 'Read-only worker returned invalid JSON; no files were changed.', 'verify', mutates ? 'unknown' : 'none')
+    if (!result.value) return failure('RESULT_UNKNOWN', mutates ? 'Worker returned a non-object result; inspect postconditions.' : 'Read-only worker returned a non-object result; no files were changed.', 'verify', mutates ? 'unknown' : 'none')
     const value = result.value
     // Report reads/writes to the host's read-before-edit table, exactly like host read/edit. (#17)
     if (['inspect_local_file', 'stat'].includes(tool) && value?.status === 'completed') emitObserved(ctx, readObservation, exec)
@@ -236,6 +244,6 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
     const normalized = normalizeNativeDenial(value, policy, tool, mutates ? requiredMode(policy) : 'workspace-write')
     return { ...normalized, sandbox: { mode: policy.mode, enforcement: 'policy', boundary: 'trusted-native-file-operations' } }
   } catch (error) {
-    return failure(spawned ? 'RESULT_UNKNOWN' : 'EXECUTOR_UNAVAILABLE', `DSH trusted file executor failed; this is not a user authorization denial. ${errorText(error)}`, 'execute', spawned ? 'unknown' : 'none')
+    return failure(spawned && mutates ? 'RESULT_UNKNOWN' : 'EXECUTOR_UNAVAILABLE', `DSH trusted file executor failed; this is not a user authorization denial. ${errorText(error)}`, 'execute', spawned && mutates ? 'unknown' : 'none')
   }
 }

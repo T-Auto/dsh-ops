@@ -3,6 +3,7 @@ import { createScope } from '@deepseek-ai/dsh-scope'
 import { integration, registerNativeCapability, diagnose } from 'dsh-ops/integration'
 import { bootHost, shutdown, scopedToolNames } from './lib/host.mjs'
 import { assert, test, report, waitFor, withTempDir } from './lib/harness.mjs'
+import { prepareStep, executeCall } from './lib/executor.mjs'
 async function setup(cwd, options = {}) {
   const { ctx } = await bootHost()
   const agents = []; ctx.provide('agents', { list: () => [...agents] })
@@ -13,12 +14,17 @@ async function setup(cwd, options = {}) {
     await (parent?.ctx ?? ctx).plugin({ inject: ['tools'], apply(inner) {
       agent.ctx = createScope(inner, agent, parent ? { parent } : undefined).ctx
     } })
-    agents.push(agent); await ctx.serial('agent/created', { agent }); return agent
+    agents.push(agent); await ctx.serial('agent/created', { agent })
+    agent.prepared = await prepareStep(ctx, agent)
+    return agent
   }
-  return { ctx, mint, names: agent => scopedToolNames(ctx, agent) }
+  return { ctx, mint, names: agent => ctx.get('tools').definitions(agent, agent.prepared.toolSet).map(tool => tool.name) }
 }
-const call = (ctx, agent, name, args = {}) => ctx.get('tools').execute({ agent, name, arguments: args, callId: name, signal: new AbortController().signal })
-const commit = async (ctx, agent) => { await ctx.serial('session/event', agent.session, { type: 'step/end' }); await ctx.get('systemPrompt').assemble({ scope: agent, agent }) }
+const call = (ctx, agent, name, args = {}) => executeCall(ctx, { agent, toolSet: agent.prepared.toolSet, name, arguments: args, callId: name, signal: new AbortController().signal })
+const commit = async (ctx, agent) => {
+  ctx.emit('session/event', agent.session, { type: 'step/end' })
+  agent.prepared.dispose(); agent.prepared = await prepareStep(ctx, agent)
+}
 function capability(execute = async () => ({ value: 'ok' }), authorize = () => true) {
   return { search: 'lookup catalogue external example', authorize, definition: {
     name: 'acme_lookup', description: 'Look up an Acme catalogue item.', parameters: { type: 'object', properties: {} },
@@ -34,7 +40,7 @@ await test('pure external Native discovery needs no worker, file, shell, subproc
     const childOther = await mint('external-child-other', 'other-preset', a)
     const unrelated = await mint('external-other', 'other-preset')
     assert.deepEqual(names(unrelated), [])
-    const first = await ctx.get('systemPrompt').assemble({ scope: a, agent: a })
+    const first = await ctx.get('systemPrompt').assemble({ scope: a, agent: a, toolSet: a.prepared.toolSet })
     const selected = await call(ctx, a, 'ops_discover_tools', { query: 'select:acme_lookup' })
     assert.deepEqual(selected.value.activated, ['acme_lookup']); assert.equal(actions, 0)
     assert.equal(names(a).includes('acme_lookup'), false)
@@ -72,6 +78,7 @@ await test('late providers, allow/disable controls, provider authorization and c
     const a = await mint('auth-a')
     assert.equal(names(a).includes('acme_lookup'), false)
     await registerNativeCapability(ctx, capability(async () => { ++actions; return { value: 'ok' } }, () => { ++admissions; return authorized }))
+    await commit(ctx, a)
     await waitFor(() => names(a).includes('acme_lookup'))
     assert.equal((await call(ctx, a, 'acme_lookup')).value.status, 'rejected'); assert.equal(actions, 0)
     admissions = 0; authorized = true; assert.equal((await call(ctx, a, 'acme_lookup')).value.value, 'ok')

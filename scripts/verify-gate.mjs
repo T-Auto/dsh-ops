@@ -25,6 +25,7 @@
  *   node scripts/verify-gate.mjs --skip-install      # node_modules is already current
  *   node scripts/verify-gate.mjs --json              # machine-readable summary
  *   node scripts/verify-gate.mjs --keep-going        # run every step, report all failures
+ *   node scripts/verify-gate.mjs --worker-target <triple>   # also stage that cross-built worker before the suites
  *
  * A red host is reported, not smoothed over: both of `test/run.mjs`'s summary shapes are
  * parsed (the green one and `N of M suite(s) failed`), so a failing run names the failing step
@@ -56,6 +57,8 @@ const HOST = `${process.platform}-${process.arch}`
 const TARGET = option('target', HOST)
 const JSON_OUT = flag('json')
 const KEEP_GOING = flag('keep-going')
+/** A Rust triple to build and stage over the host worker, so the suites resolve the shipped binary. */
+const WORKER_TARGET = option('worker-target', undefined)
 
 /**
  * What each platform is allowed to skip, and no more.
@@ -183,6 +186,11 @@ async function main() {
   await run('build the plugin', 'npm', ['run', 'build'])
   await run('native worker unit tests', 'cargo', ['test', '--workspace', '--locked', '--manifest-path', 'native/Cargo.toml'])
   await run('build and stage the native worker', 'npm', ['run', 'build:ptc'])
+  // The shipped Linux worker is a different binary (musl) from the host build above. Staging it here
+  // makes every suite that resolves `runtime/<target>/` exercise the artifact users receive.
+  if (WORKER_TARGET !== undefined) {
+    await run(`build and stage the ${WORKER_TARGET} worker`, 'node', ['bin/dsh-ops.mjs', 'build-ptc', '--target', WORKER_TARGET])
+  }
 
   // Every pack (including POSIX packs) carries the frozen Windows payload.
   const stageArgs = ['run', 'stage:niubash', '--']
@@ -192,7 +200,7 @@ async function main() {
   await run('stage complete frozen Niubash payload', 'npm', stageArgs)
   const { NIUBASH_PIN } = await import('../lib/cli/niubash-payload.js')
   const runtimeEnv = { DSH_OPS_NIUBASH_ARCHIVE: archive ?? path.join(PACKAGE_ROOT, 'dist/downloads', NIUBASH_PIN.archive),
-    DSH_OPS_SUITE_TIMEOUT_MS: process.env.DSH_OPS_SUITE_TIMEOUT_MS ?? '600000' }
+    DSH_OPS_SUITE_TIMEOUT_MS: process.env.DSH_OPS_SUITE_TIMEOUT_MS ?? '300000' }
   if (TARGET === 'win32-x64') {
     const { verifyNiubashTree, NIUBASH_PACKAGE_PATH } = await import('../lib/cli/niubash-payload.js')
     runtimeEnv.DSH_OPS_TEST_NIUBASH = verifyNiubashTree(path.join(PACKAGE_ROOT, NIUBASH_PACKAGE_PATH))
@@ -222,7 +230,8 @@ async function main() {
   // Keep the external-checkout suites as skips: `DSH_OPS_REQUIRE_RUNTIME=1` would otherwise
   // count them as failures and make this gate permanently red on a machine without that checkout.
   env.DSH_OPS_ALLOW_SKIPS = [...EXTERNAL_SUITE_DEPS, ...ALLOWED_SKIPS].join(',')
-  const verify = await run('full suite verification', 'npm', ['run', 'verify'], { env })
+  // Plugin and manifest were already built/validated above; do not repeat npm verify's prelude.
+  const verify = await run('full suite verification', 'node', ['test/run.mjs'], { env })
   const summary = parseSummary(verify.output)
 
   await run('staged runtime closure', 'node', ['bin/native-runtime.mjs', 'check', '--platform', TARGET])

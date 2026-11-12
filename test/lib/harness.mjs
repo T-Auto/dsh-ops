@@ -24,6 +24,9 @@ import { fileURLToPath } from 'node:url'
 /** The repository root, resolved from this file (`test/lib/`). */
 export const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 
+// Compilers/packers need parallel-load headroom, still below CI's 300s suite watchdog.
+export const CPU_PROCESS_TIMEOUT_MS = 120_000
+
 const home = process.env.DSH_HOME ?? ''
 if (home === '' || !path.resolve(home).startsWith(path.resolve(tmpdir()))) {
   console.error(
@@ -139,7 +142,7 @@ export const wait = (ms) => new Promise((resolve) => REAL_TIMERS.setTimeout(reso
 
 /**
  * Wait until a condition holds, or fail after a deadline.
- * @param {() => boolean} condition - the predicate.
+ * @param {() => boolean | Promise<boolean>} condition - the predicate.
  * @param {object} [options] - wait inputs.
  * @param {number} [options.timeoutMs] - how long to keep asking.
  * @param {number} [options.intervalMs] - how long to wait between asks.
@@ -149,7 +152,7 @@ export const wait = (ms) => new Promise((resolve) => REAL_TIMERS.setTimeout(reso
 export async function waitFor(condition, { timeoutMs = 30_000, intervalMs = 50, what = 'condition' } = {}) {
   const deadline = Date.now() + timeoutMs
   for (;;) {
-    if (condition()) return
+    if (await condition()) return
     if (Date.now() > deadline) throw new Error(`timed out after ${timeoutMs} ms waiting for ${what}`)
     await wait(intervalMs)
   }

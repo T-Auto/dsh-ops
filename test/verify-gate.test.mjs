@@ -20,7 +20,10 @@ cp.spawn = (command, args, options) => {
   const joined = args.join(' ');
   let output = '', code = 0;
   if (joined === 'run validate:manifest') output = 'validate-manifest: all 89 checks passed';
-  if (joined === 'run verify') output = 'dsh-ops test: ${count} suite(s) passed';
+  if (joined === 'test/run.mjs') {
+    output = 'dsh-ops test: ${count} suite(s) passed';
+    if (options.env.DSH_OPS_SUITE_TIMEOUT_MS !== '300000') code = 31;
+  }
   if (args[0] === 'pack') fs.writeFileSync(path.join(args[args.indexOf('--pack-destination') + 1], 'fixture.tgz'), 'orchestration fixture');
   if (process.env.GATE_ARTIFACT_FAILURE === 'unpack' && args[0] === '-xzf') code = 23;
   if (process.env.GATE_ARTIFACT_FAILURE === 'closure' && args.includes('--root')) code = 29;
@@ -40,18 +43,30 @@ export async function load(url, context, next) {
   return next(url, context);
 }
 `)
-    for (const failure of ['none', 'unpack', 'closure']) {
+    const runGate = (failure, extraArgs = []) => {
       const child = spawnSync(process.execPath, ['--experimental-loader', pathToFileURL(loader).href,
         '--import', pathToFileURL(preload).href,
-        path.join(PACKAGE_ROOT, 'scripts/verify-gate.mjs'), '--skip-install', '--keep-going', '--json'], {
+        path.join(PACKAGE_ROOT, 'scripts/verify-gate.mjs'), '--skip-install', '--keep-going', '--json', ...extraArgs], {
         cwd: PACKAGE_ROOT, encoding: 'utf8', timeout: 30000,
-        env: { ...process.env, DSH_OPS_TEST_BASH: '', GATE_ARTIFACT_FAILURE: failure },
+        env: { ...process.env, DSH_OPS_TEST_BASH: '', DSH_OPS_SUITE_TIMEOUT_MS: undefined, GATE_ARTIFACT_FAILURE: failure },
       })
       assert.equal(child.error, undefined, String(child.error))
       assert.equal(child.status, failure === 'none' ? 0 : 1, child.stdout + child.stderr)
       const match = /\n(\{\n  "host":[\s\S]*?\n\})\n/.exec(child.stdout)
       assert.ok(match, child.stdout + child.stderr)
-      const result = JSON.parse(match[1])
+      return { child, result: JSON.parse(match[1]) }
+    }
+    const musl = runGate('none', ['--worker-target', 'x86_64-unknown-linux-musl']).result.steps.map(step => step.title)
+    assert.ok(musl.indexOf('build and stage the x86_64-unknown-linux-musl worker') > musl.indexOf('build and stage the native worker'),
+      'the cross worker is staged over the host worker')
+    assert.ok(musl.indexOf('build and stage the x86_64-unknown-linux-musl worker') < musl.indexOf('full suite verification'),
+      'the suites run against the cross worker, not before it')
+    for (const failure of ['none', 'unpack', 'closure']) {
+      const { child, result } = runGate(failure)
+      assert.equal(result.steps.some(step => /--target/.test(step.command)), false, 'no cross worker unless --worker-target is given')
+      assert.equal(result.steps.filter(step => /run build$/.test(step.command)).length, 1)
+      assert.equal(result.steps.filter(step => /run validate:manifest$/.test(step.command)).length, 1)
+      assert.equal(result.steps.find(step => step.title === 'full suite verification').command, 'node test/run.mjs')
       const title = failure === 'unpack' ? 'unpack the release artifact' : 'packed runtime closure'
       assert.equal(result.steps.at(-1).title, 'packed runtime closure', 'keep-going must complete the final step')
       if (failure === 'none') {

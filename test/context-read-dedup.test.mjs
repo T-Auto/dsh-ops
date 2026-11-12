@@ -1,6 +1,9 @@
 import fs from 'node:fs'
+import { ToolExecutionPipeline } from '@deepseek-ai/dsh-tools/pipeline'
 import { createAssistantMessage, createToolResultMessage, createUserMessage, freezeMessage } from '@deepseek-ai/dsh-llm'
 import { assert, test, report } from './lib/harness.mjs'
+import { NativeFileTools } from '../lib/projections/native/runtime.js'
+import { WORKER } from './lib/boundary.mjs'
 import { requireWorker } from './lib/boundary.mjs'
 import { fixture, READ, text, full, elided } from './lib/context-read.mjs'
 requireWorker('context-read-dedup')
@@ -22,7 +25,7 @@ await test('only exact prior Native body in a completed ordinary provider reques
   assert.ok(text(repeat).includes(first.message.id))
   assert.ok(Buffer.byteLength(text(repeat)) < Buffer.byteLength(text(first)))
   // No IO cache: each call still executes the read and returns its full canonical rows.
-  assert.equal(repeat.value.items.length, 30)
+  assert.equal(repeat.value.data.items.length, 30)
 }))
 
 await test('retained transcript alone, uncommitted results and untrusted user body text are not proof', () => fixture(async ({ request, read }) => {
@@ -83,7 +86,7 @@ await test('file revision, same-size mtime change, identity replacement and requ
   fs.writeFileSync(file, bytes.toString().replace('payload line 1', 'changed line 1'))
   const changed = await read()
   assert.match(text(changed), /^1 \| changed/m)
-  assert.notEqual(changed.value.revision, first.value.revision)
+  assert.notEqual(changed.value.data.revision, first.value.data.revision)
 }))
 
 await test('paged reads keep completeness and continuation notices when identical body is omitted', () => fixture(async ({ file, request, read }) => {
@@ -96,20 +99,23 @@ await test('paged reads keep completeness and continuation notices when identica
   assert.deepEqual(repeat.value, first.value)
 }))
 
-await test('nested transport dispatch uses a real registry parent token and keeps full PTC data', () => fixture(async ({ ctx, agent, file, request, read }) => {
+await test('nested transport dispatch uses a real registry parent token and keeps full PTC data', () => fixture(async ({ ctx, agent, file, request, read, call }) => {
   const first = await read()
   await request()
   let nested
   await ctx.plugin({ inject: ['tools'], apply: inner => inner.tools.register({
     name: 'fixture_transport', description: 'Nested canonical dispatch fixture', parameters: { type: 'object', properties: {} },
-    output: { schema: { type: 'object' }, render: () => [] },
+    output: { schema: ctx.get('tools').get(READ, agent).output.schema, render: () => [] },
     execute: async (_args, exec) => {
-      nested = await ctx.get('tools').execute({ agent, callId: 'nested-read', rootCallId: exec.rootCallId, parent: exec.token,
-        name: READ, arguments: { path: file }, signal: exec.signal })
+      const pipeline = new ToolExecutionPipeline(ctx)
+      const prepared = await pipeline.prepare({ agent, callId: 'nested-read', rootCallId: exec.rootCallId, parent: exec.token,
+        toolSet: exec.toolSet, name: READ, arguments: { path: file }, signal: exec.signal })
+      const outcome = prepared.kind === 'dispatch' ? await pipeline.dispatch(prepared.exec) : prepared
+      nested = await pipeline.complete(prepared.exec, outcome)
       return nested.value
     },
   }) })
-  const outer = await ctx.get('tools').execute({ agent, callId: 'transport', name: 'fixture_transport', arguments: {}, signal: new AbortController().signal })
+  const outer = await call({ agent, callId: 'transport', name: 'fixture_transport', arguments: {}, signal: new AbortController().signal })
   full(nested)
   assert.deepEqual(nested.value, first.value)
   assert.deepEqual(outer.value, first.value)
@@ -117,14 +123,14 @@ await test('nested transport dispatch uses a real registry parent token and keep
   full(await read()) // Unknown outer tools conservatively discard evidence.
 }))
 
-await test('post-execute policy content and failures remain authoritative', () => fixture(async ({ ctx, request, read }) => {
+await test('post-execute policy content and failures remain authoritative', () => fixture(async ({ ctx, agent, request, read, call }) => {
   await read()
   await request()
   const stop = ctx.on('tools/post-execute', async () => ({ kind: 'accept', content: [{ type: 'text', text: 'policy redacted' }] }))
   assert.equal(text(await read()), 'policy redacted')
   stop()
   const deny = ctx.on('tools/pre-execute', async () => ({ kind: 'deny', reason: 'permission withdrawn' }))
-  const denied = await ctx.get('tools').execute({ callId: 'denied', name: READ, arguments: {}, signal: new AbortController().signal })
+  const denied = await call({ agent, callId: 'denied', name: READ, arguments: {}, signal: new AbortController().signal })
   assert.equal(denied.isError, true)
   assert.doesNotMatch(text(denied), /Unchanged file range/)
   deny()
@@ -184,7 +190,7 @@ await test('message content projection increments generation and invalidates wit
   full(await read())
 }))
 
-await test('sandbox-mode events and other tool results discard evidence before another read', () => fixture(async ({ ctx, agent, request, read }) => {
+await test('sandbox-mode events and other tool results discard evidence before another read', () => fixture(async ({ ctx, agent, request, read, call }) => {
   const first = await read()
   await request()
   agent.session.append('sandbox/mode', { mode: 'read-only' })
@@ -195,7 +201,7 @@ await test('sandbox-mode events and other tool results discard evidence before a
   await request([fresh.assistant, fresh.message])
   await ctx.plugin({ inject: ['tools'], apply: inner => inner.tools.register({ name: 'fixture_mutation', description: 'Potential mutation',
     parameters: { type: 'object', properties: {} }, output: { schema: { type: 'object' }, render: () => [] }, execute: async () => ({}) }) })
-  await ctx.get('tools').execute({ agent, callId: 'mutation', name: 'fixture_mutation', arguments: {}, signal: new AbortController().signal })
+  await call({ agent, callId: 'mutation', name: 'fixture_mutation', arguments: {}, signal: new AbortController().signal })
   full(await read())
 }))
 
@@ -219,7 +225,7 @@ await test('ordinary requests without session identity clear proof and incomplet
   full(await read())
 }))
 
-await test('short, hex, clipped and denied reads preserve the full authoritative result', () => fixture(async ({ ctx, agent, file, request, read }) => {
+await test('short, hex, clipped and denied reads preserve the full authoritative result', () => fixture(async ({ ctx, agent, file, request, read, call }) => {
   fs.writeFileSync(file, 'payload')
   const short = await read()
   await request()
@@ -230,16 +236,32 @@ await test('short, hex, clipped and denied reads preserve the full authoritative
   assert.equal(text(await read({ args })), text(hex))
   fs.writeFileSync(file, 'payload' + 'x'.repeat(100_000))
   const clipped = await read()
-  assert.ok(clipped.value.items.some(item => item.truncatedInLine) || text(clipped).includes('TruncatedBy: output-budget'))
+  assert.ok(clipped.value.data.items.some(item => item.truncatedInLine) || text(clipped).includes('TruncatedBy: output-budget'))
   await request()
   const clippedRepeat = await read()
   assert.equal(text(clippedRepeat), text({ content: ctx.get('tools').get(READ, agent).output.render({ path: file }, clippedRepeat.value) }),
     'a fresh stored reference must keep its own full authoritative rendering')
   assert.doesNotMatch(text(clippedRepeat), /Unchanged file range/)
   fs.unlinkSync(file)
-  const absent = await ctx.get('tools').execute({ agent, callId: 'absent', name: READ, arguments: { path: file }, signal: new AbortController().signal })
+  const absent = await call({ agent, callId: 'absent', name: READ, arguments: { path: file }, signal: new AbortController().signal })
   assert.ok(absent.isError || absent.value.status !== 'completed')
+  assert.equal(absent.value.data?.error?.code, absent.value.error?.code, 'Outcome retains the raw failure receipt')
   assert.doesNotMatch(text(absent), /Unchanged file range/)
 }))
 
+await test('root observers remain runtime-owned and separate source lifetimes cannot dispose or transfer proof', () => fixture(async ({ ctx, agent, mint, read, request }) => {
+  const first = await read(); full(first)
+  await request(); elided(await read())
+  const unrelated = new NativeFileTools({ ctx, config: { workerPath: WORKER, required: true } })
+  await unrelated.start([])
+  try {
+    const sibling = mint('independent-read-source')
+    full(await read({ owner: sibling }))
+    await request()
+    full(await read({ owner: sibling }))
+  } finally { await unrelated.stop() }
+  await request()
+  elided(await read())
+  assert.equal(first.value.data.items.length, 30)
+}))
 report('context-read-dedup')

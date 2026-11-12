@@ -7,6 +7,7 @@ import Sessions from '@deepseek-ai/dsh-session'
 import Projections from '@deepseek-ai/dsh-session-projection'
 import Prompt from '@deepseek-ai/dsh-system-prompt'
 import Tools from '@deepseek-ai/dsh-tools'
+import * as NativeExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import Loop from '@deepseek-ai/dsh-agent-loop'
 import Jobs from '@deepseek-ai/dsh-jobs-local'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -56,8 +57,10 @@ export async function boot({ root, worker, baselineSource, projection = 'candida
   const ctx = new Context(); ctx.logger.level = 0
   const queues = new Map(), requests = [], results = [], events = [], errors = []
   for (const plugin of [Agents, Sessions, Projections, Prompt]) await ctx.plugin(plugin, {})
-  await ctx.plugin(Tools, { mode: 'native' })
+  await ctx.plugin(Tools, {})
+  await ctx.plugin(NativeExecutor, {})
   await ctx.plugin(Policy, { mode: 'workspace-write', workspaceRoot: root })
+  ctx.provide('workingDirectory', { get: session => session.header.cwd ?? root, ensure: async agent => agent.session.header.cwd ?? root })
   if (withShell) await ctx.plugin(Jobs, {})
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem, { cwd: root })
   // Both projections do their work in a child process (official: the packaged `rg`; candidate:
@@ -133,7 +136,7 @@ export async function boot({ root, worker, baselineSource, projection = 'candida
     assert.ok(scripts.length && scripts.at(-1).length === 0, 'scripts must end with a final response')
     const start = { requests: requests.length, results: results.length, events: events.length, errors: errors.length }
     queues.set(agent.session.id, [...scripts])
-    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Execute the deterministic benchmark task.' }] }))
+    agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Execute the deterministic benchmark task.' }], source: { kind: 'user' } }))
     await agent.whenIdle()
     assert.deepEqual(errors.slice(start.errors), [])
     assert.equal(queues.get(agent.session.id).length, 0, 'every scripted provider response must be consumed')

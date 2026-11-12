@@ -1,3 +1,5 @@
+import { Context } from '@deepseek-ai/cordis'
+import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 /** Regression coverage for the shared consumer path and cancellation contract. */
 import { createScope } from '@deepseek-ai/dsh-scope'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
@@ -26,13 +28,14 @@ async function host(cwd, services = true) {
   }
   const mint = async (preset = 'standard') => {
     const id = `${preset}-${agents.length}`, agent = { id, session: { id, mode: 'read-only', header: { cwd, agentPreset: preset } } }
-    await ctx.plugin({ inject: ['tools'], apply(inner) { agent.ctx = createScope(inner, agent).ctx } })
+    await ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { agent.ctx = createScope(inner, agent).ctx } })
     agents.push(agent); await ctx.serial('agent/created', { agent }); return agent
   }
   return { ctx, mint, names: agent => scopedToolNames(ctx, agent) }
 }
 const disabledBuiltins = { minimal: { enabled: false, dynamicTools: false }, standard: { enabled: false, dynamicTools: false },
-  ptc: { enabled: false, dynamicTools: false }, cordis: { enabled: false, dynamicTools: false } }
+  ptc: { enabled: false, dynamicTools: false }, 'ops-ptc': { enabled: false, dynamicTools: false },
+  cordis: { enabled: false, dynamicTools: false } }
 
 await test('custom preset settings validate and preserve independent switches through host normalization', () => {
   const raw = { presets: { acme: { files: true, residentTools: true, residentNames: ['stat'], discovery: false, promptPolicy: false } } }
@@ -84,7 +87,7 @@ for (const retire of ['consumer', 'agent', 'preset', 'authority', 'presentation'
     }))
     const row = await ctx.plugin(integration({ preset: 'acme', profile: 'discovery', allowedTools: [], externalTools: ['acme_lookup'], externalAlwaysLoaded: ['acme_lookup'] }))
     const agent = await mint('acme')
-    const running = ctx.get('tools').get('acme_lookup', agent).execute({}, { agent, signal: new AbortController().signal })
+    const running = executeCall(ctx, { name: 'acme_lookup', arguments: {}, agent, signal: new AbortController().signal })
     await started
     if (retire === 'consumer') await row.dispose()
     if (retire === 'agent') await ctx.serial('agent/disposed', { agent })
@@ -92,7 +95,7 @@ for (const retire of ['consumer', 'agent', 'preset', 'authority', 'presentation'
     if (retire === 'authority') await ctx.serial('session/event', agent.session, { type: 'sandbox/mode' })
     if (retire === 'presentation') {
       ctx.provide('ptcRuntime', { language: 'typescript' })
-      agent.ctx.tools.presentAs('ptc')
+      selectExecutor(agent.ctx, 'ptc')
       await ctx.get('systemPrompt').assemble({ scope: agent, agent })
     }
     await waitFor(() => seen.aborted)
@@ -124,7 +127,7 @@ await test('invocation owner registers before user code and drains cooperative c
   assert.equal(calls.active.size, 0)
 })
 await test('public Native and typed PTC pre-dispatch cancellation return no-effect values', async () => {
-  const runtime = new NativeFileTools({ ctx: {}, config: { workerPath: 'unused' } })
+  const runtime = new NativeFileTools({ ctx: new Context(), config: { workerPath: 'unused' } })
   await runtime.start([])
   const controller = new AbortController(); controller.abort(new Error('cancelled'))
   const exec = { signal: controller.signal, agent: { session: { id: 'cancel' } } }
@@ -153,7 +156,7 @@ await test('non-cooperative external execution cannot pin consumer unload or be 
     }))
     const row = await ctx.plugin(integration({ preset: 'acme', profile: 'discovery', allowedTools: [], externalTools: ['acme_lookup'], externalAlwaysLoaded: ['acme_lookup'] }))
     const agent = await mint('acme')
-    const running = ctx.get('tools').get('acme_lookup', agent).execute({}, { agent })
+    const running = executeCall(ctx, { name: 'acme_lookup', arguments: {}, agent })
     await started
     await row.dispose()
     assert.equal(signal.aborted, true); assert.equal(names(agent).includes('acme_lookup'), false); assert.equal(actions, 1)
@@ -172,8 +175,9 @@ await test('discovered built-in worker cancels when its preset consumer is withd
   try {
     await ctx.plugin(integration({ preset: 'acme', profile: 'discovery', allowedTools: ['stat'], alwaysLoaded: ['stat'] }))
     const agent = await mint('acme')
-    const running = ctx.get('tools').get('ops_stat', agent).execute({ path: '.' }, { agent, signal: new AbortController().signal })
-    await waitFor(() => Boolean(workerSignal))
+    await waitFor(() => ctx.get('tools').get('ops_stat', agent))
+    const running = executeCall(ctx, { name: 'ops_stat', arguments: { path: '.' }, agent, signal: new AbortController().signal })
+    await Promise.race([running.then(result => { if (!workerSignal) throw new Error(JSON.stringify(result)) }), waitFor(() => Boolean(workerSignal))])
     agent.session.header.agentPreset = 'other'
     await ctx.serial('session/event', agent.session, { type: 'agent-preset/selected' })
     assert.equal(workerSignal.aborted, true)
@@ -201,18 +205,18 @@ await test('an existing agent switches to an explicit override and restores the 
   try {
     await ctx.plugin(Bundle, {})
     const agent = await mint()
-    await waitFor(() => names(agent).includes('ops_read_files'))
-    const previous = ctx.get('tools').get('ops_read_files', agent)
+    await waitFor(() => names(agent).includes('ops_inspect_local_file'))
+    const previous = ctx.get('tools').get('ops_inspect_local_file', agent)
     const row = await ctx.plugin(integration({ preset: 'standard', residentNames: ['stat'], discovery: false }))
     await ctx.get('systemPrompt').assemble({ scope: agent, agent })
-    await waitFor(() => names(agent).includes('ops_stat') && !names(agent).includes('ops_read_files'))
-    assert.equal((await previous.execute({ files: [] }, { agent })).status, 'rejected')
+    await waitFor(() => names(agent).includes('ops_stat') && !names(agent).includes('ops_inspect_local_file'))
+    assert.equal((await previous.execute({ path: '.' }, { agent })).status, 'rejected')
     const custom = ctx.get('tools').get('ops_stat', agent)
     await row.dispose()
     await ctx.get('systemPrompt').assemble({ scope: agent, agent })
-    await waitFor(() => names(agent).includes('ops_read_files') && !names(agent).includes('ops_stat'))
+    await waitFor(async () => { const step = await prepareStep(ctx, agent); try { const visible = step.assembly.tools.map(t => t.name); return visible.includes('ops_inspect_local_file') && !visible.includes('ops_stat') } finally { step.dispose() } })
     assert.equal((await custom.execute({ path: '.' }, { agent })).status, 'rejected')
-    assert.notEqual(ctx.get('tools').get('ops_read_files', agent), previous)
+    assert.notEqual(ctx.get('tools').get('ops_inspect_local_file', agent), previous)
   } finally { await shutdown(ctx) }
 }))
 report('consumer-assembly')

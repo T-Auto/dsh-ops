@@ -1,28 +1,33 @@
-/** The single row's small page: two bundle switches and four per preset. */
+/** The single row's small page: the bundle switches and four per preset. */
 import { assert, test, report } from './lib/harness.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { companionVersion } from '../lib/settings/companion.js'
-import { GROUPS, ROW_ID, groupsFor, bundleGates, changedFields, flatKey, readRowValues } from '../lib/client/row-schema.js'
+import { GROUPS, ROW_ID, groupsFor, bundleGates, changedFields, executorDiffers, executorOps, flatKey, readExecutor, readRowValues } from '../lib/client/row-schema.js'
 import { hasStatus, statusView } from '../lib/client/detail.js'
 import { en } from '../lib/client/locales.js'
 import { Config, effectiveMode, resolveMergedConfig } from '../lib/settings/merged.js'
 import { readRowValues as draftFor } from '../lib/client/row-schema.js'
 const t = key => en[key]
 const SWITCHES = ['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools']
+/** The bundle card: the four gates plus the default-preset force switch. */
+const GLOBAL_SWITCHES = [...SWITCHES, 'forceDefaultOpsPtc']
 
 await test('the page matches the host descriptor, and the opt-in switches share one card', () => {
-  assert.deepEqual(Object.keys(Config.dict), ['presets', 'global', 'minimal', 'standard', 'ptc', 'cordis', 'panel', 'tui', 'other'])
+  assert.deepEqual(Object.keys(Config.dict), ['presets', 'global', 'minimal', 'standard', 'ptc', 'ops-ptc', 'cordis', 'panel', 'tui', 'other'])
   const global = GROUPS.find(group => group.id === 'global')
-  // The bundle section mirrors the presets' four switches, in the same order.
-  assert.deepEqual(global.fields.map(spec => spec.path[1]), SWITCHES)
-  assert.deepEqual(Object.keys(Config.dict.global.dict), SWITCHES)
-  for (const section of ['minimal', 'standard', 'ptc', 'cordis']) {
+  // The bundle section mirrors the presets' four switches, then adds the
+  // default-preset force switch that has no per-preset counterpart.
+  assert.deepEqual(global.fields.map(spec => spec.path[1]), GLOBAL_SWITCHES)
+  assert.deepEqual(Object.keys(Config.dict.global.dict), GLOBAL_SWITCHES)
+  for (const section of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis']) {
     const group = GROUPS.find(entry => entry.id === section)
     const expected = section === 'minimal' ? SWITCHES : ['bash', 'hidePwsh', 'hideOfficialTools', 'residentTools', 'dynamicTools']
     assert.deepEqual(group.fields.map(spec => spec.path[1]), expected, section)
-    assert.deepEqual([...group.fields.map(spec => spec.path[1]), 'enabled'].sort(), Object.keys(Config.dict[section].dict).sort(), section)
+    // bashPath belongs to the executor card rather than the boolean switch grid.
+    assert.deepEqual([...group.fields.map(spec => spec.path[1]), 'enabled', 'bashPath'].sort(), Object.keys(Config.dict[section].dict).sort(), section)
+    assert.equal(Config.dict[section].dict.bashPath.meta.volatile, true)
   }
   // compat/panel/tui used to be three single-switch cards; they are one card now.
   const other = GROUPS.find(group => group.id === 'other')
@@ -31,18 +36,22 @@ await test('the page matches the host descriptor, and the opt-in switches share 
   assert.equal(ROW_ID, 'dsh-ops')
 })
 
-await test('Bash and PowerShell are both visible by default; hiding PowerShell is explicit intent', () => {
+await test('built-in presets hide PowerShell by default and preserve explicit opt-out', () => {
   const merged = resolveMergedConfig({})
-  assert.deepEqual(merged.global, { bash: true, hidePwsh: true, hideOfficialTools: true, dynamicTools: true })
-  for (const section of ['minimal', 'standard', 'ptc', 'cordis']) {
+  assert.deepEqual(merged.global, { bash: true, hidePwsh: true, hideOfficialTools: true, dynamicTools: true, forceDefaultOpsPtc: true })
+  for (const section of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis']) {
     assert.equal(merged[section].config.bash, true, `${section}.bash`)
-    assert.equal(merged[section].config.hidePwsh, false, `${section}.hidePwsh`)
+    assert.equal(merged[section].config.hidePwsh, true, `${section}.hidePwsh`)
+    assert.equal(resolveMergedConfig({ [section]: { hidePwsh: false } })[section].config.hidePwsh, false)
+    assert.equal(readRowValues({ [section]: { hidePwsh: false } })[`${section}.hidePwsh`], false)
     assert.equal(merged[section].config.hideOfficialTools, true, `${section}.hideOfficialTools`)
     assert.equal(merged[section].config.dynamicTools, true, `${section}.dynamicTools`)
   }
   const draft = readRowValues({})
+  assert.equal(draft['global.forceDefaultOpsPtc'], true, 'the default-preset force switch ships on')
+  assert.equal(readRowValues({ global: { forceDefaultOpsPtc: false } })['global.forceDefaultOpsPtc'], false)
   assert.equal(draft['standard.bash'], true)
-  assert.equal(draft['standard.hidePwsh'], false)
+  assert.equal(draft['standard.hidePwsh'], true)
   assert.equal(draft['panel.enabled'], false)
   assert.equal(draft['tui.enabled'], false)
 })
@@ -72,10 +81,58 @@ await test('only changed switches are written, as nested paths', () => {
   ])
 })
 
-await test('the status card reports host facts and says nothing it cannot verify', () => {
+await test('the status card reports the resolved executor and its candidates', () => {
   assert.deepEqual(statusView(undefined, t), { summary: en.summaryNone, facts: [], note: en.runtimeHelp })
-  const view = statusView({ platform: 'win32', managed: [{ version: '1.2', directory: 'C:/m', owned: true }], git: ['C:/Git/bash.exe'], powerShell: { supported: true, guidance: '' } }, t)
-  assert.deepEqual(view.facts.map(fact => fact.value), ['win32', '1.2', 'C:/Git/bash.exe', en.statusPwshReady])
+  const bundled = { id: 'ptc', enabled: true, publishesBash: true, available: true, source: 'bundled',
+    engine: 'niubash', file: 'C:/pkg/runtime/win32-x64/niubash/niu.exe', detail: 'verified' }
+  const { id: _id, enabled: _enabled, publishesBash: _publishesBash, ...bash } = bundled
+  const base = { platform: 'win32', git: [], managed: [], powerShell: { supported: true, guidance: '' } }
+  const view = statusView({ ...base, bash, modes: [bundled], git: ['C:/Git/bin/bash.exe'] }, t)
+  // A payload shipped in the package is a working executor even without an install.
+  assert.equal(view.summary, en.summaryNiubashBundled)
+  // The optional `<DSH_HOME>` copy is not a fact of the running executor.
+  assert.deepEqual(view.facts.map(fact => fact.value), ['win32', `${en.engineNiubash}（${en.sourceBundled}）`,
+    bundled.file, 'C:/Git/bin/bash.exe', en.statusPwshReady])
+  // An explicit path is reported as such, with its engine.
+  const git = { ...bundled, source: 'config', engine: 'msys', file: 'C:/Git/bin/bash.exe' }
+  const configured = statusView({ ...base, modes: [git], bash: { available: true, source: 'config', engine: 'msys', file: git.file, detail: 'configured bash executable' } }, t)
+  assert.equal(configured.summary, en.summaryGitConfigured)
+  assert.ok(configured.facts.some(fact => fact.value === `${en.engineMsys}（${en.sourceConfig}）`))
+  // Modes that disagree are named, never reduced to one favourite.
+  const mixed = statusView({ ...base, modes: [bundled, { ...git, id: 'standard' }] }, t)
+  assert.equal(mixed.summary, en.summaryMixed)
+  assert.ok(mixed.facts.some(fact => fact.value.includes('ptc=') && fact.value.includes('standard=')))
+  // Nothing publishes Bash: the card asks for an executor instead of claiming one.
+  assert.equal(statusView({ ...base, modes: [{ ...bundled, enabled: false }] }, t).summary, en.summaryNoShell)
+  // A mode that publishes Bash but resolves nothing missing is the actionable case.
+  assert.equal(statusView({ ...base, modes: [{ ...bundled, available: false, source: 'missing', engine: 'none', file: undefined }],
+    bash: { available: false, source: 'missing', engine: 'none', detail: 'no payload' } }, t).summary, en.summaryMissing)
+})
+
+await test('the executor card reads the saved rows and writes exactly one choice', () => {
+  assert.deepEqual(readExecutor({}), { engine: 'niubash', path: '' })
+  assert.deepEqual(readExecutor({ ptc: { bashPath: 'C:/Git/bin/bash.exe' }, standard: { bashPath: 'C:/Git/bin/bash.exe' } }),
+    { engine: 'git', path: 'C:/Git/bin/bash.exe' })
+  // An explicitly pinned Niubash tree is the default rung again, not a second engine.
+  assert.deepEqual(readExecutor({ ptc: { bashPath: 'C:/dsh-ops/shells/niubash/niu.exe' } }), { engine: 'niubash', path: '' })
+  assert.equal(readExecutor({ ptc: { bashPath: 'C:/a/bash.exe' }, minimal: { bashPath: 'C:/b/bash.exe' } }).engine, 'mixed')
+  // Selecting the packaged payload removes only the keys that actually exist.
+  assert.deepEqual(executorOps({ ptc: { bashPath: 'C:/Git/bin/bash.exe' }, minimal: {} }, { clear: true }),
+    [{ op: 'unset', path: ['ptc', 'bashPath'] }])
+  // Selecting Git Bash writes every mode row and never invents a preset field.
+  assert.deepEqual(executorOps({ presets: { 'acme.chat': { profile: 'native' } } }, { clear: false, file: 'C:/Git/bin/bash.exe' }), [
+    { op: 'set', path: ['minimal', 'bashPath'], value: 'C:/Git/bin/bash.exe' },
+    { op: 'set', path: ['standard', 'bashPath'], value: 'C:/Git/bin/bash.exe' },
+    { op: 'set', path: ['ptc', 'bashPath'], value: 'C:/Git/bin/bash.exe' },
+    { op: 'set', path: ['ops-ptc', 'bashPath'], value: 'C:/Git/bin/bash.exe' },
+    { op: 'set', path: ['cordis', 'bashPath'], value: 'C:/Git/bin/bash.exe' },
+  ])
+  // A custom preset that already opted in follows the same choice.
+  assert.deepEqual(executorOps({ presets: { acme: { bashPath: 'C:/old/bash.exe' } } }, { clear: true }),
+    [{ op: 'unset', path: ['presets', 'acme', 'bashPath'] }])
+  assert.equal(executorDiffers({ engine: 'git', path: 'C:/x/bash.exe' }, {}), true)
+  assert.equal(executorDiffers({ engine: 'niubash', path: '' }, {}), false)
+  assert.equal(executorDiffers({ engine: 'git', path: 'C:/a/bash.exe' }, { ptc: { bashPath: 'C:/a/bash.exe' } }), false)
 })
 
 await test('the status section belongs to the bundle and to the one row', () => {
@@ -108,7 +165,7 @@ await test('the companion linkage locks the host-shell hide switch off', () => {
   assert.equal(draftFor({ other: { pwsh7Link: false } }, { pwsh7Installed: true })['other.pwsh7Link'], false, 'an explicit off wins')
   const free = resolveMergedConfig({ standard: { hidePwsh: true } })
   assert.equal(effectiveMode(free.standard, free.global).hidePwsh, true)
-  assert.equal(resolveMergedConfig({ global: { hidePwsh: true }, standard: {} }).standard.config.hidePwsh, false)
+  assert.equal(resolveMergedConfig({ global: { hidePwsh: true }, standard: {} }).standard.config.hidePwsh, true)
   assert.equal(effectiveMode(resolveMergedConfig({ global: { hidePwsh: false }, standard: { hidePwsh: true } }).standard,
     resolveMergedConfig({ global: { hidePwsh: false } }).global).hidePwsh, false)
 })

@@ -6,9 +6,9 @@ Linux / macOS：使用当前平台构建的 worker；`setup --dry-run` 会说明
 
 Linux / macOS: build the worker for the current host. `setup --dry-run` explains skipped Windows-only checks. `ab`, `compare`/`report`, `panel` and `tools` use the same entry point on every platform. A model sweep needs your own OpenAI-compatible endpoint; the tools self-check needs no model. Every sweep now fingerprints the composed profiles even without `--seal`, recording platform and component configuration in the arm summaries. `enabled` is a configuration fact, not proof of tool readiness; unresolved expressions remain `unknown`.
 
-`compare` 默认拒绝不同平台（或已知/未知平台）混配，退出码为 2；诊断时可加 `--allow-cross-platform`，报告会明确标记差异不是插件效应。旧数据两侧都缺平台时仍可读取，显示 `unknown`，不能据此声称同平台。CI 的可选 tools-only smoke 覆盖 Linux / Windows / macOS，各自上传 artifact；不运行模型 sweep，不产出跨平台结论。
+`compare` 默认拒绝不同平台（或已知/未知平台）混配，退出码为 2；诊断时可加 `--allow-cross-platform`，报告会明确标记差异不是插件效应。旧数据两侧都缺平台时仍可读取，显示 `unknown`，不能据此声称同平台。CI 的 tools-only smoke 位于 `benchmark-gates.yml`，按手动派发与每月调度覆盖 Linux / Windows / macOS，各自上传 artifact；它是测量、不是合并门禁，不运行模型 sweep，不产出跨平台结论。
 
-`compare` rejects mismatched platforms with exit 2. `--allow-cross-platform` is an explicit diagnostic override and adds a “not a plugin effect” warning. Both-unknown legacy archives remain readable. The optional, non-blocking tools smoke runs on Linux, Windows and macOS with separate artifacts.
+`compare` rejects mismatched platforms with exit 2. `--allow-cross-platform` is an explicit diagnostic override and adds a “not a plugin effect” warning. Both-unknown legacy archives remain readable. The tools smoke runs from `benchmark-gates.yml` on dispatch and on a monthly schedule across Linux, Windows and macOS with separate artifacts; it is a measurement, never a merge gate.
 
 ```console
 npm ci --ignore-scripts
@@ -99,6 +99,12 @@ Real setup verifies composed configuration and runs one bounded headless readine
 The `calls` command compares official tools with OPS, or alternates two OPS builds in one process using `--baseline-plugin-root` / `--plugin-root`. Each arm keeps its own code and worker; the corpus and host version are shared. The operator prepares the corpus from the documented recipe, and `--baseline <report>` checks its identity only. Timings are human evidence, never a CI performance verdict.
 
 参数、语料固定规则与隔离输出示例见 [工具调用基准](../docs/工具调用基准.md) / [English](../docs/benchmark-calls.md)。这些命令不调用模型，不需要配置 sweep 的两个 profile。
+
+`node bench/cli.mjs index-ab` 在**同一语料、同一 worker 二进制**上比较遍历 `glob` 与带 `cache_dir` 的可选索引路径：两臂请求形状相同、逐轮交替，冷态/热态/重复查询与 worker 峰值 RSS 一起报告；只有字节不一致才算失败，耗时只作证据。生成语料由固定配方决定（含被排除的 `.hidden`/`node_modules`/`target`），报告记录 revision、worker 哈希、语料哈希与每轮样本。命令不改变默认行为，也不作 CI 性能门禁。
+
+The `index-ab` command compares the walk with the opt-in `cache_dir` path on one corpus and one worker binary: same request shape, alternating rounds, cold/warm/repeated calls plus peak worker RSS; byte identity is the only failure and timings are evidence only. The recipe-generated corpus includes excluded directories, and the report records revision, worker hash, corpus hash and every sample. It changes no default and is never a CI performance gate.
+
+参数与语料复现见 [索引 AB 证据](../docs/索引AB基准.md) / [English](../docs/benchmark-index-ab.md)。
 
 ## 任务一览
 

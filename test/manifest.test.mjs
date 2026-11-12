@@ -138,7 +138,14 @@ await test('the manifest license matches the package and is MIT', () => {
 await test('the bundle patch inserts exactly the one row and no removed FastCtx key', async () => {
   const { parse } = await import('yaml')
   const { LEGACY_FASTCTX_KEYS } = await import('../lib/config.js')
-  const patch = parse(fs.readFileSync(path.join(PACKAGE_ROOT, pkg.dsh.bundle.patch), 'utf8'))
+  // The bundle declares one patch file and that file inserts one row: the ops-ptc
+  // preset is registered at runtime, so it is not a bundle row the user can toggle.
+  assert.equal(pkg.dsh.bundle.patch, './cordis.patch.yml')
+  const patchFile = path.join(PACKAGE_ROOT, pkg.dsh.bundle.patch)
+  assert.ok(fs.existsSync(patchFile), patchFile)
+  assert.ok(pkg.files.includes('presets'), 'the runtime preset fragment ships in the package')
+  assert.ok(pkg.files.includes('prompts'), 'the batch-call guidance ships in the package')
+  const patch = parse(fs.readFileSync(patchFile, 'utf8'))
   const rows = patch.flatMap((entry) => entry.insert ?? [])
   assert.deepEqual(rows.map((row) => row.id), ['dsh-ops'])
   assert.deepEqual(rows.map((row) => row.name), ['dsh-ops'])
@@ -150,6 +157,9 @@ await test('the bundle patch inserts exactly the one row and no removed FastCtx 
   for (const row of rows) {
     for (const key of LEGACY_FASTCTX_KEYS) assert.equal(Object.hasOwn(row.config ?? {}, key), false, `${row.name} still writes ${key}`)
   }
+  // No entry overrides another bundle's row: the old default-preset override would
+  // leave a selected preset dangling whenever this bundle is disabled.
+  assert.deepEqual(patch.filter((entry) => entry.id !== undefined), [])
   // Every legacy entry stays exported so profiles that still name the old row keep loading.
   for (const legacy of ['shell', 'file', 'ptc', 'hide-official', 'background']) assert.ok(pkg.exports[`./${legacy}`], legacy)
 })
@@ -211,7 +221,7 @@ await test('the display manifest declares the one row, enabled by default', asyn
   const { parse } = await import('yaml')
   const patch = parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'cordis.patch.yml'), 'utf8'))
   const config = patch.flatMap((entry) => entry.insert ?? [])[0].config
-  for (const feature of ['minimal', 'standard', 'ptc', 'cordis', 'discovery']) assert.equal(config[feature].enabled, true, feature)
+  for (const feature of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis', 'discovery']) assert.equal(config[feature].enabled, true, feature)
   for (const feature of ['panel', 'tui']) assert.equal(config[feature].enabled, false, feature)
 })
 

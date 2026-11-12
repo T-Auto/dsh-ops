@@ -2,13 +2,13 @@
 
 中文：[Bash 与 PowerShell 共存](Bash与PowerShell共存.md).
 
-`ops_bash` is an independent Bash command tool. Windows uses local MSYS Bash, not Linux, WSL or PowerShell. OPS does not rewrite the host OS or hide host `pwsh` by default.
+`ops_bash` is an independent Bash command tool. Windows uses local MSYS Bash, not Linux, WSL or PowerShell. OPS does not rewrite the host OS. Built-in presets hide host PowerShell by default only while their Bash replacement is callable.
 
 ## Defaults and explicit choices
 
-- Built-in presets enable Bash but default `hidePwsh` to false. Custom presets also default `hidePwsh` to false; file-tool `replaceOfficial` does not imply shell hiding.
-- `global.hidePwsh` remains true by default, but is only an allow gate, not hiding intent. Hiding `pwsh` and `pwsh_persistent` requires explicit preset `hidePwsh: true`, the global gate, a callable Bash tool in that Windows agent, and no active pwsh7 link.
-- Previously saved explicit `hidePwsh: true` is respected, not silently migrated. An explicit global false vetoes hiding. When Bash is missing or cannot be published under the current authority/services, official PowerShell stays available as fallback.
+- Built-in presets enable Bash and default `hidePwsh` to true. Custom presets still default `hidePwsh` to false; file-tool `replaceOfficial` does not imply shell hiding.
+- `global.hidePwsh` remains true by default, but is only an allow gate. Hiding `pwsh` and `pwsh_persistent` requires enabled preset hiding, the global gate, a callable Bash tool in that Windows agent, and no active pwsh7 link.
+- Previously saved explicit `hidePwsh: false` or `true` is respected, not silently migrated. An explicit global false vetoes hiding. When Bash is missing or cannot be published under the current authority/services, official PowerShell stays available as fallback, and the prompt states that the slot is unavailable, quoting the resolution `source` and `detail` (which carries the deployment remedy) instead of leaving an empty section that reads as "this deployment has no Bash".
 - `other.pwsh7Link` keeps official `pwsh` visible for `dsh-win-pwsh7` to manage its version. An unsaved link still follows existing companion detection; explicit on/off wins. Coexistence does not require the companion. OPS does not modify third-party plugins, bundle order or profiles.
 
 ## Prompt and execution contracts

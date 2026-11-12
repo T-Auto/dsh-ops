@@ -1,6 +1,6 @@
 [package]
 name = "ops-search"
-version = "0.5.0-alpha3"
+version = "0.5.0"
 edition = "2024"
 license = "MIT"
 rust-version = "1.88"
@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 ops-protocol = { path = "../ops-protocol" }
 ops-files = { path = "../ops-files" }
+ops-index = { path = "../ops-index" }
 cap-std = "3.4"
 cap-fs-ext = "3.4"
 serde = { version = "1.0", features = ["derive"] }
@@ -18,3 +19,26 @@ sha2 = "0.10.9"
 
 [dev-dependencies]
 uuid = { version = "1.26", features = ["v4"] }
+
+# The platform index sources are target-gated: each crate is itself
+# `#![cfg(target_os = ...)]`, so only the matching one contributes code and the
+# others are never built. `ops-search` names them; the pure `ops-index` crate
+# stays free of platform dependencies.
+#
+# Windows is additionally feature-gated (#718). `ops-win-index` pulls
+# `usn-journal-rs`, whose COM calls make the linked worker import OLEAUT32;
+# a default Windows worker must start without those imports, so the MFT source
+# is opt-in (`--features win-index`) until that dependency is lazy-loaded or
+# replaced. Linux and macOS stay unconditional, so their behaviour is unchanged.
+[features]
+default = []
+win-index = ["dep:ops-win-index"]
+
+[target.'cfg(windows)'.dependencies]
+ops-win-index = { path = "../ops-win-index", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ops-linux-index = { path = "../ops-linux-index" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+ops-mac-index = { path = "../ops-mac-index" }

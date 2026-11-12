@@ -69,9 +69,11 @@ The session must already use DSH's **PTC-only** presentation. The component does
 not force presentation, replace the registry, or create a REPL. It recognizes the
 host's public prompt assembly (`tools:ptc-only` section plus the reserved-only wire
 schema), not private `modeFor`, run_code existence alone or a guessed session key.
-This PTC row publishes its independent SDK only in PTC-only scopes, with inspect/result and the
-loader initially resident. Other APIs require next-step activation or `alwaysLoaded`. It adds
-no bindings or extra prompt in Native scopes. The file row independently supplies Native ops_result page/release; see [result budgets](result-budgets.md#native-and-ptc-reference-pages). 文件组件独立提供 Native 引用分页/释放，详见[结果预算](结果预算.md#native-与-ptc-引用分页)。
+This PTC row publishes its independent SDK only in PTC-only scopes, with inspect and the
+loader initially resident. Load `result` on demand through `ops_load_sdk`, even with `allowedTools: []`.
+Other APIs require next-step activation or `alwaysLoaded`.
+It adds no bindings or extra prompt in Native scopes.
+PTC 初始常驻 inspect 与 loader；result 通过 ops_load_sdk 按需加载，即使 allowedTools 为空也可选择。 The file row independently supplies Native ops_result page/release; see [result budgets](result-budgets.md#native-and-ptc-reference-pages). 文件组件独立提供 Native 引用分页/释放，详见[结果预算](结果预算.md#native-与-ptc-引用分页)。
 The host generates SDK declarations from the same tool schemas; no duplicate guide
 or dynamic plan IDs are added to the system prefix.
 
@@ -157,7 +159,10 @@ Their important fields are (paths resolve relative to the DSH session cwd):
   epoch-millisecond `modified`); at least one positive glob is required.
 - `ops_grep`: required regex `pattern`, optional `path` and array `glob` filter.
   Use `summary` for aggregate file/match totals, `count` for per-file counts,
-  `content` for matching text (default). Item pages default to 100, with 0-based
+  `content` for matching text (default), or `definitions` for only the lines
+  where the matched identifier is declared (lexical classification, no
+  `multiline`/context flags; on a complete scan `matched` counts every matching
+  line and `total` the returned declaration lines). Item pages default to 100, with 0-based
   `offset` and `nextOffset`. Every page scans candidates to count totals, but only
   materializes the requested window. `complete:false` means more results or an
   incomplete scan; `truncated`/`failed` scans are not exhaustive. Totals exclude
@@ -368,9 +373,9 @@ the DSH local sandbox's workspace/temporary-area policy fence. The *released* Li
 x64 worker is built for `x86_64-unknown-linux-musl` and statically linked, so the
 shipped artifact no longer requires a `GLIBC_*` floor; reproduce it with
 `npm run build:ptc -- --target x86_64-unknown-linux-musl`.
-macOS arm64 (`aarch64-apple-darwin`) and macOS Intel (`x86_64-apple-darwin`) now run
-the full gate in CI: `macos-latest` (arm64) is blocking, and `macos-15-intel` (x64)
-is a non-blocking signal because the leg measured 318 s > 300 s. Both build and stage
+macOS arm64 (`aarch64-apple-darwin`) and macOS Intel (`x86_64-apple-darwin`) run the
+full gate in CI: `macos-latest` (arm64) and `macos-15-intel` (x64) are both blocking
+legs. Both build and stage
 their Mach-O worker, run the suite, and verify the receipt. The earlier 0.3.1
 `cargo check --locked`-only record is superseded. A local Intel macOS 12.7.6 run
 still has one expected `CLONE_ACL` failure, so macOS 12 remains a follow-up.
