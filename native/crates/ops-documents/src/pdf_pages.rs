@@ -161,7 +161,9 @@ impl Streams {
             self.cache.insert(id, bytes);
         }
         let bytes = &self.cache[&id];
-        if self.processed + bytes.len() > MAX_CONTENT_DECODED || output.len() + bytes.len() > MAX_STREAM {
+        if self.processed + bytes.len() > MAX_CONTENT_DECODED
+            || output.len() + bytes.len() > MAX_STREAM
+        {
             return Err(limit(
                 "PDF processed content exceeds 16 MiB total or 1 MiB per page",
             ));
@@ -178,7 +180,9 @@ impl Streams {
         page: &Page<'_>,
         started: Instant,
     ) -> Result<Vec<u8>> {
-        let contents = get(page.dict, b"Contents")?;
+        let Some(contents) = page.dict.get(b"Contents".as_slice()) else {
+            return Ok(Vec::new());
+        };
         let mut output = Vec::new();
         match contents {
             Value::Array(items) => {
@@ -189,6 +193,7 @@ impl Streams {
                     self.append(doc, reference(item)?, started, &mut output)?;
                 }
             }
+            Value::Null => {}
             value => self.append(doc, reference(value)?, started, &mut output)?,
         }
         Ok(output)

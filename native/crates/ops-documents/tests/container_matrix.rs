@@ -1,9 +1,7 @@
 //! Classic cross-reference tables, indirect integers and structural limits.
 mod common;
 
-use common::{
-    CATALOG, HELVETICA, PAGES, Pdf, classic, read, stream, stream_with_length, text,
-};
+use common::{CATALOG, HELVETICA, PAGES, Pdf, classic, read, stream, stream_with_length, text};
 use ops_documents::pdf_container::{MAX_FILE, MAX_STREAM, parse};
 use serde_json::json;
 
@@ -69,7 +67,10 @@ fn indirect_integers_resolve_in_every_direction() {
         assert_eq!(document.objects.len(), size - 1, "{case}");
         let content = if case == "backward" { 5 } else { 4 };
         assert_eq!(
-            document.object((content, 0)).expect("content object").stream,
+            document
+                .object((content, 0))
+                .expect("content object")
+                .stream,
             Some(CONTENT),
             "{case}"
         );
@@ -83,24 +84,36 @@ fn indirect_integers_resolve_in_every_direction() {
     size.object(b"7");
     let objects = size.offsets.len();
     let xref = size.bytes.len();
-    size.bytes
-        .extend_from_slice(format!("xref
+    size.bytes.extend_from_slice(
+        format!(
+            "xref
 0 {}
 0000000000 65535 f 
-", objects + 1).as_bytes());
+",
+            objects + 1
+        )
+        .as_bytes(),
+    );
     for number in 1..=objects {
         let offset = size.offsets[&number];
-        size.bytes
-            .extend_from_slice(format!("{offset:010} 00000 n 
-").as_bytes());
+        size.bytes.extend_from_slice(
+            format!(
+                "{offset:010} 00000 n 
+"
+            )
+            .as_bytes(),
+        );
     }
     size.bytes.extend_from_slice(
-        format!("trailer
+        format!(
+            "trailer
 << /Size 6 0 R /Root 1 0 R >>
 startxref
 {xref}
 %%EOF
-").as_bytes(),
+"
+        )
+        .as_bytes(),
     );
     read_text(&size.bytes, "Hello");
 }
@@ -126,24 +139,36 @@ fn dangling_and_cyclic_indirect_integers_are_reference_errors() {
     }
     let objects = size.offsets.len();
     let xref = size.bytes.len();
-    size.bytes
-        .extend_from_slice(format!("xref
+    size.bytes.extend_from_slice(
+        format!(
+            "xref
 0 {}
 0000000000 65535 f 
-", objects + 1).as_bytes());
+",
+            objects + 1
+        )
+        .as_bytes(),
+    );
     for number in 1..=objects {
         let offset = size.offsets[&number];
-        size.bytes
-            .extend_from_slice(format!("{offset:010} 00000 n 
-").as_bytes());
+        size.bytes.extend_from_slice(
+            format!(
+                "{offset:010} 00000 n 
+"
+            )
+            .as_bytes(),
+        );
     }
     size.bytes.extend_from_slice(
-        format!("trailer
+        format!(
+            "trailer
 << /Size 9 0 R /Root 1 0 R >>
 startxref
 {xref}
 %%EOF
-").as_bytes(),
+"
+        )
+        .as_bytes(),
     );
 
     let chain = |five: &[u8]| {
@@ -180,9 +205,17 @@ startxref
         ),
     ] {
         let error = read(&bytes, json!({})).expect_err("the reference must fail the read");
-        assert_eq!(error.code, "DOCUMENT_PARSE_ERROR", "{case}: {}", error.message);
+        assert_eq!(
+            error.code, "DOCUMENT_PARSE_ERROR",
+            "{case}: {}",
+            error.message
+        );
         assert!(error.message.contains(needle), "{case}: {}", error.message);
-        assert!(!error.message.contains("bounded nonnegative"), "{case}: {}", error.message);
+        assert!(
+            !error.message.contains("bounded nonnegative"),
+            "{case}: {}",
+            error.message
+        );
     }
 }
 
@@ -191,14 +224,21 @@ fn input_and_structure_limits_are_refused_at_one_over() {
     let oversized = vec![b' '; MAX_FILE + 1];
     let error = read(&oversized, json!({})).expect_err("a file over 16 MiB must fail");
     assert_eq!(error.code, "OUTPUT_LIMIT");
-    assert!(error.next_action.contains("16 MiB"), "{}", error.next_action);
+    assert!(
+        error.next_action.contains("16 MiB"),
+        "{}",
+        error.next_action
+    );
 
-    let bodies: Vec<Vec<u8>> = vec![
-        format!("<< /Length {} >>\nstream\nx\nendstream", MAX_STREAM + 1).into_bytes(),
-    ];
+    let bodies: Vec<Vec<u8>> =
+        vec![format!("<< /Length {} >>\nstream\nx\nendstream", MAX_STREAM + 1).into_bytes()];
     for (index, body) in bodies.iter().enumerate() {
         let error = parse(&classic(std::slice::from_ref(body)))
             .expect_err(&format!("limit fixture {index} must be refused"));
-        assert_eq!(error.code, "OUTPUT_LIMIT", "fixture {index}: {}", error.message);
+        assert_eq!(
+            error.code, "OUTPUT_LIMIT",
+            "fixture {index}: {}",
+            error.message
+        );
     }
 }

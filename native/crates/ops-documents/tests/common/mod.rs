@@ -45,7 +45,11 @@ fn adler32(data: &[u8]) -> u32 {
 /// A zlib stream whose deflate blocks store their input; integration tests carry no compressor.
 pub fn zlib(data: &[u8]) -> Vec<u8> {
     let mut output = vec![0x78, 0x01];
-    let chunks: Vec<&[u8]> = if data.is_empty() { vec![&[]] } else { data.chunks(65_535).collect() };
+    let chunks: Vec<&[u8]> = if data.is_empty() {
+        vec![&[]]
+    } else {
+        data.chunks(65_535).collect()
+    };
     for (index, chunk) in chunks.iter().enumerate() {
         let last = index + 1 == chunks.len();
         output.push(u8::from(last));
@@ -96,7 +100,10 @@ pub struct Pdf {
 
 impl Pdf {
     pub fn new() -> Self {
-        Self { bytes: HEADER.to_vec(), offsets: BTreeMap::new() }
+        Self {
+            bytes: HEADER.to_vec(),
+            offsets: BTreeMap::new(),
+        }
     }
 
     /// Write the next object number and return it.
@@ -109,7 +116,8 @@ impl Pdf {
     /// Write one explicit object number; a later revision may reuse a superseded number.
     pub fn numbered(&mut self, number: usize, body: &[u8]) {
         self.offsets.insert(number, self.bytes.len());
-        self.bytes.extend_from_slice(format!("{number} 0 obj\n").as_bytes());
+        self.bytes
+            .extend_from_slice(format!("{number} 0 obj\n").as_bytes());
         self.bytes.extend_from_slice(body);
         self.bytes.extend_from_slice(b"\nendobj\n");
     }
@@ -133,9 +141,8 @@ impl Pdf {
         self.bytes
             .extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", count + 1).as_bytes());
         for number in 1..=count {
-            self.bytes.extend_from_slice(
-                format!("{:010} 00000 n \n", self.offsets[&number]).as_bytes(),
-            );
+            self.bytes
+                .extend_from_slice(format!("{:010} 00000 n \n", self.offsets[&number]).as_bytes());
         }
         self.bytes.extend_from_slice(
             format!("trailer\n<< /Size {size} {trailer} >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
@@ -166,7 +173,11 @@ impl Pdf {
     }
 
     fn close_xref_stream(mut self, extra: &str, png: bool) -> Vec<u8> {
-        let last = *self.offsets.keys().next_back().expect("at least one object");
+        let last = *self
+            .offsets
+            .keys()
+            .next_back()
+            .expect("at least one object");
         let size = last + 2;
         let stream_offset = self.bytes.len();
         let mut rows = vec![row(0, 0, 65_535)];
@@ -175,7 +186,11 @@ impl Pdf {
         }
         rows.push(row(1, stream_offset as u32, 0));
         let decoded = if png { png_up(&rows) } else { rows.concat() };
-        let parms = if png { " /DecodeParms << /Predictor 12 /Columns 7 >>" } else { "" };
+        let parms = if png {
+            " /DecodeParms << /Predictor 12 /Columns 7 >>"
+        } else {
+            ""
+        };
         self.stream(
             &format!(
                 "/Type /XRef /Size {size} /W [1 4 2] /Index [0 {size}] /Root 1 0 R{parms} {extra}"
@@ -269,7 +284,9 @@ pub fn cmap(codespace: &str, body: &str) -> Vec<u8> {
 
 /// The single page's text.
 pub fn text(output: &Value) -> &str {
-    output["items"][0]["text"].as_str().unwrap_or_else(|| panic!("page text: {output}"))
+    output["items"][0]["text"]
+        .as_str()
+        .unwrap_or_else(|| panic!("page text: {output}"))
 }
 
 /// One PDF on disk; removed when the test ends, including on panic.
@@ -294,7 +311,11 @@ impl TempPdf {
     /// Run `read_pdf` as worker dispatch does; `extra` overrides window arguments.
     pub fn read(&self, extra: Value) -> Result<Value, Failure> {
         let path = self.path();
-        let root = path.parent().expect("scratch directory").to_string_lossy().into_owned();
+        let root = path
+            .parent()
+            .expect("scratch directory")
+            .to_string_lossy()
+            .into_owned();
         let mut args = json!({ "path": path.to_string_lossy() });
         if let Value::Object(fields) = extra {
             for (key, value) in fields {
