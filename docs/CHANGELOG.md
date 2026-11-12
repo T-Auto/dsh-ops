@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- `ops_read_pdf` resolves indirect `/Length`, `/Size` and `/Count` values and treats a missing or null page `/Contents` as an empty page instead of a parse error. Classic xref tables remain the only container form; a comment before an object header is no longer accepted as a header.
+- `ops_read_pdf` 支持间接 `/Length`、`/Size`、`/Count`，页面缺 `/Contents` 或为 null 时按空页处理而不是解析错误。容器仍只读经典 xref 表；对象头之前的注释不再被当作对象头。
 - Glob accepts `kind: file | directory | all` (default `file`), including empty directories in shallow listings without following links or changing hidden-item policy. Partial Native searches retain paths, scan counters, skip reasons and bounded diagnostic examples; directory read refusals give usable guidance.
 - Glob 新增 `kind: file | directory | all`（默认 `file`），浅层列举可见空目录，仍不跟随链接，也不改变隐藏项策略。Native 搜索不完整时保留路径、扫描计数、跳过原因与有界诊断样例；目录读取拒绝给出可执行指引。
 - Correct the model-visible glob/grep/read-files result shapes and the ops-ptc batching examples. Bypass reminders distinguish command-output filters from definite file access. On-demand integration diagnostics report the host-selected runtime version or `unknown`, without adding version text to prompts or SDKs. Shared SDK declaration deduplication remains a documented host dependency.
