@@ -1,17 +1,15 @@
 # Batch tool calls
 
-One run_code call is one round trip. A program that fetches one fact, thinks, then
-fetches the next costs the same budget as a program that fetches six and decides once.
-The difference is not length: it is whether every operation was decided before the
-first one ran.
+Group independent calls in one run_code program and keep dependencies explicit.
+Return enough status and completion facts for the next decision.
 
 ## Core rules
 
 1. **Call tools only inside run_code**: write `await tools.<name>(args)`.
 2. **No dependencies, run concurrently**: use Promise.all for independent calls.
 3. **Dependencies, run sequentially**: await the earlier call before using its result.
-4. **Per-call fault tolerance**: wrap each call in try/catch so one failure does not
-   abort the rest.
+4. **Per-call fault tolerance**: check each Outcome status and per-file error; failures
+   are values. Catch dispatch exceptions separately so one failure does not abort the rest.
 5. **Return only what is needed**: intermediate results are never shown; return a short
    summary of the fields the next step needs.
 6. **OPS first for file work**: list with ops_glob, search with ops_grep, read with
@@ -22,34 +20,30 @@ first one ran.
 
 ## Step 0 - the plan line
 
-The first line of every program is a plan comment, and it is what makes a wasted step
-visible: the line cannot be written without deciding the whole step, and comparing it
-with what the program actually issued shows whether the two agree.
+Declare the intended calls on the first line of every program:
 
 ```ts
 // plan: <operation>; <operation>; <operation>
 ```
 
-One entry per tool call, in the order you intend to run them. Prose is fine, and a
-full-width semicolon also separates entries. It has to be the first line of the program:
-a plan comment on a later line does not count, and neither does one after a blank line.
+Use one entry per tool call; a full-width semicolon also separates entries. The plan
+must be the first line of the program, before code or blank lines.
 
 ## Step 1 - split by dependency
 
-Independent operations go in the same program under Promise.all. An operation that
-needs a value you do not have yet is a later program. Splitting by dependency is what
-keeps the plan honest: everything in one program must have been decidable in advance.
+Run independent calls under Promise.all. Await dependencies sequentially in the same
+program. SDK loading requires a separate program before using the new bindings.
 
 ## Step 2 - reconcile
 
-Fewer operations ran than the plan listed means the plan was wrong or the step was
-wasted; decide which before the next step. A one-entry plan is legitimate only when
-that result decides what comes next.
+Compare planned and actual calls. A one-entry plan is valid when its result determines
+the next operation.
 
 ## Step 3 - load before you call
 
-Only ops_inspect_local_file is resident. Every other tools.ops_* name must be loaded,
-and the load takes effect on the NEXT program, never in the one that requested it:
+Use names already present in the current SDK. The default resident reader is
+ops_inspect_local_file; load absent names only. Loading takes effect on the NEXT program,
+never in the one that requested it:
 
 ```ts
 // plan: load glob/read_files/stat; read the manifest head with the resident reader
@@ -61,28 +55,33 @@ return { loaded: load.data?.tools, headLines: head.data?.items?.length }
 ```
 
 Calling an unloaded name throws "tools.ops_read_files is not a function". That is not a
-reason to fall back to the shell; it is one step spent loading. Loaded names stay
-callable for the rest of the session, so pay it once, early.
+reason to fall back to the shell; it is one step spent loading. Loaded names remain
+selected in this live scope; recheck the current SDK after a mode or component change.
+Programs need not share a process or local variables.
 
 ## Trajectory 1 - reconnaissance: independent probes in one program
 
 ```ts
 // plan: top-level directory list; source file list; manifest head
 const [dirs, src, manifest] = await Promise.all([
-  tools.ops_glob({ pattern: ["*/**"], outputMode: "paths", limit: 40 }),
+  tools.ops_glob({ pattern: ["*"], kind: "directory", outputMode: "paths", limit: 40 }),
   tools.ops_glob({ pattern: ["src/**/*.ts"], outputMode: "paths", limit: 60 }),
   tools.ops_read_files({ files: [{ path: "package.json", limit: 30 }] }),
 ])
 return {
-  dirs: dirs.data?.items?.length ?? 0,
-  src: (src.data?.items ?? []).map(item => item.path).slice(0, 20),
+  status: [dirs.status, src.status, manifest.status],
+  dirs: dirs.data?.items ?? [],
+  src: (src.data?.items ?? []).slice(0, 20),
   manifestLines: manifest.data?.items?.[0]?.lineCount,
 }
 ```
 
-Three probes, one round trip. Read the three result shapes carefully: a glob answers in
-data.items[].path, a file read in data.items[0].items. Mixing them up is the most
-common copy error.
+Three probes, one round trip. Glob paths are `data.items: string[]`; details are
+`{path,bytes,modified,kind?}[]`. Grep content is `{path,line,text}[]`,
+files_with_matches is `{path}[]`, count is `{path,count}[]`, definitions adds `kind`
+to content rows, and summary has empty items with `data.files`/`data.matches` totals.
+Read-files contains per-file results in `data.items`, with lines in each file's
+`items`. Check status, scan/page completeness and each file's error before claiming success.
 
 ## Trajectory 2 - search, then read the hits: one dependency, then a fan-out
 
@@ -94,10 +93,17 @@ const files = (hits.data?.items ?? []).map(item => item.path).slice(0, 5)
 const reads = await Promise.all(files.map(async file => {
   try {
     const read = await tools.ops_read_files({ files: [{ path: file, limit: 20 }] })
-    return { file, ok: true, lines: read.data?.items?.[0]?.lineCount }
-  } catch (error) { return { file, ok: false, reason: error.message } }
+    return { file, status: read.status, error: "error" in read ? read.error : undefined,
+      lines: read.data?.items?.[0]?.lineCount }
+  } catch (error) { return { file, ok: false, reason: error instanceof Error ? error.message : String(error) } }
 }))
-return reads
+return {
+  search: { status: hits.status, error: "error" in hits ? hits.error : undefined, complete: hits.data?.complete,
+    scanComplete: hits.data?.scanComplete, pageComplete: hits.data?.pageComplete,
+    matchedObserved: hits.data?.matchedObserved, matchedTotal: hits.data?.matchedTotal,
+    nextOffset: hits.data?.nextOffset, continuation: hits.status === "partial" ? hits.continuation : hits.data?.continuation },
+  reads,
+}
 ```
 
 The search is the dependency, so it is awaited first. The five reads depend on its
@@ -112,12 +118,15 @@ const [stat, context] = await Promise.all([
   tools.ops_stat({ path: "src/policy.ts" }),
   tools.ops_inspect_local_file({ path: "src/policy.ts", offset: 1, limit: 20 }),
 ])
+if (stat.status !== "completed" || !stat.data.revision)
+  return { status: stat.status, error: "error" in stat ? stat.error : undefined }
 const edit = await tools.ops_edit_file({
   path: "src/policy.ts",
   expectedRevision: stat.data.revision,
   edits: [{ oldText: "export const VERSION = 1", newText: "export const VERSION = 2" }],
 })
-return { context: context.data?.items?.length, changed: edit.data?.changed }
+return { status: edit.status, error: "error" in edit ? edit.error : undefined,
+  context: context.data?.items?.length, changed: edit.data?.changed }
 ```
 
 The revision and the context are independent, so they share one program. The write
@@ -129,15 +138,19 @@ needs the revision, so it is a second await in the same program, not a second st
 // plan: read every page of the event log until it reports complete
 const rows = []
 let offset = 1
+let complete = false
+let error
 for (let page = 0; page < 40; page++) {
   const read = await tools.ops_read_files({ files: [{ path: "events.jsonl", offset, limit: 200 }] })
   const file = read.data?.items?.[0]
+  if ("error" in read || file?.error) { error = "error" in read ? read.error : file?.error; break }
   rows.push(...(file?.items ?? []))
   const next = file?.nextOffset ?? 0
-  if (file?.complete || !next || next <= offset) break
+  if (file?.complete) { complete = true; break }
+  if (!next || next <= offset) break
   offset = next
 }
-return { lines: rows.length }
+return { lines: rows.length, complete, error, nextOffset: complete ? undefined : offset }
 ```
 
 Advance by nextOffset, never by page count, and stop when the result reports complete.
@@ -156,7 +169,7 @@ return files.data?.items?.length
 // plan: source files; directories; manifest head       <- same work, one program
 const [files, dirs, manifest] = await Promise.all([
   tools.ops_glob({ pattern: ["src/**/*.ts"], outputMode: "paths" }),
-  tools.ops_glob({ pattern: ["*/**"], outputMode: "paths", limit: 40 }),
+  tools.ops_glob({ pattern: ["*"], kind: "directory", outputMode: "paths", limit: 40 }),
   tools.ops_read_files({ files: [{ path: "package.json", limit: 30 }] }),
 ])
 return { files: files.data?.items?.length, dirs: dirs.data?.items?.length,
@@ -171,7 +184,7 @@ return { files: files.data?.items?.length, dirs: dirs.data?.items?.length,
 | Dependent calls inside Promise.all | await the dependency first, then fan out |
 | More than 128 dispatches in one program | slice(0, 128) before mapping, continue in the next program |
 | Returning the whole payload | Return only the fields the next step needs |
-| One failure aborting the batch | try/catch per item and keep e.message |
+| One failure aborting the batch | Check Outcome status; catch dispatch exceptions and keep e.message |
 | Shell standing in for a file tool | Use the OPS file API for list, search, read and edit |
 | ops_read_files before it is loaded | ops_load_sdk in the previous program |
 | Using e.toolName as the error reason | Use e.message |

@@ -21,6 +21,32 @@ Selections belong to the exact live agent and persist until its component or age
 
 Read Outcome status before data. A partial result retains coverage and a continuation; failures retain code, effect state and retry policy. The loader performs no file work and grants no filesystem permission. No token benchmark or IO speedup is claimed here.
 
+## Result shapes and host boundaries
+
+Glob `paths` returns strings; `details` returns `{path, bytes, modified, kind?}`. Grep
+`files_with_matches` returns `{path}`, `count` returns `{path, count}`, `content` returns
+`{path, line, text}`, and `definitions` adds `kind`; `summary` returns no rows and puts
+totals in `files` and `matches`. Text rows can also carry clipping facts. `read_files`
+returns per-file receipts, each with its own `items`, `complete`, `nextOffset` or `error`.
+The PTC output schemas describe these distinct row shapes and omit unrelated top-level
+search metadata. They do not change canonical values or Native rendering.
+
+The pinned DSH `renderToolsSdk` generates `ToolArgsMap` and `ToolOutputMap` independently
+from each registered JSON schema. Its supported subset has no `$ref`/`$defs`, and its
+`ToolDefinition` has no custom SDK declaration hook. Sharing `Outcome<T>`, page and
+reference declarations across the **model-visible** SDK, or making return types depend
+on `outputMode` arguments, therefore requires a host extension. Changing only the
+package's `.d.ts` would not fix that prompt. This remains a host dependency of #865;
+OPS does not replace the host renderer or add another declaration block.
+
+The ops-ptc batching lesson and reminders are separate from this shared SDK. Its examples
+use the actual row shapes, check returned failures, and do not assume local variables
+survive the next program. Bypass notices distinguish literal shell file access from
+filters of command output (for example `git diff | head`); uncertain shell syntax earns
+no definite accusation. Use the current SDK and load only missing APIs. Disabling
+`batchingGuidance` leaves these lessons and notices absent; ordinary PTC and Native do
+not gain the ops-ptc lesson.
+
 ## Compact loader guidance
 
 The scoped OPS prompt section contains only a one-line pointer to the actual visible `ops_load_sdk`, not an always-resident task directory. The loader description lists configured raw names plus the implicit `result` exception. This is a configured pool, not proof of current execution authority: selection and commit recheck current authority, and actual calls enforce it again. Use callable SDK APIs first; otherwise select 1–5 exact raw names and wait for the next model step. There is no keyword-search SDK API.

@@ -34,6 +34,7 @@ export const PARAMETERS = Object.freeze({
   }),
   glob: bounded({
     path: searchPath,
+    kind: { type: 'string', enum: ['file', 'directory', 'all'], description: 'Entry kind; default file. directory includes empty directories. ["*"] lists immediate children.' },
     pattern: { type: 'array', description: 'Glob ARRAY, e.g. ["**/*.md","!vendor/**"]; at least one positive entry is required.', items: string },
     outputMode: { type: 'string', enum: ['paths', 'details'], description: 'Paths (default) or paths with byte sizes and modification times.' },
     sort: { type: 'string', enum: ['path', 'modified'], description: 'Path order (default) or newest modification first.' },
@@ -125,8 +126,8 @@ const EDIT_DESCRIPTION = 'Precisely patch one UTF-8 file. Overlapping edits reje
 export const DESCRIPTIONS = Object.freeze({
   ...DOCUMENT_DESCRIPTIONS,
   read_files: 'Read UTF-8 ranges relative to session cwd. Check each file complete/error; nextOffset continues lines, nextIndex resumes pending files. Binary needs a binary reader. Failures return status:error|rejected and error.code; never throw.',
-  inspect_local_file: 'Read bounded UTF-8 text lines or a hex view from path relative to the DSH session cwd. Directories are rejected; use ops_glob or ops_grep.' + RESULT,
-  glob: 'Find regular files below path. Globs match paths relative to path: "*.md" matches the top level only, "!" excludes. Symlinks, reparse points, hidden files and dependency/build directories are excluded. Follow nextOffset; check scanComplete and pageComplete. matchedTotal exists only after a complete scan. Incomplete scans require a narrower query.' + RESULT,
+  inspect_local_file: 'Read bounded UTF-8 text lines or a hex view from path relative to the DSH session cwd. Directories are rejected; choose a file.' + RESULT,
+  glob: 'Find files (default), directories or both below path. Globs match paths relative to path: "*.md" matches the top level only, "!" excludes. Symlinks, reparse points, hidden files and dependency/build directories are excluded. Follow nextOffset; check scanComplete and pageComplete. matchedTotal exists only after a complete scan. Incomplete scans require a narrower query.' + RESULT,
   grep: 'Search UTF-8 files below path. glob filters paths relative to path ("!" excludes); there is no include field. Searches exclude symlinks, junctions, reparse points, hidden files and .git. Use summary for aggregate file/match totals, count for per-file counts, files_with_matches for paths, content for text (default), or definitions for only the lines where the matched identifier is declared (function/method/type/variable/macro; lexical, not a parser; skips comment/string bodies; no multiline or context flags; matched counts all matching lines, total counts returned declarations). Follow nextOffset; each page rescans. Check scanComplete and pageComplete; matchedTotal exists only after a complete scan, matchedObserved is a lower bound otherwise. skipReasons explains gaps. Narrow incomplete scans instead of blindly paging.' + RESULT,
   stat: 'Inspect one regular file: SHA-256 revision, bytes, UTF-8 lineCount (null for binary), timestamps and permissions; no content. Missing paths return exists:false, revision:absent.' + RESULT,
   diff: 'Read-only comparison of one UTF-8 file with content. Returns one prefix/suffix-trimmed replacement hunk (not a minimal diff), paged with offset/limit. Includes old/new hashes and line counts; no publication.' + RESULT,

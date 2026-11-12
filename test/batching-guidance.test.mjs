@@ -20,7 +20,7 @@ await test('the shipped guidance is English Markdown with its host-source identi
   }
   assert.equal(BATCHING_GUIDANCE_ID, 'batching-guidance')
   // A wording or format change is a product change and must bump the revision.
-  assert.equal(BATCHING_GUIDANCE_REVISION, '3')
+  assert.equal(BATCHING_GUIDANCE_REVISION, '4')
 })
 
 await test('the guidance loader returns exactly the shipped Markdown file', () => {

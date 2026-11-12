@@ -7,6 +7,16 @@ It reports the current preset, visible tools, selected/degraded state, external 
 operator-actionable issue codes. It does not execute a file/shell/provider action and does not
 activate discovery capabilities.
 
+On demand it also returns `runtimeVersion` and, when known, `runtimeVersionSource`.
+The adapter calls `getDshRuntimeVersion()` from the `app-boot` package selected by
+the host's installation-scope `pluginPackages.resolution`. Prerelease and build
+metadata are preserved. Missing or ambiguous authority returns `unknown`; OPS
+does not infer the running version from its dependencies, npm, executable metadata
+or inherited `DSH_VERSION`. No version, package list or configuration path is added
+to prompts, SDK declarations or ordinary tool results. Hosts without this
+installation resolution need a host-owned version service before they can report
+a known value through this adapter.
+
 Important states:
 
 - `not-selected`: this agent has no explicit OPS integration or enabled built-in mode.

@@ -10,11 +10,12 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Agent } from '../adapter/dsh/types.js'
+import { literalShellFileWork } from './shell-file-work.js'
 
 /** Identity of the guidance in the host message source. */
 export const BATCHING_GUIDANCE_ID = 'batching-guidance'
 /** Revision of the guidance text; bump it when the wording or the file format changes. */
-export const BATCHING_GUIDANCE_REVISION = '3'
+export const BATCHING_GUIDANCE_REVISION = '4'
 
 /** The shipped guidance file, resolved from this module's own location (src or lib). */
 const DEFAULT_GUIDANCE_FILE = new URL('../../prompts/batching-guidance.md', import.meta.url)
@@ -83,7 +84,6 @@ const BRANCHING = /\bif\s*\(|\btry\s*\{|\bswitch\s*\(|\?\s*[^:]{1,80}:/u
 const WAITING = /\bwait\s*:\s*true|job_output\s*\(/u
 const BYPASS = /node:fs|node:child_process|\bfs\./u
 const SHELL_TOOL = /^(?:pwsh|bash|shell|ops_bash|pwsh_persistent|bash_persistent)$/u
-const SHELL_FILE_WORK = /Get-ChildItem|Get-Content|Select-String|Test-Path|(?:^|[\s;&|"'`])(?:ls|dir|cat|type|grep|rg|find|head|tail|wc|sed|awk|cp|mv|rm|mkdir)\s/iu
 
 /** Program text with comments and string bodies separated from executable tokens. */
 interface ReadableProgram {
@@ -262,9 +262,10 @@ export function analyzeProgram(code: unknown): ProgramShape {
   const readable = readProgram(code)
   // A commented-out call is not a call: dispatch sites are read from comment-free
   // text, which is also what lets a truly dispatch-free program earn no notice.
-  const sites = [...readable.code.matchAll(DISPATCH)]
+  const sites = [...readable.code.matchAll(DISPATCH)].filter(match => readable.bare.slice(match.index, match.index + 5) === 'tools')
   const plan = parsePlan(code)
-  const shellForFiles = sites.some(match => SHELL_TOOL.test(match[1] ?? match[2] ?? '')) && SHELL_FILE_WORK.test(readable.code)
+  const shellForFiles = sites.some(match => SHELL_TOOL.test(match[1] ?? match[2] ?? '')
+    && literalShellFileWork(readable.code, match.index + match[0].length))
   return {
     hasFirstLinePlan: plan.length > 0,
     declaredOperations: plan.length,
@@ -362,7 +363,7 @@ export function noticeText(category: BatchingCategory, shape: ProgramShape): str
     return [
       'Your last program did file work through the shell or Node IO, which bypasses path policy and the audit trail.',
       'List with `ops_glob`, search with `ops_grep`, read with `ops_read_files` or `ops_inspect_local_file`, edit with `ops_edit_file`.',
-      'Only `ops_inspect_local_file` is resident: load the others with `tools.ops_load_sdk` in the previous program, then call them here.',
+      'Use the APIs in the current SDK; load only missing names with `tools.ops_load_sdk` for the next program.',
     ].join('\n')
   }
   return [

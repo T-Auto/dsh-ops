@@ -21,6 +21,27 @@ PTC 行配置由统一配置入口验证：
 
 先检查 Outcome.status 再使用 data。部分结果保留覆盖信息及 continuation；失败保留错误代码、影响状态和重试策略。加载器不执行文件操作，也不授予文件系统权限。本页不声称 token 基准或 IO 提速。
 
+## 返回形状与宿主边界
+
+Glob 的 `paths` 返回字符串；`details` 返回 `{path, bytes, modified, kind?}`。Grep 的
+`files_with_matches` 返回 `{path}`，`count` 返回 `{path, count}`，`content` 返回
+`{path, line, text}`，`definitions` 再增加 `kind`；`summary` 没有行，汇总数位于
+`files` 和 `matches`。文本行还可能带有行内截断事实。`read_files` 返回各文件独立的
+receipt，包含各自的 `items`、`complete`、`nextOffset` 或 `error`。PTC 输出 schema
+描述这些不同的行形状，并移除搜索顶层不适用的元数据；不修改 canonical 值或 Native 呈现。
+
+当前固定版本的 DSH `renderToolsSdk` 对每个注册 JSON schema 分别生成 `ToolArgsMap`
+和 `ToolOutputMap`。支持的 schema 子集没有 `$ref`/`$defs`，`ToolDefinition` 也没有
+自定义 SDK 声明 hook。因此，在**模型可见** SDK 中跨工具共享 `Outcome<T>`、分页与引用
+声明，或让返回类型随 `outputMode` 参数变化，需要宿主扩展。仅修改包内 `.d.ts` 无法
+修复该提示文本。这仍是 #865 的宿主依赖；OPS 不替换宿主渲染器，也不另加一套声明块。
+
+ops-ptc 批量教程与提醒和共享 SDK 分开。示例使用真实行形状、检查返回的失败，不假定
+普通局部变量跨程序保留。绕过提醒区分字面 shell 文件操作与命令输出过滤（如
+`git diff | head`）；不能确定的 shell 语法不触发确定性的指控。以当前 SDK 为准，
+只加载缺失的 API。关闭 `batchingGuidance` 不注入教程或提醒；原版 PTC 和 Native
+不会因此默认带上 ops-ptc 教程。
+
 ## 精简加载器指导
 
 OPS 作用域提示段只保留一行指向当前真实可见的 `ops_load_sdk`，不再常驻完整任务目录。加载器描述列出配置的原始名称及隐式 `result` 例外。这是配置池，不证明当前执行权限：选择与提交时重新检查当前权限，真实调用还会再次执行权限检查。优先使用已可调用的 SDK；否则选择 1–5 个准确原始名称，等待下一个模型步骤。不存在关键字搜索 SDK API。

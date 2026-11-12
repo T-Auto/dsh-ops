@@ -43,13 +43,14 @@ export function capNativeText(text: string, maxBytes = NATIVE_OUTPUT_BYTES, reco
 function facts(value: Row, keys: string[]): string {
   return keys.filter(key => value[key] !== undefined).map(key => `${key}=${field(value[key])}`).join('; ')
 }
-function notices(value: Row, displayed: number): string[] {
+function notices(value: Row, displayed: number, represented: readonly string[] = []): string[] {
   const incomplete = value.complete === false || value.truncated === true || value.status === 'partial'
   const details = [
     `${displayed} item${displayed === 1 ? '' : 's'} displayed`,
     `complete=${value.complete === undefined ? (incomplete ? 'false' : 'unspecified') : value.complete}`,
     `TruncatedBy: ${value.truncatedBy ?? (incomplete ? 'worker-limit' : 'none')}`,
-    facts(value, ['nextOffset', 'nextIndex', 'pending', 'omitted', 'total', 'matched', 'files', 'matches', 'skippedFiles', 'skippedPaths', 'failed', 'continuation']),
+    facts(value, ['nextOffset', 'nextIndex', 'pending', 'omitted', 'total', 'matched', 'files', 'matches', 'skippedFiles', 'skippedPaths', 'failed', 'continuation']
+      .filter(key => !represented.includes(key))),
   ].filter(Boolean)
   const output = [`[Notice: ${details.join('; ')}.]`]
   for (const item of rows(value.items)) {
@@ -63,6 +64,8 @@ function notices(value: Row, displayed: number): string[] {
 
 function inspect(args: Row, value: Row): string[] {
   const items = rows(value.items)
+  const textTotal = args.view !== 'hex' && !items.some(item => item.view === 'hex')
+    ? count(value.lineCount) ? value.lineCount : count(value.total) ? value.total : undefined : undefined
   const output: string[] = []
   const groups = new Map<string, Row[]>()
   for (const item of items) {
@@ -78,7 +81,7 @@ function inspect(args: Row, value: Row): string[] {
     const span = numbers.length ? `${numbers[0]}-${numbers.at(-1)}` : 'none'
     const total = count(value.lineCount) ? value.lineCount : count(value.total) ? value.total : '?'
     output.push(`=== FILE: ${label(path)} (${hex ? 'Hex' : `Lines ${span} of ${total}`}) ===`)
-    const observed = facts(value, ['revision', 'bytes', 'lineCount'])
+    const observed = facts(value, textTotal !== undefined && value.lineCount === textTotal ? ['revision', 'bytes'] : ['revision', 'bytes', 'lineCount'])
     if (observed) output.push(`[Notice: ${observed}.]`)
     for (const item of group) {
       if (hex) output.push(`${label(item.offset ?? '?')} | ${contentLine(item.text)}`)
@@ -86,7 +89,7 @@ function inspect(args: Row, value: Row): string[] {
     }
     if (!group.length) output.push(value.lineCount === 0 ? '(empty file)' : '(no lines in this range)')
   }
-  output.push(...notices(value, items.length))
+  output.push(...notices(value, items.length, textTotal !== undefined && value.total === textTotal ? ['total'] : []))
   return output
 }
 
@@ -138,8 +141,16 @@ function diff(args: Row, value: Row): string[] {
 
 function listing(tool: string, args: Row, value: Row): string[] {
   const output: string[] = []
+  const represented: string[] = []
+  // These aliases are established by the search kernel, not inferred from equal-looking counts.
+  if ((tool === 'glob' || tool === 'grep') && value.scanComplete !== undefined) {
+    represented.push('skippedFiles')
+    if (count(value.matchedObserved) && value.matched === value.matchedObserved) represented.push('matched')
+    // Grep's total counts output rows, which can differ from regex matches.
+    if (tool === 'glob' && value.scanComplete === true && count(value.matchedTotal) && value.total === value.matchedTotal) represented.push('total')
+  }
   if (value.scanComplete !== undefined) output.push(`[Notice: ${facts(value, ['scanComplete', 'pageComplete', 'scannedFiles', 'skippedFiles', 'skipReasons', 'matchedObserved', 'matchedTotal'])}.]`)
-  if (typeof value.nextAction === 'string') output.push(`Next: ${label(value.nextAction)}`)
+  if (typeof value.nextAction === 'string' && (!record(value.error) || value.error.nextAction !== value.nextAction)) output.push(`Next: ${label(value.nextAction)}`)
   const items = Array.isArray(value.items) ? value.items : []
   for (const item of items) {
     if (typeof item === 'string') { output.push(label(item)); continue }
@@ -157,9 +168,12 @@ function listing(tool: string, args: Row, value: Row): string[] {
       output.push(`${path}${Object.keys(rest).length ? `: ${facts(rest, Object.keys(rest))}` : ''}`)
     }
   }
-  const summary = facts(value, ['exists', 'revision', 'bytes', 'lineCount', 'metadata', 'revisionBefore', 'revisionAfter', 'changed', 'dryRun'])
+  const omitZeroChange = (tool === 'glob' || tool === 'grep') && value.status === 'completed' && value.changed === 0
+    && !value.error && value.scanComplete !== false && (value.failed === undefined || value.failed === 0)
+  const summary = facts(value, ['exists', 'revision', 'bytes', 'lineCount', 'metadata', 'revisionBefore', 'revisionAfter', 'changed', 'dryRun']
+    .filter(key => key !== 'changed' || !omitZeroChange))
   if (summary) output.unshift(summary)
-  output.push(...notices(value, items.length))
+  output.push(...notices(value, items.length, represented))
   return output
 }
 
@@ -169,7 +183,11 @@ export function renderNative(tool: string, args: unknown, result: unknown): stri
   const input = record(args) ? args : {}
   let lines: string[]
   if (isDocumentTool(tool)) lines = renderDocument(tool, input, result)
-  else if (record(result.error) || ['error', 'rejected', 'conflict', 'unknown', 'failed'].includes(String(result.status))) lines = failure(result)
+  else if (record(result.error) || ['error', 'rejected', 'conflict', 'unknown', 'failed'].includes(String(result.status))) {
+    // Failed searches still own observations; they are not mutation receipts.
+    lines = (tool === 'glob' || tool === 'grep') && result.scanComplete !== undefined
+      ? [...failure({ ...result, items: [] }), ...listing(tool, input, result)] : failure(result)
+  }
   else if (tool === 'result') return capNativeText(renderResult(input, result), NATIVE_OUTPUT_BYTES, 'Repeat the same offset with smaller limit/maxBytes; do not advance past undisplayed rows.')
   else if (tool === 'read_files') lines = compactRanges(input, result) ?? readMany(result)
   else if (tool === 'inspect_local_file') lines = inspect(input, result)

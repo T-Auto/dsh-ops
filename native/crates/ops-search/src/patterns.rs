@@ -39,6 +39,13 @@ impl<'a> Patterns<'a> {
                 .iter()
                 .any(|pattern| glob_segments(pattern, &value))
     }
+    pub fn shallow(&self) -> bool {
+        !self.positive.is_empty()
+            && self
+                .positive
+                .iter()
+                .all(|pattern| pattern.len() == 1 && pattern[0] != "**")
+    }
 }
 #[cfg(test)]
 mod tests {

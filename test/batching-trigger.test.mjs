@@ -71,6 +71,27 @@ await test('comments and strings are not a bypass, while real module IO still is
   assert.equal(analyzeProgram('const r = await tools.ops_stat({ path: "a" })\nreturn \x60\x24{fs.readFileSync("a")}\x60').bypassesFileTools, true)
 })
 
+await test('stdin filters do not accuse command output of bypassing file APIs', () => {
+  const shape = command => analyzeProgram(`await tools.ops_bash({ command: ${JSON.stringify(command)} })`)
+  for (const command of ['git diff | head -20', 'git diff | grep TODO | sed -n \'1,20p\'',
+    'printf "hello" | grep hello', 'printf "cat file" | tail -n 2', 'npm test | tail -20',
+    'git diff 2>&1 | head -20', 'git diff | grep --include "*.ts" TODO', 'git diff | Select-String TODO',
+    'git diff | grep -m 1 TODO', 'git diff | grep --max-count 1 TODO',
+    "git diff | sed --posix -n '1,8p'", 'sed --version', 'printf x | grep x <<< text',
+    'git diff | grep --unknown-option value TODO']) {
+    assert.equal(shape(command).bypassesFileTools, false, command)
+  }
+  for (const command of ['grep TODO src/file.ts', 'cat file | head -20', 'git diff | grep TODO file',
+    'printf x | sed -i s/x/y/ file', 'head -n 2 file', 'cat < file', 'git diff > output.txt',
+    'Get-Content file | Select-String TODO', 'Select-String -Path file -Pattern TODO']) {
+    assert.equal(shape(command).bypassesFileTools, true, command)
+  }
+  assert.equal(analyzeProgram('await tools.ops_bash({ description: "grep file", command: "git diff" })').bypassesFileTools, false)
+  assert.equal(analyzeProgram('const example = "tools.ops_bash({ command: \'cat file\' })"; return example').dispatchSites, 0)
+  assert.equal(analyzeProgram('// tools.ops_bash({ command: "cat file" })').bypassesFileTools, false)
+  assert.doesNotMatch(noticeText('bypass', shape('cat file')), /Only .* resident|load the others/)
+})
+
 await test('a program with no dispatch site earns no category', () => {
   // A value program and a comment-only program have no call shape to correct.
   for (const code of ['return 1', '// plan: read nothing\n// a note about node:fs\nreturn 1', '// tools.ops_stat({ path: "a" })\nreturn 1']) {
