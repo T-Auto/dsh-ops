@@ -1,4 +1,5 @@
 /** Typed OPS shell boundary; host classes are borrowed through services, never imported as values. */
+import type { ExecutionTiming, ExecutionTimingSnapshot } from '../execution/timing.js'
 import type { OpsErrorPayload } from '../kernel/outcome.js'
 import type { ToolDefinition, ToolRunContext } from '../adapter/dsh/types.js'
 import type { JsonSchemaNode } from '../adapter/dsh/types.js'
@@ -22,7 +23,7 @@ export interface ShellResult {
   stderr: ShellStream
   cancelled?: boolean
   stopped?: string
-  diagnostics?: { durationMs: number; executor: { kind: string; source: string } }
+  diagnostics?: { durationMs: number; executor: { kind: string; source: string }; timing?: ExecutionTimingSnapshot }
   permission?: { code: string; message: string; nextAction: string }
   restriction?: { code: string; message: string; nextAction: string }
   sandbox?: { mode: ShellPolicy['mode']; denied: boolean; enforcement?: 'full' | 'partial'; runnerFailed?: boolean }
@@ -30,7 +31,7 @@ export interface ShellResult {
 export type SettledShellResult = ShellResult & { status: 'completed' | 'failed' }
 export type HostForeground = SettledShellResult & { kind: 'foreground'; exitCode: number | null; signal: string | null; aborted: boolean }
 export type HostBashResult = (HostForeground | { kind: 'background'; jobId: string; label: string }
-  | { kind: 'promoted'; jobId: string; label: string; timeoutMs: number; output: string }) & Pick<ShellResult, 'resolvedFrom' | 'cwdSource'>
+  | { kind: 'promoted'; jobId: string; label: string; timeoutMs: number; output: string }) & Pick<ShellResult, 'resolvedFrom' | 'cwdSource'> & { executionTiming?: ExecutionTimingSnapshot }
 export interface ShellExecution {
   status: 'running' | 'completed' | 'killed'
   readonly started: boolean
@@ -42,7 +43,7 @@ export interface ShellExecution {
   signal?: string | null
   sandbox?: ShellResult['sandbox']
 }
-export interface ExecutionOptions { onExpiry?: 'none' }
+export interface ExecutionOptions { onExpiry?: 'none'; timing?: ExecutionTiming }
 export interface ShellExecutionSpec extends ExecutionOptions {
   command?: string
   scriptPath?: string

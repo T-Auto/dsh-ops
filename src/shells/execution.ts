@@ -1,4 +1,5 @@
 /** Live Bash command over the host subprocess service; no service registration. */
+import { ExecutionTiming } from '../execution/timing.js'
 import { Buffer } from 'node:buffer'
 import path from 'node:path'
 import type { SubprocessHandle, SubprocessOutputReader, SubprocessOutputRead } from '../adapter/dsh/types.js'
@@ -76,6 +77,8 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
   const controller = new AbortController()
   const callerSignal = exec.signal
   const startedAt = performance.now()
+  const timing = spec.includeDiagnostics ? spec.timing ?? new ExecutionTiming('executor') : undefined
+  timing?.begin('prepare')
   let cause: 'cancelled' | 'timeout' | undefined
   let handle: SubprocessHandle | undefined
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -138,6 +141,8 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
       if (!subprocess) throw new Error('Host subprocess service is unavailable')
       const childEnv = shellEnvOverrides(globalThis.process.env, env)
       assertRunning()
+      timing?.end('prepare')
+      timing?.begin('launch')
       handle = subprocess.spawn({
         argv: preparedArgv,
         // Legacy direct executor callers can omit cwd; scoped host calls resolve it before this seam.
@@ -152,7 +157,12 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
         signal: controller.signal,
         env: prepareArgv ? adaptElectronRunner(preparedArgv, childEnv) : childEnv,
       })
+      timing?.end('launch')
+      timing?.begin('hostWait')
       const outcome = await handle.done
+      timing?.observeHostDone()
+      timing?.end('hostWait')
+      timing?.begin('outputFinalize')
       streams = [collectStream(handle.collected?.stdout, spec.includeDiagnostics), collectStream(handle.collected?.stderr, spec.includeDiagnostics)]
       value = {
         ...(outcome?.exitCode != null ? { exitCode: outcome.exitCode } : {}),
@@ -162,6 +172,10 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
         stderr: streams[1].stream,
       }
     } catch (error) {
+      timing?.end('prepare')
+      timing?.end('launch')
+      timing?.end('hostWait')
+      timing?.begin('outputFinalize')
       expire()
       streams = [collectStream(handle?.collected?.stdout, spec.includeDiagnostics), collectStream(handle?.collected?.stderr, spec.includeDiagnostics)]
       value = {
@@ -178,7 +192,13 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
       clearTimeout(timer)
       callerSignal?.removeEventListener('abort', onCallerAbort)
     }
-    const projected = projectResult ? await projectResult(value) : value
+    let projected: ShellResult
+    try { projected = projectResult ? await projectResult(value) : value }
+    finally { timing?.end('outputFinalize') }
+    if (timing) projected = { ...projected, diagnostics: {
+      durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      executor: { kind: 'subprocess', source }, timing: timing.snapshot(),
+    } }
     process.status = projected.error || projected.timedOut || projected.cancelled || projected.signal ? 'killed' : 'completed'
     process.exitCode = projected.exitCode ?? null
     process.signal = projected.signal ?? null

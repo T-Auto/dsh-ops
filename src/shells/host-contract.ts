@@ -6,7 +6,7 @@ import { bashFailure } from './failure.js'
 import { BASH_OUTPUT_SCHEMA, renderBashResult, withBashStatus } from './tool.js'
 
 const nullable = (type: JsonSchemaType): JsonSchemaNode => ({ oneOf: [{ type }, { type: 'null' }] })
-const directoryProperties = { resolvedFrom: { type: 'string' }, cwdSource: { type: 'string' } } as const
+const directoryProperties = { resolvedFrom: { type: 'string' }, cwdSource: { type: 'string' }, executionTiming: { type: 'object' } } as const
 export const HOST_BASH_OUTPUT_SCHEMA: JsonSchemaNode = {
   oneOf: [
     { type: 'object', additionalProperties: false, required: ['kind', 'jobId', 'label'], properties: {

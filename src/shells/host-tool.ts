@@ -1,5 +1,6 @@
 // Adapted from @deepseek-ai/dsh-tool-bash 0.2.0-rc.2 (MIT). See licenses/deepseek-harness/LICENSE.
 /** Host-compatible consumer over an OPS-owned executor; host services stay scoped and borrowed. */
+import { ExecutionTiming } from '../execution/timing.js'
 import type { ToolDefinition } from '../adapter/dsh/types.js'
 import type { JsonSchemaNode } from '../adapter/dsh/types.js'
 import type { ShellContext, ShellBase, ShellCall, ShellPolicy, CreateShellExecution, StartShell, ShellExecution, ShellJobs, HostBashResult, HostShellDefinition } from './types.js'
@@ -42,9 +43,23 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
     presentCall: presentBashCall,
     presentResult: presentBashResult,
     async execute(input: unknown, exec: ShellCall = {}): Promise<HostBashResult> {
+      const timing = input && typeof input === 'object' && 'includeDiagnostics' in input && input.includeDiagnostics === true
+        ? new ExecutionTiming('tool-call') : undefined
+      timing?.begin('admission')
       let basis: DirectoryBasis | undefined
       const stamp = (value: HostBashResult): HostBashResult => basis ? { ...value, resolvedFrom: basis.cwd, cwdSource: basis.source } : value
-      const complete = async (value: HostBashResult) => { value = stamp(value); await projection.prepare(value, exec); return value }
+      const finish = (value: HostBashResult): HostBashResult => {
+        timing?.end('admission')
+        timing?.end('policy')
+        timing?.end('resultReturn')
+        return { ...stamp(value), ...(timing ? { executionTiming: timing.snapshot() } : {}) }
+      }
+      const complete = async (value: HostBashResult) => {
+        timing?.begin('resultReturn')
+        value = stamp(value)
+        try { await projection.prepare(value, exec); return finish(value) }
+        finally { timing?.end('resultReturn') }
+      }
       let timeoutMs = 120_000
       let policy: ShellPolicy | undefined
       let process: ShellExecution | undefined
@@ -66,32 +81,38 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
         // Pure validation occurs before approval, job admission or physical preparation.
         base.resolve(local)
         if (typeof args.description !== 'string' || !args.description.trim()) throw new BashArgumentError('invalid description: expected a non-empty string', 'description')
-        if (!exec.agent?.session?.id) return hostFailure('EXECUTOR_UNAVAILABLE: an authoritative session is required.', timeoutMs)
+        timing?.end('admission')
+        timing?.begin('policy')
+        if (!exec.agent?.session?.id) return finish(hostFailure('EXECUTOR_UNAVAILABLE: an authoritative session is required.', timeoutMs))
         const standing = ctx.get('sandboxPolicy')?.resolve({ session: exec.agent.session })
-        if (!standing || !['read-only', 'workspace-write', 'danger-full-access'].includes(standing.mode)) return hostFailure('EXECUTOR_UNAVAILABLE: authoritative session policy is unavailable.', timeoutMs)
+        if (!standing || !['read-only', 'workspace-write', 'danger-full-access'].includes(standing.mode)) return finish(hostFailure('EXECUTOR_UNAVAILABLE: authoritative session policy is unavailable.', timeoutMs))
         policy = await approveBashPolicy(ctx, args, exec, standing)
         exec.signal?.throwIfAborted()
         const dshEnv = ctx.get('shellEnv')?.collect(exec) ?? {}
+        timing?.end('policy')
         const approvedPolicy = policy
         const start: StartShell = async (execution, options) => {
-          process = await createExecution(local, execution, standing, approvedPolicy, dshEnv, options)
+          timing?.end('queue')
+          process = await createExecution(local, execution, standing, approvedPolicy, dshEnv, { ...options, timing })
           return process
         }
         if (jobs) {
+          timing?.begin('queue')
           let attached
           try { attached = startBashJob(jobs, args as { description: string; command?: string; script_path?: string }, exec, start) }
           catch (error) {
+            timing?.end('queue')
             if (run_in_background || error instanceof BashJobAdmissionError && error.runInvoked) throw error
             ctx.logger?.warn?.(`Bash job admission refused; using the foreground deadline: ${errorMessage(error)}`)
           }
-          if (attached) return run_in_background ? stamp({ kind: 'background', jobId: attached.id, label: attached.label }) : await complete(await waitOnBashJob(jobs, attached, exec, timeoutMs))
-        } else if (run_in_background) return hostFailure('EXECUTOR_UNAVAILABLE: the host job registry is unavailable.', timeoutMs)
+          if (attached) return run_in_background ? finish({ kind: 'background', jobId: attached.id, label: attached.label }) : await complete(await waitOnBashJob(jobs, attached, exec, timeoutMs))
+        } else if (run_in_background) return finish(hostFailure('EXECUTOR_UNAVAILABLE: the host job registry is unavailable.', timeoutMs))
         const execution = await start(exec, {})
         const result = await execution.result()
         return await complete(hostForeground(result, execution.started ? 'unknown' : 'none'))
       } catch (error) {
         const message = isBashArgumentError(error) ? `INVALID_BASH_ARGUMENT: ${errorMessage(error)}` : errorMessage(error)
-        return stamp({ ...hostFailure(message, timeoutMs, process?.started ? 'unknown' : 'none', exec.signal?.aborted === true), ...(policy ? { sandbox: { mode: policy.mode, denied: false } } : {}) })
+        return finish({ ...hostFailure(message, timeoutMs, process?.started ? 'unknown' : 'none', exec.signal?.aborted === true), ...(policy ? { sandbox: { mode: policy.mode, denied: false } } : {}) })
       }
     },
   } satisfies ToolDefinition

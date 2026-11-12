@@ -250,7 +250,7 @@ export function bashToolDefinition({ file, source, subprocess, prepareArgv, env 
         },
         includeDiagnostics: {
           type: 'boolean',
-          description: 'Include compact timing and executor diagnostics in structured output; omitted by default.',
+          description: 'Include monotonic execution phases and executor diagnostics; unavailable host events are explicit. Omitted by default.',
         },
       },
       additionalProperties: false,
@@ -331,9 +331,9 @@ export function bashToolDefinition({ file, source, subprocess, prepareArgv, env 
 
       return { command, scriptPath, workdir, timeoutMs, graceMs, includeDiagnostics }
     },
-    start(args, exec = {}, { onExpiry } = {}) {
+    start(args, exec = {}, { onExpiry, timing } = {}) {
       const spec = definition.resolve(args)
-      return startBashExecution({ file, source, subprocess, prepareArgv, env, projectResult }, { ...spec, onExpiry }, exec)
+      return startBashExecution({ file, source, subprocess, prepareArgv, env, projectResult }, { ...spec, onExpiry, timing }, exec)
     },
     async execute(args, exec) { return definition.start(args, exec).result() },
   }

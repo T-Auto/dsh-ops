@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Opt-in Bash diagnostics now separate monotonic admission, policy, job queue, preparation, host spawn/wait, output finalization and result-return timing. Unknown first-byte, target-exit and tree-settlement events stay explicit; no backend or lifecycle change. A bounded sampling helper retains failed and warmup samples without writing files (issue #872, slice A).
+- Bash 按需诊断新增单调时钟分段，区分准入、权限、job 排队、准备、宿主启动/等待、输出结算和结果返回。首字节、目标退出与进程树结算的不可观测边界明确保留，不改变后端和生命周期。新增有界采样辅助函数，保留失败及预热样本，不写磁盘（#872 切片 A）。
 - Glob accepts `kind: file | directory | all` (default `file`), including empty directories in shallow listings without following links or changing hidden-item policy. Partial Native searches retain paths, scan counters, skip reasons and bounded diagnostic examples; directory read refusals give usable guidance.
 - Glob 新增 `kind: file | directory | all`（默认 `file`），浅层列举可见空目录，仍不跟随链接，也不改变隐藏项策略。Native 搜索不完整时保留路径、扫描计数、跳过原因与有界诊断样例；目录读取拒绝给出可执行指引。
 - Correct the model-visible glob/grep/read-files result shapes and the ops-ptc batching examples. Bypass reminders distinguish command-output filters from definite file access. On-demand integration diagnostics report the host-selected runtime version or `unknown`, without adding version text to prompts or SDKs. Shared SDK declaration deduplication remains a documented host dependency.
