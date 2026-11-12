@@ -70,7 +70,7 @@ await test('file parameter schemas preserve their reviewed structural constraint
   // #865 adds only optional glob kind: file/directory/all; #734 adds the opt-in
   // includeHidden boolean to glob and grep. Every other structural constraint stays pinned.
   const hash = createHash('sha256').update(JSON.stringify(withoutDescriptions(fileParameters))).digest('hex')
-  assert.equal(hash, 'PENDING_RECOMPUTE')
+  assert.equal(hash, '0e700929dff3eb37c6f9d2ddf23bc1fcf8337b57c4b772dcc79626865803db8d')
 })
 
 await test('create-only help names the required literal instead of suggesting an omitted revision', () => {
