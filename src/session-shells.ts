@@ -1,4 +1,5 @@
 /** Plugin-owned bash layers; permission changes never mutate the shared registry. */
+import { acquireCradle } from './execution/cradle/owner.js'
 import path from 'node:path'
 import type { Context, Fiber } from './adapter/dsh/types.js'
 import type { Agent } from './adapter/dsh/types.js'
@@ -162,13 +163,14 @@ export interface BashGate {
   watch?(notify: () => void): () => void
 }
 
-export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'publishBashTool'>, shells: { bash: ShellResolution }, gate: BashGate = { allows: () => true }) {
+export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'publishBashTool'> & Partial<Pick<ResolvedConfig, 'executionBackend' | 'binaryPath'>>, shells: { bash: ShellResolution }, gate: BashGate = { allows: () => true }) {
   if (!config.publishBashTool) return
   const bash = shells.bash
   if (!bash.available) {
     ctx.logger?.warn?.(`dsh-ops: bash unavailable: ${bash.detail}`)
     return
   }
+  const cradle = config.executionBackend === 'cradle' ? acquireCradle(ctx, config.binaryPath) : undefined
   const entries = new Map<Agent, Entry>()
   let ready = false
   let stopped = false
@@ -238,7 +240,7 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
       if (!publishable) continue
       const base = bashToolDefinition({ file: bash.file, source: bash.source, subprocess: ctx.get('subprocess') })
       const definition = hostBashDefinition(ctx, base,
-        (args, exec, standing, policy, dshEnv, options) => startSessionBash({ ctx, bash, active: () => entry.published === true && entry.definition === definition
+        (args, exec, standing, policy, dshEnv, options) => startSessionBash({ ctx, bash, cradle, active: () => entry.published === true && entry.definition === definition
           && exec.agent !== undefined && entries.has(exec.agent) && allowed(exec.agent) },
           args, exec, standing, policy, dshEnv, options), async (args, session, exec) => {
             const basis = await resolveSessionDirectory(ctx, exec.agent, exec.signal)
@@ -294,6 +296,7 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
     const entry = entries.get(agent)
     if (!entry) return
     entries.delete(agent)
+    if (agent.session && ![...entries.keys()].some(other => other.session === agent.session)) cradle?.cancelOwner(agent.session)
     // Removal revokes retained callbacks immediately. Dispose can emit a tool
     // change too, including when another observer disposes during an append.
     const retired = new Promise<void>(resolve => setImmediate(resolve)).then(async () => {
@@ -313,6 +316,7 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
     // allSettled: one failing detach must not leave the remaining sessions' bash layers published.
     await Promise.allSettled([...entries.keys()].map(detach))
     await Promise.allSettled(retiring)
+    await cradle?.dispose()
   }, 'dsh-ops: session bash layers')
   ctx.on('agent/created', async ({ agent }) => {
     const entry = attach(agent)

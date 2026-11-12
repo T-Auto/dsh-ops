@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Add the opt-in Windows `executionBackend: cradle`: per-kernel private supervisor, resident scheduling worker, task-specific kill-on-close Jobs, acknowledged result handoff, 300-second idle retirement and bounded output/spill transport. Existing approvals, confinement and host jobs remain in the call path; file workers stay per-request. No automatic fallback or measured performance claim.
+- 新增主动启用的 Windows `executionBackend: cradle`：每内核私有监督器、常驻调度 worker、每任务 kill-on-close Job、结果确认交接、300 秒空闲回收及有界输出/spill 传输。原审批、confinement 和宿主 jobs 保留，文件 worker 继续逐请求执行。不自动回退，不声称已有性能结果。
 - Opt-in Bash diagnostics now separate monotonic admission, policy, job queue, preparation, host spawn/wait, output finalization and result-return timing. Unknown first-byte, target-exit and tree-settlement events stay explicit; no backend or lifecycle change. A bounded sampling helper retains failed and warmup samples without writing files (issue #872, slice A).
 - Bash 按需诊断新增单调时钟分段，区分准入、权限、job 排队、准备、宿主启动/等待、输出结算和结果返回。首字节、目标退出与进程树结算的不可观测边界明确保留，不改变后端和生命周期。新增有界采样辅助函数，保留失败及预热样本，不写磁盘（#872 切片 A）。
 - Glob accepts `kind: file | directory | all` (default `file`), including empty directories in shallow listings without following links or changing hidden-item policy. Partial Native searches retain paths, scan counters, skip reasons and bounded diagnostic examples; directory read refusals give usable guidance.

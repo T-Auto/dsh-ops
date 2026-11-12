@@ -56,12 +56,75 @@ cache. Resource numbers cover the sampler process only; child CPU/RSS, handles a
 are explicitly unknown. Capture them externally for the eventual performance gate. Output must be
 validated per workload; an exit code alone is not equivalence evidence.
 
-This slice does **not** install a cradle, persistent worker or replacement process backend. The
-existing per-request policy, host sandbox/jobs, deadlines, cancellation, spills and shell isolation
-are unchanged. B–F require measured bottlenecks and independent lifecycle/security evidence before
-backend selection. No Windows/Linux performance claim follows from this implementation. The final
-comparison still needs interleaved rounds, all workloads/permission modes/projections, ext4 for WSL,
-and equivalent containment and retention. No benchmark or regression run is implied by these docs.
+The explicit Windows cradle backend is described below. The host backend remains the default until
+lifecycle/security and equivalent Windows/Linux performance acceptance is complete. No performance
+claim follows from the timing implementation; the final comparison still needs interleaved rounds,
+all workloads/permission modes/projections, ext4 for WSL, and equivalent containment and retention.
+
+## Windows cradle and resident executor
+
+Set `executionBackend: cradle` on the shell row or the relevant built-in mode section (for example
+`ops-ptc`). The default is `host`; selecting `cradle` never silently falls back. Build/stage the
+native worker with the existing `build:ptc` pipeline: the supervisor is a `--cradle` entry in the
+same provenance-checked binary, not another downloaded runtime. Selecting it on non-Windows fails
+explicitly; those systems keep their existing host executor.
+
+Ownership is keyed by the Cordis kernel root, not process id, home or workspace. Component leases
+share that root's lazy supervisor. Each generation has a random 128-bit nonce, private inherited
+stdin/stdout, and an opened parent-process handle. No named endpoint, TCP listener, process-name
+scan, per-command watchdog process or filesystem rendezvous is created. Closing the control
+connection or signalling the parent handle closes every owned Job through process exit.
+
+The native supervisor owns task Jobs, target handles, stdout/stderr pipe readers and settlement.
+A resident scheduling thread validates launch data; it owns no Jobs and catches request panics
+without replay. Accepted tasks pass a second host authority check before `commit`. Each launch uses
+an explicit stdio handle allowlist and suspended creation → Job assignment → resume; Job creation
+or nested assignment failure refuses the task. Jobs are unnamed, non-inheritable and kill-on-close,
+without breakaway flags. Each command gets a fresh shell, environment and EOF stdin: resident
+executor does not mean shared shell functions, traps, cwd, options or descriptors. Fixed-file
+workers deliberately retain their existing per-request authority boundary, not a privileged pool.
+
+Requests have strictly increasing ids and `accepted`, `prepared`, `started`, `targetExit`, `settled`
+and acknowledgement boundaries. A broken submitted request is never replayed and reports unknown
+effects. The host-facing command completes only after target exit, Job active-process-zero, both
+output drains and result delivery. Thus a background descendant remains a live host job, including
+when it closes its inherited output descriptors. `job_output` and `job_kill` remain the normal DSH
+interfaces; no separate private job registry is exposed. Cancelling a Windows task terminates its
+exact Job immediately (no reliable cooperative signal exists for these non-console tasks).
+Deadlines remain in the existing executor; background promotion disables only that deadline.
+Session disposal cancels that lease's session tasks; the final component lease shuts down its
+supervisor, with a bounded exact-child shutdown escalation.
+
+Running → Idle → Draining → Exited is driven by `Instant`, not output activity. The 300-second
+countdown starts only when the task map is empty **after result acknowledgement**. Queued, running,
+background and output-draining tasks prevent retirement indefinitely, including silent hour-long
+commands. Retirement and admission are serialized by the supervisor event loop; a race is an
+explicit connection failure, never transparent resubmission. The next independent invocation
+creates a fresh generation. The scheduler retires with its supervisor.
+
+Bounds: 32 admitted tasks, 1 MiB control frames, 256 queued output frames (8 KiB binary chunks,
+hex-encoded separately from control), 2 MiB host outbound control backlog, 64,000-byte stream tails,
+64 MiB per-stream spill and 256 MiB retained spill reservations per generation. Output reads pause
+while spill IO completes; disk failure/quota exhaustion drops the complete spill claim but keeps
+the bounded tail and loss flag. Spills are created only on overflow using the existing ledger's
+private directory/file shape, so its configured retention remains authoritative. Empty instance
+spill directories are removed on shutdown; retained result files are not deleted prematurely.
+There are no polling timers for Jobs: a completion port observes tree settlement, blocking reads
+observe output, and a handle wait observes the parent. The 15-second startup handshake deadline is
+not a task lifetime or heartbeat policy.
+
+All requests still pass existing argument validation, `sandboxPolicy.resolve`, approval, sandbox
+confinement, session authority rechecks and host environment scrubbing. Confinement argv is executed
+unchanged; unsupported host installation/scrub contracts refuse activation rather than substituting
+raw unrestricted commands. The native module is an explicit platform boundary; protocol, ownership,
+output accounting and DSH adaptation remain separate modules. Native/PTC publication and audit
+continue through the existing tool entry.
+
+Code delivery is not acceptance evidence: multi-kernel collision, nested Job restrictions,
+parent/supervisor crashes, idle races, cancellation storms, policy changes, disk/pipe pressure,
+actual Desktop/Web integration and the Windows/Linux performance matrix still require execution
+by the operator. No runtime test or benchmark result is claimed.
+
 
 ## Integration status
 

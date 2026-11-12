@@ -55,6 +55,7 @@ export interface ShellExecutionSpec extends ExecutionOptions {
 export interface ShellExecutorOptions {
   file: string
   source: string
+  executorKind?: 'subprocess' | 'cradle'
   subprocess?: Pick<SubprocessRuntime, 'spawn'>
   env?: NodeJS.ProcessEnv
   prepareArgv?: (argv: string[], signal: AbortSignal) => Promise<string[]>

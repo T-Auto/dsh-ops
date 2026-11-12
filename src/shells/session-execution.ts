@@ -1,4 +1,6 @@
 /** Resolve and confine every invocation using the current session authority. */
+import type { CradleLease } from '../execution/cradle/owner.js'
+import type { SubprocessRuntime } from '../adapter/dsh/types.js'
 import path from 'node:path'
 import { sameAuthority } from '../authority-paths.js'
 import type { ConfinedArgv } from '../adapter/dsh/types.js'
@@ -10,7 +12,7 @@ import { prepareWorkspace } from '../workspace-preparation.js'
 import { executionRestriction } from '../permissions.js'
 import { isNiubashExecutable, prepareNiubash } from '../niubash/runtime.js'
 
-export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bash: { file: string; source: string }; active(): boolean },
+export function startSessionBash({ ctx, bash, active, cradle }: { ctx: ShellContext; bash: { file: string; source: string }; active(): boolean; cradle?: CradleLease },
   args: Record<string, unknown>, exec: ShellCall, standing: ShellPolicy, policy: ShellPolicy, dshEnv: NodeJS.ProcessEnv, options: ExecutionOptions): ShellExecution {
   if (!exec.agent?.session) throw new Error('EXECUTOR_UNAVAILABLE: an authoritative session is required.')
   const session = exec.agent.session
@@ -25,8 +27,13 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
   const native = process.platform === 'win32' && isNiubashExecutable(bash.file)
   const env = { ...dshEnv }
   let confinement: ConfinedArgv | undefined
+  let executor = ctx.get('subprocess')
+  const dispatch: Pick<SubprocessRuntime, 'spawn'> = { spawn(spec) {
+    if (!executor) throw new Error('EXECUTOR_UNAVAILABLE: execution service is unavailable')
+    return executor.spawn(spec)
+  } }
   const definition = bashToolDefinition({ file: bash.file, source: bash.source,
-    env, subprocess: ctx.get('subprocess'),
+    env, subprocess: dispatch, executorKind: cradle ? 'cradle' : 'subprocess',
     prepareArgv: async (argv: string[], signal: AbortSignal) => {
       signal.throwIfAborted()
       assertAuthority()
@@ -46,6 +53,9 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
         if (!sandbox?.confine) throw new Error('SANDBOX_UNAVAILABLE: confinement is unavailable; no command executed.')
         confinement = await sandbox.confine(argv, { ...policy, mode: policy.mode }, signal)
         if (!['full', 'partial'].includes(confinement?.enforcement) || !confinement.argv?.length) throw new Error('SANDBOX_UNAVAILABLE: invalid confinement result; no command executed.')
+      }
+      if (cradle) {
+        executor = cradle.bind(session, await cradle.executor(signal, assertAuthority))
       }
       signal.throwIfAborted()
       assertAuthority()

@@ -73,7 +73,7 @@ function recordSettledStreams(streams: readonly SettledStream[], exec: ShellCall
  * process containment, collection and disposal. A job can observe output without consuming it.
  * `onExpiry: none` disables only this executor's deadline, never caller cancellation.
  */
-export function startBashExecution({ file, source, subprocess, prepareArgv, env = {}, projectResult }: ShellExecutorOptions, spec: ShellExecutionSpec, exec: ShellCall = {}): ShellExecution {
+export function startBashExecution({ file, source, executorKind = 'subprocess', subprocess, prepareArgv, env = {}, projectResult }: ShellExecutorOptions, spec: ShellExecutionSpec, exec: ShellCall = {}): ShellExecution {
   const controller = new AbortController()
   const callerSignal = exec.signal
   const startedAt = performance.now()
@@ -109,7 +109,7 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
     ...(cause === 'cancelled' ? { cancelled: true } : {}),
     ...(spec.includeDiagnostics ? { diagnostics: {
       durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
-      executor: { kind: 'subprocess', source },
+      executor: { kind: executorKind, source },
     } } : {}),
   })
   const deadline = spec.onExpiry === 'none' ? Infinity : startedAt + spec.timeoutMs
@@ -197,7 +197,7 @@ export function startBashExecution({ file, source, subprocess, prepareArgv, env 
     finally { timing?.end('outputFinalize') }
     if (timing) projected = { ...projected, diagnostics: {
       durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
-      executor: { kind: 'subprocess', source }, timing: timing.snapshot(),
+      executor: { kind: executorKind, source }, timing: timing.snapshot(),
     } }
     process.status = projected.error || projected.timedOut || projected.cancelled || projected.signal ? 'killed' : 'completed'
     process.exitCode = projected.exitCode ?? null

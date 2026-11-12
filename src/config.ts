@@ -22,7 +22,7 @@ export const LEGACY_FASTCTX_KEYS = Object.freeze(['serverName', 'enableShellTool
 export const CORE_CONFIG_KEYS = Object.freeze([
   ...LEGACY_FASTCTX_KEYS, 'binaryPath', 'required', 'shellPolicy', 'deniedHostTools', 'promptPolicy',
   'extraGuidance', 'bashPath', 'publishBashTool', 'allowSystemShellFallback', 'denyCredentialReads', 'configUpdateVersion', 'indexCache',
-  'downloadGuard', 'spillRetentionDays', 'spillTotalBudgetMiB', 'spillSweepEnabled', 'resultCache', 'disk',
+  'downloadGuard', 'spillRetentionDays', 'spillTotalBudgetMiB', 'spillSweepEnabled', 'resultCache', 'disk', 'executionBackend',
 ])
 
 /** Upper bound accepted for the legacy `toolCallTimeoutMs`, matching the loader's timer ceiling. */
@@ -212,6 +212,7 @@ export interface ResolvedConfig {
   extraGuidance: string
   bashPath: string | undefined
   publishBashTool: boolean
+  executionBackend: 'host' | 'cradle'
   allowSystemShellFallback: boolean
   downloadGuard: DownloadGuardConfig
   /** Spill files older than this many days are evicted; 0 reports only. */
@@ -277,7 +278,11 @@ export function resolveConfig(rawConfig?: unknown): ResolvedConfig {
     )
   }
 
+  const executionBackend = optionalString(raw, 'executionBackend') ?? 'host'
+  if (executionBackend !== 'host' && executionBackend !== 'cradle') throw new ConfigError('executionBackend must be host or cradle')
+
   return {
+    executionBackend,
     configUpdateVersion,
     binaryPath: optionalString(raw, 'binaryPath'),
     required: optionalBoolean(raw, 'required', false),

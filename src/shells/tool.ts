@@ -215,7 +215,7 @@ export function bashToolDescription() {
  * @param {import('./types.js').ShellExecutorOptions} options - the typed host executor inputs.
  * @returns {import('./types.js').LegacyShellDefinition} the legacy executor definition wrapped by the host projection.
  */
-export function bashToolDefinition({ file, source, subprocess, prepareArgv, env = {}, projectResult = withBashStatus }: ShellExecutorOptions): LegacyShellDefinition {
+export function bashToolDefinition({ file, source, executorKind, subprocess, prepareArgv, env = {}, projectResult = withBashStatus }: ShellExecutorOptions): LegacyShellDefinition {
   const definition: LegacyShellDefinition = {
     name: BASH_TOOL_NAME,
     description: bashToolDescription(),
@@ -333,7 +333,7 @@ export function bashToolDefinition({ file, source, subprocess, prepareArgv, env 
     },
     start(args, exec = {}, { onExpiry, timing } = {}) {
       const spec = definition.resolve(args)
-      return startBashExecution({ file, source, subprocess, prepareArgv, env, projectResult }, { ...spec, onExpiry, timing }, exec)
+      return startBashExecution({ file, source, executorKind, subprocess, prepareArgv, env, projectResult }, { ...spec, onExpiry, timing }, exec)
     },
     async execute(args, exec) { return definition.start(args, exec).result() },
   }

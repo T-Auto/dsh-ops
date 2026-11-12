@@ -35,7 +35,7 @@ export interface ModeConfig extends ResolvedConfig {
 export const MODE_CONFIG_KEYS: readonly string[] = Object.freeze([
   ...LEGACY_FASTCTX_KEYS,
   'binaryPath', 'required', 'denyCredentialReads', 'promptPolicy', 'extraGuidance',
-  'bashPath', 'publishBashTool', 'allowSystemShellFallback', 'configUpdateVersion',
+  'bashPath', 'publishBashTool', 'allowSystemShellFallback', 'configUpdateVersion', 'executionBackend',
   'spillRetentionDays', 'spillTotalBudgetMiB', 'spillSweepEnabled',
   'allowedTools', 'alwaysLoaded',
   'bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools', 'residentTools',

@@ -13,6 +13,7 @@ export const Config = settingsConfig(value => {
   return { ...raw, publishBashTool: validated.publishBashTool }
 }, {
   bashPath: editable('string', 'Absolute custom Bash or pinned niu.exe executor path. Remove the override to select complete managed Niubash on Windows.'),
+  executionBackend: editable('string', 'Execution backend: host (default) or opt-in Windows cradle. No automatic fallback.'),
   publishBashTool: editable('boolean', 'Publish Bash for authorized sessions.'),
   shellPolicy: editable('string', 'Use advise or deny-host-shell for host shell routing.'),
   deniedHostTools: editable('array', 'Host tool names denied by deny-host-shell policy.', { type: 'string' }),
