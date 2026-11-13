@@ -3,13 +3,17 @@ mod channel;
 mod identity;
 mod job;
 mod launch;
+mod output;
 mod pipe_write;
 mod security;
 mod signal;
+mod spill_file;
+mod spill_io;
 pub use channel::{Channel, ChannelSnapshot, ChannelView};
 pub use identity::Baseline;
 pub use launch::Range;
 pub use signal::signal_console_and_exit;
+pub use spill_file::{MAX_SPILL_BYTES, SpillStore};
 
 use std::{
     io,

@@ -33,7 +33,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { describeSpillError, getSpillLedger, isCode, type SpillLedger, type SpillLedgerEntry } from './spill-ledger.js'
+import { describeSpillError, getSpillLedger, isCode, nativeSpillPathMatches, type SpillLedger, type SpillLedgerEntry } from './spill-ledger.js'
 
 /** Default retention window; aligned with the upstream spill-local `cleanupPeriodDays`. */
 export const DEFAULT_SPILL_RETENTION_DAYS = 30
@@ -267,10 +267,25 @@ function observeEntry(entry: SpillLedgerEntry, context: { fs: SpillFilesystem; r
   const directory = path.dirname(file)
   const name = path.basename(file)
   const directoryName = path.basename(directory)
-  if (!SPILL_DIRECTORY_PATTERN.test(directoryName)) return { kind: 'skip', reason: 'unexpected-directory' }
-  const match = SPILL_FILE_PATTERN.exec(name)
-  if (match === null) return { kind: 'skip', reason: 'unexpected-file-name' }
-  if (Number(match[1]) !== entry.pid) return { kind: 'skip', reason: 'pid-mismatch' }
+  const native = entry.origin === 'ops-native-v1'
+  if (entry.origin !== undefined && !native) return { kind: 'skip', reason: 'unexpected-origin' }
+  if (native) {
+    if (!nativeSpillPathMatches(file, entry.pid)) return { kind: 'skip', reason: 'native-origin-mismatch' }
+    if (!samePath(path.dirname(directory), context.realTmp, context.platform)) return { kind: 'skip', reason: 'outside-temporary-root' }
+    // A native origin promises physical ancestors, including the private directory.
+    for (let parent = directory; ; parent = path.dirname(parent)) {
+      try {
+        const stat = context.fs.lstat(parent)
+        if (stat.isSymbolicLink() || !stat.isDirectory()) return { kind: 'skip', reason: 'symlinked-directory' }
+      } catch { return { kind: 'skip', reason: 'unreadable-directory' } }
+      if (parent === path.dirname(parent)) break
+    }
+  } else {
+    if (!SPILL_DIRECTORY_PATTERN.test(directoryName)) return { kind: 'skip', reason: 'unexpected-directory' }
+    const match = SPILL_FILE_PATTERN.exec(name)
+    if (match === null) return { kind: 'skip', reason: 'unexpected-file-name' }
+    if (Number(match[1]) !== entry.pid) return { kind: 'skip', reason: 'pid-mismatch' }
+  }
   let realDirectory: string
   try {
     realDirectory = context.fs.realpath(directory)

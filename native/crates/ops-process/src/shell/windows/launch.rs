@@ -1,4 +1,5 @@
 use super::{argv, channel::Channel, check, job::Job, owned};
+use super::{output::Output, spill_file::SpillStore, spill_io::Cancellation};
 use crate::shell::{Capture, CaptureView, Launch, Retention, budget};
 use std::{
     fs::File,
@@ -25,6 +26,9 @@ pub struct Range {
     readers: Vec<Reader>,
     observed: [Arc<AtomicU64>; 2],
     outputs: Option<[CaptureView; 2]>,
+    spill: Option<SpillStore>,
+    spill_cancel: [Cancellation; 2],
+    poisoned: bool,
     settled: bool,
 }
 impl Range {
@@ -36,6 +40,9 @@ impl Range {
             readers: Vec::new(),
             observed: std::array::from_fn(|_| Arc::new(AtomicU64::new(0))),
             outputs: None,
+            spill: None,
+            spill_cancel: std::array::from_fn(|_| Cancellation::default()),
+            poisoned: false,
             settled: false,
         })
     }
@@ -63,6 +70,28 @@ impl Range {
     }
     pub fn output_views(&self) -> Option<[CaptureView; 2]> {
         self.outputs.clone()
+    }
+    pub fn enable_spill(&mut self, store: SpillStore) -> io::Result<()> {
+        if self.process.is_some() || self.settled {
+            return Err(io::Error::other("spill must be configured before launch"));
+        }
+        self.spill = Some(store);
+        Ok(())
+    }
+    pub fn cleanup_unconfirmed(&self) -> bool {
+        self.poisoned
+            || self
+                .outputs
+                .as_ref()
+                .is_some_and(|views| views.iter().any(|view| view.snapshot().cleanup_unconfirmed))
+    }
+    fn poison_outputs(&mut self) {
+        self.poisoned = true;
+        if let Some(views) = &self.outputs {
+            for view in views {
+                view.poison("output cleanup unconfirmed".into());
+            }
+        }
     }
     /// Direct root exit only; descendants and output readers can still be alive.
     pub fn root_exit(&self) -> io::Result<Option<u32>> {
@@ -201,12 +230,24 @@ impl Range {
             }
             self.readers.push(drain(
                 out_read,
-                outputs[0].clone(),
+                Output::new(
+                    outputs[0].clone(),
+                    spec.output_cap,
+                    self.spill.clone(),
+                    "stdout",
+                    self.spill_cancel[0].clone(),
+                ),
                 self.observed[0].clone(),
             )?);
             self.readers.push(drain(
                 err_read,
-                outputs[1].clone(),
+                Output::new(
+                    outputs[1].clone(),
+                    spec.output_cap,
+                    self.spill.clone(),
+                    "stderr",
+                    self.spill_cancel[1].clone(),
+                ),
                 self.observed[1].clone(),
             )?);
             if unsafe { ResumeThread(main_thread.as_raw_handle()) } == u32::MAX {
@@ -220,8 +261,17 @@ impl Range {
         result
     }
     pub fn terminate(&mut self, deadline: Instant) -> io::Result<()> {
-        self.job.terminate()?;
-        self.wait_empty(deadline)
+        for control in &self.spill_cancel {
+            control.cancel();
+        }
+        let result = self
+            .job
+            .terminate()
+            .and_then(|()| self.wait_empty(deadline));
+        if result.is_err() && self.spill.is_some() {
+            self.poison_outputs();
+        }
+        result
     }
     pub fn wait_empty(&mut self, deadline: Instant) -> io::Result<()> {
         self.job.wait_empty(deadline)?;
@@ -233,10 +283,46 @@ impl Range {
     }
     /// Read only after confirmed Job emptiness; descendants cannot retain writers then.
     pub fn captures(&mut self) -> io::Result<Vec<Capture>> {
+        if self.spill.is_some() {
+            return self.captures_until(Instant::now() + Duration::from_secs(5));
+        }
         if !self.settled {
             return Err(io::Error::other("shell range is not confirmed empty"));
         }
         join_readers(&mut self.readers)
+    }
+    /// A failed join retains every reader and poisons the owner. The coordinator
+    /// must stop admission and close the managed kernel transport before dropping it.
+    pub fn captures_until(&mut self, deadline: Instant) -> io::Result<Vec<Capture>> {
+        if !self.settled {
+            return Err(io::Error::other("shell range is not confirmed empty"));
+        }
+        while self.readers.iter().any(|reader| !reader.is_finished()) {
+            for control in &self.spill_cancel {
+                if control.cancelled() {
+                    control.cancel();
+                }
+            }
+            if self.cleanup_unconfirmed() || Instant::now() >= deadline {
+                for control in &self.spill_cancel {
+                    control.cancel();
+                }
+                self.poison_outputs();
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "output cleanup unconfirmed; managed kernel teardown required",
+                ));
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        let result = join_readers(&mut self.readers);
+        if self.cleanup_unconfirmed() {
+            Err(io::Error::other(
+                "output owner is poisoned; managed kernel teardown required",
+            ))
+        } else {
+            result
+        }
     }
 }
 impl Drop for Range {
@@ -248,6 +334,11 @@ impl Drop for Range {
         // after an observation failure must not falsely report successful cleanup.
         if self.settled {
             let _ = self.captures();
+        }
+        if self.poisoned {
+            // No detach on an unconfirmed I/O cancellation. Fatal transport teardown
+            // must terminate this managed kernel if the operation cannot acknowledge.
+            let _ = join_readers(&mut self.readers);
         }
     }
 }
@@ -314,23 +405,38 @@ fn eof_pipe(sa: &SECURITY_ATTRIBUTES) -> io::Result<OwnedHandle> {
     drop(writer);
     Ok(input)
 }
-fn drain(handle: OwnedHandle, output: CaptureView, observed: Arc<AtomicU64>) -> io::Result<Reader> {
+fn drain(handle: OwnedHandle, output: Output, observed: Arc<AtomicU64>) -> io::Result<Reader> {
     thread::Builder::new()
         .name("ops-shell-diagnostic".into())
-        .spawn(move || collect(File::from(handle), output, observed))
+        .spawn(move || collect_output(File::from(handle), output, observed))
 }
+#[cfg(test)]
 fn collect(
     mut reader: impl Read,
     output: CaptureView,
     observed: Arc<AtomicU64>,
 ) -> io::Result<Capture> {
+    collect_output(
+        &mut reader,
+        Output::new(output, 4, None, "stdout", Cancellation::default()),
+        observed,
+    )
+}
+fn collect_output(
+    mut reader: impl Read,
+    mut output: Output,
+    observed: Arc<AtomicU64>,
+) -> io::Result<Capture> {
     let mut bytes = [0; 8192];
-    let result = (|| loop {
-        let count = reader.read(&mut bytes)?;
-        if count == 0 {
-            return Ok(());
+    let result = (|| {
+        output.start();
+        loop {
+            let count = reader.read(&mut bytes)?;
+            if count == 0 {
+                return Ok(());
+            }
+            observed.store(output.append(&bytes[..count]), Ordering::Relaxed);
         }
-        observed.store(output.append(&bytes[..count]), Ordering::Relaxed);
     })();
     let capture = output.finish(&result);
     result.map(|()| capture)
@@ -363,6 +469,150 @@ mod tests {
         atomic::{AtomicBool, Ordering},
         mpsc,
     };
+
+    fn blocked_spill_range() -> (
+        Range,
+        SpillStore,
+        Arc<super::super::spill_io::TestGate>,
+        mpsc::Receiver<()>,
+    ) {
+        let store = SpillStore::new(&std::env::temp_dir(), 1024).unwrap();
+        let mut range = Range::new().unwrap();
+        range.enable_spill(store.clone()).unwrap();
+        let (gate, entered) = range.spill_cancel[0].gate_next_write();
+        let command = std::env::current_exe().unwrap();
+        range
+            .spawn_with_retention(
+                Launch {
+                    argv: vec![
+                        command.into(),
+                        "--ignored".into(),
+                        "--exact".into(),
+                        "shell::windows::launch::tests::spill_output_child".into(),
+                        "--nocapture".into(),
+                    ],
+                    cwd: std::env::current_dir().unwrap(),
+                    env: Vec::new(),
+                    output_cap: 4,
+                },
+                Retention::Tail,
+            )
+            .unwrap();
+        (range, store, gate, entered)
+    }
+    #[test]
+    #[ignore = "output child fixture, explicitly invoked by spill ownership tests"]
+    fn spill_output_child() {
+        println!("spill-fixture");
+    }
+    #[test]
+    fn unacknowledged_spill_cancellation_retains_a_poisoned_owner() {
+        let (mut range, store, gate, entered) = blocked_spill_range();
+        let entered = entered.recv_timeout(Duration::from_secs(5));
+        let view = range.output_views().unwrap()[0].clone();
+        let (snapshot, received) = mpsc::channel();
+        let observer = thread::spawn(move || {
+            let _ = snapshot.send(view.snapshot());
+        });
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            entered.map_err(|e| {
+                io::Error::other(format!(
+                    "{e}; outputs={:?}; root={:?}",
+                    range.output_views().unwrap().map(|v| v.snapshot()),
+                    range.root_exit()
+                ))
+            })?;
+            range.terminate(Instant::now() + Duration::from_secs(5))?;
+            let snapshot = received
+                .recv_timeout(Duration::from_secs(1))
+                .expect("snapshot blocked on filesystem I/O");
+            assert_eq!(
+                snapshot.observed, 0,
+                "filesystem wait must not hold the snapshot mutex"
+            );
+            assert!(!snapshot.eof);
+            assert!(snapshot.spill.is_none());
+            let result = range.captures_until(Instant::now() + Duration::from_millis(20));
+            assert!(result.is_err());
+            assert!(range.cleanup_unconfirmed());
+            assert!(
+                !range.readers.is_empty(),
+                "a failed join must retain its reader handles"
+            );
+            assert!(range.enable_spill(store.clone()).is_err());
+            Ok::<_, io::Error>(())
+        }));
+        gate.release();
+        observer.join().unwrap();
+        range
+            .terminate(Instant::now() + Duration::from_secs(5))
+            .unwrap();
+        // Joining after the deliberate fixture release is teardown only; the owner
+        // stays poisoned and cannot be reused or reported independently cleaned.
+        join_readers(&mut range.readers).unwrap();
+        assert!(
+            range
+                .captures_until(Instant::now() + Duration::from_secs(1))
+                .is_err(),
+            "late joined readers cannot turn a poisoned owner into successful cleanup"
+        );
+        for view in range.output_views().unwrap() {
+            let snapshot = view.snapshot();
+            assert!(snapshot.cleanup_unconfirmed);
+            assert!(!snapshot.eof);
+            assert!(snapshot.spill.is_none());
+            assert!(snapshot.error.is_some());
+        }
+        assert_eq!(
+            std::fs::read_dir(store.test_directory()).unwrap().count(),
+            0,
+            "a previously poisoned stream must be discarded, not sealed after the late write"
+        );
+        drop(range);
+        for file in std::fs::read_dir(store.test_directory()).unwrap() {
+            std::fs::remove_file(file.unwrap().path()).unwrap();
+        }
+        let directory = store.test_directory().to_path_buf();
+        drop(store);
+        std::fs::remove_dir(directory).unwrap();
+        outcome.unwrap().unwrap();
+    }
+    #[test]
+    #[ignore = "fatal I/O child fixture, explicitly invoked through the public host probe"]
+    fn fatal_spill_child() {
+        use std::io::Write;
+        let mut control = crate::ControlPipe::inherited().unwrap();
+        let (mut range, store, _gate, entered) = blocked_spill_range();
+        writeln!(
+            control,
+            "{{\"type\":\"ready\",\"pid\":{},\"childPid\":{}}}",
+            std::process::id(),
+            range.pid().unwrap()
+        )
+        .unwrap();
+        entered.recv_timeout(Duration::from_secs(5)).unwrap();
+        range
+            .terminate(Instant::now() + Duration::from_secs(5))
+            .unwrap();
+        assert!(
+            range
+                .captures_until(Instant::now() + Duration::from_millis(20))
+                .is_err()
+        );
+        assert!(range.cleanup_unconfirmed());
+        // The wire declares uncertainty and then independently shuts down. The
+        // Range's Drop keeps its unacknowledged reader until the public owner kills
+        // this managed process. No supposedly successful cleanup receipt is sent.
+        writeln!(
+            control,
+            "{{\"type\":\"poisoned\",\"cleanupConfirmed\":false,\"directory\":{:?}}}",
+            store.test_directory().to_string_lossy()
+        )
+        .unwrap();
+        control.shutdown().unwrap();
+        drop(range);
+        panic!("unresponsive fixture reader unexpectedly detached");
+    }
 
     #[test]
     fn default_input_is_a_closed_pipe_not_a_nul_device() {

@@ -117,6 +117,12 @@ jobs:
         run: |
           cargo build --locked --manifest-path native/Cargo.toml --example task_capture
           node bench/probes/probe-872-task-capture.mjs native/target/debug/examples/task_capture.exe
+      - name: Windows native raw spill and fatal I/O ownership
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          node bench/probes/probe-872-spill.mjs native/target/debug/examples/task_capture.exe native/target/debug/dsh-ops-worker.exe
+          node bench/probes/probe-872-spill-fatal.mjs
       - name: Assert the Linux worker is statically linked
         if: runner.os == 'Linux'
         shell: bash

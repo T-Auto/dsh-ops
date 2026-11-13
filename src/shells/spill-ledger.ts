@@ -38,6 +38,8 @@ const LEDGER_MODE = 0o600
 
 /** One spill file this plugin's own settlement produced. */
 export interface SpillLedgerEntry {
+  /** Absent identifies the existing host provider; native files never borrow its naming rule. */
+  origin?: 'ops-native-v1'
   /** Absolute path the host reported as `spillPath`. */
   path: string
   /** Stream length in bytes at settlement; what the retained file is expected to hold. */
@@ -64,10 +66,18 @@ export interface SpillLedgerOptions {
 
 /** What {@link SpillLedger.record} accepts from a settlement. */
 export interface SpillLedgerRecord {
+  origin?: 'ops-native-v1'
   path: string
   bytes: number
   pid?: number
   sessionId?: string
+}
+
+/** Exact native output origin. The recording PID is the kernel, not this Node process. */
+export function nativeSpillPathMatches(file: string, pid: number): boolean {
+  const directory = /^dsh-ops-native-([1-9]\d*)-[0-9a-f]{32}$/.exec(path.basename(path.dirname(file)))
+  return directory !== null && Number(directory[1]) === pid
+    && /^(?:stdout|stderr)-[0-9a-f]{32}\.log$/.test(path.basename(file))
 }
 
 /**
@@ -100,7 +110,11 @@ function parseLedgerLine(line: string): SpillLedgerEntry | undefined {
   if (typeof raw.recordedAt !== 'number' || !Number.isFinite(raw.recordedAt)) return undefined
   if (raw.sessionId !== undefined && typeof raw.sessionId !== 'string') return undefined
   if (raw.lastError !== undefined && typeof raw.lastError !== 'string') return undefined
+  if (raw.origin !== undefined && raw.origin !== 'ops-native-v1') return undefined
+  if (raw.origin === 'ops-native-v1' && (!nativeSpillPathMatches(raw.path, raw.pid)
+    || !Number.isSafeInteger(raw.bytes) || raw.bytes > 64 * 1024 * 1024)) return undefined
   return {
+    ...(raw.origin === undefined ? {} : { origin: raw.origin }),
     path: raw.path,
     bytes: raw.bytes,
     pid: raw.pid,
@@ -214,10 +228,14 @@ export class SpillLedger {
   record(input: SpillLedgerRecord): void {
     if (input === null || typeof input !== 'object') return
     if (typeof input.path !== 'string' || input.path === '' || !path.isAbsolute(input.path)) return
+    if (input.origin !== undefined && input.origin !== 'ops-native-v1') return
+    if (input.origin === 'ops-native-v1' && (!Number.isSafeInteger(input.pid) || !nativeSpillPathMatches(input.path, input.pid!)
+      || !Number.isSafeInteger(input.bytes) || input.bytes < 0 || input.bytes > 64 * 1024 * 1024)) return
     this.load()
     const bytes = typeof input.bytes === 'number' && Number.isFinite(input.bytes) && input.bytes >= 0 ? input.bytes : 0
     const pid = typeof input.pid === 'number' && Number.isSafeInteger(input.pid) && input.pid > 0 ? input.pid : process.pid
     const entry: SpillLedgerEntry = {
+      ...(input.origin === undefined ? {} : { origin: input.origin }),
       path: input.path,
       bytes,
       pid,

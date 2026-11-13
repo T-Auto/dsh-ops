@@ -2,7 +2,7 @@
 //! this layer never resolves authority, modifies argv, or publishes sessions.
 use std::{ffi::OsString, io, path::PathBuf};
 mod capture;
-pub use capture::{Capture, CaptureRead, CaptureSnapshot, CaptureView, Retention};
+pub use capture::{Capture, CaptureRead, CaptureSnapshot, CaptureView, Retention, SpillSnapshot};
 
 pub struct Launch {
     pub argv: Vec<OsString>,
@@ -26,7 +26,8 @@ pub(crate) fn budget(cap: usize) -> io::Result<()> {
 mod windows;
 #[cfg(windows)]
 pub use windows::{
-    Baseline, Channel, ChannelSnapshot, ChannelView, Range, signal_console_and_exit,
+    Baseline, Channel, ChannelSnapshot, ChannelView, MAX_SPILL_BYTES, Range, SpillStore,
+    signal_console_and_exit,
 };
 
 /// POSIX group creation would escape the public host's PGID fallback owner.
