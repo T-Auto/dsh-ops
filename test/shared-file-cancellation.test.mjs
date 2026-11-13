@@ -20,16 +20,19 @@ class ObservedSubprocess extends Subprocess {
   spawn(spec) {
     const handle = super.spawn(spec)
     if (path.resolve(spec.argv[0]) !== path.resolve(WORKER)) return handle
-    if (spec.argv.includes('--serve')) { ++kernelStarts; return handle }
-    const request = JSON.parse(spec.stdio.stdin.data).request
-    assert.equal(request.tool, 'result', 'file calls must use the resident kernel')
-    assert.equal(request.args?.action, 'purge', 'only result-cache cleanup retains its own worker')
-    purges.push(handle.done)
+    assert.ok(spec.argv.includes('--serve'), 'file calls and cache cleanup must reuse the resident kernel')
+    ++kernelStarts
     return handle
   }
 }
 function gateRequests(kernel) {
   const invoke = kernel.invoke.bind(kernel)
+  const purge = kernel.purgeResults.bind(kernel)
+  kernel.purgeResults = (...args) => {
+    const work = purge(...args)
+    purges.push(work)
+    return work
+  }
   kernel.invoke = (envelope, signal, onStarted) => {
     assert.equal(envelope.request.tool, 'stat', 'only the business operation is completion-gated')
     let release
@@ -115,8 +118,11 @@ await test('discovery lifetime, independent PTC, caller abort and source disposa
     await ptc.dispose()
     assert.equal(kernel.available, true, 'consumer disposal leaves the provider owner active')
     assert.equal(kernelStarts, 1, 'Native and PTC requests share one resident startup')
-    if (process.platform !== 'win32') assert.ok(purges.length > 0, 'POSIX session cache teardown reaches the real purge worker')
-    for (const outcome of await Promise.all(purges)) assert.equal(outcome.exitCode, 0, 'trusted cache purge completes without the business gate')
+    if (process.platform !== 'win32') assert.ok(purges.length > 0, 'POSIX session cache teardown reaches the real resident purge')
+    for (const outcome of await Promise.all(purges)) {
+      assert.equal(outcome.exitCode, 0, 'trusted cache purge completes without the business gate')
+      assert.equal(outcome.value.status, 'completed')
+    }
   } finally { for (const release of gates) release(); steps.forEach(step => step.dispose()); await shutdown(ctx) }
 }))
 report('shared-file-cancellation')
