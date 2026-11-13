@@ -3,29 +3,27 @@ import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
-import type { SandboxExecutionPolicy, ConfinedArgv } from '../adapter/dsh/types.js'
+import type { SandboxExecutionPolicy, ConfinedArgv, Session } from '../adapter/dsh/types.js'
 import type { WorkerStorage } from '../execution/protocol.js'
-import { workerEnvelope } from '../execution/protocol.js'
+import type { ResidentClient } from '../execution/resident/client.js'
 import { CAPABILITIES } from '../capabilities/registry.js'
 import { publicToolName } from '../policy.js'
 import { sameAuthority } from '../authority-paths.js'
 import { prepareWorkspace } from '../workspace-preparation.js'
-import { resultSessionNonce, registerResultCleanup } from './result-lifecycle.js'
+import { resultSessionNonce, registerResultCleanup, resultCleanupAuthority } from './result-lifecycle.js'
 import type { ResultSession } from './result-lifecycle.js'
 import { markCleanupRootLive, registerCleanupRoot, releaseCleanupRootLive } from './result-cleanup-registry.js'
 
-interface Subprocess {
-  spawn(spec: { argv: string[]; cwd: string; stdio: { stdin: { data: string }; stdout: { maxBytes: number }; stderr: { maxBytes: number } }; graceMs: number; signal: AbortSignal }): {
-    done: Promise<{ exitCode: number | null; signal?: unknown }>
-    collected: { stdout: { readFrom(offset: number): { text: string; lossy?: boolean } } }
-  }
+export interface ResultCleanupAuthority {
+  sandbox?: { confine(argv: string[], policy: SandboxExecutionPolicy & { mode: 'read-only' | 'workspace-write' }, signal?: AbortSignal): Promise<ConfinedArgv>; prepareResultStorage?(argv: string[], policy: SandboxExecutionPolicy & { mode: 'workspace-write' }, signal?: AbortSignal): Promise<ConfinedArgv> }
+  sandboxPolicy?: { resolve(input: { session: Session }): SandboxExecutionPolicy }
 }
 export interface StorageHost {
   root?: object
-  get(name: 'sandbox'): { confine(argv: string[], policy: SandboxExecutionPolicy & { mode: 'read-only' | 'workspace-write' }, signal?: AbortSignal): Promise<ConfinedArgv>; prepareResultStorage?(argv: string[], policy: SandboxExecutionPolicy & { mode: 'workspace-write' }, signal?: AbortSignal): Promise<ConfinedArgv> } | undefined
-  get(name: 'sandboxPolicy'): { resolve(input: { session: ResultSession }): SandboxExecutionPolicy } | undefined
+  get(name: 'sandbox'): ResultCleanupAuthority['sandbox']
+  get(name: 'sandboxPolicy'): ResultCleanupAuthority['sandboxPolicy']
   get(name: 'tools'): { schemas(scope: unknown): { name: string }[]; get(name: string, scope: unknown): unknown } | undefined
-  get(name: 'subprocess'): Subprocess | undefined
+  get(name: 'opsKernel'): ResidentClient | undefined
 }
 type Location = { root: string; windowsWriteSid?: string }
 const locations = new WeakMap<object, Map<string, Location>>()
@@ -78,17 +76,21 @@ function currentTools(ctx: StorageHost, scope: unknown, tool: string): string[] 
     .map(item => item.rawName)
 }
 async function purge(ctx: StorageHost, session: ResultSession, file: string, storage: WorkerStorage,
-  original: SandboxExecutionPolicy): Promise<void> {
-  const policyService = ctx.get('sandboxPolicy'), subprocess = ctx.get('subprocess')
-  const policy = policyService?.resolve({ session })
-  if (!policy || !subprocess || policy.mode === 'read-only' || !sameAuthority(policy, original)
+  original: SandboxExecutionPolicy, client: ResidentClient | undefined): Promise<void> {
+  const retained = resultCleanupAuthority(ctx)
+  const policyService = retained?.sandboxPolicy ?? ctx.get('sandboxPolicy')
+  // Lifecycle keys retain the exact host Session object; its small interface is also used by tests.
+  const policy = policyService?.resolve({ session: session as Session })
+  const identity = (value: string) => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value)
+  if (!client || identity(client.file) !== identity(file)) throw new Error('Resident cleanup provider unavailable')
+  if (!policy || policy.mode === 'read-only' || !sameAuthority(policy, original)
     || (process.platform === 'win32' && policy.sessionId !== session.id)) throw new Error('Cleanup authority unavailable')
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 5000)
   timer.unref?.()
   try {
-    let argv = [file]
+    const argv = [file]
     if (policy.mode !== 'danger-full-access') {
-      const sandbox = ctx.get('sandbox')
+      const sandbox = retained?.sandbox ?? ctx.get('sandbox')
       const confined = process.platform === 'win32' && sandbox?.prepareResultStorage
         ? await sandbox.prepareResultStorage(argv, { ...policy, mode: 'workspace-write' }, controller.signal)
         : await sandbox?.confine(argv, { ...policy, mode: 'workspace-write' }, controller.signal)
@@ -97,16 +99,15 @@ async function purge(ctx: StorageHost, session: ResultSession, file: string, sto
         const location = windowsCacheLocation(confined.argv)
         if (location?.root !== storage.root || location?.windowsWriteSid !== storage.windowsWriteSid) throw new Error('Cleanup cache grant changed')
       }
-      argv = exposePosixCache(confined.argv, storage)
     }
-    const latest = policyService?.resolve({ session })
+    const latest = policyService?.resolve({ session: session as Session })
     if (!latest || !sameAuthority(latest, policy)
       || (process.platform === 'win32' && latest?.sessionId !== session.id)) throw new Error('Cleanup authority changed')
-    const envelope = workerEnvelope('ptc', { root: policy.workspaceRoot, scope: session.id, tool: 'result', args: { action: 'purge' }, read_only: false }, 5000, storage)
-    const handle = subprocess.spawn({ argv, cwd: policy.workspaceRoot, stdio: { stdin: { data: JSON.stringify(envelope) }, stdout: { maxBytes: 4096 }, stderr: { maxBytes: 4096 } }, graceMs: 1000, signal: controller.signal })
-    const outcome = await handle.done, output = handle.collected.stdout.readFrom(0)
-    const value: unknown = JSON.parse(output.text)
-    if (outcome.exitCode !== 0 || outcome.signal || output.lossy || !value || typeof value !== 'object'
+    // Only the existing trusted cache operation crosses this boundary. Native cache code
+    // validates ownership/no-follow names; the grant above never widens business paths.
+    const outcome = await client.purgeResults(policy.workspaceRoot, session.id, storage, controller.signal)
+    const value = outcome.value
+    if (outcome.exitCode !== 0 || outcome.interrupted || !outcome.readers || outcome.lossy || !value || typeof value !== 'object'
       || !('status' in value) || value.status !== 'completed') throw new Error('Cache purge did not complete')
   } finally { clearTimeout(timer) }
 }
@@ -168,8 +169,9 @@ export async function resultStorage(ctx: StorageHost, session: ResultSession, sc
     markCleanupRootLive(root)
   }
   const storage: WorkerStorage = { ...location, authorityId: digest([nonce, policy.mode, policy.workspaceRoot, policy.additionalWritableRoots ?? [], denyRoots, denyNames]), allowedTools: currentTools(ctx, scope, tool) }
+  const client = ctx.get('opsKernel')
   registerResultCleanup(ctx, session, key, async () => {
-    try { await purge(ctx, session, file, storage, policy) }
+    try { await purge(ctx, session, file, storage, policy, client) }
     finally { cache.delete(key); releaseCleanupRootLive(root) }
   }, root)
   return storage

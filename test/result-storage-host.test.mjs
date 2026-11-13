@@ -5,6 +5,7 @@ import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { mountResident } from './lib/resident.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
 import { definition } from '../lib/file/contract.js'
 import { exposePosixCache, windowsCacheLocation, resultStorage } from '../lib/kernel/result-storage.js'
@@ -20,6 +21,7 @@ await test('Native result defaults to live cwd and explicit original roots retai
   const signal = new AbortController().signal, exec = { agent, signal }
   try {
     await ctx.plugin(Subprocess); await ctx.plugin(Sandbox)
+    await mountResident(ctx, { file: WORKER })
     await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: () => ({ mode: 'workspace-write', workspaceRoot: root, sessionId: session.id }) }))
     await ctx.plugin(inner => mountResultLifecycle(inner))
     await ctx.plugin(inner => inner.provide('workingDirectory', { async ensure() { ensures++; return cwd }, get: () => cwd }))
@@ -52,6 +54,7 @@ await test('real host references bind live session, current authority and produc
     let mode = 'workspace-write', calls = 0
     try {
       await ctx.plugin(Subprocess); await ctx.plugin(Sandbox)
+      await mountResident(ctx, { file: WORKER })
       await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: () => ({ mode, workspaceRoot: root, sessionId: session.id }) }))
       await ctx.plugin(inner => mountResultLifecycle(inner))
       const registration = await ctx.plugin(inner => {
@@ -121,6 +124,7 @@ if (process.platform !== 'win32') await test('the worker argv binds the session 
     const { ctx } = await bootHost(), session = { id: 'bwrap-private-tmp', header: { cwd: root } }
     try {
       await ctx.plugin(Subprocess)
+      await mountResident(ctx, { file: WORKER })
       await ctx.plugin(inner => inner.provide('sandbox', { confine: async argv => ({ enforcement: 'full', runnerFailureRules: [],
         argv: [shim, '--ro-bind', '/', '/', '--tmpfs', '/tmp', '--bind', root, root, '--', ...argv] }) }))
       await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: () => ({ mode: 'workspace-write', workspaceRoot: root, sessionId: session.id }) }))
@@ -132,7 +136,7 @@ if (process.platform !== 'win32') await test('the worker argv binds the session 
       const cacheRoot = (await resultStorage(ctx, session, undefined, WORKER, 'result', ctx.get('sandboxPolicy').resolve({ session }), [], false)).root
       await expireResultSession(ctx, session)
       const runs = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => line.split('\x1f').slice(0, -1))
-      assert.equal(runs.length, 3, 'put, page and the session purge each run through the runner')
+      assert.equal(runs.length, 2, 'only PTC put/page use the runner; purge uses the resident kernel')
       for (const argv of runs) {
         const separator = argv.indexOf('--'), bind = argv.lastIndexOf(cacheRoot, separator)
         assert.ok(bind > 0 && argv[bind - 2] === '--bind' && argv[bind - 1] === cacheRoot && bind === separator - 1, argv.join(' '))
