@@ -50,13 +50,13 @@
    - 上传 `release-dist`（`if-no-files-found: error`）。
 3. **`publish`（`ubuntu-24.04`，`needs: gate`，仅 tag；唯一 `contents: write`）**
    - 只用 Actions 自带 `github.token`，**不引用任何 secret**。
-   - Release 不存在 → `gh release create --verify-tag --generate-notes`；已存在 → 计算缺失资产并只上传缺失项；tarball 为 0 或缺 `SHA256SUMS` 显式失败。
+   - Release 不存在 → 优先用 `docs/release-notes/<tag>.md`（`gh release create --verify-tag --notes-file`），该文件缺失时回退 `--generate-notes`；已存在 → 计算缺失资产并只上传缺失项；tarball 为 0 或缺 `SHA256SUMS` 显式失败。
    - 最后把 `SHA256SUMS` 抄进 run summary。
 
 ## 发版步骤（维护者）
 
 1. 确认要发布的 commit 在 `main` 上且 `CI required` 绿。
-2. `npm version` 更新 `package.json` 版本并合并（走 PR）。
+2. `npm version` 更新 `package.json` 版本并合并（走 PR）；在同一条版本分支提交 `docs/release-notes/v<version>.md`，正文按 v0.5.2–v0.5.5 的双语模板写。
 3. Actions → Release → **Run workflow**，ref 选 `main`：dry run，确认四个 `native-*` 工件 + `release-dist` 产出、`publish` skipped、`SHA256SUMS` 与 `dist-release` 一致。
 4. `git tag v<package.json 版本>` → `git push origin v<version>`。
 5. 发布中断时：重新 dispatch 同一个 tag（同 commit），只补缺失资产；**不要**移动 tag。
