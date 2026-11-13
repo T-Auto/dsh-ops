@@ -139,11 +139,17 @@ pub fn serve() -> io::Result<()> {
             &std::env::temp_dir(),
             ops_process::shell::MAX_SPILL_BYTES,
         )?;
-        task_manager.enable_spill(spill_store)?;
+        task_manager.enable_spill(spill_store.clone())?;
+        shells.enable_spill(spill_store)?;
     }
     let active: Active = Arc::default();
     let mut tasks: Vec<thread::JoinHandle<()>> = Vec::new();
     let mut capabilities = crate::shell::capabilities();
+    #[cfg(windows)]
+    capabilities
+        .as_array_mut()
+        .unwrap()
+        .push(json!("shell-spill-v1"));
     capabilities
         .as_array_mut()
         .unwrap()

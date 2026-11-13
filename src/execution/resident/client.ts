@@ -63,7 +63,7 @@ class Client implements ResidentClient {
     // The startup waiter is installed immediately; all paths also await it below.
     void this.hello.catch(() => {})
     if (!handle.control) throw new Error('The host did not provide a resident control pipe')
-    this.shell = new ResidentShellChannel(() => this.available, (value, sending) => this.frames.send(encodeFrame(value), sending), error => this.fail(error))
+    this.shell = new ResidentShellChannel(() => this.available, (value, sending) => this.frames.send(encodeFrame(value), sending), error => this.fail(error), () => this.pid)
     this.task = new ResidentTaskChannel(() => this.available, (value, sending) => this.frames.send(encodeFrame(value), sending), error => this.fail(error), () => this.pid)
     this.frames = new ResidentFrames(handle.control, value => this.receive(value), error => this.fail(error),
       // 32 file + 32 shell executions, their 64 cancels, 32 admissions,

@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Connect persistent session streams to the kernel's shared task spill store and existing retention ledger, with `shell-spill-v1`, actual-kernel-PID validation, sealed terminal recovery and exact Session ownership. Public activation still requires a qualified runtime; stock foreground CI does not qualify asynchronous output (#872).
+- 将持久会话输出接入内核与任务共享的溢写存储及现有保留账本，增加 `shell-spill-v1`、实际内核 PID 校验、封存终态恢复和准确 Session 归属。公共启用仍需已验证的运行时；现有运行时的前台 CI 不代表异步输出已合格（#872）。
+
 - Connect resident task output to the shared native spill store and existing settled-file retention. Complete native streams retain exact kernel/session ownership, while unknown cleanup remains poisoned. The new `task-spill-v1` capability gates later production fresh migration; persistent channels and public fresh activation remain pending (#872).
 - 将常驻任务输出接入共享原生 spill store 和既有终态文件保留流程。完整原生流保留精确内核/会话所有权，回收未知则保持中毒状态。新增 `task-spill-v1` capability 作为后续生产 fresh 迁移门槛；持久通道和公开 fresh 启用仍待完成（#872）。
 

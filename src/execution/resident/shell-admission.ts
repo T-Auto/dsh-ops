@@ -13,6 +13,7 @@ import { sessionWorkdir } from '../../session-shells.js'
 import { prepareShellLaunch, shellEnvironment, environmentIdentity, type ShellLaunchOptions } from './shell-launch.js'
 import type { ShellAdmission, ShellCompleted, ShellFailure, ShellKernelMessage, ShellTransport } from './shell-protocol.js'
 import { collectShellOutput, type ShellOutputPair } from './shell-output.js'
+import { recordSettledSpills } from '../../shells/spill-settlement.js'
 
 type Args = { command: string; workdir?: string; timeoutMs: number; sandbox_permissions?: string; justification?: string }
 interface Facts { standing: ShellPolicy; effective: ShellPolicy; environment: string }
@@ -217,6 +218,12 @@ export function createShellAdmissionHost(ctx: Context, options: ShellAdmissionOp
       void collectShellOutput(transport, event).then(output => {
         if (!pending.has(event.requestId)) return
         transport.send({ type: 'shell.release', requestId: event.requestId })
+        recordSettledSpills([output.stdout, output.stderr].flatMap(stream =>
+          event.cleanupConfirmed && !stream.error && !stream.spillError && stream.spillPath
+            && stream.spillSealed === true && stream.spillOrigin === 'ops-native-v1' && stream.spillPid !== undefined
+            ? [{ path: stream.spillPath, bytes: stream.bytesTotal, origin: stream.spillOrigin,
+              pid: stream.spillPid, sessionId: item.owner.session.id }]
+            : []))
         finish(event.requestId, { ...event, ...output, status: output.error ? 'failed' : event.status,
           ...(event.error ?? output.error ? { error: event.error ?? output.error } : {}) })
       }).catch(error => { transport.abort(new Error(errorMessage(error))) })
