@@ -4,6 +4,8 @@
 mod resident;
 #[path = "../src/shell/mod.rs"]
 mod shell;
+#[path = "../src/task/mod.rs"]
+mod task;
 use std::{
     io::{Read, Write},
     time::Duration,

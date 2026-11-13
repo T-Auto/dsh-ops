@@ -33,6 +33,11 @@ impl Manager {
     pub fn contains(&self, _: &str) -> bool {
         false
     }
+    pub fn output(
+        &self,
+    ) -> std::sync::Arc<dyn Fn(serde_json::Value) -> std::io::Result<()> + Send + Sync> {
+        std::sync::Arc::new(|_| Err(ops_process::shell::unsupported()))
+    }
     pub fn reap(&mut self) -> std::io::Result<()> {
         Ok(())
     }

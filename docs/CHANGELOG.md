@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Add an internal Windows resident task queue with current-head admission, independent Job ownership, bounded tail reads and joined owner cleanup. Explicit job lifetime and promotion preserve the original process range; hard execution caps remain separate from host handoff timers. Production fresh/Jobs migration and recoverable spill remain pending (#872).
+- 添加 Windows 内部常驻任务队列：当前队首准入、独立 Job 所有权、有界尾部读取与等待完成的 owner 回收。显式 job 生命周期及提升保留原进程范围；硬执行上限与宿主移交计时分开。生产 fresh/Jobs 迁移及可恢复 spill 仍待完成（#872）。
+
 - Add an internal resident-shell host adapter that rechecks current authority at each native queue head, scopes one-call grants and awaits owner cleanup. Bounded transport and terminal output collection preserve explicit effect and state-loss facts; public session tools and recoverable spill remain pending (#872).
 - 添加内部常驻 shell 宿主适配器：每次原生队首准入重查当前权限、限制单次批准范围并等待所有者回收。有界通道与终态输出收集保留明确效果和状态丢失事实；公开会话工具与可恢复 spill 仍待完成（#872）。
 

@@ -62,10 +62,8 @@ mod probe {
                 let _ = shutdown.shutdown();
             },
         )?;
-        writeln!(
-            writer.lock().unwrap(),
-            "{}",
-            json!({"type":"ready","pid":std::process::id(),"capabilities":shell::capabilities()})
+        (manager.output())(
+            json!({"type":"ready","pid":std::process::id(),"capabilities":shell::capabilities()}),
         )?;
         let result = (|| {
             while let Some(bytes) = read_frame(&mut reader)? {
