@@ -58,7 +58,9 @@ returns the newest suffix and explicitly reports the skipped bytes. Readers do
 not consume one another's cursors. Empty live output is not EOF, and a cursor
 beyond the observed total is an error. Text decoding belongs to the host.
 
-`task.closeOwner` seals the owner before cancelling its requests. Its
+`task.closeOwner` seals the owner before cancelling its requests. Sealing and
+bounded admission publication share the owner lock, so a newly sealed owner
+cannot publish another queue-head admission. Its
 `task.ownerClosed` reply follows every pending task's terminal publication and
 reports confirmed cleanup or `CLEANUP_UNKNOWN`. Unconfirmed cleanup poisons the
 owner and shuts down the private transport so the public host can retire its

@@ -30,9 +30,11 @@ pub(super) fn run(state: Arc<State>) -> io::Result<()> {
     }
 }
 fn cancelled(state: &State, request: &Request) -> bool {
+    interrupted(state, request) || request.owner.data.lock().unwrap().closed
+}
+fn interrupted(state: &State, request: &Request) -> bool {
     state.closing.load(Ordering::Acquire)
         || request.cancelled.load(Ordering::Acquire)
-        || request.owner.data.lock().unwrap().closed
         || request
             .deadline
             .is_some_and(|deadline| Instant::now() >= deadline)
@@ -49,9 +51,17 @@ fn cancelled_before_launch(state: &State, request: &Request) -> io::Result<()> {
     )
 }
 fn admission(state: &State, request: &Request) -> io::Result<Option<Value>> {
-    request.data.lock().unwrap().phase = Phase::Admitting;
-    (state.output)(json!({"type":"task.admit","requestId":request.id}))?;
     let mut data = request.data.lock().unwrap();
+    {
+        // Seal versus admission publication uses one owner lock. The bounded
+        // enqueue cannot wait for physical transport I/O while holding it.
+        let owner = request.owner.data.lock().unwrap();
+        if owner.closed || interrupted(state, request) {
+            return Ok(None);
+        }
+        data.phase = Phase::Admitting;
+        (state.output)(json!({"type":"task.admit","requestId":request.id}))?;
+    }
     loop {
         if cancelled(state, request) {
             return Ok(None);
