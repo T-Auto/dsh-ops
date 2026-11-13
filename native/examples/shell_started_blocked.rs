@@ -66,9 +66,11 @@ mod probe {
             &std::env::temp_dir(),
             ops_process::shell::MAX_SPILL_BYTES,
         )?)?;
-        (manager.output())(
+        (manager.started_output())(
             json!({"type":"ready","pid":std::process::id(),"capabilities":shell::capabilities()}),
-        )?;
+        )?
+        .recv()
+        .map_err(io::Error::other)??;
         let result = (|| {
             while let Some(bytes) = read_frame(&mut reader)? {
                 let value: Value = serde_json::from_slice(&bytes)?;

@@ -49,6 +49,11 @@ export function mountFakeResident(ctx, options = {}) {
         if (!options.invoke) throw new Error('Publication-only resident fixture must not execute')
         return options.invoke(envelope, signal, onStarted)
       },
+      async invokeConfined(envelope, launch, signal, onStarted) {
+        if (!client.available) throw new ResidentNotStarted('Resident fixture is unavailable')
+        if (!options.invoke) throw new Error('Publication-only resident fixture must not execute')
+        return options.invoke(envelope, signal, onStarted, launch)
+      },
       async stop() { client.available = false },
     }
     inner.effect(() => () => client.stop(), 'fixture: resident kernel')
@@ -65,8 +70,8 @@ export function providePublicationAuthorities(ctx, agents) {
 
 /** Convert existing raw-output subprocess mocks into explicit kernel receipts. */
 export function mountExchangeResident(ctx, { file = 'unused', cwd = process.cwd() } = {}) {
-  return mountFakeResident(ctx, { file, invoke: (envelope, signal, started) => exchange(ctx.get('subprocess'), {
-    argv: [file], cwd, signal, graceMs: 1000,
+  return mountFakeResident(ctx, { file, invoke: (envelope, signal, started, launch) => exchange(ctx.get('subprocess'), {
+    argv: launch?.argv ?? [file], cwd: launch?.cwd ?? cwd, ...(launch ? { env: launch.env } : {}), signal, graceMs: 1000,
     stdio: { stdin: { data: JSON.stringify(envelope) }, stdout: { maxBytes: envelope.budget.maxBytes }, stderr: { maxBytes: 16384 } },
   }, started) })
 }

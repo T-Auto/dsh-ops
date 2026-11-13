@@ -4,7 +4,7 @@ import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
  */
 import { ownWindowsFixture, skipSuite, waitFor } from './lib/harness.mjs'
 import { workingDirectoryOver } from './lib/host.mjs'
-import { mountResident, mountFakeResident } from './lib/resident.mjs'
+import { mountResident, mountFakeResident, mountExchangeResident } from './lib/resident.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -37,8 +37,10 @@ const workerTriples = { 'darwin-arm64': 'aarch64-apple-darwin', 'darwin-x64': 'x
   'linux-arm64': 'aarch64-unknown-linux-musl', 'linux-x64': 'x86_64-unknown-linux-musl',
   'win32-arm64': 'aarch64-pc-windows-msvc', 'win32-x64': 'x86_64-pc-windows-msvc' }
 const workerName = process.platform === 'win32' ? 'dsh-ops-worker.exe' : 'dsh-ops-worker'
+const stagedWorker = tryResolveWorker()
 const workerCandidates = [
   ...(process.env.DSH_OPS_WORKER_BIN !== undefined ? [process.env.DSH_OPS_WORKER_BIN] : [
+    ...(stagedWorker.ok ? [stagedWorker.file] : []),
     path.resolve('native/target/release', workerName),
     ...(workerTriples[`${process.platform}-${process.arch}`] ? [path.resolve('native/target', workerTriples[`${process.platform}-${process.arch}`], 'release', workerName)] : []),
   ]),
@@ -236,7 +238,7 @@ try {
       } })
     })
     const live = []; ctx.provide('agents', { list: () => live })
-    await mountFakeResident(ctx, { file })
+    await mountExchangeResident(ctx, { file, cwd: dir })
     const component = await ctx.plugin(ptc, { binaryPath: file, required: true, alwaysLoaded: ['batch', 'result'] })
     const makeAgent = async (id, presentation, parent) => {
       const agent = { id, session: { id, mode: 'workspace-write', header: { cwd: dir } } }
@@ -303,6 +305,13 @@ try {
     assert.equal((await direct(pure, 'ops_batch', {action:'run',operations:[{op:'remove',path:'host-dest'}]})).error.code,'EXECUTOR_UNAVAILABLE')
     assert.equal(calls.length,before); assert.equal(hostJobs.size,0)
     const fakeOutcome = (outcome, stderr = '', lossy = false) => ({ get(name) {
+      if (name === 'opsKernel') {
+        const invoke = async (_envelope, _signal, started) => {
+          started?.()
+          return { exitCode: outcome.exitCode, interrupted: Boolean(outcome.signal), readers: true, lossy, stderr, value: {} }
+        }
+        return { file, available: true, invoke, invokeConfined: (envelope, _launch, signal, started) => invoke(envelope, signal, started) }
+      }
       if (name === 'subprocess') return { spawn() { return { done: Promise.resolve(outcome),
         collected: { stdout: { readFrom: () => ({ text: '{}', lossy }) }, stderr: { readFrom: () => ({ text: stderr }) } } } } }
       if (name === 'sandbox') return { confine: async argv => ({ argv, enforcement: 'full', denialSignatures: ['fixture access denied'],
@@ -355,6 +364,11 @@ try {
     const workerStarted = new Promise(resolve => { enteredWorker = resolve })
     const interruptedCtx = { get(name) {
       if (name === 'sandboxPolicy') return { resolve: () => ({mode:'danger-full-access',workspaceRoot:dir}) }
+      if (name === 'opsKernel') return { file, available: true, invoke(_envelope, _signal, started) {
+        started?.(); enteredWorker()
+        return new Promise(resolve => abortDuringWork.signal.addEventListener('abort', () => resolve({ exitCode: null,
+          interrupted: true, readers: true, lossy: false, stderr: '' }), { once: true }))
+      } }
       if (name === 'subprocess') return { spawn() {
         enteredWorker()
         return { collected: { stdout: {readFrom:()=>({text:'',lossy:false})},stderr:{readFrom:()=>({text:'',lossy:false})} },

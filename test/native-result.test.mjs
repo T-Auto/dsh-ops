@@ -48,8 +48,19 @@ requireWorker('native-result')
 let serial = 0
 async function setup(root) {
   const { ctx } = await bootHost()
-  await ctx.plugin(Subprocess); await ctx.plugin(Sandbox)
+  let workerStarts = 0
+  class Observed extends Subprocess {
+    spawn(spec) {
+      if (process.platform === 'win32' && spec.argv.includes(WORKER)) {
+        assert.deepEqual(spec.argv, [WORKER, '--serve'], 'Native/PTC result calls must not launch a public one-shot worker')
+        workerStarts++
+      }
+      return super.spawn(spec)
+    }
+  }
+  await ctx.plugin(Observed); await ctx.plugin(Sandbox)
   await mountResident(ctx, { file: WORKER })
+  ctx.effect(() => () => { if (process.platform === 'win32') assert.equal(workerStarts, 1) })
   await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: ({ session } = {}) => ({ mode: session?.mode ?? 'workspace-write', workspaceRoot: root, sessionId: session?.id }) }))
   inventory(ctx)
   const file = { fiber: await mountNativeCatalogue(ctx, { binaryPath: WORKER, required: true }) }

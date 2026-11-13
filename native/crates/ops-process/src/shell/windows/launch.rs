@@ -1,5 +1,5 @@
 use super::{argv, channel::Channel, check, job::Job, owned};
-use super::{output::Output, spill_file::SpillStore, spill_io::Cancellation};
+use super::{output::Output, spill_file::SpillStore, spill_io::Cancellation, stdin::Input};
 use crate::shell::{Capture, CaptureView, Launch, Retention, budget};
 use std::{
     fs::File,
@@ -19,11 +19,34 @@ use windows_sys::Win32::{
 };
 
 type Reader = JoinHandle<io::Result<Capture>>;
+#[cfg(test)]
+#[path = "stdin_tests.rs"]
+mod stdin_tests;
+/// Requests termination; the owning Range must still observe emptiness and join all I/O.
+#[derive(Clone)]
+pub struct RangeCancellation {
+    job: Arc<Job>,
+    input: Option<Cancellation>,
+    output: [Cancellation; 2],
+}
+impl RangeCancellation {
+    pub fn cancel(&self) -> io::Result<()> {
+        if let Some(input) = &self.input {
+            input.cancel();
+        }
+        for output in &self.output {
+            output.cancel();
+        }
+        self.job.terminate()
+    }
+}
 pub struct Range {
     pub(super) job: Arc<Job>,
     process: Option<OwnedHandle>,
     pid: Option<u32>,
     readers: Vec<Reader>,
+    input: Option<Input>,
+    input_error: Option<io::Error>,
     observed: [Arc<AtomicU64>; 2],
     outputs: Option<[CaptureView; 2]>,
     spill: Option<SpillStore>,
@@ -38,6 +61,8 @@ impl Range {
             process: None,
             pid: None,
             readers: Vec::new(),
+            input: None,
+            input_error: None,
             observed: std::array::from_fn(|_| Arc::new(AtomicU64::new(0))),
             outputs: None,
             spill: None,
@@ -77,6 +102,10 @@ impl Range {
     pub fn pid(&self) -> Option<u32> {
         self.pid
     }
+    /// Delivery failure is distinct from joined captures and confirmed process exit.
+    pub fn input_error(&self) -> Option<&io::Error> {
+        self.input_error.as_ref()
+    }
     pub fn output_views(&self) -> Option<[CaptureView; 2]> {
         self.outputs.clone()
     }
@@ -93,6 +122,20 @@ impl Range {
                 .outputs
                 .as_ref()
                 .is_some_and(|views| views.iter().any(|view| view.snapshot().cleanup_unconfirmed))
+    }
+    pub fn cancellation(&self) -> RangeCancellation {
+        RangeCancellation {
+            job: self.job.clone(),
+            input: self.input.as_ref().map(|input| input.control.clone()),
+            output: self.spill_cancel.clone(),
+        }
+    }
+    /// Deliver one record only after the caller's start receipt has been sent.
+    pub fn write_input(&mut self, bytes: Vec<u8>) -> io::Result<()> {
+        self.input
+            .as_mut()
+            .ok_or_else(|| io::Error::other("stdin was not requested"))?
+            .start(bytes)
     }
     fn poison_outputs(&mut self) {
         self.poisoned = true;
@@ -140,10 +183,25 @@ impl Range {
     pub fn spawn(&mut self, spec: Launch) -> io::Result<u32> {
         self.spawn_with_retention(spec, Retention::Prefix)
     }
-    pub fn spawn_with_retention(
+    pub fn spawn_with_retention(&mut self, spec: Launch, retention: Retention) -> io::Result<u32> {
+        let stderr_cap = spec.output_cap;
+        self.spawn_io(spec, retention, stderr_cap, false)
+    }
+    /// Start with empty owned stdin; bytes are withheld until write_input().
+    pub fn spawn_with_stdin(
+        &mut self,
+        spec: Launch,
+        retention: Retention,
+        stderr_cap: usize,
+    ) -> io::Result<u32> {
+        self.spawn_io(spec, retention, stderr_cap, true)
+    }
+    fn spawn_io(
         &mut self,
         mut spec: Launch,
         retention: Retention,
+        stderr_cap: usize,
+        piped: bool,
     ) -> io::Result<u32> {
         if self.process.is_some() || self.settled {
             return Err(io::Error::new(
@@ -152,9 +210,10 @@ impl Range {
             ));
         }
         budget(spec.output_cap)?;
+        budget(stderr_cap)?;
         let outputs = [
             CaptureView::new(spec.output_cap, retention)?,
-            CaptureView::new(spec.output_cap, retention)?,
+            CaptureView::new(stderr_cap, retention)?,
         ];
         let mut command = argv::command_line(&spec.argv)?;
         let executable = argv::wide(&spec.argv[0])?;
@@ -176,7 +235,20 @@ impl Range {
             bInheritHandle: 1,
         };
         // Match fresh host execution: EOF from a closed pipe, not a NUL device.
-        let input = eof_pipe(&sa)?;
+        let (input, writer) = if piped {
+            let (input, writer) = pipe(&sa)?;
+            check(unsafe {
+                SetHandleInformation(
+                    input.as_raw_handle(),
+                    HANDLE_FLAG_INHERIT,
+                    HANDLE_FLAG_INHERIT,
+                )
+            })?;
+            check(unsafe { SetHandleInformation(writer.as_raw_handle(), HANDLE_FLAG_INHERIT, 0) })?;
+            (input, Some(Input::new(writer)))
+        } else {
+            (eof_pipe(&sa)?, None)
+        };
         let (out_read, out_write) = pipe(&sa)?;
         let (err_read, err_write) = pipe(&sa)?;
         let inherited = [
@@ -230,6 +302,7 @@ impl Range {
         self.pid = Some(info.dwProcessId);
         self.process = Some(process);
         self.outputs = Some(outputs.clone());
+        self.input = writer;
         drop(input);
         drop(out_write);
         drop(err_write);
@@ -252,7 +325,7 @@ impl Range {
                 err_read,
                 Output::new(
                     outputs[1].clone(),
-                    spec.output_cap,
+                    stderr_cap,
                     self.spill.clone(),
                     "stderr",
                     self.spill_cancel[1].clone(),
@@ -270,6 +343,9 @@ impl Range {
         result
     }
     pub fn terminate(&mut self, deadline: Instant) -> io::Result<()> {
+        if let Some(input) = &mut self.input {
+            input.cancel();
+        }
         for control in &self.spill_cancel {
             control.cancel();
         }
@@ -277,7 +353,7 @@ impl Range {
             .job
             .terminate()
             .and_then(|()| self.wait_empty(deadline));
-        if result.is_err() && self.spill.is_some() {
+        if result.is_err() && (self.spill.is_some() || self.input.is_some()) {
             self.poison_outputs();
         }
         result
@@ -288,11 +364,14 @@ impl Range {
             self.wait_root_exit(deadline)?;
         }
         self.settled = true;
+        if let Some(input) = &mut self.input {
+            input.cancel();
+        }
         Ok(())
     }
     /// Read only after confirmed Job emptiness; descendants cannot retain writers then.
     pub fn captures(&mut self) -> io::Result<Vec<Capture>> {
-        if self.spill.is_some() {
+        if self.spill.is_some() || self.input.is_some() {
             return self.captures_until(Instant::now() + Duration::from_secs(5));
         }
         if !self.settled {
@@ -306,7 +385,17 @@ impl Range {
         if !self.settled {
             return Err(io::Error::other("shell range is not confirmed empty"));
         }
-        while self.readers.iter().any(|reader| !reader.is_finished()) {
+        while self.readers.iter().any(|reader| !reader.is_finished())
+            || self
+                .input
+                .as_ref()
+                .is_some_and(|input| !input.is_finished())
+        {
+            if let Some(input) = &mut self.input
+                && input.control.cancelled()
+            {
+                input.cancel();
+            }
             for control in &self.spill_cancel {
                 if control.cancelled() {
                     control.cancel();
@@ -316,6 +405,9 @@ impl Range {
                 for control in &self.spill_cancel {
                     control.cancel();
                 }
+                if let Some(input) = &mut self.input {
+                    input.cancel();
+                }
                 self.poison_outputs();
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
@@ -323,6 +415,10 @@ impl Range {
                 ));
             }
             thread::sleep(Duration::from_millis(2));
+        }
+        // Attempt both joins even when input delivery or one reader failed.
+        if let Err(error) = self.input.as_mut().map_or(Ok(()), Input::join) {
+            self.input_error.get_or_insert(error);
         }
         let result = join_readers(&mut self.readers);
         if self.cleanup_unconfirmed() {
@@ -348,6 +444,9 @@ impl Drop for Range {
             // No detach on an unconfirmed I/O cancellation. Fatal transport teardown
             // must terminate this managed kernel if the operation cannot acknowledge.
             let _ = join_readers(&mut self.readers);
+            if let Some(input) = &mut self.input {
+                let _ = input.join();
+            }
         }
     }
 }

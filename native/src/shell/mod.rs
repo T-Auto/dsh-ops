@@ -1,4 +1,9 @@
 //! Kernel-owned shell queues. The host supplies current authority at every head.
+pub type Started = std::sync::Arc<
+    dyn Fn(serde_json::Value) -> std::io::Result<std::sync::mpsc::Receiver<std::io::Result<()>>>
+        + Send
+        + Sync,
+>;
 #[cfg(windows)]
 mod driver;
 #[cfg(windows)]
@@ -36,6 +41,9 @@ impl Manager {
     pub fn output(
         &self,
     ) -> std::sync::Arc<dyn Fn(serde_json::Value) -> std::io::Result<()> + Send + Sync> {
+        std::sync::Arc::new(|_| Err(ops_process::shell::unsupported()))
+    }
+    pub fn started_output(&self) -> Started {
         std::sync::Arc::new(|_| Err(ops_process::shell::unsupported()))
     }
     pub fn reap(&mut self) -> std::io::Result<()> {

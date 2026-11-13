@@ -15,13 +15,33 @@ use std::{
 };
 
 const WINDOW: usize = 32;
-const FRAME_BYTES: usize = envelope::MAX_REQUEST_BYTES + 256;
+#[path = "resident/confined.rs"]
+mod confined;
+const FRAME_BYTES: usize = envelope::MAX_REQUEST_BYTES + confined::LAUNCH_BYTES + 256;
 type Output = Arc<Mutex<ControlPipe>>;
 type Active = Arc<Mutex<HashMap<String, Arc<Mutex<RequestState>>>>>;
 #[derive(Default)]
 struct RequestState {
     cancelled: bool,
-    leaf: Option<Cancel>,
+    leaf: Option<Running>,
+}
+enum Running {
+    Leaf(Cancel),
+    #[cfg(windows)]
+    Confined(ops_process::shell::RangeCancellation),
+}
+impl Running {
+    fn cancel(&self) {
+        match self {
+            Self::Leaf(leaf) => {
+                let _ = leaf.cancel();
+            }
+            #[cfg(windows)]
+            Self::Confined(range) => {
+                let _ = range.cancel();
+            }
+        }
+    }
 }
 
 fn send(output: &Output, value: Value) -> io::Result<()> {
@@ -43,12 +63,34 @@ fn cancel(state: &Arc<Mutex<RequestState>>) {
     let mut state = state.lock().unwrap();
     state.cancelled = true;
     if let Some(leaf) = &state.leaf {
-        let _ = leaf.cancel();
+        leaf.cancel();
     }
 }
-fn execute(input: Vec<u8>, id: &str, state: &Arc<Mutex<RequestState>>, output: &Output) -> Value {
+fn execute(
+    input: Vec<u8>,
+    launch: Option<confined::Launch>,
+    id: &str,
+    state: &Arc<Mutex<RequestState>>,
+    output: &Output,
+    shutdown: &ControlPipe,
+    started: &crate::shell::Started,
+) -> Value {
     if state.lock().unwrap().cancelled {
         return interrupted();
+    }
+    if let Some(launch) = launch {
+        #[cfg(windows)]
+        return confined::execute(input, launch, id, state, started, &|| {
+            let _ = shutdown.shutdown();
+        });
+        #[cfg(not(windows))]
+        {
+            let _ = (launch, shutdown, started);
+            return refused(
+                "EXECUTOR_UNAVAILABLE",
+                "confined worker ownership requires Windows Jobs",
+            );
+        }
     }
     let execution = (|| {
         Execution::spawn(
@@ -69,9 +111,9 @@ fn execute(input: Vec<u8>, id: &str, state: &Arc<Mutex<RequestState>>, output: &
     };
     {
         let mut current = state.lock().unwrap();
-        current.leaf = Some(execution.cancellation());
+        current.leaf = Some(Running::Leaf(execution.cancellation()));
         if current.cancelled {
-            let _ = current.leaf.as_ref().unwrap().cancel();
+            current.leaf.as_ref().unwrap().cancel();
         }
     }
     // From here the caller must conservatively treat an unconfirmed effect as
@@ -149,7 +191,7 @@ pub fn serve() -> io::Result<()> {
     capabilities
         .as_array_mut()
         .unwrap()
-        .push(json!("shell-spill-v1"));
+        .extend([json!("shell-spill-v1"), json!("confined-worker-v1")]);
     capabilities
         .as_array_mut()
         .unwrap()
@@ -183,6 +225,11 @@ pub fn serve() -> io::Result<()> {
                     if input.len() > envelope::MAX_REQUEST_BYTES {
                         return Err(io::Error::other("request exceeds 2 MiB"));
                     }
+                    let launch = message
+                        .get("launch")
+                        .map(|launch| confined::parse(launch, envelope))
+                        .transpose()?;
+                    let shutdown = reader.get_ref().try_clone()?;
                     let state = Arc::new(Mutex::new(RequestState::default()));
                     {
                         let mut requests = active.lock().unwrap();
@@ -196,8 +243,21 @@ pub fn serve() -> io::Result<()> {
                         requests.insert(id.clone(), state.clone());
                     }
                     let (output, active) = (output.clone(), active.clone());
+                    let started = shells.started_output();
+                    let completed = shells.output();
                     tasks.push(thread::spawn(move || {
-                        let exchange = execute(input, &id, &state, &output);
+                        let confined = launch.is_some();
+                        let exchange =
+                            execute(input, launch, &id, &state, &output, &shutdown, &started);
+                        if confined {
+                            // Share the bounded transport queue with started, including
+                            // a start still pending when cancellation/deadline won.
+                            active.lock().unwrap().remove(&id);
+                            let _ = completed(
+                                json!({"type":"completed","requestId":id,"exchange":exchange}),
+                            );
+                            return;
+                        }
                         // Release the admission slot BEFORE publishing completion.
                         // Holding the writer limits removed-but-blocked replies to one;
                         // other slow replies retain their slots and apply backpressure.
