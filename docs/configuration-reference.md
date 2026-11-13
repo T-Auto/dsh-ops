@@ -92,7 +92,8 @@ external English Markdown file:
 - **Once at session start**: one plugin-context message joins the session's first accepted non-empty
   user-message batch (step-tail, source `dsh-ops:step-tail` / `batching-guidance`). It enters logged history,
   so the model's first request already sees the whole procedure: the first-line `// plan:` comment, the
-  dependency split, the load-before-call step and four copyable trajectories.
+  dependency split, the load-before-call step (only while dynamic loading publishes the loader) and four
+  copyable trajectories.
 - **On a thin program**: when a **root** `run_code` program breaks one of three latched categories, a short
   notice is appended to that call's own result as `additionalContexts`. The tool result keeps its value, its
   content and its existing contexts; the program is never blocked or rewritten.
@@ -109,6 +110,15 @@ external English Markdown file:
 - Everything is plugin-context history and the tool schema is untouched, so the system prompt and its cache
   survive. The lesson counts as spent only once it appears as a durable `user/message`; a batch withdrawn
   before admission (cancellation, rejection) leaves the next accepted batch free to teach it again.
+- The text follows the published surface. While dynamic loading publishes `ops_load_sdk`, the lesson ships
+  byte for byte, load step included. With `dynamicTools: false` the scope publishes no loader, so that step and
+  its table row are replaced by a direct-call section that lists the APIs this scope actually publishes; a
+  scope that publishes nothing says so and points at the official tools. The program-shape notices carry the
+  same surface, so `bypass` names neither a loader nor an API the scope cannot reach: its file-work line lists
+  only the file APIs that are loadable (or resident) here, and a shell tool that bypassed them is never offered
+  as the replacement. Two limits are deliberate: the shipped lesson itself is substituted only when the loader is
+  absent (a narrow pool narrows the notices, not the trajectories), and the lists follow the configured pool and the
+  read-only policy without the per-agent ownership narrowing.
 
 `batchingTelemetry` (same row, YAML-only, default `false`) emits one structured log line per delivered
 notice, for example `dsh-ops batching: turn=3 category=plan plan=1 bypass=0 shape=2 total=3`. It is

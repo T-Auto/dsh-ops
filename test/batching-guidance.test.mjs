@@ -7,7 +7,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { assert, test, report, PACKAGE_ROOT } from './lib/harness.mjs'
-import { BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, loadBatchingGuidance } from '../lib/ptc/batching-guidance.js'
+import { BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, LOAD_SECTION_HEADING, LOAD_TABLE_ROW_PREFIX, loadBatchingGuidance, renderBatchingGuidance } from '../lib/ptc/batching-guidance.js'
 
 /** The editable guidance file shipped at the package root, outside the build output. */
 const GUIDANCE_FILE = path.join(PACKAGE_ROOT, 'prompts', 'batching-guidance.md')
@@ -20,7 +20,7 @@ await test('the shipped guidance is English Markdown with its host-source identi
   }
   assert.equal(BATCHING_GUIDANCE_ID, 'batching-guidance')
   // A wording or format change is a product change and must bump the revision.
-  assert.equal(BATCHING_GUIDANCE_REVISION, '4')
+  assert.equal(BATCHING_GUIDANCE_REVISION, '5')
 })
 
 await test('the guidance loader returns exactly the shipped Markdown file', () => {
@@ -104,6 +104,100 @@ await test('the teacher trajectory pins the first-line plan and a runnable load 
   // File work belongs to the OPS APIs; a shell example here would teach the bypass.
   for (const banned of ['find .', 'ls -la', 'grep -rn']) assert.ok(!text.includes(banned), banned)
   assert.ok(text.length > 2500 && text.length < 9000, 'guidance stays bounded: ' + text.length)
+})
+
+await test('a scope with the loader receives the shipped file unchanged', () => {
+  // The default path must not pay for a branch it never needs: byte identity is the contract.
+  const text = loadBatchingGuidance()
+  assert.equal(renderBatchingGuidance(text, { loader: true, resident: [] }), text)
+  // An unreadable file stays empty, so delivery is skipped instead of failing a tool result.
+  assert.equal(renderBatchingGuidance('', { loader: false, resident: ['ops_glob'], loadable: [] }), '')
+})
+
+await test('a loader-less scope is never taught to load', () => {
+  const rendered = renderBatchingGuidance(loadBatchingGuidance(), { loader: false, resident: ['ops_glob', 'ops_grep'], loadable: [] })
+  // The defect this guards: the lesson named a call that cannot succeed in this scope.
+  assert.equal(rendered.includes('ops_load_sdk'), false, 'the unreachable loader is gone')
+  assert.equal(rendered.includes(LOAD_SECTION_HEADING), false, 'the load section is replaced')
+  assert.ok(rendered.includes('## Step 3 - call what is published'), 'the step that remains is named')
+  assert.ok(rendered.includes('ops_glob') && rendered.includes('ops_grep'), 'the resident names are listed instead')
+  // Everything shared with the loader path survives verbatim: the lesson is not truncated.
+  for (const kept of ['# Batch tool calls', '## Step 1 - split by dependency', '## Step 2 - reconcile', '## Common mistakes', '// plan:']) {
+    assert.ok(rendered.includes(kept), kept)
+  }
+})
+
+await test('a scope that publishes nothing says so', () => {
+  const rendered = renderBatchingGuidance(loadBatchingGuidance(), { loader: false, resident: [] })
+  assert.equal(rendered.includes('ops_load_sdk'), false)
+  assert.ok(rendered.includes('publishes no OPS API and no loader'), 'the empty surface is stated')
+  assert.equal(rendered.includes('## Step 3 - call what is published'), false, 'no resident list is invented')
+})
+
+await test('the replacement survives a resident list that names the loader', () => {
+  // The list is generated after the filter, so the filter can never eat it.
+  const rendered = renderBatchingGuidance(loadBatchingGuidance(), { loader: false, resident: ['ops_load_sdk', 'ops_glob'], loadable: [] })
+  assert.ok(rendered.includes('ops_load_sdk') && rendered.includes('ops_glob'), 'the list is rendered whole')
+})
+
+await test('a drifted file keeps its structure when the anchor is gone', () => {
+  const drifted = '# Batch tool calls\n\nintro\n## Step 1 - split by dependency\nbody mentions ops_load_sdk once\n'
+  const out = renderBatchingGuidance(drifted, { loader: false, resident: ['ops_glob'], loadable: [] })
+  assert.ok(out.startsWith('# Batch tool calls'), 'the H1 stays first')
+  assert.ok(out.indexOf('call what is published') < out.indexOf('## Step 1'), 'the step precedes the first section')
+  assert.equal(out.includes('ops_load_sdk'), false, 'no unreachable mention survives')
+})
+
+await test('a renamed load section does not survive beside its replacement', () => {
+  // A drifted file keeps the old lesson under a different heading; two contradicting
+  // Step 3 sections would teach both loading and direct calls.
+  const drifted = '# Batch tool calls\n\nintro\n## Step 3 - loading tools\nload prose here\n## Step 1 - split\nbody\n'
+  const out = renderBatchingGuidance(drifted, { loader: false, resident: ['ops_glob'], loadable: [] })
+  assert.equal((out.match(/## Step 3/g) ?? []).length, 1, 'exactly one Step 3 remains')
+  assert.equal(out.includes('load prose here'), false, 'the old load section is dropped')
+  assert.ok(out.startsWith('# Batch tool calls'), 'the H1 stays first')
+})
+
+await test('a fenced example that teaches loading is dropped whole', () => {
+  // Deleting one line inside a fence would leave a half example that calls a name the
+  // scope cannot reach, so the whole block goes with it.
+  const drifted = '# Batch tool calls\n\nintro\n```js\nconst sdk = await tools.ops_load_sdk({ tools: ["edit_file"] })\nawait sdk.ops_edit_file({ path: "a" })\n```\n## Step 1 - split\nbody\n'
+  const out = renderBatchingGuidance(drifted, { loader: false, resident: ['ops_glob'], loadable: [] })
+  assert.equal(out.includes('sdk.ops_edit_file'), false, 'the dangling call does not survive')
+  assert.equal(out.includes('ops_load_sdk'), false, 'the load call does not survive')
+  assert.equal((out.match(/```/g) ?? []).length, 0, 'no half-open fence is left behind')
+})
+
+await test('only a heading that means loading loses its section', () => {
+  // A substring match would swallow "Payload" and drop a valid section with it.
+  const drifted = '# Batch tool calls\n## Payload budget\nkeep me\n## Step 3 - loading tools\nload prose\n'
+  const out = renderBatchingGuidance(drifted, { loader: false, resident: ['ops_glob'], loadable: [] })
+  assert.ok(out.includes('## Payload budget'), 'the ordinary section survives')
+  assert.ok(out.includes('keep me'), 'its body survives too')
+  assert.equal(out.includes('load prose'), false, 'the load section still goes')
+})
+
+await test('a heading inside a fence is example text, not a boundary', () => {
+  // The fenced line must not cut the load section short, or half of it survives.
+  const drifted = '# Batch tool calls\n## Step 3 - load before you call\nprose one\n```\n## not a heading\n```\nprose two\n## Trajectory 1 - next\nbody\n'
+  const out = renderBatchingGuidance(drifted, { loader: false, resident: ['ops_glob'], loadable: [] })
+  assert.equal(out.includes('prose two'), false, 'the whole section is replaced')
+  assert.ok(out.includes('## Trajectory 1 - next'), 'the next real section is kept')
+})
+
+await test('a fenced copy of the heading is not the anchor', () => {
+  // Taking the quoted line for the anchor would slice the document inside the fence.
+  const drifted = '# Batch tool calls\n```\n## Step 3 - load before you call\n```\nreal prose\n'
+  const out = renderBatchingGuidance(drifted, { loader: false, resident: ['ops_glob'], loadable: [] })
+  assert.ok(out.includes('real prose'), 'the real body survives the fallback')
+  assert.ok(out.startsWith('# Batch tool calls'), 'the H1 stays first')
+})
+
+await test('the shipped file still carries the anchors the renderer rewrites', () => {
+  // The loader-less rendering edits prose by anchor: moving either one must fail here, not at runtime.
+  const lines = loadBatchingGuidance().split('\n')
+  assert.ok(lines.some(line => line.trim() === LOAD_SECTION_HEADING), 'the load heading is present')
+  assert.ok(lines.some(line => line.startsWith(LOAD_TABLE_ROW_PREFIX)), 'the load row is present')
 })
 
 report('batching-guidance')

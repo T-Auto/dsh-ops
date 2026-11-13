@@ -203,6 +203,22 @@ await test('ops-ptc batchingGuidance teaches until the lesson is committed to hi
   } finally { await shutdown(ctx) }
 }))
 
+await test('a loader-less ops-ptc row teaches only what it publishes', () => withTempDir('batching-no-loader', async cwd => {
+  const { ctx, agent } = await setup(cwd, 'ops-ptc', { residentTools: true, dynamicTools: false,
+    batchingGuidance: true, alwaysLoaded: ['stat'], allowedTools: ['stat'] })
+  try {
+    await waitFor(() => names(ctx, agent).includes(publicToolName('stat')))
+    // End to end through the provider: the scope publishes no loader, so the lesson
+    // must not name one. This is the assertion that fails when the surface is dropped.
+    const taught = stepTailMessages(await drivePreStep(agent, 1))
+    assert.equal(taught.length, 1, JSON.stringify(taught))
+    const text = JSON.stringify(taught)
+    assert.equal(text.includes('ops_load_sdk'), false, 'the unreachable loader is gone')
+    assert.match(text, /call what is published/, 'the direct-call step replaces it')
+    assert.match(text, /ops_stat/, 'the published API is listed instead')
+  } finally { await shutdown(ctx) }
+}))
+
 await test('ops-ptc without batchingGuidance teaches nothing on the first turn', () => withTempDir('batching-teach-off', async cwd => {
   const { ctx, agent } = await setup(cwd, 'ops-ptc', { residentTools: true, dynamicTools: false,
     batchingGuidance: false, alwaysLoaded: ['stat'], allowedTools: ['stat'] })
@@ -230,11 +246,29 @@ await test('the root run_code trigger answers on its own tool result', () => wit
     assert.equal(thin.isError, false, JSON.stringify(thin))
     assert.match(text(thin), /did not open with a plan line/, 'the plan notice rides the root result')
     assert.doesNotMatch(text(thin), /Promise\.all/, 'the plan notice stays about the comment')
-    // A shell listing is a bypass; the notice names the API that replaces it.
+    // A shell listing is a bypass; resident file APIs are reachable without loading,
+    // so the notice still names them even though this pool could not load them.
     const bypass = await run('const r = await tools.ops_bash({ description: "list", command: "ls -la" })\nreturn r.stdout.text')
-    assert.match(text(bypass), /ops_glob/, 'the bypass notice names the listing tool')
+    assert.match(text(bypass), /ops_inspect_local_file/, 'the notice names the resident file API')
+    assert.doesNotMatch(text(bypass), /ops_bash/, 'the shell it just accused is not offered as the fix')
     // The trigger appends context and never rewrites the tool result itself.
     assert.equal(thin.value.result, 'completed', JSON.stringify(thin.value))
+  } finally { await shutdown(ctx) }
+}))
+
+await test('a read-only agent is never told to edit files through the notice', () => withTempDir('batching-readonly', async cwd => {
+  const { ctx, agent } = await setup(cwd, 'ops-ptc', { residentTools: true, dynamicTools: true,
+    batchingGuidance: true, alwaysLoaded: ['stat'], allowedTools: ['stat', 'edit_file'] })
+  try {
+    await waitFor(() => names(ctx, agent).includes(publicToolName('stat')))
+    // The policy is resolved per delivery, so a read-only session narrows the surface.
+    agent.session.mode = 'read-only'
+    const result = await executeCall(ctx, { agent, toolSet: agent.prepared.toolSet, name: 'run_code',
+      arguments: { description: 'shape fixture', code: 'const r = await tools.ops_bash({ description: "list", command: "ls -la" })\nreturn r.stdout.text' },
+      callId: 'readonly-' + ++sequence, signal: new AbortController().signal })
+    const text = JSON.stringify(result.additionalContexts ?? [])
+    assert.doesNotMatch(text, /ops_edit_file/, 'a read-only agent is not taught to mutate')
+    assert.match(text, /ops_inspect_local_file/, 'the reachable file API stays named')
   } finally { await shutdown(ctx) }
 }))
 

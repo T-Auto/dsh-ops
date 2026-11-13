@@ -13,7 +13,8 @@ import { renderSdkDirectory } from '../projections/ptc/directory.js'
 import { PTC_RESIDENT_TOOLS } from '../ptc/config.js'
 import type { ApiName } from '../ptc/config.js'
 import { ownPtcScopes } from '../ptc/ownership.js'
-import { BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, createProgramLatch, loadBatchingGuidance } from '../ptc/batching-guidance.js'
+import { BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, createProgramLatch, loadBatchingGuidance, renderBatchingGuidance } from '../ptc/batching-guidance.js'
+import type { GuidanceSurface } from '../ptc/batching-guidance.js'
 import { InvocationLifetime, InvocationNotStarted } from '../lifecycle/invocations.js'
 import { monitoredInvoke } from '../execution/monitored.js'
 import { record } from '../execution/boundary.js'
@@ -80,13 +81,30 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     const selectable: ApiName[] = gate.dynamic === false ? [] : [...config.allowedTools, 'result' as ApiName]
     const pool = new Set<ApiName>([...resident, ...selectable])
     const owns = (agent: Agent): boolean => !stopped && gate.allows(agent) && Boolean(ownership?.owns(agent))
+    // One predicate for "may this agent call it": the guidance surface and the tool
+    // registration must never disagree about a read-only policy.
+    const reachable = (mode: string | undefined, api: ApiName): boolean =>
+      mode !== 'read-only' || !capability(api)?.mutates
     const permitted = (agent: Agent, api: ApiName | 'load_sdk'): boolean => {
       if (!owns(agent) || !ctx.get('ptcRuntime') || !ctx.get('subprocess')) return false
       const policy = ctx.get('sandboxPolicy')?.resolve({ session: agent.session })
       return policy !== undefined && ['read-only', 'workspace-write', 'danger-full-access'].includes(policy.mode)
-        && (api === 'load_sdk' || api === 'result' || !capability(api)?.mutates || policy.mode !== 'read-only')
+        && (api === 'load_sdk' || api === 'result' || reachable(policy.mode, api))
     }
     const loadable = [...new Set<ApiName>([...config.allowedTools, 'result'])]
+    // What this scope publishes decides which guidance text is truthful, and the answer
+    // is per agent: a read-only policy removes the mutating calls even when the row names
+    // them. Ownership and runtime availability are checked separately, so teaching never
+    // depends on mount order.
+    const surfaceFor = (agent: Agent): GuidanceSurface => {
+      const mode = ctx.get('sandboxPolicy')?.resolve({ session: agent.session })?.mode
+      return {
+        loader: gate.dynamic !== false,
+        resident: [...resident].filter(api => reachable(mode, api)).map(api => publicToolName(api)),
+        // Loadable names answer to the same gate the loader itself uses.
+        loadable: allowedApis(agent).map(api => publicToolName(api)),
+      }
+    }
     const allowedApis = (agent: Agent): ApiName[] => gate.dynamic === false ? [] : loadable.filter(api => permitted(agent, api))
     const selected = (entry: Entry, api: ApiName | 'load_sdk'): boolean => api === 'load_sdk'
       ? gate.dynamic !== false : resident.has(api) || entry.selected.has(api)
@@ -99,7 +117,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     // the triggering tool result, so no system-prompt bytes are spent up front.
     // One latch for the program-shape trigger. It observes the root run_code program,
     // which is the only place the whole step is visible.
-    const shapeLatch = createProgramLatch()
+    const shapeLatch = createProgramLatch(surfaceFor)
     const guidanceMessage = async (turn: number, text: string): Promise<UserMessage> => {
       const createUserMessage = await loadUserMessage()
       return createUserMessage({
@@ -190,7 +208,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
             revision: BATCHING_GUIDANCE_REVISION,
             provide() {
               if (entry.taught) return undefined
-              const text = loadBatchingGuidance()
+              const text = renderBatchingGuidance(loadBatchingGuidance(), surfaceFor(agent))
               return text.length > 0 ? text : undefined
             },
           }))
