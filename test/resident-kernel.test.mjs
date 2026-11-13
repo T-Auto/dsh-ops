@@ -357,7 +357,12 @@ for (const action of stalledActions) await test(`real native ${action} exits wit
         // Shutdown/half-close retain undrained output; disconnect closes only
         // the transport. Neither action terminates the managed process range.
         const outcome = await within(handle.done, 10_000, `${action} natural exit with stalled reader`)
-        assert.equal(outcome.exitCode, 0, `${action}: ${handle.collected.stderr.readFrom(0).text}`)
+        const diagnostic = handle.collected.stderr.readFrom(0).text
+        if (action === 'disconnect' && process.platform !== 'win32' && outcome.exitCode === 1) {
+          // Closing a socket with unread output can reset the peer. The server
+          // reports that transport error after joining leaves; it is not a kill.
+          assert.match(diagnostic.trim(), /^OPS kernel stopped: Connection reset by peer \(os error (54|104)\)$/)
+        } else assert.equal(outcome.exitCode, 0, `${action}: ${diagnostic}`)
         assert.equal(await handle.waitForExit(AbortSignal.timeout(10_000)), true)
       } catch (error) {
         throw new Error(`${error.message}; ${action} stderr: ${handle.collected.stderr.readFrom(0).text}`, { cause: error })
