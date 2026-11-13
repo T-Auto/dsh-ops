@@ -1,27 +1,14 @@
 //! Kernel-owned shell ranges. Callers supply trusted, host-confined argv;
 //! this layer never resolves authority, modifies argv, or publishes sessions.
 use std::{ffi::OsString, io, path::PathBuf};
+mod capture;
+pub use capture::{Capture, CaptureRead, CaptureSnapshot, CaptureView, Retention};
 
 pub struct Launch {
     pub argv: Vec<OsString>,
     pub cwd: PathBuf,
     pub env: Vec<(OsString, OsString)>,
     pub output_cap: usize,
-}
-#[derive(Default, Debug)]
-pub struct Capture {
-    pub bytes: Vec<u8>,
-    pub observed: u64,
-    pub truncated: bool,
-}
-#[cfg(any(windows, test))]
-impl Capture {
-    pub(crate) fn append(&mut self, bytes: &[u8], cap: usize) {
-        self.observed = self.observed.saturating_add(bytes.len() as u64);
-        self.truncated |= bytes.len() > cap.saturating_sub(self.bytes.len());
-        let keep = bytes.len().min(cap.saturating_sub(self.bytes.len()));
-        self.bytes.extend_from_slice(&bytes[..keep]);
-    }
 }
 #[cfg(any(windows, test))]
 pub(crate) fn budget(cap: usize) -> io::Result<()> {

@@ -111,6 +111,12 @@ jobs:
           cargo build --locked --manifest-path native/Cargo.toml --bin dsh-ops-worker --example shell_started_blocked
           node bench/probes/probe-872-shell-started.mjs native/target/debug/examples/shell_started_blocked.exe runtime/win32-x64/niubash/niu.exe runtime/win32-x64/niubash/niu.exe
           node bench/probes/probe-872-shell-backpressure.mjs native/target/debug/dsh-ops-worker.exe runtime/win32-x64/niubash/niu.exe lib/execution/resident/shell-bootstrap.js runtime/win32-x64/niubash/niu.exe
+      - name: Windows internal task capture and ownership
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo build --locked --manifest-path native/Cargo.toml --example task_capture
+          node bench/probes/probe-872-task-capture.mjs native/target/debug/examples/task_capture.exe
       - name: Assert the Linux worker is statically linked
         if: runner.os == 'Linux'
         shell: bash
