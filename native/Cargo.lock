@@ -211,6 +211,7 @@ dependencies = [
  "ops-batch",
  "ops-documents",
  "ops-files",
+ "ops-process",
  "ops-protocol",
  "ops-results",
  "ops-search",
@@ -630,6 +631,14 @@ dependencies = [
  "objc2-core-services",
  "ops-index",
  "rayon",
+]
+
+[[package]]
+name = "ops-process"
+version = "0.5.4"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

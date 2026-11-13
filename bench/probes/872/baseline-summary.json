@@ -1,0 +1,233 @@
+{
+  "issue": 872,
+  "kind": "current-baseline",
+  "measuredAt": "2026-11-13T12:42:26.245Z",
+  "finishedAt": "2026-11-13T12:50:20.200Z",
+  "probe": {
+    "file": "bench/probes/probe-872-baseline.mjs",
+    "sha256": "63ccc0429171c289134ea8f00bf9d01fe298ab103b44467cb36420a3e0119cb3",
+    "arguments": [
+      "--bash",
+      "<verified complete Niubash tree>/niu.exe",
+      "--output",
+      "probe-872-baseline-windows.json"
+    ],
+    "environment": {
+      "TMP": "<short local E: temporary directory>",
+      "TEMP": "<same directory>"
+    }
+  },
+  "build": {
+    "revision": "e724444416fed01eb1f75916ec556c0a286e73f9",
+    "packageVersion": "0.5.5",
+    "libSha256": "ec684b9132d3d790ceed8601b04cb7fe39b79b8cfd0002367da7d374273c496b",
+    "workerSha256": "38cb7fb9286c9449dc9550d6f5da4a30f0934acc71b5fc33b1e648b049149b39",
+    "bashSha256": "7ec3ec04ce91bae64c23d7150e6b16574e9d91df8fcf0df997006e2b37bf2f1e",
+    "lockSha256": "51144ec60091b33ef7a81daa96bc4483631eb7e10b44d580fe37610a3f91e391",
+    "sourceDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "hostPackages": {
+      "dsh-subprocess-local": "0.2.2-rc.1",
+      "dsh-sandbox-local": "0.2.2-rc.1",
+      "dsh-tool-executor-native": "0.2.2-rc.1",
+      "dsh-tool-executor-ptc": "0.2.2-rc.1",
+      "dsh-ptc-runtime-node": "0.2.2-rc.1",
+      "dsh-jobs-local": "0.2.2-rc.1"
+    }
+  },
+  "environment": {
+    "platform": "win32",
+    "arch": "x64",
+    "node": "v26.12.1",
+    "osRelease": "10.0.26300",
+    "cpu": "AMD Ryzen 7 6800HS with Radeon Graphics         ",
+    "sandboxMode": "danger-full-access",
+    "filesystem": "Windows local E: volume"
+  },
+  "measurement": "prepareStep (admission and prompt/SDK assembly) through tools.execute, canonical validation and model-facing rendering",
+  "composition": "Real Cordis, Agents/Sessions/Loop, policy, subprocess/sandbox, jobs, Native/Node PTC executors; NativeFileTools and mountSessionBash. A probe-owned jobs controller admits foreground jobs; no Desktop, model or UI service.",
+  "percentileMethod": "nearest rank",
+  "counts": {
+    "cold": 4,
+    "warmup": 20,
+    "hot": 800,
+    "total": 824,
+    "failures": 0,
+    "hotSamplesPerItem": 200,
+    "hostSpawnCalls": 1236
+  },
+  "cold": [
+    {
+      "item": "native/file",
+      "elapsedMs": 404.4553999999998,
+      "ok": true
+    },
+    {
+      "item": "native/fresh-command",
+      "elapsedMs": 6254.9117,
+      "ok": true
+    },
+    {
+      "item": "ptc/file",
+      "elapsedMs": 865.5046999999995,
+      "ok": true
+    },
+    {
+      "item": "ptc/fresh-command",
+      "elapsedMs": 775.3603000000003,
+      "ok": true
+    }
+  ],
+  "hot": [
+    {
+      "item": "native/file",
+      "count": 200,
+      "failures": 0,
+      "allLatencyMs": {
+        "p50": 357.0756999999867,
+        "p95": 474.2179000000033,
+        "p99": 578.0692999999737
+      },
+      "successfulLatencyMs": {
+        "p50": 357.0756999999867,
+        "p95": 474.2179000000033,
+        "p99": 578.0692999999737
+      },
+      "hostUserCpuMs": 1952,
+      "hostSystemCpuMs": 6317,
+      "maxSampledHostRssBytes": 148262912,
+      "spawnCalls": 200
+    },
+    {
+      "item": "native/fresh-command",
+      "count": 200,
+      "failures": 0,
+      "allLatencyMs": {
+        "p50": 325.72320000000764,
+        "p95": 443.97669999999925,
+        "p99": 629.5327999999863
+      },
+      "successfulLatencyMs": {
+        "p50": 325.72320000000764,
+        "p95": 443.97669999999925,
+        "p99": 629.5327999999863
+      },
+      "hostUserCpuMs": 1088,
+      "hostSystemCpuMs": 3810,
+      "maxSampledHostRssBytes": 148262912,
+      "spawnCalls": 200
+    },
+    {
+      "item": "ptc/file",
+      "count": 200,
+      "failures": 0,
+      "allLatencyMs": {
+        "p50": 745.0155999999843,
+        "p95": 1004.5920000000042,
+        "p99": 1130.6106000000145
+      },
+      "successfulLatencyMs": {
+        "p50": 745.0155999999843,
+        "p95": 1004.5920000000042,
+        "p99": 1130.6106000000145
+      },
+      "hostUserCpuMs": 3769,
+      "hostSystemCpuMs": 10910,
+      "maxSampledHostRssBytes": 148262912,
+      "spawnCalls": 400
+    },
+    {
+      "item": "ptc/fresh-command",
+      "count": 200,
+      "failures": 0,
+      "allLatencyMs": {
+        "p50": 711.6317999999737,
+        "p95": 967.6528000000108,
+        "p99": 1147.2874999999985
+      },
+      "successfulLatencyMs": {
+        "p50": 711.6317999999737,
+        "p95": 967.6528000000108,
+        "p99": 1147.2874999999985
+      },
+      "hostUserCpuMs": 2878,
+      "hostSystemCpuMs": 8072,
+      "maxSampledHostRssBytes": 148148224,
+      "spawnCalls": 400
+    }
+  ],
+  "resourcesBeforeCalls": {
+    "rssBytes": 74182656,
+    "cpuMs": {
+      "user": 703,
+      "system": 906
+    },
+    "peakRssBytes": 87642112,
+    "osHandles": {
+      "kind": "Windows process Handles",
+      "count": 193
+    }
+  },
+  "resourcesAfterCalls": {
+    "rssBytes": 147197952,
+    "cpuMs": {
+      "user": 11359,
+      "system": 31484
+    },
+    "peakRssBytes": 148574208,
+    "osHandles": {
+      "kind": "Windows process Handles",
+      "count": 209
+    }
+  },
+  "resourcesAfterTeardown": {
+    "rssBytes": 147480576,
+    "cpuMs": {
+      "user": 11359,
+      "system": 31515
+    },
+    "peakRssBytes": 148574208,
+    "osHandles": {
+      "kind": "Windows process Handles",
+      "count": 209
+    }
+  },
+  "unsettledTopLevelHandlesAfterTeardown": 0,
+  "artifacts": [
+    {
+      "file": "probe-872-baseline-windows.json",
+      "sha256": "ff696c3154c0dc429cba6f56e748f213fcf7051bb722751d11f587de577048c1",
+      "storage": "Raw local report, not checked into Git",
+      "calls": 824,
+      "failures": 0,
+      "note": "Complete current baseline; no A/B or performance improvement claim."
+    },
+    {
+      "file": "probe-872-smoke.json",
+      "sha256": "89771ed71156da5ed3a75287ddb2a3e1ea8ce4f400fbeec795cd3fc5627ee17b",
+      "storage": "Raw local report, not checked into Git",
+      "calls": 16,
+      "failures": 8,
+      "note": "Eight shell refusals: Niubash preparation ENAMETOOLONG under sandbox temporary path; file calls passed. Kept separately; no failed sample removed."
+    },
+    {
+      "file": "probe-872-smoke-short-temp.json",
+      "sha256": "dbd3aae641de44f0e4c134c88e31c6d5423b0149932d6712c79ac4f3c49b9403",
+      "storage": "Raw local report, not checked into Git",
+      "calls": 16,
+      "failures": 0,
+      "note": "Short TMP/TEMP smoke: all 16 calls passed."
+    }
+  ],
+  "limitations": [
+    "No comparison arm and no resident kernel; this report cannot establish an improvement.",
+    "Cold means the first call for each item after host setup, in listed order; shared services may already be warm. It is not OS-cache-cold or full application startup.",
+    "CPU/RSS/OS handle counts describe this Node host only; child CPU, child peak RSS and whole process-tree handle counts are not measured.",
+    "The probe retains sample records and completed Session events; host memory includes that instrumentation.",
+    "Subprocess counts and unsettled handles cover calls through the public host spawn seam; they do not count internal provider descendants or prove process-tree quiescence.",
+    "Timings include failures; successful-only percentiles are also supplied. No failed sample is retried or removed.",
+    "A separate WSL host feasibility probe overlapped the first few rounds. No CPU-heavy Windows build overlapped; this was not a dedicated idle machine.",
+    "Windows handle snapshots include observer pipe handles; their counts are not a leak or process-tree cleanup proof.",
+    "The first Native command included Niubash preparation; later first-item calls reuse warmed shared services.",
+    "All samples used one unchanged danger-full-access policy. This is not a confinement benchmark or a Windows/Linux comparison."
+  ]
+}

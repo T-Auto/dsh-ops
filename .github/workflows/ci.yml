@@ -67,6 +67,12 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y acl
       - name: Install locked dependencies
         run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
+      - name: Native inherited control channel compatibility
+        shell: bash
+        run: |
+          cargo test --locked --manifest-path native/Cargo.toml --example resident_probe
+          cargo build --locked --manifest-path native/Cargo.toml --example resident_probe
+          node bench/probes/probe-872-native.mjs
       # The gate, not `npm run verify`: it runs the same suites with `DSH_OPS_REQUIRE_RUNTIME=1`
       # on POSIX (a runtime-absence skip is a failure, not a pass), refuses any skip outside this
       # platform's known set, fails when a suite file on disk was never collected, checks the
