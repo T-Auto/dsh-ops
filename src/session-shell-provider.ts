@@ -1,14 +1,14 @@
-/** One activation-owned shell authority adapter, shared by Native and PTC consumers. */
-import type { Agent, Context } from '../../adapter/dsh/types.js'
-import type { ResolvedConfig } from '../../config.js'
-import { resolveShells } from '../../shells/resolve.js'
-import { integrationFor } from '../../consumer/registry.js'
-import { enabledModes } from '../../presets/registry.js'
-import { modeOf } from '../../presets/detect.js'
-import { residentShellAdmission } from './shell-owner.js'
-import type { ShellLaunchOptions } from './shell-launch.js'
-import { NIUBASH_MANIFEST_SHA256 } from '../../cli/niubash-payload.js'
-import { isNiubashExecutable } from '../../niubash/runtime.js'
+/** Product composition selects the runtime; the generic execution owner receives that selection. */
+import type { Agent, Context } from './adapter/dsh/types.js'
+import type { ResolvedConfig } from './config.js'
+import { resolveShells } from './shells/resolve.js'
+import { integrationFor } from './consumer/registry.js'
+import { enabledModes } from './presets/registry.js'
+import { modeOf } from './presets/detect.js'
+import { residentShellAdmission } from './execution/resident/shell-owner.js'
+import type { ShellLaunchOptions } from './execution/resident/shell-launch.js'
+import { NIUBASH_MANIFEST_SHA256 } from './cli/niubash-payload.js'
+import { isNiubashExecutable } from './niubash/runtime.js'
 
 // The current package can complete before escaped original output is accounted
 // for; diagnostic counters cannot prove live-stream quiescence (see session-shell.md).
