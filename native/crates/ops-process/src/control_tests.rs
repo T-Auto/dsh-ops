@@ -33,7 +33,14 @@ fn shutdown_during_io(read: bool) {
         later.write_all(b"late").is_err(),
         "shutdown must prevent the next write"
     );
-    assert_eq!(later.read(&mut [0u8; 1]).unwrap(), 0);
+    // Closing a POSIX peer with unread buffered output can report reset instead
+    // of EOF. Both are terminal; neither permits another usable control read.
+    let read = later.read(&mut [0u8; 1]);
+    assert!(
+        matches!(read, Ok(0))
+            || matches!(&read, Err(error) if matches!(error.kind(), io::ErrorKind::ConnectionReset | io::ErrorKind::NotConnected)),
+        "closed control channel must return EOF or a terminal socket error: {read:?}"
+    );
     control.shutdown().unwrap();
 }
 #[test]
