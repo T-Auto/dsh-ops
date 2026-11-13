@@ -443,11 +443,9 @@ await test('the Bash output schema states when text may be parsed and that spill
   const { BASH_OUTPUT_SCHEMA } = await import('../lib/shells/tool.js')
   for (const channel of ['stdout', 'stderr']) {
     const properties = BASH_OUTPUT_SCHEMA.properties[channel].properties
-    // Only the flag carries a field sentence: the tool description states the rest, and the
-    // resident byte budgets forbid repeating it in the typed declaration (#892).
-    assert.match(properties.truncated.description, /lossy fragment, not complete JSON/, channel)
-    assert.equal(properties.text.description, undefined, channel)
-    assert.equal(properties.spillPath.description, undefined, channel)
+    // The declaration carries no prose: the tool text states the contract once, and the
+    // typed schema only keeps the shape claim (truncated required, spillPath optional).
+    for (const name of ['text', 'truncated', 'spillPath']) assert.equal(properties[name].description, undefined, name)
     // The claim is the schema's own: truncated is required, spillPath is not.
     assert.deepEqual(BASH_OUTPUT_SCHEMA.properties[channel].required, ['text', 'truncated'], channel)
   }

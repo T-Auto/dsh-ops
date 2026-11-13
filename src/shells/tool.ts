@@ -148,7 +148,7 @@ export const BASH_OUTPUT_SCHEMA: JsonSchemaNode = Object.freeze<JsonSchemaNode>(
       required: ['text', 'truncated'],
       properties: {
         text: { type: 'string' },
-        truncated: { type: 'boolean', description: 'True when text is a lossy fragment, not complete JSON.' },
+        truncated: { type: 'boolean' },
         bytes: { type: 'integer' },
         bytesTotal: { type: 'integer' },
         lines: { type: 'integer' },
@@ -161,7 +161,7 @@ export const BASH_OUTPUT_SCHEMA: JsonSchemaNode = Object.freeze<JsonSchemaNode>(
       required: ['text', 'truncated'],
       properties: {
         text: { type: 'string' },
-        truncated: { type: 'boolean', description: 'True when text is a lossy fragment, not complete JSON.' },
+        truncated: { type: 'boolean' },
         bytes: { type: 'integer' },
         bytesTotal: { type: 'integer' },
         lines: { type: 'integer' },
