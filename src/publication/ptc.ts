@@ -75,7 +75,10 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     ctx.on('system-prompt/change', () => { ++presentationRevision })
     let ownership: Awaited<ReturnType<typeof ownPtcScopes>> | undefined
     const resident = new Set<ApiName>(gate.resident === false ? [] : [...PTC_RESIDENT_TOOLS, ...config.alwaysLoaded])
-    const pool = new Set<ApiName>([...resident, ...config.allowedTools, 'result'])
+    // A loader-less scope can never select the allowed pool: registering it only
+    // lets a host that renders registered definitions declare unreachable APIs.
+    const selectable: ApiName[] = gate.dynamic === false ? [] : [...config.allowedTools, 'result' as ApiName]
+    const pool = new Set<ApiName>([...resident, ...selectable])
     const owns = (agent: Agent): boolean => !stopped && gate.allows(agent) && Boolean(ownership?.owns(agent))
     const permitted = (agent: Agent, api: ApiName | 'load_sdk'): boolean => {
       if (!owns(agent) || !ctx.get('ptcRuntime') || !ctx.get('subprocess')) return false

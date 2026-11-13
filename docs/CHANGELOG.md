@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- A loader-less PTC scope no longer registers the configured `allowedTools` pool: with dynamic loading off nothing could ever select those APIs, and a host assembly without a step tool set declared all sixteen in `tools:sdk`. Resident publication, the default inspect + loader set and selection behavior are unchanged (#887).
+- 关闭动态加载的 PTC 作用域不再注册 `allowedTools` 候选池：没有 loader 时这些 API 永远不可选，而缺少 step tool set 的宿主装配会把十六个全部写进 `tools:sdk`。常驻发布、默认 inspect + loader 与选择行为不变（#887）。
 - Glob accepts `kind: file | directory | all` (default `file`), including empty directories in shallow listings without following links or changing hidden-item policy. Partial Native searches retain paths, scan counters, skip reasons and bounded diagnostic examples; directory read refusals give usable guidance.
 - Glob 新增 `kind: file | directory | all`（默认 `file`），浅层列举可见空目录，仍不跟随链接，也不改变隐藏项策略。Native 搜索不完整时保留路径、扫描计数、跳过原因与有界诊断样例；目录读取拒绝给出可执行指引。
 - Correct the model-visible glob/grep/read-files result shapes and the ops-ptc batching examples. Bypass reminders distinguish command-output filters from definite file access. On-demand integration diagnostics report the host-selected runtime version or `unknown`, without adding version text to prompts or SDKs. Shared SDK declaration deduplication remains a documented host dependency.
