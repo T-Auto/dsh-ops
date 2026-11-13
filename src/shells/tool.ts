@@ -147,12 +147,12 @@ export const BASH_OUTPUT_SCHEMA: JsonSchemaNode = Object.freeze<JsonSchemaNode>(
       additionalProperties: false,
       required: ['text', 'truncated'],
       properties: {
-        text: { type: 'string', description: 'May be a partial fragment; check truncated before parsing structured output.' },
-        truncated: { type: 'boolean', description: 'True when text is a lossy fragment, so it must not be parsed as complete JSON.' },
+        text: { type: 'string', description: 'May be a partial fragment; check truncated before parsing.' },
+        truncated: { type: 'boolean', description: 'True when text is a lossy fragment, not complete JSON.' },
         bytes: { type: 'integer' },
         bytesTotal: { type: 'integer' },
         lines: { type: 'integer' },
-        spillPath: { type: 'string', description: 'Optional; its presence does not guarantee the full output was retained.' },
+        spillPath: { type: 'string', description: 'Optional; not a completeness guarantee.' },
       },
     },
     stderr: {
@@ -160,12 +160,12 @@ export const BASH_OUTPUT_SCHEMA: JsonSchemaNode = Object.freeze<JsonSchemaNode>(
       additionalProperties: false,
       required: ['text', 'truncated'],
       properties: {
-        text: { type: 'string', description: 'May be a partial fragment; check truncated before parsing structured output.' },
-        truncated: { type: 'boolean', description: 'True when text is a lossy fragment, so it must not be parsed as complete JSON.' },
+        text: { type: 'string', description: 'May be a partial fragment; check truncated before parsing.' },
+        truncated: { type: 'boolean', description: 'True when text is a lossy fragment, not complete JSON.' },
         bytes: { type: 'integer' },
         bytesTotal: { type: 'integer' },
         lines: { type: 'integer' },
-        spillPath: { type: 'string', description: 'Optional; its presence does not guarantee the full output was retained.' },
+        spillPath: { type: 'string', description: 'Optional; not a completeness guarantee.' },
       },
     },
   },
@@ -197,7 +197,7 @@ export function bashToolDescription() {
     + 'tools for file operations. Each call uses a fresh non-login shell; set workdir explicitly. For Bash scripts '
     + 'longer than about 1 KB or containing heredocs, quotes, backslashes or non-ASCII text, write the script to '
     + 'a file first and pass script_path instead of embedding it in command. Use command for short commands and '
-    + 'pipelines. Fix failed Bash commands here, do not mix shell syntax. stdout/stderr.text may be partial: check truncated before parsing structured output, and when it is true narrow or project the output; spillPath is optional and does not guarantee completeness. '
+    + 'pipelines. Fix failed Bash commands here, do not mix shell syntax. Check truncated before parsing structured output; spillPath is optional, not a completeness guarantee. '
     + 'Verify absolute targets before delete/move. Foreground only: no run_in_background and no job id, so a '
     + 'server or watcher occupies the call until timeoutMs.'
 }
