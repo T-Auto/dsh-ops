@@ -45,7 +45,7 @@ for (const mode of ['native', 'ptc']) await test(`${mode} cancellation carries o
       assert.equal(calls, 0)
       assert.deepEqual(result.additionalContexts ?? [], [])
     } finally { before.dispose() }
-    for (const extra of [{}, { shellState: 'unchanged' }, { shellState: 'unknown' }, { cleanupConfirmed: false }]) {
+    for (const extra of [{}, { effectState: 'none' }, { shellState: 'unchanged' }, { shellState: 'unknown' }, { cleanupConfirmed: false }]) {
       entered = Promise.withResolvers(); joined = Promise.withResolvers()
       const controller = new AbortController()
       let settled = false
@@ -60,11 +60,11 @@ for (const mode of ['native', 'ptc']) await test(`${mode} cancellation carries o
       assert.equal(result.error.info.code, 'ABORTED')
       assert.equal(result.value, undefined)
       const contexts = result.additionalContexts ?? []
-      const expected = Object.keys(extra).length === 0
+      const expected = extra.shellState === undefined && extra.cleanupConfirmed !== false
       assert.equal(contexts.length, expected ? 1 : 0, JSON.stringify(extra))
       if (expected) {
         assert.deepEqual(contexts[0].source, { kind: 'dsh-ops:shell-reset', callId: observedCallId,
-          shellState: 'reset', cleanupConfirmed: true, effectState: 'unknown' })
+          shellState: 'reset', cleanupConfirmed: true, effectState: extra.effectState ?? 'unknown' })
         assert.match(JSON.stringify(contexts[0].content), /Persistent shell reset.*cleanup confirmed/)
         assert.doesNotMatch(JSON.stringify(contexts[0]), /sensitive-command/)
         if (mode === 'ptc') assert.doesNotMatch(JSON.stringify(result.content), /shell reset/,
