@@ -77,3 +77,9 @@ The earlier Node-only and fresh-Bash reports are retained separately. Cleanup co
 observed kernel PID 11580 was gone. This worker retained tails only;
 the probe observed no spill path and establishes no complete-spill retention or production approval
 bridge. Passing stock Bash fresh execution does not qualify that runtime for persistent sessions.
+
+After the base serialized owner sealing with admission publication, the same real probe passed
+7/7 again against worker `2fcf7f1d608b71fe53d121c892465bd58bf0bb04765d7ee260c441c1c58c3b2e`.
+The `task-host-owner-order-final.json` report hash is
+`3d0c4e3831abf1e462a5838d5e1959281593a8a090a829943fb4005cc1eef1e8`;
+kernel PID 15456 was gone and cleanup was confirmed. The preceding report remains separate.

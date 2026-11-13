@@ -499,6 +499,56 @@ fn acknowledge(state: &State, owner: &Arc<Owner>) -> io::Result<()> {
 mod tests {
     use super::*;
     #[test]
+    fn sealed_owner_queued_before_request_cancel_never_requests_admission() {
+        let (send, receive) = std::sync::mpsc::channel();
+        let mut manager = Manager::new(
+            Arc::new(move |value| send.send(value).map_err(io::Error::other)),
+            || {},
+        )
+        .unwrap();
+        let owner = Arc::new(Owner {
+            key: "sealed-owner".into(),
+            data: Mutex::new(OwnerData {
+                closed: true,
+                pending: HashSet::from(["queued".into()]),
+                ..OwnerData::default()
+            }),
+        });
+        let request = Arc::new(Request {
+            id: "queued".into(),
+            owner: owner.clone(),
+            deadline: None,
+            grace: Duration::ZERO,
+            cancelled: AtomicBool::new(false),
+            data: Mutex::new(Data::default()),
+            wake: Condvar::new(),
+        });
+        manager
+            .state
+            .owners
+            .lock()
+            .unwrap()
+            .insert(owner.key.clone(), owner);
+        manager
+            .state
+            .requests
+            .lock()
+            .unwrap()
+            .insert(request.id.clone(), request.clone());
+        // Seal the owner before close_owner reaches this request's cancel flag.
+        manager.state.queue.lock().unwrap().push_back(request);
+        manager.state.wake.notify_one();
+        let first = receive.recv_timeout(Duration::from_secs(5));
+        // Join even a broken admission waiter before asserting the first frame.
+        manager.shutdown().unwrap();
+        let first = first.expect("queued request must publish without approval");
+        assert_eq!(first["type"], "task.completed", "{first}");
+        assert_eq!(first["requestId"], "queued");
+        assert_eq!(first["effectState"], "none");
+        assert_eq!(first["cleanupConfirmed"], true);
+    }
+
+    #[test]
     fn uncertain_owner_cleanup_has_a_structured_error_and_keeps_the_owner_poisoned() {
         let replies = Arc::new(Mutex::new(Vec::new()));
         let output = replies.clone();
