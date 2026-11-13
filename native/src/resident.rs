@@ -18,6 +18,11 @@ const WINDOW: usize = 32;
 const FRAME_BYTES: usize = envelope::MAX_REQUEST_BYTES + 256;
 type Output = Arc<Mutex<ControlPipe>>;
 type Active = Arc<Mutex<HashMap<String, Arc<Mutex<RequestState>>>>>;
+fn trace(phase: &str) {
+    if cfg!(target_os = "macos") {
+        eprintln!("resident teardown: {phase}");
+    }
+}
 #[derive(Default)]
 struct RequestState {
     cancelled: bool,
@@ -188,10 +193,12 @@ pub fn serve() -> io::Result<()> {
         }
         Ok(())
     })();
+    trace("read loop ended");
     // A peer may half-close input while refusing to drain replies. Cancel I/O
     // through the independently held reader handle before joining blocked writers.
     // Future writes also fail, so teardown cannot race a newly started reply.
     let shutdown = reader.get_ref().shutdown();
+    trace("control shutdown returned");
     // EOF belongs to the owning host connection, not a page, heartbeat or call.
     // Keep the control loop responsive during filesystem operations; each leaf
     // has its own cancellation range and must settle before this owner exits.
@@ -199,8 +206,10 @@ pub fn serve() -> io::Result<()> {
     for state in states {
         cancel(&state);
     }
+    trace("executions cancelled");
     for task in tasks {
         let _ = task.join();
     }
+    trace("executions joined");
     result.and(shutdown)
 }

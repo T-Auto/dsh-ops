@@ -96,6 +96,9 @@ class Client implements ResidentClient {
     const pending = [...this.pending.values()]
     for (const request of pending) request.cleanup()
     this.pending.clear()
+    // Frames discarded before the writable boundary could not cause effects.
+    // Only sent requests need the conservative interrupted/unknown outcome.
+    for (const request of pending) if (!request.sent) request.reject(new ResidentNotStarted(error.message))
     let cleanupFailure = ''
     try { this.handle.terminate() } catch (failure) { cleanupFailure = `Termination failed: ${String(failure)}` }
     this.failureDrain = (async () => {
@@ -107,7 +110,7 @@ class Client implements ResidentClient {
       } catch (failure) { cleanupFailure += `\nOwned range cleanup is unknown: ${String(failure)}` }
       let diagnostic = ''
       try { diagnostic = this.handle.collected.stderr?.readFrom(0).text ?? '' } catch { /* provider failure */ }
-      for (const request of pending) request.resolve({ exitCode: null, interrupted: true, readers: true, lossy: false,
+      for (const request of pending) if (request.sent) request.resolve({ exitCode: null, interrupted: true, readers: true, lossy: false,
         stderr: [error.message.slice(0, 1000), cleanupFailure.slice(0, 1000), diagnostic.slice(-2000)].join('\n') })
     })()
   }

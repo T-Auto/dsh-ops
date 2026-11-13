@@ -135,6 +135,8 @@ await test('already-aborted and oversized requests never reach the kernel', asyn
 await test('kernel loss settles every admitted call as interrupted and never reconnects', async () => {
   const host = fixture(), client = await host.starting
   const calls = [client.invoke(envelope('a')), client.invoke(envelope('b'))]
+  await flush()
+  assert.equal(host.frames.filter(frame => frame.type === 'execute').length, 2)
   host.finish()
   for (const result of await Promise.all(calls)) {
     assert.equal(result.interrupted, true); assert.equal(result.exitCode, null)
@@ -168,6 +170,22 @@ await test('unobservable fatal cleanup keeps an explicit unknown outcome', async
   assert.equal(result.interrupted, true); assert.equal(result.value, undefined)
   assert.match(result.stderr, /cleanup is unknown.*range cannot be observed/)
   host.handle.waitForExit = wait
+  await host.dispose()
+})
+
+await test('fatal loss refuses an unsent queued request without implying possible effects', async () => {
+  const host = fixture({ hold: true, holdExit: true }), client = await host.starting
+  const admitted = client.invoke(envelope('admitted'))
+  const queued = client.invoke(envelope('unsent'))
+  const refused = assert.rejects(queued, ResidentNotStarted)
+  let admittedSettled = false
+  void admitted.then(() => { admittedSettled = true })
+  host.finish()
+  await refused
+  assert.equal(host.frames.filter(frame => frame.type === 'execute').length, 1)
+  assert.equal(admittedSettled, false, 'sent work still waits for owned-range cleanup')
+  host.releaseExit()
+  assert.equal((await admitted).interrupted, true)
   await host.dispose()
 })
 
@@ -323,6 +341,7 @@ for (const action of stalledActions) await test(`real native ${action} exits wit
       const handle = ctx.get('subprocess').spawn({ argv: [WORKER, '--serve'], cwd: root, graceMs: 100,
         stdio: { stdin: 'ignore', stdout: { maxBytes: 4096 }, stderr: { maxBytes: 4096 }, control: 'pipe' } })
       const control = handle.control
+      let halfCloseFinished = false
       try {
         const hello = await within(new Promise((resolve, reject) => {
           let text = ''
@@ -351,7 +370,7 @@ for (const action of stalledActions) await test(`real native ${action} exits wit
         assert.ok(control.readableLength >= control.readableHighWaterMark, 'the undrained response buffer must reach backpressure')
         assert.equal(control.listenerCount('data'), 0, 'no test/client callback drains responses')
         if (action === 'disconnect') control.destroy()
-        else if (action === 'half-close') control.end()
+        else if (action === 'half-close') control.end(() => { halfCloseFinished = true })
         else control.write(`${JSON.stringify({ type: 'shutdown' })}\n`)
         // A blocked native output writer must be released before thread joins.
         // Shutdown/half-close retain undrained output; disconnect closes only
@@ -361,11 +380,11 @@ for (const action of stalledActions) await test(`real native ${action} exits wit
         if (action === 'disconnect' && process.platform !== 'win32' && outcome.exitCode === 1) {
           // Closing a socket with unread output can reset the peer. The server
           // reports that transport error after joining leaves; it is not a kill.
-          assert.match(diagnostic.trim(), /^OPS kernel stopped: Connection reset by peer \(os error (54|104)\)$/)
+          assert.match(diagnostic, /^OPS kernel stopped: Connection reset by peer \(os error (54|104)\)$/m)
         } else assert.equal(outcome.exitCode, 0, `${action}: ${diagnostic}`)
         assert.equal(await handle.waitForExit(AbortSignal.timeout(10_000)), true)
       } catch (error) {
-        throw new Error(`${error.message}; ${action} stderr: ${handle.collected.stderr.readFrom(0).text}`, { cause: error })
+        throw new Error(`${error.message}; ${action} halfCloseFinished=${halfCloseFinished} writableFinished=${control.writableFinished} writableLength=${control.writableLength} destroyed=${control.destroyed}; stderr: ${handle.collected.stderr.readFrom(0).text}`, { cause: error })
       } finally {
         handle.terminate(); await handle.waitForExit(); control.destroy(); await ctx.fiber.dispose()
       }
