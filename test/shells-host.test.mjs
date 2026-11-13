@@ -6,6 +6,7 @@ import { startBashJob, waitOnBashJob } from '../lib/shells/jobs.js'
 import { sessionWorkdir } from '../lib/session-shells.js'
 import { hostForeground } from '../lib/shells/host-contract.js'
 import { assert, report, test, TEST_HOME } from './lib/harness.mjs'
+import { BASH_PARSE_CONTRACT } from '../lib/shells/prompt.js'
 
 function fixture({ mode = 'danger-full-access', jobs, approval, settle = true, exitCode = 0, file = process.execPath } = {}) {
   const calls = [], pending = Promise.withResolvers()
@@ -140,12 +141,17 @@ await test('escalation argument failures precede approval and execution', async 
 await test('completed foreground jobs leave the registry with their result', async () => {
   const jobs = jobRegistry(), f = fixture({ jobs })
   assert.match(f.definition.description, /long-running processes and daemons with run_in_background; job_kill terminates the job's entire process tree/)
-  // The host projection carries the same parse contract as the standalone rung (#892).
-  assert.match(f.definition.description, /check truncated before parsing structured output/)
-  assert.match(f.definition.description, /spillPath is optional, not a completeness guarantee/)
   const value = await f.definition.execute({ command: 'true', description: 'Run a foreground host job' }, f.exec)
   assert.equal(value.kind, 'foreground'); assert.equal(jobs.removed, true)
   assert.equal(jobs.outcome.detail, 'exit code: 0')
+})
+
+await test('the host projection carries the shared Bash parse contract with and without jobs', () => {
+  for (const options of [{}, { jobs: jobRegistry() }]) {
+    const { definition } = fixture(options)
+    assert.equal(definition.description.includes(BASH_PARSE_CONTRACT), true,
+      options.jobs === undefined ? 'foreground-only' : 'with jobs')
+  }
 })
 
 await test('timeout promotion returns the same job and consumes output exactly once', async () => {

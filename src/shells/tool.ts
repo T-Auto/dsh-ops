@@ -24,6 +24,7 @@ import {
   MAX_BASH_TIMEOUT_MS,
 } from './constants.js'
 import { BashArgumentError } from './argument-error.js'
+import { BASH_PARSE_CONTRACT } from './prompt.js'
 import { startBashExecution } from './execution.js'
 
 /**
@@ -197,7 +198,7 @@ export function bashToolDescription() {
     + 'tools for file operations. Each call uses a fresh non-login shell; set workdir explicitly. For Bash scripts '
     + 'longer than about 1 KB or containing heredocs, quotes, backslashes or non-ASCII text, write the script to '
     + 'a file first and pass script_path instead of embedding it in command. Use command for short commands and '
-    + 'pipelines. Fix failed Bash commands here, do not mix shell syntax. Check truncated before parsing structured output; spillPath is optional, not a completeness guarantee. '
+    + 'pipelines. Fix failed Bash commands here, do not mix shell syntax. ' + BASH_PARSE_CONTRACT + ' '
     + 'Verify absolute targets before delete/move. Foreground only: no run_in_background and no job id, so a '
     + 'server or watcher occupies the call until timeoutMs.'
 }

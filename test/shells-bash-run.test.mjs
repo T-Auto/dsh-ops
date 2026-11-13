@@ -20,6 +20,7 @@ import {
   resolveShells,
   withBashStatus,
 } from '../lib/shells.js'
+import { BASH_PARSE_CONTRACT } from '../lib/shells/prompt.js'
 import { sessionWorkdir } from '../lib/session-shells.js'
 import { assert, TEST_HOME, report, test, withTempDir } from './lib/harness.mjs'
 import { config, fakeSubprocess, makeExecutable } from './lib/shells-fixtures.mjs'
@@ -434,21 +435,8 @@ await test('the standalone Bash description preserves its fresh-shell and foregr
   assert.match(description, /no run_in_background and no job id/)
   assert.match(description, /occupies the call until timeoutMs/)
   assert.doesNotMatch(description, /pwsh|PowerShell|fallback/i)
-  // The parse contract is stated where the model reads it, not only in the schema (#892).
-  assert.match(description, /Check truncated before parsing structured output/)
-  assert.match(description, /spillPath is optional, not a completeness guarantee/)
-})
-
-await test('the Bash output schema states when text may be parsed and that spillPath is optional', async () => {
-  const { BASH_OUTPUT_SCHEMA } = await import('../lib/shells/tool.js')
-  for (const channel of ['stdout', 'stderr']) {
-    const properties = BASH_OUTPUT_SCHEMA.properties[channel].properties
-    // The declaration carries no prose: the tool text states the contract once, and the
-    // typed schema only keeps the shape claim (truncated required, spillPath optional).
-    for (const name of ['text', 'truncated', 'spillPath']) assert.equal(properties[name].description, undefined, name)
-    // The claim is the schema's own: truncated is required, spillPath is not.
-    assert.deepEqual(BASH_OUTPUT_SCHEMA.properties[channel].required, ['text', 'truncated'], channel)
-  }
+  // The parse contract is stated where the model reads it, from the one shared constant (#892).
+  assert.equal(description.includes(BASH_PARSE_CONTRACT), true, 'the shared parse contract sentence')
 })
 
 // A definition whose subprocess service is missing cannot exist in a real
