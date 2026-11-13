@@ -5,6 +5,8 @@ import { record } from '../boundary.js'
 import type { workerEnvelope } from '../protocol.js'
 import type { WorkerExchange } from '../transport.js'
 import { ENVELOPE_BYTES, ResidentFrames, encodeFrame } from './frames.js'
+import { ResidentShellChannel } from './shell-channel.js'
+import type { ShellTransport } from './shell-protocol.js'
 
 type Envelope = ReturnType<typeof workerEnvelope>
 interface Pending {
@@ -21,6 +23,7 @@ export interface ResidentClient {
   readonly file: string
   readonly pid: number
   readonly available: boolean
+  readonly shell: ShellTransport
   invoke(envelope: Envelope, signal?: AbortSignal, started?: () => void): Promise<WorkerExchange>
   stop(): Promise<void>
 }
@@ -40,6 +43,7 @@ function exchange(value: unknown): value is WorkerExchange {
 
 class Client implements ResidentClient {
   pid = 0
+  readonly shell: ResidentShellChannel
   private readonly pending = new Map<string, Pending>()
   private readonly frames: ResidentFrames
   private readonly hello: Promise<void>
@@ -55,7 +59,12 @@ class Client implements ResidentClient {
     // The startup waiter is installed immediately; all paths also await it below.
     void this.hello.catch(() => {})
     if (!handle.control) throw new Error('The host did not provide a resident control pipe')
-    this.frames = new ResidentFrames(handle.control, value => this.receive(value), error => this.fail(error))
+    this.shell = new ResidentShellChannel(() => this.available, (value, sending) => this.frames.send(encodeFrame(value), sending), error => this.fail(error))
+    this.frames = new ResidentFrames(handle.control, value => this.receive(value), error => this.fail(error),
+      // 32 file + 32 shell executions, their 64 cancels, 32 admissions,
+      // 64 retire/close controls, 64 stream reads, 32 releases and shutdown.
+      // Each frame remains byte-bounded; one outstanding write preserves backpressure.
+      () => this.shell.capabilities.includes('shell-v1') ? 321 : 65)
     this.timer = setTimeout(() => this.fail(new Error('Resident kernel handshake exceeded 10000ms')), 10_000)
     handle.done.then(() => this.fail(new Error('Resident kernel exited')), error => this.fail(new Error(`Resident kernel failed: ${String(error)}`)))
   }
@@ -68,12 +77,16 @@ class Client implements ResidentClient {
     if (!record(value)) throw new Error('Resident message is not an object')
     if (value.type === 'ready') {
       if (this.pid || value.version !== 1 || !Number.isSafeInteger(value.pid) || Number(value.pid) < 1) throw new Error('Invalid resident handshake')
+      if (value.capabilities !== undefined && (!Array.isArray(value.capabilities) || value.capabilities.length > 16
+        || value.capabilities.some(capability => typeof capability !== 'string' || capability.length > 64))) throw new Error('Invalid resident capabilities')
+      this.shell.capabilities = Object.freeze([...(value.capabilities as string[] | undefined) ?? []])
       this.pid = Number(value.pid)
       clearTimeout(this.timer)
       this.ready()
       return
     }
     if (!this.pid || typeof value.requestId !== 'string') throw new Error('Resident message precedes handshake or lacks requestId')
+    if (this.shell.receive(value)) return
     const pending = this.pending.get(value.requestId)
     if (!pending) throw new Error('Resident message has an unknown requestId')
     if (value.type === 'started') {
@@ -112,6 +125,7 @@ class Client implements ResidentClient {
       try { diagnostic = this.handle.collected.stderr?.readFrom(0).text ?? '' } catch { /* provider failure */ }
       for (const request of pending) if (request.sent) request.resolve({ exitCode: null, interrupted: true, readers: true, lossy: false,
         stderr: [error.message.slice(0, 1000), cleanupFailure.slice(0, 1000), diagnostic.slice(-2000)].join('\n') })
+      this.shell.unavailable(error.message.slice(0, 1000), cleanupFailure === '')
     })()
   }
   invoke(envelope: Envelope, signal?: AbortSignal, started?: () => void): Promise<WorkerExchange> {

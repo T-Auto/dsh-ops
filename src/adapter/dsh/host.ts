@@ -14,6 +14,17 @@ export async function loadUserMessage(): Promise<typeof import('@deepseek-ai/dsh
   return llm.createUserMessage
 }
 
+/** Use the running host's public scrub, including its active proxy environment. */
+export async function loadScrubbedParentEnv(): Promise<Record<string, string>> {
+  const anchor = hostEntryAnchor()
+  let source: string
+  try { source = anchor ? pathToFileURL(createRequire(anchor).resolve('@deepseek-ai/dsh-subprocess')).href : import.meta.resolve('@deepseek-ai/dsh-subprocess') }
+  catch { throw new Error('EXECUTOR_UNAVAILABLE: the host public subprocess environment API is unavailable.') }
+  const host = await import(source) as typeof import('@deepseek-ai/dsh-subprocess')
+  if (typeof host.scrubbedParentEnv !== 'function') throw new Error('EXECUTOR_UNAVAILABLE: the host public environment scrub is unavailable.')
+  return host.scrubbedParentEnv()
+}
+
 export function service<T>(ctx: Pick<Context, 'get'>, name: string): T | undefined {
   try {
     const value = ctx.get(name as never)
