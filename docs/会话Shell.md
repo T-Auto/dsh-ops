@@ -84,6 +84,16 @@ payload 校验；须明确提供 `--worker`、`--bash`、`--shell-env`、`--cont
 它直接使用包根入口，不注入准入服务，并验证 Native/PTC 状态及三种 sandbox 模式下的完整输出
 恢复。在完整运行时获准前，该探针应拒绝启动。这些检查均不证明性能提升。
 
+隔离源码构建的候选版本通过全部九个正常根入口检查，覆盖 Native/PTC 状态、独立 fresh 调用、
+明确拒绝/重置，以及三种 sandbox 模式下显式等待的后台 stdout/stderr 完整恢复。相对源码
+`d0aa842c` 仅修改完整运行时 manifest 与其获准清单摘要，没有注入准入服务。worker SHA-256 为
+`9b25fceacb73ab1abe53b64b291b89d8ee8896cb9d8df6cfa7a1983f993715c0`；运行时清单摘要为
+`24bd2f20fea7e6358aa9f75f1fa4d1896ee3b4962d42042bfd2f5e4ca8317068`。
+清理已确认且观测内核已退出。本地报告 `c5-qualification-public.json` 的 SHA-256 为
+`4fc90c521b1850aa88c800b5e006ea10cf1bae8b828372f6e8f924a6f245b063`；
+`c5-qualification-receipt.json` 记录精确源码补丁与完整 payload。候选归档仍未发布，已提交的
+运行时 pin 与获准清单集合保持不变。
+
 合入 fresh 任务与会话 spill 后，六个针对性套件的 92 个检查通过。提交前和排队准入时均检查
 精确的发布 Agent。在隔离编译副本中仅移除该相等性检查后，保留定义调用兄弟 Agent 的测试失败
 （13 通过、1 失败）；未改动的实现通过全部 14 个发布检查。

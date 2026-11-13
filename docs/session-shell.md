@@ -101,6 +101,17 @@ without an injected admission service and checks Native/PTC state plus complete 
 in all three sandbox modes. Until a complete runtime is qualified, that probe must refuse startup.
 None of these focused checks establish a performance improvement.
 
+An isolated source-built candidate passed all nine normal-root probe checks, including Native/PTC
+state, independent fresh calls, explicit refusals/reset, and waited background stdout/stderr recovery
+in all three sandbox modes. Only the complete runtime manifest and its accepted inventory digest
+differed from source `d0aa842c`; no admission service was injected. Worker SHA-256 was
+`9b25fceacb73ab1abe53b64b291b89d8ee8896cb9d8df6cfa7a1983f993715c0`; runtime inventory was
+`24bd2f20fea7e6358aa9f75f1fa4d1896ee3b4962d42042bfd2f5e4ca8317068`.
+Cleanup was confirmed and the observed kernel exited. The local report `c5-qualification-public.json`
+has SHA-256 `4fc90c521b1850aa88c800b5e006ea10cf1bae8b828372f6e8f924a6f245b063`;
+`c5-qualification-receipt.json` records the exact source patch and complete payload. The candidate
+archive remains unpublished, and the shipped runtime pin and accepted inventory set are unchanged.
+
 After integration with fresh tasks and session spill, 92 checks across six focused suites passed.
 The exact publishing Agent is checked before submission and again during queued admission.
 Removing only that equality in an isolated compiled copy makes the retained-definition sibling
