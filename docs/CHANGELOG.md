@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Add an internal resident-shell host adapter that rechecks current authority at each native queue head, scopes one-call grants and awaits owner cleanup. Bounded transport and terminal output collection preserve explicit effect and state-loss facts; public session tools and recoverable spill remain pending (#872).
+- 添加内部常驻 shell 宿主适配器：每次原生队首准入重查当前权限、限制单次批准范围并等待所有者回收。有界通道与终态输出收集保留明确效果和状态丢失事实；公开会话工具与可恢复 spill 仍待完成（#872）。
+
 - Add a Windows resident shell queue with per-request admission, deadlines, cancellation and explicit state-loss results. Bounded output replies preserve control-reader responsiveness, and a blocked start acknowledgement remains cancellable. Repository-only regressions exercise real public-host ownership; model-facing shell publication and DSH jobs remain pending (#872).
 - 添加 Windows 常驻 shell 队列，按请求准入、计时、取消并明确报告状态丢失。有界输出回复保持控制 reader 可响应，开始回执阻塞时仍能取消。仓库专用回归验证真实公开宿主所有权；模型可见 shell 发布与 DSH jobs 仍待完成（#872）。
 

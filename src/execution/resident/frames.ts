@@ -3,7 +3,7 @@ import type { Duplex } from 'node:stream'
 
 export const ENVELOPE_BYTES = 2 * 1024 * 1024
 export const FRAME_BYTES = ENVELOPE_BYTES + 256
-const QUEUED_FRAMES = 65 // 32 executions, one cancellation each, one shutdown.
+const QUEUED_FRAMES = 65 // File-only: 32 executions, one cancellation each, one shutdown.
 interface Queued { bytes: Buffer; sending(): void }
 
 export function encodeFrame(value: unknown): Buffer {
@@ -17,7 +17,8 @@ export class ResidentFrames {
   private readonly queue: Queued[] = []
   private writing = false
   private stopped = false
-  constructor(private readonly pipe: Duplex, receive: (value: unknown) => void, private readonly failed: (error: Error) => void) {
+  constructor(private readonly pipe: Duplex, receive: (value: unknown) => void, private readonly failed: (error: Error) => void,
+    private readonly capacity: () => number = () => QUEUED_FRAMES) {
     pipe.on('error', error => failed(error))
     pipe.on('end', () => failed(new Error('Resident control channel ended')))
     pipe.on('close', () => failed(new Error('Resident control channel closed')))
@@ -43,7 +44,7 @@ export class ResidentFrames {
   /** Return a remover for a frame that has not reached the writable stream yet. */
   send(bytes: Buffer, sending: () => void = () => {}): () => boolean {
     if (this.stopped) throw new Error('Resident control channel is closed')
-    if (this.queue.length >= QUEUED_FRAMES) throw new Error('Resident control queue is full')
+    if (this.queue.length >= this.capacity()) throw new Error('Resident control queue is full')
     const entry = { bytes, sending }
     this.queue.push(entry)
     this.pump()
