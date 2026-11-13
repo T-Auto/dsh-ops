@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Native tool construction and the publication refusal queue no longer attach listeners or lifetime effects to the composition root. The evidence observer and result admission subscribe on the caller's context with global dispatch, and the refusal queue falls back to the caller lifetime when the root refuses an effect. dsh-tui 0.20 refuses `root.events.on` and `root.effect` from a plugin activation, and the native-tools row is one, so every `dsh-tui --resume` aborted with "cannot resume session" before the agent mounted.
+- 原生工具构造与发布拒绝队列不再向组合根挂监听或生命周期 effect：证据观察者与 result admission 改为在调用方上下文订阅并声明 global 分发，拒绝队列在 root 拒绝 effect 时回落到调用方生命周期。dsh-tui 0.20 会拒绝插件激活期内的 `root.events.on` 与 `root.effect`，而原生工具行正是插件激活，导致每次 `dsh-tui --resume` 都在 agent 挂载前报 "cannot resume session"。
+
 ## [0.5.5] — 2026-11-13 — Patch release
 
 - A loader-less PTC scope no longer registers the configured `allowedTools` pool: with dynamic loading off nothing could ever select those APIs, and a host assembly without a step tool set declared all sixteen in `tools:sdk`. Resident publication, the default inspect + loader set and selection behavior are unchanged (#887).

@@ -91,13 +91,18 @@ function queueFor(ctx: Context): Queue {
     else flush()
   } }
   queues.set(root, queue)
-  root.effect(() => () => {
+  const teardown = () => {
     stopped = true
     if (timer) clearTimeout(timer)
     timer = undefined
     for (const work of pending) work.reject(new Error('Publication root disposed'))
     pending.clear(); queues.delete(root)
-  }, 'dsh-ops: registry refusal queue')
+  }
+  // The queue belongs to the root, but dsh-tui's root-capability guard refuses
+  // `root.effect` from a plugin activation, which the native-tools row is. The
+  // caller's own lifetime hook keeps the queue teardown reachable there.
+  try { root.effect(() => teardown, 'dsh-ops: registry refusal queue') }
+  catch { if (typeof ctx.effect === 'function') ctx.effect(() => teardown, 'dsh-ops: registry refusal queue') }
   return queue
 }
 
