@@ -11,8 +11,6 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 原生工具构造与发布拒绝队列不再向组合根挂监听或生命周期 effect：证据观察者与 result admission 改为在调用方上下文订阅并声明 global 分发，拒绝队列在 root 拒绝 effect 时回落到调用方生命周期。dsh-tui 0.20 会拒绝插件激活期内的 `root.events.on` 与 `root.effect`，而原生工具行正是插件激活，导致每次 `dsh-tui --resume` 都在 agent 挂载前报 "cannot resume session"。
 - The Bash tool description now states the parse contract of `stdout`/`stderr` where the model reads it: `text` may be a partial fragment, `truncated` marks one that must not be parsed as complete structured output, and `spillPath` is optional and not a completeness guarantee. The typed output schema is unchanged: repeating the contract there would cost every PTC request without saying anything the tool text does not. Command semantics, exit codes, result values, limits, spill files, permissions and rendering are unchanged.
 - Bash 工具说明现在在模型读取它的地方写明 `stdout`/`stderr` 的解析契约：文本可能只是片段，`truncated` 标记的片段不得当作完整结构化输出解析，`spillPath` 是可选项且不保证完整。输出类型 schema 保持不变：在那里重复这段契约只会让每个 PTC 请求更贵，并不会多说明什么。命令语义、退出码、结果值、上限、落盘、权限与渲染均不变。
-- Turning a PTC preset's `dynamicTools` off now publishes the configured pool (`allowedTools` plus `result`) as resident instead of leaving the scope with no reachable API. The loader is gone, yet every callable API stays visible; this is the cache-friendly choice for providers that break on dynamically added tools. `residentTools: false` still publishes nothing, so the declaration-surface guard is preserved.
-- PTC 预设关闭 `dynamicTools` 后改为把配置池（`allowedTools` 与 `result`）作为常驻发布，而不是让作用域失去任何可达 API：加载器消失，但全部可调用 API 仍然可见，这是给不支持动态工具增删的提供商准备的缓存友好选项。`residentTools: false` 仍不发布任何启动 API，声明面守卫得以保留。
 
 ## [0.5.5] — 2026-11-13 — Patch release
 
