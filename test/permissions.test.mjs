@@ -5,9 +5,10 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
-import { assert, test, report, skipSuite, withTempDir, ownWindowsFixture } from './lib/harness.mjs'
+import { assert, test, report, skipSuite, waitFor, withTempDir, ownWindowsFixture } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
-import { mountResident } from './lib/resident.mjs'
+import { mountResident, providePublicationAuthorities } from './lib/resident.mjs'
+import { residentFreshTasks } from '../lib/execution/resident/fresh-provider.js'
 import { prepareWorkspace, mountWorkspacePreparation, runPreparation, preparationEnvironment, preparationSpawnSpec } from '../lib/workspace-preparation.js'
 import { invoke as fileCall } from '../lib/file/worker.js'
 import { invoke as ptcCall } from '../lib/ptc/worker.js'
@@ -314,11 +315,13 @@ await test('owned Modify-only workspace starts real DSH sandbox; three modes and
     const {ctx}=await bootHost({ withWorkingDirectory: true })
     const agent={id:'matrix',session:{id:'matrix',mode:'workspace-write',header:{cwd:root},append(){return Promise.resolve()},read(){return []}}}
     agent.ctx=createScope(ctx,agent).ctx
+    providePublicationAuthorities(ctx, [agent])
     try {
       await ctx.plugin(Subprocess); await ctx.plugin(Sandbox,{})
       await mountResident(ctx, { file: worker })
       await ctx.plugin(FileSystem,{})
       await ctx.plugin(inner=>inner.provide('sandboxPolicy',{defaultMode:'workspace-write',resolve:({session})=>({mode:session?.mode ?? agent.session.mode,workspaceRoot:root,sessionId:session?.id ?? agent.session.id})}))
+      await ctx.plugin(residentFreshTasks())
       await ctx.plugin(inner=>mountWorkspacePreparation(inner))
       // This is the outer transport gate: it must run before run_code launches,
       // not after the first nested ops call.
@@ -385,8 +388,8 @@ await test('owned Modify-only workspace starts real DSH sandbox; three modes and
       }
       await ctx.plugin({inject:['tools','systemPrompt'],apply(inner){mountSessionBash(inner,{publishBashTool:true},shells)}})
       await ctx.serial('agent/created',{agent})
-      let bash
-      for(let n=0;n<50;n++) { bash=ctx.get('tools').get('ops_bash',agent);if(bash)break;await new Promise(r=>setTimeout(r,10)) }
+      await waitFor(() => Boolean(ctx.get('tools').get('ops_bash', agent)), { what: 'permission matrix fresh Bash publication' })
+      const bash=ctx.get('tools').get('ops_bash',agent)
       assert.ok(bash)
       let result=await bash.execute({description:"Check session permission enforcement",command:"printf 'READ_OK'",workdir:root,timeoutMs:10000},exec)
       if (process.platform==='win32' && result.error?.startsWith('EXECUTOR_UNAVAILABLE')) {

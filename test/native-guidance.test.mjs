@@ -24,9 +24,11 @@ await test('directory refusal does not route to an absent file tool', () => {
 })
 await test('Native guidance follows readiness, dynamic publication, hiding and mode changes', () => withTempDir('native-guidance', async cwd => {
   const { ctx } = await bootHost()
-  let mounted, discovery, active = false, keep = false, refresh = () => {}
+  let mounted, discovery, active = false, keep = false
   const live = [], target = publicToolName('inspect_local_file')
-  const gate = { allows: () => active, watch: notify => { refresh = notify; return () => {} } }
+  const observers = new Set()
+  const refresh = () => { for (const notify of observers) notify() }
+  const gate = { allows: () => active, watch: notify => { observers.add(notify); return () => observers.delete(notify) } }
   try {
     for (const plugin of [Subprocess, Sandbox, FileSystem]) await ctx.plugin(plugin, {})
     await mountResident(ctx, { file: WORKER, cwd })
@@ -38,7 +40,7 @@ await test('Native guidance follows readiness, dynamic publication, hiding and m
       mountNative(inner, resolveConfig({ required: true, binaryPath: WORKER }), { id: 'native-guidance', tools: ['inspect_local_file'], section: 'mode-standard', gate })
       mountReplacements(inner, { id: 'native-guidance', targets: new Map([['read', target]]), gate, keepOfficial: () => keep })
     } })
-    await new Promise(resolve => setImmediate(resolve))
+    await waitFor(() => observers.size === 2, { what: 'Native and replacement gate subscriptions' })
     const agent = { id: 'native-guidance', session: { id: 'native-guidance', mode: 'danger-full-access', header: { cwd } } }
     await ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { agent.ctx = createScope(inner, agent).ctx } })
     live.push(agent)

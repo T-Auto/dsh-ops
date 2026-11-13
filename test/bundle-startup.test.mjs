@@ -12,6 +12,7 @@ import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
 import { createScope, scopeOf, scopeParentOf } from '@deepseek-ai/dsh-scope'
 import { evaluate, isJsExpr } from '@deepseek-ai/cordis-plugin-loader'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { providePublicationAuthorities } from './lib/resident.mjs'
 import { assert, test, report, waitFor, withTempDir, PACKAGE_ROOT } from './lib/harness.mjs'
 import { resolveWorker } from '../lib/ptc/runtime.js'
 import { modeSectionName, publicToolName } from '../lib/policy.js'
@@ -35,7 +36,7 @@ async function mountBundle(ctx) {
  * parent scope exactly as the host composes a built-in preset; the agent scope
  * inherits them, and an agent-scope restriction can only hide inherited names.
  */
-async function mintAgent(ctx, presets, { id, mode, root, preset, presentation }) {
+async function mintAgent(ctx, presets, live, { id, mode, root, preset, presentation }) {
   const presetScope = createScope(ctx, { preset: `${id}-preset` }).ctx
   presets.set(scopeOf(presetScope), preset)
   // These are the real standard-preset tool-fs and tool-fs-search rows, not fake
@@ -47,6 +48,7 @@ async function mintAgent(ctx, presets, { id, mode, root, preset, presentation })
   // inherits that dependency API, so per-agent restrictions are callable.
   await presetScope.plugin({ inject: ['tools'], apply(inner) { agent.ctx = createScope(inner, agent, { parent: scopeOf(presetScope) }).ctx } })
   await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, presentation) } })
+  live.push(agent)
   await ctx.serial('agent/created', { agent, source: 'startup' })
   return agent
 }
@@ -62,6 +64,8 @@ for (const mode of ['read-only', 'workspace-write', 'danger-full-access']) {
         await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: root, sessionId: session.id }) }))
         await ctx.plugin(NodePtc, {})
         const presets = new Map()
+        const live = []
+        providePublicationAuthorities(ctx, live)
         // The real host exposes a preset registry; this stub answers for this
         // fixture's scopes only, exactly as `composedPreset(agent.ctx)` does.
         ctx.provide('agentPresets', { composedPreset: scoped => presets.get(scopeParentOf(scopeOf(scoped))) })
@@ -76,8 +80,9 @@ for (const mode of ['read-only', 'workspace-write', 'danger-full-access']) {
 
         // A Standard-preset agent receives the resident native file tools, their
         // discovery entry, and no replaced official file tools.
-        const standard = await mintAgent(ctx, presets, { id: `${mode}-standard`, mode, root, preset: 'standard', presentation: 'native' })
+        const standard = await mintAgent(ctx, presets, live, { id: `${mode}-standard`, mode, root, preset: 'standard', presentation: 'native' })
         await waitFor(() => names(standard).includes('ops_inspect_local_file') && names(standard).includes('ops_discover_tools'), { what: `${mode} standard publication` })
+        if (process.platform === 'win32') await waitFor(() => names(standard).includes('ops_bash'), { what: `${mode} standard fresh Bash publication` })
         for (const resident of ['ops_inspect_local_file', 'ops_glob', 'ops_grep']) assert.ok(names(standard).includes(resident), `${resident}: ${names(standard).join(', ')}`)
         const standardNames = await admitted(standard)
         assert.ok(['read', 'glob', 'grep'].every(name => !standardNames.includes(name)), 'admitted replacements exclude official schemas')
@@ -103,7 +108,7 @@ for (const mode of ['read-only', 'workspace-write', 'danger-full-access']) {
         console.log(`    startup ${mode}/standard: ${standardPrompt.tools.length} wire tools; resident OPS replaces read/glob/grep`)
 
         // A Cordis-preset agent is served by its own row, with its own section.
-        const cordis = await mintAgent(ctx, presets, { id: `${mode}-cordis`, mode, root, preset: 'cordis', presentation: 'native' })
+        const cordis = await mintAgent(ctx, presets, live, { id: `${mode}-cordis`, mode, root, preset: 'cordis', presentation: 'native' })
         await waitFor(() => names(cordis).includes('ops_inspect_local_file'), { what: `${mode} cordis publication` })
         assert.equal((await admitted(cordis)).includes('read'), false)
         const cordisPrompt = await assembled(cordis)
@@ -111,7 +116,7 @@ for (const mode of ['read-only', 'workspace-write', 'danger-full-access']) {
 
         // The Minimal preset keeps its official tools and receives only the
         // discovery entry. It publishes no routing section.
-        const minimal = await mintAgent(ctx, presets, { id: `${mode}-minimal`, mode, root, preset: 'minimal', presentation: 'native' })
+        const minimal = await mintAgent(ctx, presets, live, { id: `${mode}-minimal`, mode, root, preset: 'minimal', presentation: 'native' })
         await waitFor(() => names(minimal).includes('ops_discover_tools'), { what: `${mode} minimal discovery entry` })
         for (const resident of ['ops_inspect_local_file', 'ops_read_files', 'ops_glob', 'ops_grep']) assert.equal((await admitted(minimal)).includes(resident), false, `${mode}: minimal publishes no ${resident}`)
         for (const official of ['read', 'glob', 'grep']) assert.ok(names(minimal).includes(official), `${mode}: minimal keeps ${official}`)
@@ -120,7 +125,7 @@ for (const mode of ['read-only', 'workspace-write', 'danger-full-access']) {
 
         // A PTC-preset agent publishes the scoped SDK surface and no native
         // routing text; official file tools stay visible (the PTC row replaces none).
-        const ptc = await mintAgent(ctx, presets, { id: `${mode}-ptc`, mode, root, preset: 'ptc', presentation: 'ptc' })
+        const ptc = await mintAgent(ctx, presets, live, { id: `${mode}-ptc`, mode, root, preset: 'ptc', presentation: 'ptc' })
         await waitFor(() => names(ptc).includes('ops_load_sdk'), { what: `${mode} PTC publication` })
         assert.equal(names(ptc).includes('read'), true, 'the PTC row replaces no official file tool')
         const ptcPrompt = await assembled(ptc)
@@ -139,6 +144,8 @@ await test('a missing optional Bash leaves the native file surface available', a
       await ctx.plugin(Sandbox, {})
       await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: root, sessionId: session.id }) }))
       const presets = new Map()
+      const live = []
+      providePublicationAuthorities(ctx, live)
       ctx.provide('agentPresets', { composedPreset: scoped => presets.get(scopeParentOf(scopeOf(scoped))) })
       for (const row of rows.filter(enabled)) {
         await ctx.plugin(await import('../lib/index.js'), {
@@ -148,6 +155,7 @@ await test('a missing optional Bash leaves the native file surface available', a
       const presetScope = createScope(ctx, { preset: 'no-bash-preset' }).ctx
       presets.set(scopeOf(presetScope), 'standard')
       const agent = { id: 'no-bash', session: { id: 'no-bash', mode: 'workspace-write', header: { cwd: root } } }
+      live.push(agent)
       await presetScope.plugin({ inject: ['tools'], apply(inner) { agent.ctx = createScope(inner, agent, { parent: scopeOf(presetScope) }).ctx } })
       await ctx.serial('agent/created', { agent, source: 'startup' })
       const names = () => ctx.get('tools').schemas(agent).map(tool => tool.name)
