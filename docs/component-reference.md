@@ -84,6 +84,15 @@ Find regular files below `path`. `pattern` is an **array** of globs matched segm
 
 `outputMode: "details"` adds `bytes` (the on-disk size) and `modified`, a real modification time in **milliseconds since the Unix epoch** — the same quantity and unit `ops_stat` reports as `modifiedMs`, and `null` when the filesystem cannot report one. `sort: "modified"` orders newest first and is stable: equal timestamps keep the walk's path order. `sort: "path"` and an omitted `sort` both keep that walk order.
 
+Dot-prefixed directories (`.github`, `.vscode`, `.config`) are pruned by default, and the pruning happens before any pattern is matched, so naming one in `pattern` cannot bring it back. Set `includeHidden: true` to traverse them. The switch lifts **only** that rule:
+
+- `node_modules`, `target`, `.venv` and `.git` stay pruned, as do symlinks, junctions and reparse points.
+- The plugin's own `.dsh-ops` sidecars — the store directory, the `.dsh-ops-update-<sha256>.lock` update lock and the `.<name>.dsh-ops-<uuid>` atomic-write temporary — stay invisible under every setting. The lock guards concurrent writes and the temporary holds bytes that are not yet committed, so neither a directory-wide rewrite nor a search may reach them. These are matched as whole names rather than a prefix, which is why caller content such as `.dsh-ops-backup/` or `.dsh-ops.json` keeps working.
+- A caller-supplied `!` exclusion still wins.
+- Scan budgets, credential denials and the no-follow rule are unchanged.
+
+`includeHidden` also declines the index for that call and takes the live walk: an index built with dot directories pruned cannot answer a question about them, and teaching it a second policy would make two answers disagree. Change the flag between pages and the older continuation is rejected with `SEARCH_STALE` — the flag is part of the cursor's binding.
+
 | Parameter | Type | Notes |
 | --- | --- | --- |
 | `path` | string | Search root |
@@ -92,10 +101,13 @@ Find regular files below `path`. `pattern` is an **array** of globs matched segm
 | `sort` | `path` \| `modified` | Ordering |
 | `offset` | integer | Paging start |
 | `limit` | integer 1–10000 | Maximum entries |
+| `includeHidden` | boolean | Traverse dot-prefixed directories; default `false` |
 
 ### `ops_grep`
 
 Search UTF-8 files below `path` with Rust regex, bounded output, paging and optional line context. `pattern` is **one** regex string; filter files with `glob`, an array in the same syntax as `ops_glob`. **There is no `include` field.** `glob` may contain only exclusions ("everything except"); when `path` is a single file, `glob` is ignored.
+
+`includeHidden` behaves exactly as it does in `ops_glob` — same default, same scope, same `.dsh-ops` and reserved-tree exclusions — so the two tools cannot disagree about which files exist. Naming a dot directory in `glob` does not substitute for it: the walk prunes before matching.
 
 Use `summary` for aggregate file/match totals, `count` for per-file counts, `content` for matching text (default), or `definitions` for only the lines where the matched identifier is declared: function, method, class/interface/type, variable and macro positions, including function-valued declarations. The classification is lexical — it recognises declaration keywords, modifiers and line shape, skips comment and string bodies, and is not a parser, so a miss does not prove absence; use `content` for the exhaustive set. `definitions` searches individual lines only, so `multiline`, `beforeContext` and `afterContext` are rejected. On a complete scan, `matched` counts every matching line the walk saw and `total` counts the returned declaration lines, so `matched - total` is the reference count it did not return; each item adds `kind`. Each item page defaults to 100 entries. By default (`exactTotal: true`), each call scans candidates to count global totals while materializing only the requested window. Set `exactTotal: false` for a first-prefix query that stops at `offset + limit` matching rows; content stops within a file, while count/file modes finish that file so per-file counts remain exact. An early stop reports `scanComplete: false`, `truncatedBy: row-limit` and `matchedObserved` as a lower bound, with no `matchedTotal`, `total` or stable continuation. Start a fresh exact query for complete totals. Summary mode and requests with a continuation always scan fully.
 
@@ -108,6 +120,7 @@ Follow a returned continuation for stable remaining pages, keeping query options
 | `glob` | string[] | Restrict files |
 | `outputMode` | `files_with_matches` \| `content` \| `count` \| `summary` \| `definitions` | Output shape; `definitions` returns declaration lines only (lexical, no multiline/context) |
 | `caseInsensitive` | boolean | Ignore case |
+| `includeHidden` | boolean | Traverse dot-prefixed directories; default `false` |
 | `lineNumbers` | boolean | Show line numbers |
 | `beforeContext` / `afterContext` | integer ≤ 32 | Context lines |
 | `multiline` | boolean | Multi-line matching |

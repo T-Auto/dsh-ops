@@ -72,6 +72,14 @@ pub struct Scan {
     pub stopped: Option<TruncatedBy>,
     /// Traversal that produced this scan's observations.
     pub source: SourceKind,
+    /// Whether ordinary dot-prefixed directories are traversed.
+    ///
+    /// The caller sets this from its own arguments; `Scan::new()` keeps the
+    /// historical answer. It lifts only [`dotdir`]: the plugin's own sidecars
+    /// stay invisible to every selection tool regardless, so a directory-wide
+    /// `ops_replace` can never rewrite an update lock or read a half-written
+    /// temporary.
+    pub include_hidden: bool,
     pub hash: Sha256,
     started: Instant,
     timeout: Duration,
@@ -93,6 +101,7 @@ impl Scan {
             failed: 0,
             stopped: None,
             source: SourceKind::Walk,
+            include_hidden: false,
             hash: Sha256::new(),
             started: Instant::now(),
             timeout: SCAN_TIMEOUT,
@@ -511,7 +520,10 @@ impl Scan {
                 self.skip("symlink", file, false);
                 continue;
             }
-            if hidden(&child, root) || matches!(name.as_str(), "node_modules" | "target" | ".venv")
+            // A caller may opt into ordinary dot directories, but never into
+            // the plugin's own sidecars: `internal` shields the update lock, so
+            // no flag makes an `.dsh-ops-*` file observable here.
+            if (dotdir(&child, root) && !self.include_hidden) || internal(&name) || reserved(&name)
             {
                 self.skip("excluded", file, false);
                 continue;
