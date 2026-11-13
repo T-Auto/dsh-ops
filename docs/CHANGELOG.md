@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Add a repository-only regression that runs the production resident server with deliberately blocked fixture leaves. Targeted cancellation, disconnect, kernel crash and provider unload must join their owned leaves while unrelated work continues; the four-platform CI runs this check (#872). No shipped tool behavior changes.
+- 增加仓库专用回归探针：让生产常驻服务运行确定阻塞的测试执行子进程。定向取消、断连、内核崩溃和 provider 卸载必须回收所属执行，且不影响无关工作；四个平台的 CI 均运行此检查（#872）。不改变已发布工具行为。
+
 - Start one resident kernel before publishing the main row's Native/PTC file tools and reuse its connection for local file calls. Standalone integrations now explicitly mount `residentKernel()` once in their common owning activation. Removing a consumer preserves siblings; removing the provider withdraws file admission. WSL reads, confined PTC batch/result operations and cache cleanup retain their existing execution constraints and runners (#872).
 - 主入口先启动一个常驻内核，再发布 Native/PTC 文件工具；本地文件调用复用该连接。独立集成现在需要在共同所有者的激活作用域中显式挂载一次 `residentKernel()`。移除单个消费者不影响其余消费者；移除 provider 会撤销文件执行准入。WSL 读取、受约束的 PTC batch/result 操作与缓存清理仍保留原有执行约束及 runner（#872）。
 

@@ -219,6 +219,19 @@ persistent shells, task jobs and complete acceptance remain pending.
 
 ## Implementation slices and exit evidence
 
+The deterministic isolation regression builds `native/examples/resident_blocked.rs` and runs
+`node bench/probes/probe-872-isolation.mjs` after the normal plugin build. The example imports
+the production `resident.rs` directly; its one-shot leaf writes a PID receipt only after stdin
+EOF and then blocks for ten minutes. No test switch or environment hook enters the shipped worker.
+The probe uses the production client and the pinned public subprocess provider. It proves that
+one blocked request can be killed while another blocked leaf and fast requests remain alive,
+and that disconnect, kernel crash and provider unload join their owned leaves without replay.
+An observer records exact PIDs and checks survivors before emergency cleanup. The Windows run
+passes all four checks with no survivors; CI runs the same checks on all four shipped platforms.
+Reports remain under `bench/runs/blocked-resident-*`. This is controlled blocking in a test leaf,
+not arbitrary filesystem cancellation, the production deadline path, three full DSH applications,
+persistent-shell isolation, or the five-minute quiet-task acceptance requirement.
+
 | Slice | Runnable delivery | Required evidence before accepting that slice |
 | --- | --- | --- |
 | A — resident vertical slice | Plugin-owned startup/handshake, one existing read-only dispatch on a small local fixture, unload and forced-host-exit handling. | Real public host interfaces; exactly one owned process; repeated request without EOF/per-call runner; bounded framing; lifecycle probe; full old-path call baseline. This is not completion of persistent shell or general file migration. |

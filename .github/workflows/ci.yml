@@ -85,6 +85,11 @@ jobs:
         env:
           WORKER_TARGET: ${{ matrix.worker_target }}
         run: node scripts/verify-gate.mjs --skip-install --target ${{ matrix.target }} ${WORKER_TARGET:+--worker-target "$WORKER_TARGET"}
+      - name: Resident blocked-request isolation
+        shell: bash
+        run: |
+          cargo build --locked --manifest-path native/Cargo.toml --example resident_blocked
+          node bench/probes/probe-872-isolation.mjs
       - name: Assert the Linux worker is statically linked
         if: runner.os == 'Linux'
         shell: bash
