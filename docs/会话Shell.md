@@ -1,12 +1,11 @@
 # 显式会话 Bash 执行
 
-这是尚未发布的 #872 集成切片。发布前仍须验收原生 shell transport 与运行时、可恢复的原生输出
-spill/分页、由内核拥有的显式 job，以及剩余生命周期和性能要求。当前只保留前缀是已知缺口，
-不能替代原有完整 spill 契约。
+本 #872 集成将显式会话投影接入共享的[原生输出与保留契约](会话输出溢写.md)及生产 fresh
+任务路径。合格运行时分发与最终生命周期、性能验收仍是发布前提。
 
 `ops_bash` 默认仍为 `execution: "fresh"`，保留既有工作目录解析、审批、脚本文件、输出 spill 和
 宿主 Jobs 行为。当前生产运行时 pin 仍仅支持 fresh：尚无完整软件包通过持久协议所有权验收，也没有
-配置覆盖开关。未来完整软件包获准、所属内核声明 `shell-v1` 且权限服务就绪后，同一工具才能接受 `execution: "session"`。
+配置覆盖开关。完整软件包获准、所属内核同时声明 `shell-v1` 与 `shell-spill-v1` 且权限服务就绪后，同一工具才能接受 `execution: "session"`。
 Native 调用与 PTC 的 `tools.ops_bash()` 共用根激活作用域拥有的准入服务；没有另一套 PTC shell，
 也不会隐式回退到 fresh。
 
@@ -60,28 +59,38 @@ fresh，且不继承持久 shell 的函数或 cwd 变化。留下隐式后台进
 内核会重置所属执行范围；显式等待结束的命令仍是普通前台工作。
 
 输出分 stdout/stderr，`retention: "prefix"` 表示每流最多保留前 128 KiB；`bytesTotal` 计数观测
-到的字节，`truncated` 标明丢失。不伪造 `spillPath`，不能分页取回丢弃字节，也不会用 JSON 摘要
-声称前缀就是完整输出。Native 文本展示此限制和状态变化，PTC 返回类型化字段。fresh 的 spill
-保持不变；会话模式的既有预算/分页/spill 要求仍待完成，不能据此宣称发布验收通过。
+到的字节，`truncated` 表示内联视图不完整。存在 `spillPath` 时，可通过既有文件工具及权限
+读取已封存的完整流，上限 64 MiB。存储失败、超限、原始捕获错误或回收未确认时不能发布完整
+恢复路径。Native 文本区分可恢复流和仅保留前缀的降级；PTC 返回相同类型化字段，不以 JSON
+摘要声称前缀完整。原生文件所有权保持内部状态；确认终态捕获后，既有保留流程才登记精确
+内核与 Session。
 
 独立集成先在共同所有者作用域挂载一次 provider，再挂载消费者：
 
 ```js
-import { residentKernel, residentSessionShells, integration } from 'dsh-ops/integration';
+import { residentKernel, residentFreshTasks, residentSessionShells, integration } from 'dsh-ops/integration';
 await ctx.plugin(residentKernel());
+await ctx.plugin(residentFreshTasks());
 await ctx.plugin(residentSessionShells());
 await ctx.plugin(integration({ preset: 'my-preset', shell: true }));
 ```
 
-包主入口已完成此组合，但当前软件包门控使其仍仅暴露 fresh。没有 `shell-v1` 的内核同样仅暴露原来的 fresh 定义；内核/provider 丢失不会让
+包主入口已完成此组合，但当前软件包门控使其仍仅暴露 fresh。未同时提供 `shell-v1` 和
+`shell-spill-v1` 的内核同样仅暴露 fresh；内核/provider 丢失不会让
 会话请求回退到 fresh。针对性测试使用真实 Cordis/Agent 所有权和脚本化 transport，只证明发布、
-schema 与准入行为；物理运行时与完整 Native/PTC 调用仍需独立真实内核探针。仓库专用候选运行时
-探针在真实根激活下挂载已有的内部准入 seam，记录精确二进制哈希与准备后的支持文件；这不证明
-生产运行时选择已经通过。这些检查均不证明性能提升。
+schema 与准入行为；物理运行时与完整 Native/PTC 调用仍需独立真实内核探针。当前
+[公开调用探针](../bench/probes/probe-872-session-public.mjs) 要求正常编译的软件包资格判定和完整
+payload 校验；须明确提供 `--worker`、`--bash`、`--shell-env`、`--controller`、`--report` 路径。
+它直接使用包根入口，不注入准入服务，并验证 Native/PTC 状态及三种 sandbox 模式下的完整输出
+恢复。在完整运行时获准前，该探针应拒绝启动。这些检查均不证明性能提升。
 
-2026-11-14 本地验证通过 23 个新检查与 92 个既有针对性检查，共 115 个。最初 Bash-session 套件
+合入 fresh 任务与会话 spill 后，六个针对性套件的 92 个检查通过。提交前和排队准入时均检查
+精确的发布 Agent。在隔离编译副本中仅移除该相等性检查后，保留定义调用兄弟 Agent 的测试失败
+（13 通过、1 失败）；未改动的实现通过全部 14 个发布检查。
+
+较早冻结 C2 版本的历史验证通过 23 个新检查与 92 个既有针对性检查，共 115 个。最初 Bash-session 套件
 因缺少 fixture 跳过；提供既有、已验证的旧版 Bash fixture 后，该套件六个检查全部通过。这不是
-完整发布 gate。[真实公开调用探针](../bench/probes/probe-872-session-public.mjs) 的六个检查覆盖
+完整发布 gate。该版本使用内部准入 seam 的探针通过六个检查，覆盖
 12 次调用，worker SHA-256 为
 `21d3e339830e9fdee9eadd91e51d7bf99e14ecb030213aac3711ca0fabd9530d`，候选运行时 SHA-256 为
 `7c4332044ac5fd1b789f30b29c155a62f12f07f8dd3495244bda3ce4e0e84664`。

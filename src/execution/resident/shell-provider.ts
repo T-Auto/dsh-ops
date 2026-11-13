@@ -24,7 +24,8 @@ export function residentSessionShells() {
     async apply(ctx: Context): Promise<void> {
       if (!ACCEPTED_SESSION_RUNTIME_MANIFESTS.has(NIUBASH_MANIFEST_SHA256)) return
       const transport = ctx.opsKernel.shell
-      if (!transport.available || !transport.capabilities.includes('shell-v1')) return
+      if (!transport.available || !transport.capabilities.includes('shell-v1')
+        || !transport.capabilities.includes('shell-spill-v1')) return
       const selections = new WeakMap<ResolvedConfig, ShellLaunchOptions['bash'] | null>()
       function selectBash(agent: Agent) {
         const integration = integrationFor(ctx, agent)

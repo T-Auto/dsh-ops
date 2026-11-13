@@ -174,6 +174,19 @@ await test('invalid session arguments and selectors never reach either executor'
   }
 })
 
+await test('session output preserves the admitted full spill path without exposing native retention metadata', async () => {
+  const f = fixture(), spillPath = 'C:/fixture/native-output.log'
+  f.state.result = terminal({ stdout: { text: 'retained prefix', bytesTotal: 90000, lossy: true,
+    spillPath, spillOrigin: 'ops-native-v1', spillPid: 4321, spillSealed: true } })
+  const value = await f.definition.execute(args(), f.call)
+  assert.deepEqual(value.stdout, { text: 'retained prefix', bytesTotal: 90000, truncated: true, spillPath })
+  assert.equal(value.stderr.spillPath, undefined)
+  validOutput(f.definition, value)
+  const output = rendered(f.definition, args(), value)
+  assert.ok(output.includes(spillPath), output)
+  assert.doesNotMatch(output, /ops-native-v1|spillPid|spillSealed|no spill recovery/)
+})
+
 await test('session output copies distinct bounded streams and reports reset without fabricating a spill or digest', async () => {
   const f = fixture(), text = '{"state":"保持"}\n'
   f.state.result = terminal({ shellState: 'reset', stdoutTotal: 200000, stderrTotal: 4,
@@ -323,6 +336,11 @@ await test('actual Agent publication shares the admission owner and awaits targe
     const first = await f.agent(), sibling = await f.agent()
     const retainedFirst = await published(f, first), retainedSibling = await published(f, sibling)
     assert.ok(f.ctx.get('opsShellAdmission'))
+    const beforeWrongOwner = f.frames.length
+    const wrongOwner = await bounded(retainedFirst.execute(args(), { agent: sibling.agent, callId: 'retained-wrong-agent' }), 'wrong Agent refusal')
+    assert.equal(wrongOwner.failure.effectState, 'none')
+    assert.equal(wrongOwner.shellState, 'unchanged')
+    assert.equal(f.frames.length, beforeWrongOwner, 'a retained publication cannot enqueue for a sibling Agent')
     const one = await publicSessionCall(f, first, 'published-first')
     assert.equal((await f.admit(one)).decision, 'launch')
     const result = await f.finish(one)
@@ -372,7 +390,7 @@ await test('the production runtime package gate keeps session publication disabl
   await admissionFixture(async f => {
     await f.owner.dispose()
     const kernel = await f.ctx.plugin(inner => inner.provide('opsKernel', {
-      file: process.execPath, pid: process.pid, available: true, shell: f.transport,
+      file: process.execPath, pid: process.pid, available: true, shell: f.transport, task: { capabilities: [] },
       invoke() { throw new Error('No file request belongs to this fixture') },
     }))
     await f.ctx.plugin(residentSessionShells())

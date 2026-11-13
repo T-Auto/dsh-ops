@@ -257,7 +257,8 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
           }, jobs, selectedFresh ? prepared => selectedFresh.run({ ...prepared, bash,
             active: () => prepared.call.agent === agent && active() && fresh === selectedFresh }, selectedJobs) : undefined)
       const owner = admission?.availableFor(agent) ? admission : undefined
-      const definition: HostShellDefinition = owner ? withSessionExecution(foreground, owner, () => admission === owner && active()) : foreground
+      const definition: HostShellDefinition = owner ? withSessionExecution(foreground, owner,
+        call => call.agent === agent && admission === owner && active()) : foreground
       publish(entry, definition)
       if (entry.dispose) { entry.published = true; entry.generation = generation }
     }

@@ -1,15 +1,15 @@
-/** Real root/public Native/PTC routing through an explicitly injected candidate runtime; no release/performance claim. */
+/** Qualified runtime through normal root/public Native/PTC publication; no injected admission seam. */
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { pathToFileURL } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 
 const args = Object.fromEntries(Array.from({ length: (process.argv.length - 2) / 2 }, (_, i) => [process.argv[2 + i * 2].replace(/^--/, ''), process.argv[3 + i * 2]]))
-for (const key of ['worker', 'bash', 'payload', 'sha256', 'report']) assert.ok(args[key], `--${key} required`)
+for (const key of ['worker', 'bash', 'shell-env', 'controller', 'report']) assert.ok(args[key], `--${key} required`)
 const hash = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex')
-assert.equal(hash(args.bash), args.sha256)
 assert.equal(process.platform, 'win32')
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ops-public-home-'))
 process.env.DSH_HOME = home
@@ -19,18 +19,20 @@ const names = ['@deepseek-ai/dsh-agent', '@deepseek-ai/dsh-session', '@deepseek-
   '@deepseek-ai/dsh-agent-loop', '@deepseek-ai/dsh-sandbox-policy', '@deepseek-ai/dsh-subprocess-local', '@deepseek-ai/dsh-sandbox-local',
   '@deepseek-ai/dsh-fs-local', '@deepseek-ai/dsh-working-directory', '@deepseek-ai/dsh-ptc-runtime-node']
 const [Agents, Sessions, Projections, Llm, Loop, Policy, Subprocess, Sandbox, FileSystem, Directory, NodePtc] = await Promise.all(names.map(name => import(name)))
+const [Jobs, ToolJobs, ShellEnv] = await Promise.all([import('@deepseek-ai/dsh-jobs-local'),
+  import(pathToFileURL(path.resolve(args.controller)).href), import(pathToFileURL(path.resolve(args['shell-env'])).href)])
 const { bootHost } = await import('../../test/lib/host.mjs')
 const { executeCall, selectExecutor } = await import('../../test/lib/executor.mjs')
 const rootModule = await import('../../lib/index.js')
-const { residentShellAdmission } = await import('../../lib/execution/resident/shell-owner.js')
-const { prepareNiubash } = await import('../../lib/niubash/runtime.js')
+const { NIUBASH_PIN, NIUBASH_MANIFEST_SHA256, verifyNiubashTree } = await import('../../lib/cli/niubash-payload.js')
+verifyNiubashTree(path.dirname(args.bash))
 const { publicToolName } = await import('../../lib/policy.js')
 const { ctx } = await bootHost({ withWorkingDirectory: false })
-const report = { kind: 'local-candidate-root-public-session-proof', started: new Date().toISOString(), home, workspace,
-  worker: args.worker, workerSha256: hash(args.worker), bash: args.bash, bashSha256: args.sha256,
-  limitations: ['Current production package remains fresh-only. Candidate is injected through the existing internal admission runtime seam under the actual root activation.',
-    'All commands use danger-full-access. Production restricted runtime selection is unproved by this fixture.',
-    'No runtime pin change, model API, performance claim, shared spill or kernel-owned job acceptance.'], checks: [], calls: [] }
+const report = { kind: 'qualified-runtime-root-public-session-proof', started: new Date().toISOString(), home, workspace,
+  worker: args.worker, workerSha256: hash(args.worker), bash: args.bash, bashSha256: hash(args.bash),
+  manifestSha256: NIUBASH_MANIFEST_SHA256, archiveSha256: NIUBASH_PIN.archiveSha256,
+  limitations: ['Normal compiled runtime eligibility and complete payload verification are required; no admission factory or runtime override is injected.',
+    'Functional qualification only, not archive publication, performance or full feature acceptance.'], checks: [], calls: [] }
 let rootFiber, kernel, sequence = 0
 const owners = []
 const quote = text => `'${text.replaceAll("'", "'\\''")}'`
@@ -57,10 +59,12 @@ const sessionArgs = command => ({ execution: 'session', command, description: 'E
 const okay = value => { assert.equal(value.status, 'completed', JSON.stringify(value)); assert.equal(value.exitCode, 0); return value }
 try {
   for (const plugin of [Agents, Sessions, Projections, Llm, Subprocess, Sandbox, FileSystem, NodePtc]) await ctx.plugin(plugin.default, {})
-  await ctx.plugin(Policy.default, { mode: 'danger-full-access', workspaceRoot: workspace })
+  await ctx.plugin(Policy.default, { mode: 'workspace-write', workspaceRoot: workspace })
   await ctx.plugin(Directory.default, { defaultDirectory: workspace })
+  await ctx.plugin(ShellEnv, { dshHome: home })
+  await ctx.plugin(Jobs.default, { pumpPollMs: 10 })
+  await ctx.plugin(ToolJobs.default ?? ToolJobs, { completionDelivery: 'quiet', inlineOutputBytes: 0 })
   await ctx.plugin(inner => {
-    inner.provide('shellEnv', { collect: () => ({}) })
     inner.on('llm/stream', () => { throw Error('No model requests are permitted') })
   })
   await ctx.plugin(Loop.default, { agents: [] })
@@ -68,22 +72,16 @@ try {
     global: { bash: true, hidePwsh: false, hideOfficialTools: false, dynamicTools: false, forceDefaultOpsPtc: false },
     minimal: { enabled: false }, ptc: { enabled: false }, 'ops-ptc': { enabled: false }, cordis: { enabled: false },
     discovery: { enabled: false }, resultCache: { enabled: false }, panel: { enabled: false }, tui: { enabled: false }, disk: { enabled: false },
-    standard: { binaryPath: args.worker, bashPath: path.join(args.payload, 'niu.exe'), bash: true,
+    standard: { binaryPath: args.worker, bashPath: args.bash, bash: true,
       residentTools: false, dynamicTools: false, hideOfficialTools: false, hidePwsh: false },
   }
   rootFiber = await ctx.plugin({ name: 'public-candidate-root', async apply(inner) {
     await rootModule.apply(inner, config)
     kernel = inner.get('opsKernel')
     assert.ok(kernel?.available)
-    assert.equal(inner.get('opsShellAdmission', false), undefined, 'Unaccepted production pin must remain gated off')
-    // Explicit repository-only runtime seam: public confinement/process ownership remains unchanged.
-    await inner.plugin(residentShellAdmission({ transport: kernel.shell,
-      bash: { file: args.bash, source: 'explicit-reviewed-local-candidate' },
-      async runtime(_bash, env, policy, signal) {
-        const prepared = await prepareNiubash(path.join(args.payload, 'niu.exe'), env.PATH ?? env.Path, signal, { workspaceRoot: policy.workspaceRoot })
-        return { file: args.bash, env: prepared.env }
-      },
-    }))
+    assert.ok(kernel.shell.capabilities.includes('shell-spill-v1'))
+    assert.ok(inner.get('opsShellAdmission', false), 'Qualified package root must own session admission')
+    assert.ok(inner.get('opsFreshTasks', false)?.available, 'Fresh calls must use the same kernel')
   } })
   report.kernelPid = kernel.pid
   for (let index = 0; index < 2; index++) owners.push(await ctx.agents.create({ sessionId: `public-session-${index}`,
@@ -127,6 +125,26 @@ try {
     assert.equal(next.stdout.text, 'unset')
     assert.equal(okay(await run(sibling, 'native', sessionArgs('printf sibling-alive'))).stdout.text, 'sibling-alive')
   })
+  for (const mode of ['read-only', 'workspace-write', 'danger-full-access']) await check(`${mode} public session captures waited background output with complete recovery`, async () => {
+    const owner = await ctx.agents.create({ sessionId: `public-spill-${mode}`, meta: { cwd: workspace }, agentOptions: { provider: 'fixture', model: 'unused' } })
+    owners.push(owner); Policy.setSandboxMode(owner.agent.session, mode)
+    await until(() => ctx.tools.get(publicToolName('bash'), owner.agent)?.parameters.properties.execution, 'qualified mode publication')
+    const code = "const fs=require('fs');fs.writeSync(1,'PUBLIC_STDOUT\\n'+'x'.repeat(160000));fs.writeSync(2,'PUBLIC_STDERR\\n'+'y'.repeat(170000))"
+    const command = `${quote(process.execPath)} -e ${quote(code)} & wait`
+    const value = okay(await run(owner.agent, 'native', sessionArgs(command)))
+    assert.equal(value.sandbox.mode, mode)
+    for (const [stream, prefix, letter, count] of [['stdout','PUBLIC_STDOUT\n','x',160000], ['stderr','PUBLIC_STDERR\n','y',170000]]) {
+      assert.equal(value[stream].truncated, true); assert.ok(value[stream].spillPath)
+      assert.equal(fs.readFileSync(value[stream].spillPath, 'utf8'), prefix + letter.repeat(count))
+      assert.equal(value[stream].bytesTotal, Buffer.byteLength(prefix) + count)
+    }
+    await owner.agent.ctx.plugin(inner => selectExecutor(inner, 'ptc'))
+    const typed = okay(await run(owner.agent, 'ptc', sessionArgs('export PUBLIC_KEEP=kept; printf "%s" "$PUBLIC_KEEP"')))
+    assert.equal(typed.stdout.text, 'kept'); assert.equal(typed.shellState, 'preserved')
+    return { mode, enforcement: value.sandbox.enforcement, stdout: value.stdout.spillPath, stderr: value.stderr.spillPath }
+  })
+} catch (error) {
+  report.fatal = String(error.stack ?? error); process.exitCode = 1
 } finally {
   const errors = []
   for (const owner of owners) try { await owner.dispose() } catch (error) { errors.push(String(error)) }
@@ -137,6 +155,7 @@ try {
     catch (error) { if (error.code !== 'ESRCH') errors.push(String(error)) }
   }
   report.cleanup = { confirmed: errors.length === 0, errors }
+  report.status = !report.fatal && !errors.length && report.checks.every(check => check.passed) ? 'passed' : 'failed'
   report.finished = new Date().toISOString()
   fs.writeFileSync(args.report, JSON.stringify(report, null, 2))
   console.log(`report ${args.report}`)

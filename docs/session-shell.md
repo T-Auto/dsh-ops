@@ -1,15 +1,14 @@
 # Explicit session Bash execution
 
-This is the unpublished #872 integration slice. Its release prerequisites include the accepted
-native shell transport and runtime, recoverable native output spill/paging, explicit kernel-owned
-jobs, and the remaining lifecycle/performance acceptance. The current prefix capture is a known
-gap, not a replacement for the existing full spill contract.
+This #872 integration connects the explicit session projection to the shared native
+[output and retention contract](session-spill.md) and production fresh task path. Accepted
+runtime distribution and final lifecycle/performance acceptance remain release prerequisites.
 
 `ops_bash` continues to use `execution: "fresh"` by default. Fresh calls retain their existing
 working-directory resolution, approval, script-file support, output spill and host Jobs behavior.
 The current production runtime pin remains fresh-only: no complete package has yet been accepted
 for persistent protocol ownership, and there is no configuration override. After an accepted
-package, a kernel advertising `shell-v1` and ready authority services are all present, the same tool
+package, a kernel advertising both `shell-v1` and `shell-spill-v1`, and ready authority services are all present, the same tool
 can also accept `execution: "session"`. Native callers and PTC's `tools.ops_bash()` reach the same
 root-owned admission service; there is no separate PTC shell or implicit fallback to fresh.
 
@@ -72,33 +71,45 @@ or private descriptors alive cannot be treated as completed; the kernel resets i
 An explicitly waited command remains ordinary foreground work.
 
 Output has separate stdout/stderr streams and `retention: "prefix"`. At most 128 KiB per stream
-is retained; `bytesTotal` counts observed bytes and `truncated` marks loss. No `spillPath` is
-fabricated, no discarded bytes can be paged back, and no JSON digest claims the prefix is full
-output. Native text renders this limitation and state changes; PTC receives the typed fields.
-Fresh output spill remains unchanged. The existing budget/paging/spill requirement is still open
-for session mode and must be satisfied before release acceptance.
+is retained inline; `bytesTotal` counts observed bytes and `truncated` marks an incomplete inline
+view. An available `spillPath` identifies the sealed complete stream, up to 64 MiB, recoverable
+through existing file tools and their permissions. Storage failure, cap overflow, raw capture
+error or unconfirmed cleanup cannot publish a full recovery path. Native text distinguishes
+recoverable streams from prefix-only degradation; PTC receives the same typed fields. No JSON
+digest claims a prefix is complete. Native file ownership remains internal; existing retention
+records the exact kernel and Session only after confirmed terminal capture.
 
 For standalone integrations, mount the common owners once before their consumers:
 
 ```js
-import { residentKernel, residentSessionShells, integration } from 'dsh-ops/integration';
+import { residentKernel, residentFreshTasks, residentSessionShells, integration } from 'dsh-ops/integration';
 await ctx.plugin(residentKernel());
+await ctx.plugin(residentFreshTasks());
 await ctx.plugin(residentSessionShells());
 await ctx.plugin(integration({ preset: 'my-preset', shell: true }));
 ```
 
 The main package row performs this composition, but the current package gate leaves it fresh-only.
-A kernel without `shell-v1` likewise exposes the old fresh-only definition. Kernel/provider loss never causes a session request to fall back to fresh.
+A kernel without both `shell-v1` and `shell-spill-v1` likewise exposes only fresh execution.
+Kernel/provider loss never causes a session request to fall back to fresh.
 The focused tests use actual Cordis/Agent ownership with scripted transport, so they establish
 publication, schema and authority behavior; physical runtime and full Native/PTC execution require
-the separate real-kernel probe. Repository-only candidate proofs mount the existing internal
-admission seam under the actual root activation with exact binary hashes and prepared support;
-they do not establish production runtime selection. None of these focused checks establish a performance improvement.
+the separate real-kernel probe. The current [public routing probe](../bench/probes/probe-872-session-public.mjs)
+requires normal compiled package eligibility and complete payload verification. Supply explicit
+`--worker`, `--bash`, `--shell-env`, `--controller` and `--report` paths. It uses the package root
+without an injected admission service and checks Native/PTC state plus complete output recovery
+in all three sandbox modes. Until a complete runtime is qualified, that probe must refuse startup.
+None of these focused checks establish a performance improvement.
 
-The 2026-11-14 local validation passed 23 new checks and 92 existing targeted checks (115 total).
+After integration with fresh tasks and session spill, 92 checks across six focused suites passed.
+The exact publishing Agent is checked before submission and again during queued admission.
+Removing only that equality in an isolated compiled copy makes the retained-definition sibling
+test fail (13 passed, one failed); the unchanged implementation passes all 14 publication checks.
+
+Historical validation of the earlier frozen C2 revision passed 23 new checks and 92 existing targeted checks (115 total).
 The initial Bash-session suite lacked a fixture and skipped; supplying the existing verified
 legacy Bash fixture then passed all six of its checks. This was not the full release gate.
-The real [public routing probe](../bench/probes/probe-872-session-public.mjs) passed six checks
+That revision's probe used the internal admission seam and passed six checks
 covering 12 calls, using worker SHA-256
 `21d3e339830e9fdee9eadd91e51d7bf99e14ecb030213aac3711ca0fabd9530d` and candidate SHA-256
 `7c4332044ac5fd1b789f30b29c155a62f12f07f8dd3495244bda3ce4e0e84664`.

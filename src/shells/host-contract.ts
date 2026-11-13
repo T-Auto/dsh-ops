@@ -50,7 +50,8 @@ export function renderHostBash(value: HostBashResult): string {
     if (value.shellState === 'reset') markers.push('[shell state lost; a new shell is required before another session command]')
     if (value.stateLost) markers.push(`[prior shell state discarded: ${value.stateLost}]`)
     if (value.denialObservation === 'incomplete') markers.push('[denial detection incomplete: stderr was not fully retained]')
-    if (value.stdout.truncated || value.stderr.truncated) markers.push('[only the retained output prefix is available; omitted bytes have no spill recovery]')
+    const unavailable = (['stdout', 'stderr'] as const).filter(stream => value[stream].truncated && !value[stream].spillPath)
+    if (unavailable.length) markers.push(`[only the retained ${unavailable.join('/')} prefix is available; omitted bytes have no spill recovery]`)
   }
   if (value.failure) markers.push(`[${value.failure.code}; effects: ${value.failure.effectState}; retry: ${value.failure.retry}] ${value.failure.nextAction ?? ''}`)
   if (value.sandbox?.denied) markers.push(`[sandbox: file access denied under ${value.sandbox.mode} mode]`)

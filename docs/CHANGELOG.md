@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Connect explicit session Bash results to sealed spill recovery, require `shell-spill-v1` before public activation, and bind retained session callbacks to their exact publishing Agent. Fresh and session projections share the existing root-owned kernel and preserve their separate semantics; accepted runtime distribution remains pending (#872).
+- 将显式会话 Bash 结果接入已封存的 spill 恢复，公开启用前要求 `shell-spill-v1`，并把保留的会话回调绑定到发布它的准确 Agent。Fresh 与会话投影共用既有根作用域内核，保留各自语义；合格运行时分发仍待完成（#872）。
+
 - Connect persistent session streams to the kernel's shared task spill store and existing retention ledger, with `shell-spill-v1`, actual-kernel-PID validation, sealed terminal recovery and exact Session ownership. Public activation still requires a qualified runtime; stock foreground CI does not qualify asynchronous output (#872).
 - 将持久会话输出接入内核与任务共享的溢写存储及现有保留账本，增加 `shell-spill-v1`、实际内核 PID 校验、封存终态恢复和准确 Session 归属。公共启用仍需已验证的运行时；现有运行时的前台 CI 不代表异步输出已合格（#872）。
 

@@ -24,7 +24,8 @@ export const SESSION_BASH_OUTPUT_SCHEMA: JsonSchemaNode = {
   }],
 }
 function sessionResult(value: ShellAdmissionResult, timeoutMs: number): HostSessionResult {
-  const stream = (output: ShellAdmissionResult['stdout']) => ({ text: output.text, truncated: output.lossy, bytesTotal: output.bytesTotal })
+  const stream = (output: ShellAdmissionResult['stdout']) => ({ text: output.text, truncated: output.lossy, bytesTotal: output.bytesTotal,
+    ...(output.spillPath ? { spillPath: output.spillPath } : {}) })
   const result = hostForeground({ exitCode: value.exitCode, timeoutMs, timedOut: value.error?.code === 'TIMEOUT',
     cancelled: value.status === 'cancelled', stdout: stream(value.stdout), stderr: stream(value.stderr),
     ...(value.sandbox ? { sandbox: value.sandbox } : {}), ...(value.restriction ? { restriction: value.restriction } : {}),
@@ -39,7 +40,7 @@ function sessionResult(value: ShellAdmissionResult, timeoutMs: number): HostSess
 }
 const invalid = (detail: string): never => { throw new Error(`INVALID_BASH_ARGUMENT: ${detail}`) }
 
-export function withSessionExecution(fresh: HostShellDefinition, admission: Admission, active: () => boolean): HostShellDefinition {
+export function withSessionExecution(fresh: HostShellDefinition, admission: Admission, active: (call: ShellCall) => boolean): HostShellDefinition {
   const properties = { ...(fresh.parameters as JsonSchemaNode).properties,
     execution: { type: 'string', enum: ['fresh', 'session'], description: 'fresh (default): independent shell. session: preserve cwd, exports, functions and options in this Agent; command only, foreground only. Inspect shellState and stateLost.' } satisfies JsonSchemaNode,
     timeoutMs: { type: 'number', description: 'Defaults to 120000 ms, capped at 600000 ms. Session requires an integer and includes queue/admission time; expiry stops its owned shell without promotion. Fresh keeps host-job promotion when available.' } satisfies JsonSchemaNode,
@@ -53,7 +54,7 @@ export function withSessionExecution(fresh: HostShellDefinition, admission: Admi
     description: fresh.description.replace('in a fresh non-login shell.', 'in a fresh non-login shell by default.')
       .replace('shell state does not persist between calls.', 'fresh calls do not retain shell state.')
       .replace('Output is bounded with spill paths.', 'Fresh output is bounded with spill paths.')
-      + ' Optional execution=session uses the Agent’s persistent shell. Omitted workdir preserves its cwd; explicit workdir changes it before this command. Session calls queue in order and recheck authority at the head. Session timeout stops the owned shell and loses state; it never promotes to a job. Session output retains only the first 128 KiB per stream; truncated bytes have no spill recovery. Check shellState, stateLost and cleanupConfirmed.',
+      + ' Optional execution=session uses the Agent’s persistent shell. Omitted workdir preserves its cwd; explicit workdir changes it before this command. Session calls queue in order and recheck authority at the head. Session timeout stops the owned shell and loses state; it never promotes to a job. Session output retains the first 128 KiB per stream; an available spillPath recovers the complete stream up to 64 MiB. Check shellState, stateLost and cleanupConfirmed.',
     parameters: { ...fresh.parameters, properties },
     output: { ...fresh.output!, schema: SESSION_BASH_OUTPUT_SCHEMA,
       render: (_args, value) => [{ type: 'text', text: renderHostBash(value as unknown as HostBashResult) }] },
@@ -80,10 +81,11 @@ export function withSessionExecution(fresh: HostShellDefinition, admission: Admi
         if (args.includeDiagnostics !== undefined && args.includeDiagnostics !== false) invalid('includeDiagnostics requires execution=fresh.')
         if (args.timeoutMs !== undefined && (typeof args.timeoutMs !== 'number' || !Number.isSafeInteger(args.timeoutMs) || args.timeoutMs <= 0)) invalid('session timeoutMs must be a positive integer.')
         timeoutMs = Math.min(args.timeoutMs as number ?? timeoutMs, HOST_MAX_BASH_TIMEOUT_MS)
-        if (!active()) throw new Error('EXECUTOR_UNAVAILABLE: the calling Bash publication is no longer active.')
+        const isActive = () => active(call)
+        if (!isActive()) throw new Error('EXECUTOR_UNAVAILABLE: the calling Bash publication or exact Agent is no longer active.')
         const { execution: _execution, script_path: _script, run_in_background: _background, graceMs: _grace, includeDiagnostics: _diagnostics, ...local } = args
         submitted = true
-        return sessionResult(await admission.execute({ ...local, timeoutMs }, call, active), timeoutMs)
+        return sessionResult(await admission.execute({ ...local, timeoutMs }, call, isActive), timeoutMs)
       } catch (error) {
         return { ...hostFailure(errorMessage(error), timeoutMs, submitted ? 'unknown' : 'none'), execution: 'session', shellState: submitted ? 'unknown' : 'unchanged',
           cleanupConfirmed: !submitted, retention: 'prefix' }
