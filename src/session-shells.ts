@@ -17,6 +17,8 @@ import { startSessionBash } from './shells/session-execution.js'
 import { resolveSessionDirectory } from './adapter/dsh/working-directory.js'
 import { supportsFreshTasks } from './execution/resident/fresh-provider.js'
 import type { FreshTaskHost } from './execution/resident/fresh-host.js'
+import { withSessionExecution } from './shells/persistent-tool.js'
+import type { createShellAdmissionHost } from './execution/resident/shell-admission.js'
 
 /**
  * Whether a session workspace is written in a Windows form.
@@ -186,6 +188,7 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
   let publicJobs: JobRegistry | undefined, fresh: FreshTaskHost | undefined
   // Once selected, provider loss revokes this layer; it never falls back to per-call spawning.
   let nativeRequired = supportsFreshTasks(ctx.get('opsKernel')?.task.capabilities ?? [])
+  let admission: ReturnType<typeof createShellAdmissionHost> | undefined
   const allowed = (agent: Agent) => {
     if (!ready || stopped || !agent?.session) return false
     if (nativeRequired && !fresh?.available) return false
@@ -245,7 +248,7 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
       const base = bashToolDefinition({ file: bash.file, source: bash.source, subprocess: ctx.get('subprocess') })
       const selectedFresh = fresh, selectedJobs = publicJobs
       const active = () => entry.published === true && entry.definition === definition && entries.has(agent) && allowed(agent)
-      const definition = hostBashDefinition(ctx, base,
+      const foreground = hostBashDefinition(ctx, base,
         (args, exec, standing, policy, dshEnv, options) => startSessionBash({ ctx, bash, active: () => entry.published === true && entry.definition === definition
           && exec.agent !== undefined && entries.has(exec.agent) && allowed(exec.agent) },
           args, exec, standing, policy, dshEnv, options), async (args, session, exec) => {
@@ -253,6 +256,8 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
             return { workdir: sessionWorkdir(args, { header: { cwd: basis.cwd } }), basis }
           }, jobs, selectedFresh ? prepared => selectedFresh.run({ ...prepared, bash,
             active: () => prepared.call.agent === agent && active() && fresh === selectedFresh }, selectedJobs) : undefined)
+      const owner = admission?.availableFor(agent) ? admission : undefined
+      const definition: HostShellDefinition = owner ? withSessionExecution(foreground, owner, () => admission === owner && active()) : foreground
       publish(entry, definition)
       if (entry.dispose) { entry.published = true; entry.generation = generation }
     }
@@ -356,6 +361,11 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
     fresh = taskCtx.opsFreshTasks; nativeRequired = true
     scheduleReconcile(true)
     taskCtx.effect(() => () => { fresh = undefined; scheduleReconcile() })
+  })
+  ctx.inject(['opsShellAdmission'], ownerCtx => {
+    admission = ownerCtx.opsShellAdmission
+    scheduleReconcile(true)
+    ownerCtx.effect(() => () => { admission = undefined; scheduleReconcile(true) })
   })
   ctx.inject(['sandboxPolicy', 'subprocess'], authorityCtx => {
     ready = true

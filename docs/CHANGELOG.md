@@ -46,6 +46,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Add a Windows shell process substrate with atomic nested Job ownership, bounded authenticated private channels and an owned disposable signal controller. Repository-only probes exercise real public sandbox argv, cancellation and crash cleanup; published shell tools, pinned runtimes and POSIX execution remain unchanged (#872).
 - 添加 Windows shell 进程基础层：原子嵌套 Job 所有权、有界且验证 peer 的私有通道，以及所属范围内的一次性信号 controller。仓库专用探针实际验证公开 sandbox argv、取消与崩溃回收；已发布 shell 工具、固定 runtime 和 POSIX 执行保持不变（#872）。
 
+- Prepare explicit `ops_bash` execution selection for #872: fresh remains the default; a ready shell-capable resident provider can expose session state through the shared Native/PTC definition. Queue-head authority, runtime selection, state-loss and cleanup facts remain explicit. This integration is unpublished: recoverable session output spill/paging, kernel-owned jobs and full acceptance remain prerequisites.
+- 为 #872 准备 `ops_bash` 显式执行模式：默认仍为 fresh；支持 shell 且就绪的常驻 provider 可通过共用的 Native/PTC 定义暴露会话状态。队首权限、运行时选择、状态丢失与清理事实均明确返回。该集成尚未发布：可恢复的会话输出 spill/分页、内核拥有的 job 与完整验收仍是前置条件。
+
 - Add a repository-only regression that runs the production resident server with deliberately blocked fixture leaves. Targeted cancellation, disconnect, kernel crash and provider unload must join their owned leaves while unrelated work continues; the four-platform CI runs this check (#872). No shipped tool behavior changes.
 - 增加仓库专用回归探针：让生产常驻服务运行确定阻塞的测试执行子进程。定向取消、断连、内核崩溃和 provider 卸载必须回收所属执行，且不影响无关工作；四个平台的 CI 均运行此检查（#872）。不改变已发布工具行为。
 

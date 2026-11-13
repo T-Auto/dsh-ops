@@ -30,7 +30,12 @@ export interface ShellResult {
 }
 export type SettledShellResult = ShellResult & { status: 'completed' | 'failed' }
 export type HostForeground = SettledShellResult & { kind: 'foreground'; exitCode: number | null; signal: string | null; aborted: boolean }
-export type HostBashResult = (HostForeground | { kind: 'background'; jobId: string; label: string }
+export type HostSessionResult = HostForeground & {
+  execution: 'session'; shellState: 'preserved' | 'reset' | 'unchanged' | 'unknown'; cleanupConfirmed: boolean
+  retention: 'prefix'; stateLost?: 'authority-changed' | 'runtime-changed' | 'environment-changed' | 'shell-reset'
+  denialObservation?: 'detected' | 'not-observed' | 'incomplete'
+}
+export type HostBashResult = (HostForeground | HostSessionResult | { kind: 'background'; jobId: string; label: string }
   | { kind: 'promoted'; jobId: string; label: string; timeoutMs: number; output: string }) & Pick<ShellResult, 'resolvedFrom' | 'cwdSource'>
 export interface ShellExecution {
   status: 'running' | 'completed' | 'killed'
