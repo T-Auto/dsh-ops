@@ -73,7 +73,7 @@ when `lossy` is true. An active empty stream returns promptly with `eof: false`.
 must make progress, reach confirmed EOF or report an explicit output error. The command's
 private framing bytes never consume its user-output budget.
 
-One bounded 256-frame shell reply queue and one writer isolate physical output backpressure from
+One bounded 512-frame shared shell/task reply queue and one writer isolate physical output backpressure from
 the control reader. The session worker waits for the physical `started` write; the control reader
 can still process shutdown or disconnection while output is stalled. Protocol window overflow
 fails the connection immediately, including an asynchronous completion after the final input

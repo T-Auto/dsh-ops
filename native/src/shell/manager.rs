@@ -13,6 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 const RECORDS: usize = 32;
+pub(super) const REPLY_WINDOW: usize = 512;
 type Output = Arc<dyn Fn(Value) -> io::Result<()> + Send + Sync>;
 type Started = Arc<dyn Fn(Value) -> io::Result<mpsc::Receiver<io::Result<()>>> + Send + Sync>;
 type Response = (Value, Option<mpsc::SyncSender<io::Result<()>>>);
@@ -78,7 +79,7 @@ impl Manager {
         // the peer stops consuming output. The window covers every admitted
         // request, both stream reads and all owner controls, without unbounded
         // writer threads. Sending beyond that window is a protocol violation.
-        let (sender, receiver) = mpsc::sync_channel::<Response>(256);
+        let (sender, receiver) = mpsc::sync_channel::<Response>(REPLY_WINDOW);
         let writer = thread::Builder::new()
             .name("ops-shell-output".into())
             .spawn(move || {
@@ -139,6 +140,9 @@ impl Manager {
     pub fn contains(&self, id: &str) -> bool {
         self.state.requests.lock().unwrap().contains_key(id)
             || self.state.controls.lock().unwrap().contains(id)
+    }
+    pub fn output(&self) -> Arc<dyn Fn(Value) -> io::Result<()> + Send + Sync> {
+        self.state.output.clone()
     }
     pub fn reap(&mut self) -> io::Result<()> {
         let mut index = 0;

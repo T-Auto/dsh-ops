@@ -225,7 +225,7 @@ fn asynchronous_completion_overflow_fails_transport_without_another_input_frame(
 
     // The first physical write is held, so these exactly fill the reply queue.
     // Absent owners require neither session workers nor shell processes.
-    for index in 0..256 {
+    for index in 0..super::manager::REPLY_WINDOW {
         manager
             .handle(
                 &json!({"type":"shell.close","requestId":format!("fill-{index}"),

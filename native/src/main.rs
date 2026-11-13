@@ -10,6 +10,7 @@ use serde_json::json;
 use std::io::{Read, Write};
 mod resident;
 mod shell;
+mod task;
 
 fn may_mutate(request: &Request) -> bool {
     !request.read_only

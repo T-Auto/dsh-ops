@@ -129,15 +129,25 @@ pub fn serve() -> io::Result<()> {
             let _ = shell_shutdown.shutdown();
         },
     )?;
+    let task_shutdown = reader.get_ref().try_clone()?;
+    let mut task_manager = crate::task::Manager::new(shells.output(), move || {
+        let _ = task_shutdown.shutdown();
+    })?;
     let active: Active = Arc::default();
     let mut tasks: Vec<thread::JoinHandle<()>> = Vec::new();
+    let mut capabilities = crate::shell::capabilities();
+    capabilities
+        .as_array_mut()
+        .unwrap()
+        .extend(crate::task::capabilities().iter().map(|value| json!(value)));
     send(
         &output,
-        json!({"type":"ready","version":1,"pid":std::process::id(),"capabilities":crate::shell::capabilities()}),
+        json!({"type":"ready","version":1,"pid":std::process::id(),"capabilities":capabilities}),
     )?;
     let result = (|| {
         while let Some(frame) = read_frame_limit(&mut reader, FRAME_BYTES)? {
             shells.reap()?;
+            task_manager.reap()?;
             // Join finished executions without keeping one thread handle per past call.
             let mut index = 0;
             while index < tasks.len() {
@@ -152,7 +162,7 @@ pub fn serve() -> io::Result<()> {
                 Some("execute") => {
                     let envelope = &message["envelope"];
                     let id = request_id(&envelope["requestId"])?;
-                    if shells.contains(&id) {
+                    if shells.contains(&id) || task_manager.contains(&id) {
                         return Err(io::Error::other("duplicate kernel requestId"));
                     }
                     let input = serde_json::to_vec(envelope)?;
@@ -194,16 +204,26 @@ pub fn serve() -> io::Result<()> {
                         cancel(&state);
                     }
                     shells.cancel(&id)?;
+                    task_manager.cancel(&id)?;
                 }
                 Some("shutdown") => break,
                 Some(kind) if kind.starts_with("shell.") => {
                     let id = request_id(&message["requestId"])?;
-                    if active.lock().unwrap().contains_key(&id) {
+                    if active.lock().unwrap().contains_key(&id) || task_manager.contains(&id) {
                         return Err(io::Error::other(
                             "shell requestId conflicts with a file request",
                         ));
                     }
                     shells.handle(&message)?;
+                }
+                Some(kind) if kind.starts_with("task.") => {
+                    let id = request_id(&message["requestId"])?;
+                    if active.lock().unwrap().contains_key(&id) || shells.contains(&id) {
+                        return Err(io::Error::other(
+                            "task requestId conflicts with another kernel request",
+                        ));
+                    }
+                    task_manager.handle(&message)?;
                 }
                 _ => return Err(io::Error::other("unknown kernel control message")),
             }
@@ -221,9 +241,10 @@ pub fn serve() -> io::Result<()> {
     for state in states {
         cancel(&state);
     }
+    let task_shutdown = task_manager.shutdown();
     let shell_shutdown = shells.shutdown();
     for task in tasks {
         let _ = task.join();
     }
-    result.and(shutdown).and(shell_shutdown)
+    result.and(shutdown).and(task_shutdown).and(shell_shutdown)
 }
