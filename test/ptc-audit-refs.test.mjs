@@ -9,6 +9,7 @@ import { definition } from '../lib/ptc/contract.js'
 import { expireResultSession } from '../lib/kernel/result-lifecycle.js'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { WORKER, requireWorker, callWorker, envelopeOf, request } from './lib/boundary.mjs'
+import { mountResident } from './lib/resident.mjs'
 
 requireWorker('ptc-audit-refs')
 let serial = 0
@@ -17,29 +18,23 @@ async function withBridge(body) {
     fs.writeFileSync(path.join(root, 'source.txt'), 'original source\n')
     const context = new Context(); context.logger.level = 0
     await context.plugin(Subprocess)
-    const real = context.get('subprocess')
+    const kernel = await mountResident(context, { file: WORKER, cwd: root })
+    const original = kernel.invoke.bind(kernel)
     const session = { id: 'audit-refs-' + ++serial, header: { cwd: root } }
     const calls = [], cacheRoots = new Set()
     let nextFault
+    kernel.invoke = async (envelope, signal, started) => {
+      const fault = nextFault; nextFault = undefined
+      const call = { request: envelope.request, started: false }; calls.push(call)
+      if (envelope.storage?.root) cacheRoots.add(envelope.storage.root)
+      if (fault === 'before-spawn') throw new Error('fixture: admission refused before any worker was created')
+      const result = await original(envelope, signal, () => { call.started = true; started?.() })
+      call.native = result.value
+      // The native leaf really persisted its plan/run. Substitute only its received exchange.
+      return !fault ? result : fault === 'lost-reply' ? { ...result, value: undefined, invalid: 'json' } : { ...result, value: fault }
+    }
     const ctx = { root: context.root, get(name) {
       if (name === 'sandboxPolicy') return { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: root }) }
-      if (name === 'subprocess') return { spawn(spec) {
-        const envelope = JSON.parse(spec.stdio.stdin.data), fault = nextFault
-        nextFault = undefined
-        const call = { request: envelope.request, started: false }; calls.push(call)
-        if (envelope.storage?.root) cacheRoots.add(envelope.storage.root)
-        if (fault === 'before-spawn') throw new Error('fixture: spawn refused before any process was created')
-        const handle = real.spawn(spec); call.started = true
-        const done = handle.done.then(outcome => {
-          call.native = JSON.parse(handle.collected.stdout.readFrom(0).text)
-          return outcome
-        })
-        const stdout = !fault ? handle.collected.stdout : { readFrom() {
-          // Native has really persisted its plan/run. Substitute only the received reply.
-          return { text: fault === 'lost-reply' ? 'incomplete JSON' : JSON.stringify(fault), lossy: false }
-        } }
-        return { done, collected: { stdout, stderr: handle.collected.stderr } }
-      } }
       return context.get(name)
     } }
     const api = {
@@ -51,7 +46,7 @@ async function withBridge(body) {
         const entry = definition(tool, execute)
         const value = await (projected ? entry.execute(args, {}) : execute())
         if (projected) assert.deepEqual(validateJsonSchemaValue(entry.output.schema, value), [])
-        assert.equal(calls.length, before + 1, 'one requested operation starts at most one worker; no audit probe')
+        assert.equal(calls.length, before + 1, 'one requested operation submits at most one resident request; no audit probe')
         return { value, call: calls.at(-1) }
       },
       async page(id) { return (await this.call('result', { action: 'page', id })).value },

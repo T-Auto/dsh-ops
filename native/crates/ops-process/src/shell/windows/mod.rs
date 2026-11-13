@@ -9,9 +9,10 @@ mod security;
 mod signal;
 mod spill_file;
 mod spill_io;
+mod stdin;
 pub use channel::{Channel, ChannelSnapshot, ChannelView};
 pub use identity::Baseline;
-pub use launch::Range;
+pub use launch::{Range, RangeCancellation};
 pub use signal::signal_console_and_exit;
 pub use spill_file::{MAX_SPILL_BYTES, SpillStore};
 

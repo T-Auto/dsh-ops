@@ -2,7 +2,8 @@
 import type { Duplex } from 'node:stream'
 
 export const ENVELOPE_BYTES = 2 * 1024 * 1024
-export const FRAME_BYTES = ENVELOPE_BYTES + 256
+export const LAUNCH_BYTES = 64 * 1024
+export const FRAME_BYTES = ENVELOPE_BYTES + LAUNCH_BYTES + 256
 const QUEUED_FRAMES = 65 // File-only: 32 executions, one cancellation each, one shutdown.
 interface Queued { bytes: Buffer; sending(): void }
 

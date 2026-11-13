@@ -1,4 +1,4 @@
-use super::{protocol, session};
+use super::{Started, protocol, session};
 use ops_process::shell::{ChannelView, SpillStore};
 use serde_json::{Value, json};
 use std::{
@@ -15,7 +15,6 @@ use std::{
 const RECORDS: usize = 32;
 pub(super) const REPLY_WINDOW: usize = 512;
 type Output = Arc<dyn Fn(Value) -> io::Result<()> + Send + Sync>;
-type Started = Arc<dyn Fn(Value) -> io::Result<mpsc::Receiver<io::Result<()>>> + Send + Sync>;
 type Response = (Value, Option<mpsc::SyncSender<io::Result<()>>>);
 pub(super) struct State {
     pub spill: OnceLock<SpillStore>,
@@ -164,6 +163,9 @@ impl Manager {
     }
     pub fn output(&self) -> Arc<dyn Fn(Value) -> io::Result<()> + Send + Sync> {
         self.state.output.clone()
+    }
+    pub fn started_output(&self) -> Started {
+        self.state.started.clone()
     }
     pub fn reap(&mut self) -> io::Result<()> {
         let mut index = 0;
@@ -327,7 +329,7 @@ impl Manager {
         let close = value["type"] == "shell.close";
         let session = self.state.sessions.lock().unwrap().get(&key).cloned();
         let Some(session) = session else {
-            return (self.state.output)(
+            return (self.output())(
                 json!({"type":"shell.closed","requestId":id,"cleanupConfirmed":true}),
             );
         };

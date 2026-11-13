@@ -23,7 +23,7 @@ async function within(work, ms = 10_000, label = 'resident check') {
     })])
   } finally { clearTimeout(timer) }
 }
-function fixture({ hold = false, ready = true, holdExit = false } = {}) {
+function fixture({ hold = false, ready = true, holdExit = false, capabilities = [] } = {}) {
   const input = new PassThrough(), frames = [], writes = [], effects = []
   let done, exit, terminated = 0, spawns = 0, active = true
   const finished = new Promise(resolve => { done = resolve }), empty = new Promise(resolve => { exit = resolve })
@@ -56,12 +56,52 @@ function fixture({ hold = false, ready = true, holdExit = false } = {}) {
   }
   const starting = startResident(ctx, '/worker', '/workspace')
   const send = value => input.write(`${JSON.stringify(value)}\n`)
-  if (ready) send({ type: 'ready', version: 1, pid: 123 })
+  if (ready) send({ type: 'ready', version: 1, pid: 123, capabilities })
   return { ctx, starting, send, input, frames, writes, handle, finish, releaseExit: () => exit(true),
     get spawns() { return spawns }, get terminated() { return terminated }, get spec() { return spec },
     async dispose() { active = false; await Promise.all(effects.map(effect => effect())) },
   }
 }
+
+await test('confined worker capability and launch bounds refuse before admission without fallback', async () => {
+  const host = fixture(), client = await host.starting
+  const request = { ...envelope('confined-old'), component: 'ptc', request: { tool: 'batch', args: { action: 'plan' } } }
+  const launch = { argv: ['/trusted-runner', '--', '/worker'], cwd: '/workspace', env: { PATH: '/bin' } }
+  try {
+    await assert.rejects(client.invokeConfined(request, launch), /confined-worker-v1/)
+    assert.equal(host.frames.length, 0); assert.equal(host.spawns, 1)
+  } finally { await host.dispose() }
+  const current = fixture({ capabilities: ['confined-worker-v1'] }), ready = await current.starting
+  try {
+    for (const value of [{ ...launch, argv: [] }, { ...launch, argv: ['relative'] },
+      { ...launch, env: { SECRET: 'x'.repeat(65536) } }, { ...launch, env: { 'bad=key': 'x' } }, { ...launch, cwd: 'relative' }]) {
+      await assert.rejects(ready.invokeConfined(request, value), /Invalid or oversized/)
+    }
+    await assert.rejects(ready.invokeConfined(envelope('wrong-component'), launch), /trusted batch\/result/)
+    assert.equal(current.frames.length, 0); assert.equal(current.spawns, 1)
+  } finally { await current.dispose() }
+})
+
+await test('confined calls share existing admission, start receipts and targeted cancellation', async () => {
+  const host = fixture({ capabilities: ['confined-worker-v1'] }), client = await host.starting
+  const controller = new AbortController(), launch = { argv: ['/trusted-runner', '--', '/worker'], cwd: '/workspace', env: { PATH: '/bin' } }
+  const request = { ...envelope('confined'), component: 'ptc', request: { tool: 'result', args: { action: 'page' } } }
+  let started = 0
+  try {
+    const confined = client.invokeConfined(request, launch, controller.signal, () => ++started)
+    assert.deepEqual(host.frames[0], { type: 'execute', envelope: request, launch })
+    const siblings = Array.from({ length: 31 }, (_, index) => client.invoke(envelope(`sibling-${index}`)))
+    await assert.rejects(client.invoke(envelope('overflow')), ResidentNotStarted)
+    host.send({ type: 'started', requestId: 'confined' }); await flush(); assert.equal(started, 1)
+    controller.abort(); await flush()
+    assert.deepEqual(host.frames.filter(frame => frame.type === 'cancel'), [{ type: 'cancel', requestId: 'confined' }])
+    assert.equal(host.terminated, 0)
+    host.send({ type: 'completed', requestId: 'confined', exchange: { ...receipt, interrupted: true } })
+    assert.equal((await confined).interrupted, true)
+    for (let index = 0; index < 31; index++) host.send({ type: 'completed', requestId: `sibling-${index}`, exchange: receipt })
+    await Promise.all(siblings); assert.equal(client.available, true); assert.equal(host.spawns, 1)
+  } finally { await host.dispose() }
+})
 
 await test('forty simultaneous session expiry notifications drain through the bounded client without lost purges', async () => {
   const host = fixture(), client = await host.starting

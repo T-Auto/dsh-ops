@@ -6,7 +6,7 @@ import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { assert, test, report, withTempDir, skipSuite, waitFor } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
-import { mountResident, mountFakeResident } from './lib/resident.mjs'
+import { mountResident, mountFakeResident, mountExchangeResident } from './lib/resident.mjs'
 import { invoke as fileCall } from '../lib/file/worker.js'
 import { invoke as ptcCall } from '../lib/ptc/worker.js'
 import { tryResolveWorker } from '../lib/ptc/runtime.js'
@@ -124,7 +124,8 @@ await test('PTC stderr restrictions do not prove selector denial; runner failure
       await ctx.plugin(inner => inner.provide('subprocess', { spawn: () => ({ done: Promise.resolve({ exitCode }), collected: {
         stdout: { readFrom: () => ({ text: '', lossy: false }) }, stderr: { readFrom: () => ({ text: stderr, lossy: false }) },
       } }) }))
-      const call = () => ptcCall(ctx, 'unused', 'result', { action: 'page' }, execution(root), signal())
+      await mountExchangeResident(ctx, { file: process.execPath, cwd: root })
+      const call = () => ptcCall(ctx, process.execPath, 'result', { action: 'page' }, execution(root), signal())
       let value = await call()
       assert.equal(value.error.code, 'EXECUTION_RESTRICTED')
       assert.equal(value.error.effectState, 'unknown'); assert.equal(value.error.permission, undefined)
@@ -152,12 +153,13 @@ await test('PTC canonical containment rejects an external linked root without re
           stdout: { readFrom: () => ({ text: '{"status":"completed"}', lossy: false }) }, stderr: { readFrom: () => ({ text: '', lossy: false }) },
         } }
       } }))
-      let value = await ptcCall(ctx, 'unused', 'result', { root: link, action: 'page' }, execution(root), signal())
+      await mountExchangeResident(ctx, { file: process.execPath, cwd: root })
+      let value = await ptcCall(ctx, process.execPath, 'result', { root: link, action: 'page' }, execution(root), signal())
       assert.equal(value.error.code, 'POLICY_DENIED'); assert.equal(value.error.permission.required, 'danger-full-access')
       assert.equal(spawned, 0)
       for (const current of ['read-only', 'danger-full-access']) {
         mode = current
-        value = await ptcCall(ctx, 'unused', 'result', { root: link, action: 'page' }, execution(root), signal())
+        value = await ptcCall(ctx, process.execPath, 'result', { root: link, action: 'page' }, execution(root), signal())
         assert.equal(value.status, 'completed', JSON.stringify(value)); assert.equal(received.request.root, link)
       }
     } finally { await shutdown(ctx) }
@@ -172,7 +174,8 @@ await test('PTC preparation snapshot changes stop before spawn without inventing
       await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: () => ({ mode, workspaceRoot: root }) }))
       await ctx.plugin(inner => inner.provide('sandbox', { confine: async argv => { mode = 'danger-full-access'; return { argv, enforcement: 'full' } } }))
       await ctx.plugin(inner => inner.provide('subprocess', { spawn() { spawned++; throw new Error('must not spawn') } }))
-      const value = await ptcCall(ctx, 'unused', 'result', { action: 'page' }, execution(root), signal())
+      await mountFakeResident(ctx, { file: process.execPath })
+      const value = await ptcCall(ctx, process.execPath, 'result', { action: 'page' }, execution(root), signal())
       assert.equal(value.error.code, 'AUTHORITY_CHANGED'); assert.equal(value.error.permission, undefined)
       assert.equal(spawned, 0)
     } finally { await shutdown(ctx) }

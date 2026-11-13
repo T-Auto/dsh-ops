@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Route result put/page/release and batch plan/run/resume through the resident kernel on Windows, preserving the exact public confinement command and scrubbed runner environment. Full-access calls reuse the existing fixed worker on every platform; restricted POSIX calls retain their explicit platform runner until native range ownership is available. Admission failure never falls back or replays (#872).
+- Windows 的 result put/page/release 与 batch plan/run/resume 改由常驻内核执行，保留公开 confinement 的原始命令及清理后的 runner 环境。所有平台的完全访问调用复用既有固定 worker；受限 POSIX 调用在原生进程范围所有权可用前保留明确的平台 runner。准入失败不回退、不重放（#872）。
+
 - Connect explicit session Bash results to sealed spill recovery, require `shell-spill-v1` before public activation, and bind retained session callbacks to their exact publishing Agent. Fresh and session projections share the existing root-owned kernel and preserve their separate semantics; accepted runtime distribution remains pending (#872).
 - 将显式会话 Bash 结果接入已封存的 spill 恢复，公开启用前要求 `shell-spill-v1`，并把保留的会话回调绑定到发布它的准确 Agent。Fresh 与会话投影共用既有根作用域内核，保留各自语义；合格运行时分发仍待完成（#872）。
 

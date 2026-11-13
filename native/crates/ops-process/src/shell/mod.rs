@@ -3,6 +3,7 @@
 use std::{ffi::OsString, io, path::PathBuf};
 mod capture;
 pub use capture::{Capture, CaptureRead, CaptureSnapshot, CaptureView, Retention, SpillSnapshot};
+pub const MAX_INPUT_BYTES: usize = 2 * 1024 * 1024;
 
 pub struct Launch {
     pub argv: Vec<OsString>,
@@ -26,8 +27,8 @@ pub(crate) fn budget(cap: usize) -> io::Result<()> {
 mod windows;
 #[cfg(windows)]
 pub use windows::{
-    Baseline, Channel, ChannelSnapshot, ChannelView, MAX_SPILL_BYTES, Range, SpillStore,
-    signal_console_and_exit,
+    Baseline, Channel, ChannelSnapshot, ChannelView, MAX_SPILL_BYTES, Range, RangeCancellation,
+    SpillStore, signal_console_and_exit,
 };
 
 /// POSIX group creation would escape the public host's PGID fallback owner.

@@ -46,9 +46,10 @@ worker. Output drains retain bounded tails with explicit loss information. EOF a
 cancel and join admitted executions. No worker is detached or restarted.
 
 This removes repeated **host runner** startup for local file dispatch; it still pays native
-child startup per file request. WSL reads and confined PTC batch/result operations
-retain their existing runners because their enforced execution contexts cannot be replaced by the
-trusted local-file path. The final A/B report must measure all of those costs. This transport is
+child startup per file request. Windows batch/result calls now retain exact public confinement
+inside an owned native range; full-access calls reuse the fixed leaf. Restricted POSIX batch/result
+calls and explicit WSL reads retain their platform runners; see [result and batch routing](resident-confined-workers.md).
+The final A/B report must measure all of those costs. This transport is
 not evidence that session shells, DSH jobs, complete multi-process cleanup or the performance
 targets have been delivered.
 
@@ -116,7 +117,7 @@ row remains a delivery requirement even if a smaller slice does not exercise it 
 | Cancel first interrupts, then may reset only that shell tree | No inner process cancellation boundary exists. | Hard cancellation reports shell-reset/state loss; other sessions continue. |
 | Explicit background tasks use DSH job_list/job_output/job_kill | Rust `Job` is a file-batch audit record, not the DSH process-job service. | Immediate jobId, independent output, atomic startup/publication handoff, job-tree kill, session/host cleanup. |
 | Ordinary command descendants do not become implicit services | Pending shell/task ownership implementation. | Unregistered descendants cannot silently cross calls; published jobs are not killed merely because their startup request completed. |
-| Migration leaves one execution architecture | Local file calls use the shared client with no one-shot fallback. WSL and confined batch/result/cleanup paths remain explicit exceptions. | Complete shell/job ownership and eligible remaining migrations without weakening their execution constraints. |
+| Migration leaves one execution architecture | Local files, result cleanup and Windows batch/result calls use the shared client without one-shot fallback. Restricted POSIX batch/result and explicit WSL reads retain their platform runners. | Complete remaining platform migrations without weakening their execution constraints. |
 | End-to-end performance and resource evidence | Windows baseline: 824 calls, 0 failures, including 200 hot samples for each of four items. No resident benefit measured. | Resident A/B, Native/PTC, cold/warm, file/command/mixed/concurrent/long workloads; p50/p95/p99, CPU/RSS/handles and failures. |
 
 ## Rust reuse boundary

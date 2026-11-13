@@ -21,6 +21,8 @@ import { sessionTempDir } from '../session-temp.js'
 import { denied, authorityChanged, executionRestriction, normalizeNativeDenial, credentialDenied } from '../permissions.js'
 import { inside, canonicalAnchor, sameAuthority } from '../authority-paths.js'
 import { prepareWorkspace } from '../workspace-preparation.js'
+import { requireResident } from './resident/provider.js'
+import { confinedWorkerLaunch } from './resident/worker-launch.js'
 export { resolveWorker } from './runtime.js'
 export function failure(code: string, message: string, effectState: EffectState = 'none') {
   return { status: 'error', error: { code, phase: effectState === 'none' ? 'preflight' : 'execute', retryable: false, effectState,
@@ -100,6 +102,9 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
     }
     const denyRoots = (config?.denyCredentialReads ?? true) !== false ? credentialRoots() : []
     if (Buffer.byteLength(JSON.stringify(workerArgs)) > 2 * 1024 * 1024) return failure('OUTPUT_LIMIT', 'Request exceeds the 2 MiB byte budget.')
+    // Restricted POSIX runners retain their explicit platform route until native
+    // range ownership is established there. This is never a resident-error fallback.
+    const resident = process.platform === 'win32' || policy.mode === 'danger-full-access' ? requireResident(ctx, { binaryPath: file }) : undefined
     let argv = [file]
     if (policy.mode !== 'danger-full-access') {
       const sandbox = ctx.get('sandbox')
@@ -121,6 +126,7 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
       return failure('EXECUTOR_UNAVAILABLE', 'Session result storage is unavailable under current host authority.')
     }
     if (confined) argv = exposePosixCache(argv, storage)
+    const launch = resident && confined ? await confinedWorkerLaunch(argv, policy.workspaceRoot) : undefined
     const envelope = workerEnvelope('ptc', { root: operationRoot, scope: String(session.id), tool, args: workerArgs, read_only: readOnly, deny_roots: denyRoots, deny_credential_names: (config?.denyCredentialReads ?? true) !== false, ...(jobId ? { job_id: jobId } : {}), ...indexCacheRequest({ enabled: config?.indexCache === true }) }, undefined, storage)
     const input = JSON.stringify(envelope)
     if (Buffer.byteLength(input) > 2 * 1024 * 1024) return failure('OUTPUT_LIMIT', 'Request exceeds the 2 MiB byte budget.')
@@ -135,9 +141,12 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
       return authorityChanged(current, operation)
     }
     if (admission && !admission()) return publicationDenied()
-    const result = await exchange(subprocess, { argv, cwd: policy.workspaceRoot,
-      stdio: { stdin: { data: input }, stdout: { maxBytes: envelope.budget.maxBytes }, stderr: { maxBytes: 16 * 1024 } },
-      graceMs: 1000, signal }, () => { spawned = true })
+    const started = () => { spawned = true }
+    const result = resident
+      ? launch ? await resident.invokeConfined(envelope, launch, signal, started) : await resident.invoke(envelope, signal, started)
+      : await exchange(subprocess, { argv, cwd: policy.workspaceRoot,
+        stdio: { stdin: { data: input }, stdout: { maxBytes: envelope.budget.maxBytes }, stderr: { maxBytes: 16 * 1024 } },
+        graceMs: 1000, signal }, started)
     if (!result.readers) return errorResult('RESULT_UNKNOWN', mutates ? 'Worker output readers are unavailable; inspect audit records.' : 'Read-only worker output readers are unavailable; no data was changed.', mutates ? 'unknown' : 'none')
     if (result.interrupted) {
       const code = mutates ? 'RESULT_UNKNOWN' : signal.reason instanceof InvocationDeadlineError ? 'TIMEOUT' : signal.aborted ? 'ABORTED' : 'RESULT_UNKNOWN'

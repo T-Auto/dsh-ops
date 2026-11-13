@@ -10,6 +10,7 @@ import { ResidentShellChannel } from './shell-channel.js'
 import type { ShellTransport } from './shell-protocol.js'
 import { ResidentTaskChannel } from './task-channel.js'
 import type { TaskTransport } from './task-protocol.js'
+import { validateWorkerLaunch, type ConfinedWorkerLaunch } from './worker-launch.js'
 
 type Envelope = ReturnType<typeof workerEnvelope>
 interface Pending {
@@ -29,6 +30,7 @@ export interface ResidentClient {
   readonly shell: ShellTransport
   readonly task: TaskTransport
   invoke(envelope: Envelope, signal?: AbortSignal, started?: () => void): Promise<WorkerExchange>
+  invokeConfined(envelope: Envelope, launch: ConfinedWorkerLaunch, signal?: AbortSignal, started?: () => void): Promise<WorkerExchange>
   purgeResults(root: string, scope: string, storage: WorkerStorage, signal: AbortSignal): Promise<WorkerExchange>
   stop(): Promise<void>
 }
@@ -144,13 +146,21 @@ class Client implements ResidentClient {
   invoke(envelope: Envelope, signal?: AbortSignal, started?: () => void): Promise<WorkerExchange> {
     return this.dispatch(envelope, signal, started)
   }
+  invokeConfined(envelope: Envelope, launch: ConfinedWorkerLaunch, signal?: AbortSignal, started?: () => void): Promise<WorkerExchange> {
+    try {
+      if (!this.task.capabilities.includes('confined-worker-v1')) throw new ResidentNotStarted('Resident kernel does not support confined-worker-v1; update its runtime before executing restricted batch/result calls')
+      if (envelope.component !== 'ptc' || !['batch', 'result'].includes(String(envelope.request.tool))) throw new ResidentNotStarted('Confined execution requires a trusted batch/result envelope')
+      validateWorkerLaunch(launch)
+      return this.dispatch(envelope, signal, started, false, launch)
+    } catch (error) { return Promise.reject(error) }
+  }
   /** Only already-owned cache teardown may use the live connection after ordinary admission closes. */
   purgeResults(root: string, scope: string, storage: WorkerStorage, signal: AbortSignal): Promise<WorkerExchange> {
     const envelope = workerEnvelope('ptc', { root, scope, tool: 'result', args: { action: 'purge' }, read_only: false }, 5000, storage)
     envelope.budget.maxBytes = 4096
     return this.dispatch(envelope, signal, undefined, true)
   }
-  private dispatch(envelope: Envelope, signal?: AbortSignal, started?: () => void, cleanup = false): Promise<WorkerExchange> {
+  private dispatch(envelope: Envelope, signal?: AbortSignal, started?: () => void, cleanup = false, launch?: ConfinedWorkerLaunch): Promise<WorkerExchange> {
     if (signal?.aborted) return Promise.reject(new InvocationNotStarted())
     if (!(cleanup ? this.pid && !this.closing && !this.terminal : this.available)) return Promise.reject(new ResidentNotStarted('Resident kernel is unavailable; reload the plugin to start a new instance'))
     if (this.pending.size >= 32) return Promise.reject(new ResidentNotStarted('Resident kernel has 32 in-flight requests; admission is full'))
@@ -159,7 +169,7 @@ class Client implements ResidentClient {
       if (envelope.version !== 1 || typeof envelope.requestId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(envelope.requestId)
         || this.pending.has(envelope.requestId)) throw new ResidentNotStarted('Invalid or duplicate resident request identity')
       if (Buffer.byteLength(JSON.stringify(envelope)) > ENVELOPE_BYTES) throw new ResidentNotStarted('Resident request exceeds the 2 MiB byte budget')
-      bytes = encodeFrame({ type: 'execute', envelope })
+      bytes = encodeFrame({ type: 'execute', envelope, ...(launch ? { launch } : {}) })
     } catch (error) { return Promise.reject(error) }
     return new Promise((resolve, reject) => {
       const abort = () => {
