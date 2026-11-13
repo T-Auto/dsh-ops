@@ -20,6 +20,7 @@ import {
   resolveShells,
   withBashStatus,
 } from '../lib/shells.js'
+import { BASH_PARSE_CONTRACT } from '../lib/shells/prompt.js'
 import { sessionWorkdir } from '../lib/session-shells.js'
 import { assert, TEST_HOME, report, test, withTempDir } from './lib/harness.mjs'
 import { config, fakeSubprocess, makeExecutable } from './lib/shells-fixtures.mjs'
@@ -434,6 +435,8 @@ await test('the standalone Bash description preserves its fresh-shell and foregr
   assert.match(description, /no run_in_background and no job id/)
   assert.match(description, /occupies the call until timeoutMs/)
   assert.doesNotMatch(description, /pwsh|PowerShell|fallback/i)
+  // The parse contract is stated where the model reads it, from the one shared constant (#892).
+  assert.equal(description.includes(BASH_PARSE_CONTRACT), true, 'the shared parse contract sentence')
 })
 
 // A definition whose subprocess service is missing cannot exist in a real
