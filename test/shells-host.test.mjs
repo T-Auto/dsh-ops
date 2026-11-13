@@ -140,6 +140,9 @@ await test('escalation argument failures precede approval and execution', async 
 await test('completed foreground jobs leave the registry with their result', async () => {
   const jobs = jobRegistry(), f = fixture({ jobs })
   assert.match(f.definition.description, /long-running processes and daemons with run_in_background; job_kill terminates the job's entire process tree/)
+  // The host projection carries the same parse contract as the standalone rung (#892).
+  assert.match(f.definition.description, /check truncated before parsing structured output/)
+  assert.match(f.definition.description, /spillPath is optional and does not guarantee completeness/)
   const value = await f.definition.execute({ command: 'true', description: 'Run a foreground host job' }, f.exec)
   assert.equal(value.kind, 'foreground'); assert.equal(jobs.removed, true)
   assert.equal(jobs.outcome.detail, 'exit code: 0')

@@ -9,6 +9,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - Native tool construction and the publication refusal queue no longer attach listeners or lifetime effects to the composition root. The evidence observer and result admission subscribe on the caller's context with global dispatch, and the refusal queue falls back to the caller lifetime when the root refuses an effect. dsh-tui 0.20 refuses `root.events.on` and `root.effect` from a plugin activation, and the native-tools row is one, so every `dsh-tui --resume` aborted with "cannot resume session" before the agent mounted.
 - 原生工具构造与发布拒绝队列不再向组合根挂监听或生命周期 effect：证据观察者与 result admission 改为在调用方上下文订阅并声明 global 分发，拒绝队列在 root 拒绝 effect 时回落到调用方生命周期。dsh-tui 0.20 会拒绝插件激活期内的 `root.events.on` 与 `root.effect`，而原生工具行正是插件激活，导致每次 `dsh-tui --resume` 都在 agent 挂载前报 "cannot resume session"。
+- The Bash tool description and output schema now state the parse contract of `stdout`/`stderr`: `text` may be a partial fragment, `truncated` marks a fragment that must not be parsed as complete structured output, and `spillPath` is optional and not a completeness guarantee. Command semantics, exit codes, values, limits, spill files, permissions and both the host and PTC projections are unchanged.
+- Bash 工具说明与输出 schema 现在写明 `stdout`/`stderr` 的解析契约：`text` 可能只是片段，`truncated` 标记的片段不得当作完整结构化输出解析，`spillPath` 是可选项且不保证完整。命令语义、退出码、输出值、上限、落盘、权限以及宿主与 PTC 两处投影均不变。
 
 ## [0.5.5] — 2026-11-13 — Patch release
 

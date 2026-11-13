@@ -434,6 +434,22 @@ await test('the standalone Bash description preserves its fresh-shell and foregr
   assert.match(description, /no run_in_background and no job id/)
   assert.match(description, /occupies the call until timeoutMs/)
   assert.doesNotMatch(description, /pwsh|PowerShell|fallback/i)
+  // The parse contract is stated where the model reads it, not only in the schema (#892).
+  assert.match(description, /stdout\/stderr\.text may be partial/)
+  assert.match(description, /check truncated before parsing structured output/)
+  assert.match(description, /spillPath is optional/)
+})
+
+await test('the Bash output schema states when text may be parsed and that spillPath is optional', async () => {
+  const { BASH_OUTPUT_SCHEMA } = await import('../lib/shells/tool.js')
+  for (const channel of ['stdout', 'stderr']) {
+    const properties = BASH_OUTPUT_SCHEMA.properties[channel].properties
+    assert.match(properties.text.description, /partial fragment/, channel)
+    assert.match(properties.truncated.description, /complete JSON/, channel)
+    assert.match(properties.spillPath.description, /does not guarantee/, channel)
+    // The claim is the schema's own: truncated is required, spillPath is not.
+    assert.deepEqual(BASH_OUTPUT_SCHEMA.properties[channel].required, ['text', 'truncated'], channel)
+  }
 })
 
 // A definition whose subprocess service is missing cannot exist in a real
