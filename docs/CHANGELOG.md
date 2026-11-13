@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Add an explicit native `--serve` transport and a scoped host client for #872. Correlated file requests use independently terminable trusted workers; cancellation does not stop the kernel. Activation and tool migration are still pending, so this slice does not change published tools or establish persistent shells.
+- 为 #872 添加显式原生 `--serve` transport 与作用域内宿主客户端。带关联 ID 的文件请求使用可独立终止的可信 worker，取消不会停止内核。激活与工具迁移仍待完成；本切片不改变已发布工具，也不代表持久 shell 已实现。
+
 - Document the resident-kernel target and its acceptance evidence for #872. Repository-only public-host and baseline probes distinguish transport/ownership feasibility from the pending resident execution and persistent-shell implementation; no tool behavior changes.
 - 记录 #872 常驻内核目标与验收证据。仓库专用的公开宿主接口及基线探针区分通信/所有权可行性与尚待实现的常驻执行、持久 shell；工具行为未改变。
 

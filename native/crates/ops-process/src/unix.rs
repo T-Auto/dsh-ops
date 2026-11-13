@@ -7,6 +7,18 @@ use std::{
 };
 pub type Pipe = UnixStream;
 
+pub fn shutdown(pipe: &Pipe) -> io::Result<()> {
+    match pipe.shutdown(std::net::Shutdown::Both) {
+        Err(error) if error.kind() == io::ErrorKind::NotConnected => Ok(()),
+        result => result,
+    }
+}
+
+#[cfg(test)]
+pub fn test_pair() -> io::Result<(Pipe, Pipe)> {
+    UnixStream::pair()
+}
+
 pub fn inherited() -> io::Result<Pipe> {
     // SAFETY: fcntl validates the scalar descriptor and transfers a new owned fd.
     let fd = unsafe { libc::fcntl(7, libc::F_DUPFD_CLOEXEC, 0) };

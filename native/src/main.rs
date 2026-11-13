@@ -8,6 +8,7 @@ use dsh_ops_core::{
 };
 use serde_json::json;
 use std::io::{Read, Write};
+mod resident;
 
 fn may_mutate(request: &Request) -> bool {
     !request.read_only
@@ -31,6 +32,13 @@ fn may_mutate(request: &Request) -> bool {
                 == Some("page"))
 }
 fn main() {
+    if std::env::args().any(|a| a == "--serve") {
+        if let Err(error) = resident::serve() {
+            eprintln!("OPS kernel stopped: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if std::env::args().any(|a| a == "--version") {
         println!("dsh-ops-worker {}", env!("CARGO_PKG_VERSION"));
         return;

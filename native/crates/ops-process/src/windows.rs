@@ -2,14 +2,16 @@ use std::{
     io::{self, Read, Write},
     os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
     ptr::null_mut,
+    sync::{Arc, Mutex},
 };
 use windows_sys::Win32::{
     Foundation::{
         DUPLICATE_SAME_ACCESS, DuplicateHandle, ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_NO_DATA,
+        ERROR_NOT_FOUND,
     },
     Storage::FileSystem::{FILE_TYPE_PIPE, GetFileType, ReadFile, WriteFile},
     System::{
-        IO::{GetOverlappedResult, OVERLAPPED},
+        IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED},
         Threading::{CreateEventW, GetCurrentProcess},
     },
 };
@@ -26,7 +28,32 @@ unsafe extern "C" fn invalid_descriptor(
     _: usize,
 ) {
 }
-pub struct Pipe(OwnedHandle);
+struct Inner {
+    handle: OwnedHandle,
+    closed: Mutex<bool>,
+}
+pub struct Pipe(Arc<Inner>);
+
+pub fn shutdown(pipe: &Pipe) -> io::Result<()> {
+    let mut closed = pipe
+        .0
+        .closed
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if *closed {
+        return Ok(());
+    }
+    *closed = true;
+    // SAFETY: all clones issue I/O on this same owned handle. Holding the launch
+    // lock prevents a new operation from starting after cancellation's snapshot.
+    if unsafe { CancelIoEx(pipe.0.handle.as_raw_handle(), null_mut()) } == 0 {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(ERROR_NOT_FOUND as i32) {
+            return Err(error);
+        }
+    }
+    Ok(())
+}
 
 pub fn inherited() -> io::Result<Pipe> {
     // SAFETY: scope the recoverable invalid-fd handler to this thread and restore it
@@ -61,7 +88,7 @@ pub fn inherited() -> io::Result<Pipe> {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: DuplicateHandle transferred exactly one owned handle.
-    let pipe = Pipe(unsafe { OwnedHandle::from_raw_handle(owned) });
+    let pipe = Pipe::owned(unsafe { OwnedHandle::from_raw_handle(owned) });
     // SAFETY: close the original through its CRT owner, never CloseHandle(raw).
     if unsafe { libc::close(7) } == -1 {
         return Err(io::Error::last_os_error());
@@ -69,8 +96,14 @@ pub fn inherited() -> io::Result<Pipe> {
     Ok(pipe)
 }
 impl Pipe {
+    fn owned(handle: OwnedHandle) -> Self {
+        Self(Arc::new(Inner {
+            handle,
+            closed: Mutex::new(false),
+        }))
+    }
     pub fn try_clone(&self) -> io::Result<Self> {
-        self.0.try_clone().map(Self)
+        Ok(Self(self.0.clone()))
     }
     fn transfer(&self, bytes: *mut u8, len: usize, read: bool) -> io::Result<usize> {
         if len == 0 {
@@ -86,7 +119,22 @@ impl Pipe {
         // SAFETY: all-zero OVERLAPPED has valid inactive fields; this event is per operation.
         let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
         overlapped.hEvent = event.as_raw_handle();
-        let handle = self.0.as_raw_handle();
+        let handle = self.0.handle.as_raw_handle();
+        let closed = self
+            .0
+            .closed
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if *closed {
+            return if read {
+                Ok(0)
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "control channel is closed",
+                ))
+            };
+        }
         // SAFETY: Read/Write callers lend the buffer until this operation completes;
         // the OVERLAPPED and event stay live through GetOverlappedResult's wait.
         let started = unsafe {
@@ -108,8 +156,9 @@ impl Pipe {
                 )
             }
         };
-        if started == 0 {
-            let error = io::Error::last_os_error();
+        let error = (started == 0).then(io::Error::last_os_error);
+        drop(closed); // Never hold the launch lock while awaiting completion.
+        if let Some(error) = error {
             if read
                 && matches!(error.raw_os_error(), Some(code) if code == ERROR_BROKEN_PIPE as i32 || code == ERROR_NO_DATA as i32)
             {
@@ -131,6 +180,12 @@ impl Pipe {
         Ok(count as usize)
     }
 }
+
+#[cfg(test)]
+#[path = "windows_control_fixture.rs"]
+mod fixture;
+#[cfg(test)]
+pub use fixture::test_pair;
 impl Read for Pipe {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
         self.transfer(bytes.as_mut_ptr(), bytes.len(), true)

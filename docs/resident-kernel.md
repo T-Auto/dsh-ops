@@ -4,8 +4,8 @@
 
 This document tracks [#872](https://github.com/T-Auto/dsh-ops/issues/872), based on the
 `e7244444` source audit. It describes the complete target and the evidence needed to reach it.
-The audit does **not** establish a resident kernel, persistent shell, working cancellation,
-process-tree cleanup or a performance improvement. Unverified requirements remain pending.
+The explicit resident transport and its tests establish only the implementation described below.
+Plugin integration, persistent shells and the complete acceptance report remain pending.
 
 ## Target and ownership
 
@@ -26,6 +26,28 @@ interfaces. Platform code needed for inner shell/task termination belongs in one
 breakaway and detach are excluded. A kernel process is not permission to run arbitrary session
 shells with the kernel's own authority.
 
+## Explicit serve transport
+
+The worker now accepts an explicit `--serve` mode through the inherited private control pipe.
+The scoped host client starts it once, waits for `ready`, correlates `started` and `completed`
+events, and sends cancellation by request ID. It admits at most 32 active requests, bounds
+request and response frames, and never reconnects or replays a failed invocation. The client
+observes process exit before settling interrupted requests; inability to confirm cleanup is
+reported as unknown. Activation and Native/PTC tool routing have not migrated yet.
+
+File operations can block in operating-system I/O. Each admitted request therefore runs the
+existing one-shot dispatch in a trusted child of the kernel, with its own termination handle.
+Windows leaves have nested Jobs; POSIX leaves retain the host-owned process group and target
+cancellation uses the unreaped child identity. These fixed file workers do not launch children.
+The control loop remains responsive while a request runs, and a request deadline exits only its
+worker. Output drains retain bounded tails with explicit loss information. EOF and shutdown
+cancel and join admitted executions. No worker is detached or restarted.
+
+This removes repeated **host runner** startup only after tool migration; it still pays native
+child startup per file request. The final A/B report must measure that cost. This transport is
+not evidence that session shells, DSH jobs, complete multi-process cleanup or the performance
+targets have been delivered.
+
 ## Requirement and evidence matrix
 
 “Source audit” identifies current code, not an acceptance test for the new architecture. A pending
@@ -38,8 +60,8 @@ row remains a delivery requirement even if a smaller slice does not exercise it 
 | Unload and normal DSH exit stop admission and clean descendants | Existing invocation owners cancel one-shot calls; they do not prove resident ownership. | Pending and running requests settle honestly; kernel, shells and owned tasks exit. |
 | Forced DSH death, control disconnect and kernel crash clean the owned tree | Synthetic public-host probe: Windows six checks pass; WSL five pass, blocked-kernel host-death check fails. See platform evidence below. | Native kernel and shell trees must pass each failure separately; no detached descendants or effects replay; other instances survive. |
 | Page disconnect, quiet work and late heartbeat do not imply host death | No resident liveness policy exists. | Quiet task exceeding five minutes survives; page/heartbeat signals cannot trigger process cleanup. |
-| Cancellation/deadline belongs to one request | Current Rust deadline exits the whole process; no request cancellation token. | Cancel one execution without ending the kernel or another session; settle pre-start versus started work distinctly. |
-| Private, bounded duplex protocol with request IDs | Windows native probe passes handshake, 25 correlated replies, control EOF, malformed/oversized input rejection and missing-channel startup refusal. Production transport remains one-shot. | Production protocol, started/output/completed events, targeted cancel, adversarial backpressure and cross-platform native evidence. |
+| Cancellation/deadline belongs to one request | Serve mode targets an independently terminable file leaf. Native helper tests exercise cancellation after a child demonstrably blocks; client tests exercise pre-admission abort and correlated cancellation. | Tool-level deadline/effect mapping and session cancellation; persistent shells remain pending. |
+| Private, bounded duplex protocol with request IDs | Explicit serve/client protocol implements readiness, started/completed receipts, targeted cancellation and bounded admission/frames. The earlier compatibility probe passed all four CI platforms. | Production tool routing, streamed command output, adversarial backpressure and final platform evidence. |
 | Command bytes cannot forge control receipts; slow consumers exert backpressure | Existing file worker has no command execution or event stream. | Separate control from stdout/stderr; output limits and bounded buffering under a stalled reader. |
 | File dispatch, pagination, spill and error contracts remain shared | Windows native probe performs 25 read-only text inspections through existing `dispatch` on one process and refuses writable execution. | Production Native/PTC parity, per-request budgets, path/no-follow/CAS, paging/spill and cancellation tests over the same implementation. |
 | Host resolves authority once for each admitted execution | Existing file adapter resolves trusted policy/paths and rechecks after asynchronous preparation. | A single trusted context per admission, queued work re-admission, all three permission modes and credential boundaries. |
@@ -52,7 +74,7 @@ row remains a delivery requirement even if a smaller slice does not exercise it 
 | Explicit background tasks use DSH job_list/job_output/job_kill | Rust `Job` is a file-batch audit record, not the DSH process-job service. | Immediate jobId, independent output, atomic startup/publication handoff, job-tree kill, session/host cleanup. |
 | Ordinary command descendants do not become implicit services | Pending shell/task ownership implementation. | Unregistered descendants cannot silently cross calls; published jobs are not killed merely because their startup request completed. |
 | Migration leaves one execution architecture | One-shot transport is currently the only implemented file path. | Remove superseded transport/state when replacement is accepted; no silent fallback, reconnect or duplicate management layers. |
-| End-to-end performance and resource evidence | Full-call baseline measurement is pending; no resident benefit measured. | Native/PTC, cold/warm, file/command/mixed/concurrent/long workloads; p50/p95/p99, CPU/RSS/handles and failures. |
+| End-to-end performance and resource evidence | Windows baseline: 824 calls, 0 failures, including 200 hot samples for each of four items. No resident benefit measured. | Resident A/B, Native/PTC, cold/warm, file/command/mixed/concurrent/long workloads; p50/p95/p99, CPU/RSS/handles and failures. |
 
 ## Rust reuse boundary
 
@@ -174,14 +196,16 @@ malformed JSON ends the probe; input exceeding the 64 KiB frame cap ends the pro
 without an inherited control channel exits cleanly with an error and no handshake. Ordinary stdout
 is separately asserted. Helper and example unit suites each pass one test; helper Clippy with all
 targets and warnings denied passes. CI is configured to build and run this native probe on all
-four shipped platforms; results beyond the local Windows run remain pending.
+four shipped platforms; [PR #901 CI](https://github.com/T-Auto/dsh-ops/actions/runs/43429421444)
+passed all four, including this compatibility probe.
 
 The probe's dedicated reader receives control EOF independently of dispatch. Its one-slot pending
 queue closes the probe on overload; this is not the production admission/backpressure protocol.
 The handshake explicitly marks request cancellation and deadline enforcement unsupported. EOF
 terminates this entire read-only probe, and is not a per-request cancellation implementation.
 No blocked-dispatch, descendant, forced-host-death or plugin-unload claim follows from these six
-checks. Production startup/serve, general file routing, persistent shells and task jobs remain pending.
+checks. The newer explicit serve implementation is described above; plugin startup, general file
+routing, persistent shells and task jobs remain pending.
 
 ## Implementation slices and exit evidence
 

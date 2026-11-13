@@ -22,9 +22,8 @@ ops-documents = { path = "crates/ops-documents" }
 ops-search = { path = "crates/ops-search" }
 ops-results = { path = "crates/ops-results" }
 ops-batch = { path = "crates/ops-batch" }
-
-[dev-dependencies]
 ops-process = { path = "crates/ops-process" }
+
 
 [lints.rust]
 unsafe_code = "forbid"
