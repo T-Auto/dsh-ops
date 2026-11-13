@@ -351,8 +351,14 @@ jobs:
               echo "release already carries every asset; nothing to upload"
             fi
           else
-            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
-              --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+            notes="docs/release-notes/${GITHUB_REF_NAME}.md"
+            if [ -f "$notes" ]; then
+              gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+                --title "$GITHUB_REF_NAME" --notes-file "$notes" --verify-tag
+            else
+              gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+                --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+            fi
           fi
 
       - name: Record the published digests in the run summary
