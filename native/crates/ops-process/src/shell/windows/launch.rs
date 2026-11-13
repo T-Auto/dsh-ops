@@ -85,6 +85,14 @@ impl Range {
                 .as_ref()
                 .is_some_and(|views| views.iter().any(|view| view.snapshot().cleanup_unconfirmed))
     }
+    fn poison_outputs(&mut self) {
+        self.poisoned = true;
+        if let Some(views) = &self.outputs {
+            for view in views {
+                view.poison("output cleanup unconfirmed".into());
+            }
+        }
+    }
     /// Direct root exit only; descendants and output readers can still be alive.
     pub fn root_exit(&self) -> io::Result<Option<u32>> {
         self.observe_root(0)
@@ -261,7 +269,7 @@ impl Range {
             .terminate()
             .and_then(|()| self.wait_empty(deadline));
         if result.is_err() && self.spill.is_some() {
-            self.poisoned = true;
+            self.poison_outputs();
         }
         result
     }
@@ -299,7 +307,7 @@ impl Range {
                 for control in &self.spill_cancel {
                     control.cancel();
                 }
-                self.poisoned = true;
+                self.poison_outputs();
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     "output cleanup unconfirmed; managed kernel teardown required",
@@ -307,7 +315,14 @@ impl Range {
             }
             thread::sleep(Duration::from_millis(2));
         }
-        join_readers(&mut self.readers)
+        let result = join_readers(&mut self.readers);
+        if self.cleanup_unconfirmed() {
+            Err(io::Error::other(
+                "output owner is poisoned; managed kernel teardown required",
+            ))
+        } else {
+            result
+        }
     }
 }
 impl Drop for Range {
@@ -535,6 +550,24 @@ mod tests {
         // Joining after the deliberate fixture release is teardown only; the owner
         // stays poisoned and cannot be reused or reported independently cleaned.
         join_readers(&mut range.readers).unwrap();
+        assert!(
+            range
+                .captures_until(Instant::now() + Duration::from_secs(1))
+                .is_err(),
+            "late joined readers cannot turn a poisoned owner into successful cleanup"
+        );
+        for view in range.output_views().unwrap() {
+            let snapshot = view.snapshot();
+            assert!(snapshot.cleanup_unconfirmed);
+            assert!(!snapshot.eof);
+            assert!(snapshot.spill.is_none());
+            assert!(snapshot.error.is_some());
+        }
+        assert_eq!(
+            std::fs::read_dir(store.test_directory()).unwrap().count(),
+            0,
+            "a previously poisoned stream must be discarded, not sealed after the late write"
+        );
         drop(range);
         for file in std::fs::read_dir(store.test_directory()).unwrap() {
             std::fs::remove_file(file.unwrap().path()).unwrap();

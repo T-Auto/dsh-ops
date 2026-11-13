@@ -160,22 +160,34 @@ impl CaptureView {
         let mut state = self.0.lock().unwrap();
         let (cap, retention) = (state.cap, state.retention);
         state.capture.append_with(bytes, cap, retention);
-        state.spill = spill;
-        state.spill_error = spill_error;
+        if !state.cleanup_unconfirmed {
+            state.spill = spill;
+            state.spill_error = spill_error;
+        }
         state.capture.observed
     }
     #[cfg(windows)]
     pub(crate) fn poison(&self, error: String) {
         let mut state = self.0.lock().unwrap();
+        state.eof = false;
+        state.error.get_or_insert_with(|| error.clone());
         state.spill = None;
-        state.spill_error = Some(error);
+        if !state.cleanup_unconfirmed {
+            state.spill_error = Some(error);
+        }
         state.cleanup_unconfirmed = true;
+    }
+    #[cfg(windows)]
+    pub(crate) fn poisoned(&self) -> bool {
+        self.0.lock().unwrap().cleanup_unconfirmed
     }
     #[cfg(any(windows, test))]
     pub(crate) fn finish(&self, result: &io::Result<()>) -> Capture {
         let mut state = self.0.lock().unwrap();
-        state.eof = result.is_ok();
-        state.error = result.as_ref().err().map(ToString::to_string);
+        if !state.cleanup_unconfirmed {
+            state.eof = result.is_ok();
+            state.error = result.as_ref().err().map(ToString::to_string);
+        }
         state.capture.clone()
     }
 }
@@ -183,6 +195,29 @@ impl CaptureView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn poison_cannot_be_cleared_by_late_output_or_successful_eof() {
+        let view = CaptureView::new(4, Retention::Tail).unwrap();
+        let spill = SpillSnapshot {
+            path: PathBuf::from("fixture.log"),
+            pid: 1,
+            sealed: true,
+        };
+        view.commit(b"ab", Some(spill.clone()), None);
+        view.finish(&Err(io::Error::other("original read error")));
+        view.poison("cleanup unconfirmed".into());
+        view.commit(b"cdef", Some(spill), None);
+        view.finish(&Ok(()));
+        let snapshot = view.snapshot();
+        assert!(snapshot.cleanup_unconfirmed);
+        assert!(!snapshot.eof);
+        assert!(snapshot.spill.is_none());
+        assert_eq!(snapshot.spill_error.as_deref(), Some("cleanup unconfirmed"));
+        assert_eq!(snapshot.error.as_deref(), Some("original read error"));
+        assert_eq!((snapshot.observed, snapshot.bytes), (6, b"cdef".to_vec()));
+    }
 
     #[test]
     fn tail_cursors_are_independent_and_empty_live_reads_are_not_eof() {

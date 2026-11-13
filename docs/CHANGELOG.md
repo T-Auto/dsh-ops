@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Keep native output poison irreversible: late completion cannot restore EOF or a complete spill path; readers discard streams poisoned before sealing, and the managed owner remains unconfirmed until host teardown.
+- 原生输出的中毒状态保持不可逆：迟到完成不能恢复 EOF 或完整溢写路径；封存前已中毒的流会被丢弃，受管理所有者持续报告清理未确认，直至宿主整体终止。
+
 - Add an internal Windows resident task queue with current-head admission, independent Job ownership, bounded tail reads and joined owner cleanup. Explicit job lifetime and promotion preserve the original process range; hard execution caps remain separate from host handoff timers. Production fresh/Jobs migration and recoverable spill remain pending (#872).
 - 添加 Windows 内部常驻任务队列：当前队首准入、独立 Job 所有权、有界尾部读取与等待完成的 owner 回收。显式 job 生命周期及提升保留原进程范围；硬执行上限与宿主移交计时分开。生产 fresh/Jobs 迁移及可恢复 spill 仍待完成（#872）。
 

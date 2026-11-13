@@ -47,6 +47,9 @@ impl Output {
         }
     }
     pub fn append(&mut self, bytes: &[u8]) -> u64 {
+        if self.view.poisoned() {
+            self.discard("output cleanup unconfirmed".into());
+        }
         let observed = self.observed.saturating_add(bytes.len() as u64);
         if !self.disabled
             && let Some(store) = &self.store
@@ -68,6 +71,9 @@ impl Output {
                     self.discard(error.to_string());
                 }
             }
+        }
+        if self.view.poisoned() {
+            self.discard("output cleanup unconfirmed".into());
         }
         // A live file covers this exact reported observed prefix. Pending writes have
         // not committed their chunk yet; the prior snapshot remains independently readable.
@@ -98,6 +104,9 @@ impl Output {
         self.file = None;
     }
     pub fn finish(mut self, result: &io::Result<()>) -> Capture {
+        if self.view.poisoned() {
+            self.discard("output cleanup unconfirmed".into());
+        }
         if result.is_err() && self.store.is_some() {
             self.discard("raw stream did not reach EOF".into());
         }

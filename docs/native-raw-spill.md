@@ -55,6 +55,11 @@ It must not report an independently cleaned task, reuse that Range, or launch
 another range under the poisoned owner. `Drop` retains unjoined readers; it is
 not a substitute for that fatal transport callback. A close/disposition failure
 is cleanup uncertainty, not a claim that every file was removed.
+Poisoning is irreversible: late bytes may update the bounded diagnostic tail,
+but cannot clear the raw error, restore EOF, or republish a complete path. A
+reader that observes poison discards instead of sealing. A seal already in
+progress can still finish after poison; its path remains withdrawn and the
+owner still requires fatal teardown, without claiming file cleanup succeeded.
 
 ## Recovery and retention
 
