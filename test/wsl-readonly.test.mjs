@@ -1,6 +1,7 @@
 /** Public cursor/path/coverage contracts, independent of an installed WSL distribution. */
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { mountFakeResident } from './lib/resident.mjs'
 import { invoke } from '../lib/execution/files.js'
 import { wslPath, linuxPath, cursorIdentity, wrapCursor, unwrapCursor, windowsResult, inlineWslResult } from '../lib/execution/wsl-paths.js'
 import { tryWslRead } from '../lib/execution/wsl-worker.js'
@@ -84,6 +85,7 @@ await test('disabled delegation cannot open an await gap after the final Windows
           } })
           inner.provide('subprocess', { spawn: () => { spawned++; throw new Error('revoked spawn') } })
         })
+        await mountFakeResident(ctx, { file: '/unused', invoke: async () => { spawned++; throw new Error('revoked resident call') } })
         const exec = { agent: { session: { id: `wsl-revoke-${cancel}`, header: { cwd: root } } } }
         const value = await invoke(ctx, '/unused', 'write_file', { path: 'a.txt', content: 'x', expectedRevision: 'absent' }, exec, controller.signal, { denyCredentialReads: false })
         assert.equal(spawned, 0)
