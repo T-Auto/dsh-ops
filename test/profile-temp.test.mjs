@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { profileCommand } from '../lib/profile-install.js'
+import { findDanglingDefault, repairDanglingDefault } from '../lib/profile-default-repair.js'
 import { ensureSessionTemp, sessionTempDir } from '../lib/session-temp.js'
 
 const capture = body => {
@@ -255,6 +256,64 @@ await test('the launcher receives an install spec verbatim, and the cmd line ref
           'the launcher must receive ' + JSON.stringify(spec) + ' as one argument')
       }
     }
+  })
+})
+await test('uninstall repairs a dangling selectedDefault: ops-ptc in cordis.patch.yml (#881)', async () => {
+  await profileFixture(({ root, receipt }) => {
+    const profileDir = path.join(root, 'profiles', 'dsh-tui')
+    const patchFile = path.join(profileDir, 'cordis.patch.yml')
+
+    // Only item in patch -> replaced with empty sequence `[]` behind comments.
+    fs.writeFileSync(patchFile, [
+      '# Managed by DSH',
+      '- id: agent-preset-registry',
+      '  config:',
+      '    selectedDefault: ops-ptc',
+      '',
+    ].join('\n'))
+    assert.equal(capture(() => profileCommand('uninstall', { profile: 'tui', dryRun: true })).status, 0)
+    assert.match(fs.readFileSync(patchFile, 'utf8'), /selectedDefault: ops-ptc/, 'dry-run must not mutate cordis.patch.yml')
+
+    process.env.PROFILE_TEST_EXIT = '9'
+    assert.equal(capture(() => profileCommand('uninstall', { profile: 'tui' })).status, 9)
+    assert.match(fs.readFileSync(patchFile, 'utf8'), /selectedDefault: ops-ptc/, 'a failed CLI removal must not touch cordis.patch.yml')
+    delete process.env.PROFILE_TEST_EXIT
+    fs.unlinkSync(receipt)
+
+    assert.equal(capture(() => profileCommand('uninstall', { profile: 'tui' })).status, 0)
+    assert.equal(fs.readFileSync(patchFile, 'utf8'), '# Managed by DSH\n[]\n')
+
+    // Sibling config keys and sibling rows survive, while a non-ops-ptc selection is untouched.
+    const withSiblings = [
+      '- id: agent-preset-registry',
+      '  config:',
+      '    default: standard',
+      '    selectedDefault: "ops-ptc"',
+      '- id: other-plugin',
+      '  disabled: true',
+      '',
+    ].join('\n')
+    fs.writeFileSync(patchFile, withSiblings)
+    assert.deepEqual(findDanglingDefault(withSiblings), [3])
+    assert.deepEqual(repairDanglingDefault(profileDir), { file: patchFile, dangling: true, changed: true })
+    assert.equal(fs.readFileSync(patchFile, 'utf8'), [
+      '- id: agent-preset-registry',
+      '  config:',
+      '    default: standard',
+      '- id: other-plugin',
+      '  disabled: true',
+      '',
+    ].join('\n'))
+
+    const operatorChoice = [
+      '- id: agent-preset-registry',
+      '  config:',
+      '    selectedDefault: ptc',
+      '',
+    ].join('\n')
+    fs.writeFileSync(patchFile, operatorChoice)
+    assert.deepEqual(repairDanglingDefault(profileDir), { file: patchFile, dangling: false, changed: false })
+    assert.equal(fs.readFileSync(patchFile, 'utf8'), operatorChoice)
   })
 })
 report('profile-temp')

@@ -6,6 +6,7 @@ import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
 import { PACKAGE_ROOT, dshHome } from './paths.js'
 import { PLATFORMS } from './execution/runtime.js'
+import { repairDanglingDefault } from './profile-default-repair.js'
 
 /**
  * Architectures this fork will run its profile commands on.
@@ -173,6 +174,7 @@ export function profileCommand(operation: ProfileOperation, { profile, dshCli, d
   } else result = spawnSync(command, [...prefix, ...args], { stdio: 'inherit', windowsHide: true })
   if (result.error) throw result.error
   if (result.status !== 0) return result.status ?? 1
+  if (operation === 'uninstall') repairDanglingDefault(directory)
   console.log(operation === 'install'
     ? 'Installed through the official profile manager. Reload/restart the target application if needed. On Windows the pinned Bash payload ships as an optional dependency; run dsh-ops bash-runtime install to repair a missing payload. No postinstall downloads.'
     : 'Removed through the official profile manager, including its runtime dependency references. Package-manager shared caches are not deleted.')

@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Restore the profile's default agent preset when `dsh-ops` is disabled or uninstalled: runtime preset default writes now exit the active HMR transaction scope and wait for outer HMR transactions and `<profile.dir>/package.json.lock` to settle instead of failing with `HMR transactions cannot be nested` or timing out on the profile lock, and `dsh-ops uninstall` cleans up any dangling `selectedDefault: ops-ptc` entry in `cordis.patch.yml` so new sessions no longer fail with `Unknown agent preset: ops-ptc` (#881).
+- 在禁用或卸载 `dsh-ops` 时恢复 profile 的默认 agent 预设：运行时默认预设写入现在会退出当前 HMR 事务上下文并等待外层 HMR 事务及 `<profile.dir>/package.json.lock` 结束，避免因 `HMR transactions cannot be nested` 或配置锁超时而残留 `selectedDefault: ops-ptc`；同时 `dsh-ops uninstall` 会在卸载后清理 `cordis.patch.yml` 中悬空的 `selectedDefault: ops-ptc`，防止新建会话报 `Unknown agent preset: ops-ptc`（#881）。
 - Native tool construction and the publication refusal queue no longer attach listeners or lifetime effects to the composition root. The evidence observer and result admission subscribe on the caller's context with global dispatch, and the refusal queue falls back to the caller lifetime when the root refuses an effect. dsh-tui 0.20 refuses `root.events.on` and `root.effect` from a plugin activation, and the native-tools row is one, so every `dsh-tui --resume` aborted with "cannot resume session" before the agent mounted.
 - 原生工具构造与发布拒绝队列不再向组合根挂监听或生命周期 effect：证据观察者与 result admission 改为在调用方上下文订阅并声明 global 分发，拒绝队列在 root 拒绝 effect 时回落到调用方生命周期。dsh-tui 0.20 会拒绝插件激活期内的 `root.events.on` 与 `root.effect`，而原生工具行正是插件激活，导致每次 `dsh-tui --resume` 都在 agent 挂载前报 "cannot resume session"。
 
