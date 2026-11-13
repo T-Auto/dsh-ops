@@ -115,6 +115,7 @@ await test('DSH 0.2.2 refuses a missing workingDirectory instead of using a stal
   try {
     await ctx.plugin(Subprocess)
     await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: () => ({ mode: 'read-only', workspaceRoot: root }) }))
+    await mountResident(ctx, { file: WORKER })
     const exec = { agent: { session: { id: 'legacy-cwd', header: { cwd: root } } }, signal: new AbortController().signal }
     const result = await invoke(ctx, WORKER, 'read_files', { files: [{ path: 'probe.txt' }] }, exec, exec.signal)
     assert.equal(result.status, 'error', JSON.stringify(result))

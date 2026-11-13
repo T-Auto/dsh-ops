@@ -4,7 +4,7 @@ import path from 'node:path'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
-import { mountResident } from './lib/resident.mjs'
+import { mountResident, mountFakeResident } from './lib/resident.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
 import { invoke } from '../lib/file/worker.js'
 import { resolveReadFiles } from '../lib/file/read-files.js'
@@ -81,6 +81,7 @@ await test('every credential path and invalid descriptor is rejected before spaw
     try {
       await ctx.plugin(inner => inner.provide('subprocess', { spawn() { spawned++; throw new Error('unexpected spawn') } }))
       await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: () => ({ mode: race && ++resolves > 1 ? 'read-only' : 'workspace-write', workspaceRoot: root }) }))
+      await mountFakeResident(ctx, { file: WORKER, invoke: async () => { spawned++; throw new Error('unexpected resident call') } })
       const exec = execution(root)
       for (const [files, code] of [[[{ path: 'safe' }, { path: '.env' }], 'CREDENTIAL_DENIED'], [[{ path: 'safe' }, { path: '' }], 'INVALID_ARGUMENT'], [[], 'INVALID_ARGUMENT']]) {
         const value = await invoke(ctx, WORKER, 'read_files', { files }, exec, exec.signal)
