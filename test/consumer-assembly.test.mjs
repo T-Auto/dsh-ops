@@ -15,13 +15,13 @@ import { InvocationLifetime, InvocationNotStarted } from '../lib/lifecycle/invoc
 import { searchCapabilities } from '../lib/discovery/candidates.js'
 import { bootHost, shutdown, scopedToolNames } from './lib/host.mjs'
 import { assert, test, report, waitFor, withTempDir } from './lib/harness.mjs'
-import { mountFakeResident } from './lib/resident.mjs'
+import { mountFakeResident, providePublicationAuthorities } from './lib/resident.mjs'
 const capability = (execute = async () => ({ ok: true })) => ({ search: 'lookup external catalogue', authorize: () => true,
   definition: { name: 'acme_lookup', description: 'Look up external catalogue.', parameters: { type: 'object', properties: {} },
     output: { schema: { type: 'object' }, render: () => [] }, execute } })
 async function host(cwd, services = true) {
   const { ctx } = await bootHost()
-  const agents = []; ctx.provide('agents', { list: () => agents })
+  const agents = []; providePublicationAuthorities(ctx, agents)
   ctx.provide('agentPresets', { composedPreset: () => undefined })
   if (services) {
     await ctx.plugin(Subprocess)

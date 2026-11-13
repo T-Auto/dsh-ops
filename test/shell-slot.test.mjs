@@ -16,6 +16,7 @@ import { readRowValues, changedFields } from '../lib/client/row-schema.js'
 import { mountDshOpsBridge } from './fixtures/shell-slot-pwsh7/dsh-ops-bridge.mjs'
 import { bootHost, shutdown, scopedToolNames } from './lib/host.mjs'
 import { assert, report, test, withTempDir, waitFor } from './lib/harness.mjs'
+import { providePublicationAuthorities } from './lib/resident.mjs'
 
 const off = { enabled: false }
 const minimalOnly = { standard: off, ptc: off, cordis: off, discovery: off }
@@ -36,7 +37,7 @@ async function boot(cwd) {
   ctx.get('systemPrompt').variable('os', () => process.platform)
   await ctx.plugin(Subprocess)
   const live = [], presets = new Map()
-  ctx.provide('agents', { list: () => [...live] })
+  providePublicationAuthorities(ctx, live)
   ctx.provide('sandboxPolicy', { resolve: ({ session }) => session.mode === 'unavailable' ? undefined : ({ mode: session.mode, workspaceRoot: cwd }) })
   ctx.provide('agentPresets', { composedPreset: context => presets.get(scopeParentOf(scopeOf(context))) })
   const mint = async (id, { preset = 'minimal', pwsh = true, mode = 'danger-full-access' } = {}) => {

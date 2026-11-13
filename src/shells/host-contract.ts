@@ -29,7 +29,7 @@ export const HOST_BASH_OUTPUT_SCHEMA: JsonSchemaNode = {
 
 export function hostForeground(value: ShellResult, effects: 'none' | 'unknown' = 'unknown'): HostForeground {
   const settled = withBashStatus(value)
-  return { ...settled, ...(settled.status === 'failed' ? { failure: bashFailure(value, effects) } : {}), kind: 'foreground', exitCode: value.exitCode ?? null,
+  return { ...settled, ...(settled.status === 'failed' ? { failure: value.failure ?? bashFailure(value, effects) } : {}), kind: 'foreground', exitCode: value.exitCode ?? null,
     signal: value.signal ?? null, aborted: value.cancelled === true }
 }
 
@@ -47,6 +47,7 @@ export function renderHostBash(value: HostBashResult): string {
   const markers = []
   if (value.failure) markers.push(`[${value.failure.code}; effects: ${value.failure.effectState}; retry: ${value.failure.retry}] ${value.failure.nextAction ?? ''}`)
   if (value.sandbox?.denied) markers.push(`[sandbox: file access denied under ${value.sandbox.mode} mode]`)
+  if (value.sandbox?.denialObservation === 'incomplete') markers.push('[sandbox diagnostics incomplete: retained output cannot exclude a denial]')
   if (value.stopped) markers.push(`[stopped: ${value.stopped}]`)
   if (signal !== null) markers.push(`[killed by signal: ${signal}]`)
   if (exitCode !== null) markers.push(`[exit code: ${exitCode}]`)

@@ -6,6 +6,7 @@ use std::{
     process::{Command, Stdio},
     sync::{
         Arc,
+        atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver},
     },
     thread,
@@ -13,6 +14,30 @@ use std::{
 };
 
 const CHILD: &str = "task::lifecycle_tests::owned_child";
+fn fixture_directory(nonce: u128) -> PathBuf {
+    // Parallel tests can observe the same Windows wall-clock tick.
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "ops-task-test-{}-{nonce}-{sequence}",
+        std::process::id()
+    ))
+}
+
+#[test]
+fn fixture_paths_stay_unique_when_parallel_calls_share_a_clock_tick() {
+    let paths = thread::scope(|scope| {
+        let calls: Vec<_> = (0..8)
+            .map(|_| scope.spawn(|| fixture_directory(0)))
+            .collect();
+        calls
+            .into_iter()
+            .map(|call| call.join().unwrap())
+            .collect::<std::collections::HashSet<_>>()
+    });
+    assert_eq!(paths.len(), 8);
+}
+
 struct Fixture {
     manager: Manager,
     output: Receiver<Value>,
@@ -24,8 +49,7 @@ impl Fixture {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let directory =
-            std::env::temp_dir().join(format!("ops-task-test-{}-{nonce}", std::process::id()));
+        let directory = fixture_directory(nonce);
         fs::create_dir(&directory).unwrap();
         let (send, output) = mpsc::channel();
         let manager = Manager::new(

@@ -2,7 +2,7 @@
 /** Host-compatible consumer over an OPS-owned executor; host services stay scoped and borrowed. */
 import type { ToolDefinition } from '../adapter/dsh/types.js'
 import type { JsonSchemaNode } from '../adapter/dsh/types.js'
-import type { ShellContext, ShellBase, ShellCall, ShellPolicy, CreateShellExecution, StartShell, ShellExecution, ShellJobs, HostBashResult, HostShellDefinition } from './types.js'
+import type { ShellContext, ShellBase, ShellCall, ShellPolicy, CreateShellExecution, StartShell, ShellExecution, ShellJobs, HostBashResult, HostShellDefinition, ShellExecutionSpec, BashExecutionStrategy } from './types.js'
 import { errorMessage } from './types.js'
 import { BashArgumentError, isBashArgumentError } from './argument-error.js'
 import { approveBashPolicy } from './approval.js'
@@ -18,7 +18,7 @@ export const HOST_MAX_BASH_TIMEOUT_MS = 600_000
 
 export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExecution: CreateShellExecution,
   resolveWorkdir: (args: Record<string, unknown>, session: NonNullable<ShellCall['agent']>['session'] | undefined, exec: ShellCall) => unknown,
-  jobs?: ShellJobs): HostShellDefinition {
+  jobs?: ShellJobs, strategy?: BashExecutionStrategy): HostShellDefinition {
   // The registry arrives already bound by the component (`ctx.inject(['jobs'], …)`), exactly as the
   // host's own bash tool does it. Re-reading a tracked service at call time returns a fresh traceable
   // proxy, so an identity comparison against the definition-time value can never hold and must not
@@ -42,6 +42,7 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
     presentCall: presentBashCall,
     presentResult: presentBashResult,
     async execute(input: unknown, exec: ShellCall = {}): Promise<HostBashResult> {
+      exec = { ...exec }
       let basis: DirectoryBasis | undefined
       const stamp = (value: HostBashResult): HostBashResult => basis ? { ...value, resolvedFrom: basis.cwd, cwdSource: basis.source } : value
       const complete = async (value: HostBashResult) => { value = stamp(value); await projection.prepare(value, exec); return value }
@@ -50,7 +51,7 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
       let process: ShellExecution | undefined
       try {
         if (!input || typeof input !== 'object' || Array.isArray(input)) throw new BashArgumentError('invalid arguments: expected an object', 'arguments')
-        const args = input as Record<string, unknown>
+        const args = { ...input } as Record<string, unknown>
         const unknown = Object.keys(args).find(key => !Object.hasOwn(parameters.properties, key))
         if (unknown !== undefined) throw new BashArgumentError(`invalid arguments: unknown key ${JSON.stringify(unknown)}; this tool accepts ${Object.keys(parameters.properties).join(', ')}`, unknown)
         if (args.run_in_background !== undefined && typeof args.run_in_background !== 'boolean') throw new BashArgumentError('invalid run_in_background: expected a boolean', 'run_in_background')
@@ -64,7 +65,7 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
           local.workdir = resolved.workdir
         } else local.workdir = resolved
         // Pure validation occurs before approval, job admission or physical preparation.
-        base.resolve(local)
+        const spec = base.resolve(local) as ShellExecutionSpec
         if (typeof args.description !== 'string' || !args.description.trim()) throw new BashArgumentError('invalid description: expected a non-empty string', 'description')
         if (!exec.agent?.session?.id) return hostFailure('EXECUTOR_UNAVAILABLE: an authoritative session is required.', timeoutMs)
         const standing = ctx.get('sandboxPolicy')?.resolve({ session: exec.agent.session })
@@ -73,6 +74,13 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
         exec.signal?.throwIfAborted()
         const dshEnv = ctx.get('shellEnv')?.collect(exec) ?? {}
         const approvedPolicy = policy
+        if (strategy) {
+          const value = await strategy({ args: local, spec: { ...spec }, call: exec,
+            standing: { ...standing, additionalWritableRoots: [...standing.additionalWritableRoots ?? []] },
+            policy: { ...approvedPolicy, additionalWritableRoots: [...approvedPolicy.additionalWritableRoots ?? []] },
+            env: { ...dshEnv }, background: run_in_background === true, observe: execution => { process = execution } })
+          return value.kind === 'background' ? stamp(value) : await complete(value)
+        }
         const start: StartShell = async (execution, options) => {
           process = await createExecution(local, execution, standing, approvedPolicy, dshEnv, options)
           return process
@@ -91,7 +99,7 @@ export function hostBashDefinition(ctx: ShellContext, base: ShellBase, createExe
         return await complete(hostForeground(result, execution.started ? 'unknown' : 'none'))
       } catch (error) {
         const message = isBashArgumentError(error) ? `INVALID_BASH_ARGUMENT: ${errorMessage(error)}` : errorMessage(error)
-        return stamp({ ...hostFailure(message, timeoutMs, process?.started ? 'unknown' : 'none', exec.signal?.aborted === true), ...(policy ? { sandbox: { mode: policy.mode, denied: false } } : {}) })
+        return stamp({ ...hostFailure(message, timeoutMs, process?.effectState ?? (process?.started ? 'unknown' : 'none'), exec.signal?.aborted === true), ...(policy ? { sandbox: { mode: policy.mode, denied: false } } : {}) })
       }
     },
   } satisfies ToolDefinition
