@@ -20,6 +20,23 @@ On Windows volumes without named-stream or ACL support, mutations preserve avail
 
 `replace` is not bound to an earlier `inspect_local_file` result. Use `edit_file` when a single-file change must depend on that exact read. A `replace` preview is not a reservation: execution rescans. `changed` counts applied literal replacements, not files. A preview has `dryRun: true`; planned hashes alone do not establish that writes happened. Directory replacement records permission-denied reads in `skippedPaths` and returns `complete: false` with `truncated: true` while continuing eligible neighbors; ordinary binary-file skips do not by themselves make the result incomplete. Update-lock, staging and publication denials still fail the call, and sharing violations or other IO failures retain their structured error instead of becoming skips.
 
+## Directory discovery and incomplete scans
+
+`glob` accepts `kind: "file" | "directory" | "all"` (default `file`), independently of `outputMode`.
+`{ pattern: ["*"], kind: "directory" }` lists immediate child directories, including empty ones;
+`all` mixes files and directories. `paths` returns strings. `details` returns `{ path, bytes, modified }`,
+with `kind` on `directory`/`all` queries. Directory byte sizes are filesystem metadata, not recursive totals.
+Hidden entries, dependency/build directories, symlinks, junctions and other reparse points remain excluded.
+Directory queries use the bounded no-follow walk; the file-only index cannot prove empty directories.
+
+For an incomplete scan, retain `scannedFiles`, `matchedObserved`, `skipReasons` and `scanComplete: false`.
+Observed matches are lower bounds, and no stable continuation or full total is claimed. `nextAction`
+directs a fresh query under a smaller readable `path`, with up to two gap examples (stable code and path)
+when available. A non-UTF-8 name uses its containing directory as the sample. Intentional exclusions
+remain distinct from scan gaps. Complete scans retain their existing pagination and continuation checks.
+The non-UTF-8 filename fixture runs on Linux; APFS rejects those bytes when creating the directory.
+Directory discovery and no-follow fixtures also run on macOS and Windows.
+
 ## One PTC call: read, derive, edit
 
 Load the required bindings before the execution turn, using [SDK loading](ptc-sdk-loading.md). A successful `ops_load_sdk` receipt with `nextTurn: true` does not make a missing binding callable in that same `run_code`. `OpsSdk` is the complete type catalogue, not a promise that every binding is currently loaded.

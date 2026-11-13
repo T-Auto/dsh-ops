@@ -60,15 +60,26 @@ impl SourceKind {
 }
 
 pub struct Scan {
+    /// Directory queries use the walk; file indexes cannot prove empty entries.
+    pub include_directories: bool,
     pub profile: crate::profile::Profile,
     pub scanned: usize,
     pub skipped: usize,
     pub reasons: BTreeMap<String, usize>,
+    pub gap_examples: Vec<Value>,
     pub gap: bool,
     pub failed: usize,
     pub stopped: Option<TruncatedBy>,
     /// Traversal that produced this scan's observations.
     pub source: SourceKind,
+    /// Whether ordinary dot-prefixed directories are traversed.
+    ///
+    /// The caller sets this from its own arguments; `Scan::new()` keeps the
+    /// historical answer. It lifts only [`dotdir`]: the plugin's own sidecars
+    /// stay invisible to every selection tool regardless, so a directory-wide
+    /// `ops_replace` can never rewrite an update lock or read a half-written
+    /// temporary.
+    pub include_hidden: bool,
     pub hash: Sha256,
     started: Instant,
     timeout: Duration,
@@ -80,14 +91,17 @@ pub struct Scan {
 impl Scan {
     pub fn new() -> Self {
         Self {
+            include_directories: false,
             profile: crate::profile::Profile::new(),
             scanned: 0,
             skipped: 0,
             reasons: BTreeMap::new(),
+            gap_examples: Vec::new(),
             gap: false,
             failed: 0,
             stopped: None,
             source: SourceKind::Walk,
+            include_hidden: false,
             hash: Sha256::new(),
             started: Instant::now(),
             timeout: SCAN_TIMEOUT,
@@ -99,6 +113,7 @@ impl Scan {
     }
     pub fn running(&mut self) -> bool {
         if self.stopped.is_none() && self.started.elapsed() >= self.timeout {
+            self.skip("time-limit", false, true);
             self.stopped = Some(TruncatedBy::Time);
         }
         self.stopped.is_none()
@@ -114,6 +129,40 @@ impl Scan {
         if gap && !matches!(reason, "oversized" | "invalid-encoding") {
             self.failed += 1;
         }
+    }
+    fn skip_at(&mut self, reason: &str, path: &Path, file: bool) {
+        self.skip_error(reason, reason, path, file);
+    }
+    fn skip_error(&mut self, reason: &str, code: &str, path: &Path, file: bool) {
+        self.skip(reason, file, true);
+        if self.gap_examples.len() < 2 {
+            self.gap_examples.push(json!({"code":code,"path":path}));
+        }
+    }
+    fn skip_io(&mut self, reason: &str, path: &Path, file: bool, error: &std::io::Error) {
+        // Normalize OS-specific errno values without exposing unstable OS messages.
+        let code = match error.raw_os_error() {
+            #[cfg(windows)]
+            Some(206) => "ENAMETOOLONG",
+            #[cfg(windows)]
+            Some(1921) => "ELOOP",
+            #[cfg(unix)]
+            Some(1) => "EPERM",
+            #[cfg(target_os = "linux")]
+            Some(36) => "ENAMETOOLONG",
+            #[cfg(target_os = "linux")]
+            Some(40) => "ELOOP",
+            #[cfg(target_os = "macos")]
+            Some(63) => "ENAMETOOLONG",
+            #[cfg(target_os = "macos")]
+            Some(62) => "ELOOP",
+            _ => match error.kind() {
+                std::io::ErrorKind::PermissionDenied => "EACCES",
+                std::io::ErrorKind::NotFound => "ENOENT",
+                _ => "IO_ERROR",
+            },
+        };
+        self.skip_error(reason, code, path, file);
     }
     pub fn complete(&self) -> bool {
         !self.gap && self.stopped.is_none()
@@ -167,6 +216,7 @@ impl Scan {
                 }
                 self.bytes += count;
                 if self.bytes > MAX_SCAN_BYTES {
+                    self.skip_at("byte-limit", path, true);
                     self.stopped = Some(TruncatedBy::ScanBudget);
                     return Ok(None);
                 }
@@ -183,8 +233,8 @@ impl Scan {
         })();
         match read {
             Ok(value) => value,
-            Err(_) => {
-                self.skip("read-error", true, true);
+            Err(error) => {
+                self.skip_error("read-error", &error.code, path, true);
                 None
             }
         }
@@ -382,14 +432,14 @@ impl Scan {
             return Ok(());
         }
         if depth > self.max_depth {
-            self.skip("depth-limit", false, true);
+            self.skip_at("depth-limit", display, false);
             return Ok(());
         }
         let mut entries = match read_entries(&directory, display) {
             Ok(entries) => entries,
             Err(error) if depth == 0 => return Err(error),
-            Err(_) => {
-                self.skip("unreadable-directory", false, true);
+            Err(error) => {
+                self.skip_error("unreadable-directory", &error.code, display, false);
                 return Ok(());
             }
         };
@@ -400,16 +450,16 @@ impl Scan {
             }
             self.entries += 1;
             if self.entries > MAX_WALK_ENTRIES {
-                self.skip("entry-limit", false, true);
+                self.skip_at("entry-limit", display, false);
                 self.stopped = Some(TruncatedBy::ScanBudget);
                 break;
             }
             match entry {
                 Ok(name) => names.push(name),
                 Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
-                    self.skip("non-utf8-path", false, true)
+                    self.skip_at("non-utf8-path", display, false)
                 }
-                Err(_) => self.skip("unreadable-entry", false, true),
+                Err(error) => self.skip_io("unreadable-entry", display, false, &error),
             }
         }
         #[cfg(windows)]
@@ -434,7 +484,7 @@ impl Scan {
                 || (request.windows_paths
                     && ops_protocol::windows_paths::validate_name(&name).is_err())
             {
-                self.skip("invalid-path", false, true);
+                self.skip_at("invalid-path", &child, false);
                 continue;
             }
             let started = self.profile.start();
@@ -442,8 +492,8 @@ impl Scan {
             self.profile.record("relativeMetadata", started);
             let metadata = match metadata {
                 Ok(metadata) => metadata,
-                Err(_) => {
-                    self.skip("unreadable-entry", false, true);
+                Err(error) => {
+                    self.skip_io("unreadable-entry", &child, false, &error);
                     continue;
                 }
             };
@@ -457,8 +507,8 @@ impl Scan {
             self.profile.record("absoluteMetadata", started);
             let host = match host {
                 Ok(metadata) => metadata,
-                Err(_) => {
-                    self.skip("unreadable-entry", file, true);
+                Err(error) => {
+                    self.skip_io("unreadable-entry", &child, file, &error);
                     continue;
                 }
             };
@@ -470,14 +520,17 @@ impl Scan {
                 self.skip("symlink", file, false);
                 continue;
             }
-            if hidden(&child, root) || matches!(name.as_str(), "node_modules" | "target" | ".venv")
+            // A caller may opt into ordinary dot directories, but never into
+            // the plugin's own sidecars: `internal` shields the update lock, so
+            // no flag makes an `.dsh-ops-*` file observable here.
+            if (dotdir(&child, root) && !self.include_hidden) || internal(&name) || reserved(&name)
             {
                 self.skip("excluded", file, false);
                 continue;
             }
             if file {
                 if self.scanned >= self.max_files {
-                    self.skip("file-limit", true, true);
+                    self.skip_at("file-limit", &child, true);
                     self.stopped = Some(TruncatedBy::ScanBudget);
                     break;
                 }
@@ -493,11 +546,17 @@ impl Scan {
                 each(&child, &metadata, self)?;
             } else if metadata.is_dir() {
                 self.stamp(&child, &metadata);
+                if self.include_directories && patterns.matches(root, &child) {
+                    each(&child, &metadata, self)?;
+                }
+                if self.include_directories && patterns.shallow() {
+                    continue;
+                }
                 match directory.open_dir_nofollow(&name) {
                     Ok(next) => {
                         self.visit(root, &child, next, depth + 1, patterns, request, each)?
                     }
-                    Err(_) => self.skip("unreadable-directory", false, true),
+                    Err(error) => self.skip_io("unreadable-directory", &child, false, &error),
                 }
             } else {
                 self.skip("unsupported-entry", false, false);

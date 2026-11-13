@@ -10,9 +10,14 @@ const fields = tool => Object.fromEntries(Object.entries(PARAMETERS[tool].proper
 await test('grep, glob and replace parameters are pinned exactly', () => {
   assert.deepEqual(fields('grep'), {
     path: 'string', pattern: 'string', glob: 'array', outputMode: 'string', caseInsensitive: 'boolean',
-    lineNumbers: 'boolean', beforeContext: 'integer', afterContext: 'integer', multiline: 'boolean', offset: 'integer', limit: 'integer', exactTotal: 'boolean', continuation: 'string',
+    lineNumbers: 'boolean', beforeContext: 'integer', afterContext: 'integer', multiline: 'boolean', offset: 'integer', limit: 'integer', exactTotal: 'boolean', includeHidden: 'boolean', continuation: 'string',
   })
-  assert.deepEqual(fields('glob'), { path: 'string', pattern: 'array', outputMode: 'string', sort: 'string', offset: 'integer', limit: 'integer', continuation: 'string' })
+  assert.deepEqual(fields('glob'), { path: 'string', kind: 'string', pattern: 'array', outputMode: 'string', sort: 'string', offset: 'integer', limit: 'integer', includeHidden: 'boolean', continuation: 'string' })
+  assert.deepEqual(PARAMETERS.glob.properties.kind.enum, ['file', 'directory', 'all'])
+  assert.deepEqual(PARAMETERS.glob.required, ['pattern'])
+  assert.match(PARAMETERS.glob.properties.kind.description, /default file/)
+  assert.match(PARAMETERS.glob.properties.kind.description, /empty directories/)
+  assert.deepEqual(PARAMETERS.glob.properties.outputMode.enum, ['paths', 'details'])
   assert.deepEqual(fields('replace'), { path: 'string', pattern: 'string', replacement: 'string', glob: 'array', maxReplacements: 'integer', dryRun: 'boolean' })
   for (const tool of ['grep', 'glob', 'replace']) assert.equal(PARAMETERS[tool].properties.include, undefined)
 })
@@ -22,7 +27,7 @@ await test('search descriptions retain matching and completeness rules without r
   assert.match(DESCRIPTIONS.glob, /"\*\.md" matches the top level only/)
   assert.match(DESCRIPTIONS.grep, /glob filters paths relative to path/)
   assert.match(DESCRIPTIONS.grep, /there is no include field/)
-  assert.match(DESCRIPTIONS.grep, /exclude symlinks, junctions, reparse points, hidden files and \.git/)
+  assert.match(DESCRIPTIONS.grep, /exclude symlinks, junctions, reparse points and \.git/)
   for (const tool of ['glob', 'grep']) {
     assert.match(DESCRIPTIONS[tool], /Follow nextOffset/)
     assert.match(DESCRIPTIONS[tool], /scanComplete and pageComplete/)
@@ -30,7 +35,11 @@ await test('search descriptions retain matching and completeness rules without r
     assert.match(PARAMETERS[tool].properties.continuation.description, /Keep query options unchanged.*SEARCH_STALE requires a fresh query/)
     assert.doesNotMatch(DESCRIPTIONS[tool], /ARRAY|pattern is|limit defaults|SEARCH_STALE/)
     assert.match(PARAMETERS[tool].properties.limit.description, /1-10000 inclusive\. Default 100/)
+    // #734: the switch is advertised only where it exists, and it lifts one rule rather than the whole exclusion set.
+    assert.match(DESCRIPTIONS[tool], /includeHidden is set, which lifts only that rule/)
+    assert.match(DESCRIPTIONS[tool], /never the plugin-owned \.dsh-ops sidecars/)
   }
+  assert.doesNotMatch(DESCRIPTIONS.replace, /includeHidden/)
   assert.match(PARAMETERS.glob.properties.pattern.description, /at least one positive entry/)
   assert.match(PARAMETERS.grep.properties.pattern.description, /Rust regex STRING/)
   assert.match(PARAMETERS.replace.properties.pattern.description, /Nonempty literal STRING, not a regex/)

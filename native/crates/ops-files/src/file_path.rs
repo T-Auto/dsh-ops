@@ -143,7 +143,7 @@ pub fn read_file(target: &Target) -> Result<File> {
     if !metadata.is_file() {
         return Err(Failure::new(
             "IS_DIRECTORY",
-            "Expected a regular file; use ops_glob for a directory",
+            "Expected a regular file; choose a file, or list directory entries with the shell",
         ));
     }
     let mut options = OpenOptions::new();

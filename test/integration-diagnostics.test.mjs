@@ -16,6 +16,7 @@ await test('diagnostics distinguishes unselected, unavailable and ready publicat
     await ctx.plugin({ inject: ['tools'], apply(inner) { agent.ctx = createScope(inner, agent).ctx } })
     const unselected = await diagnose(ctx, agent)
     assert.equal(unselected.state, 'not-selected')
+    assert.equal(unselected.runtimeVersion, 'unknown', 'a development dependency is not the running host version')
     await ctx.plugin(integration({ preset: 'diag-preset', profile: 'discovery', allowedTools: [], externalTools: ['diag_lookup'], externalAlwaysLoaded: ['diag_lookup'] }))
     const unavailable = await diagnose(ctx, agent)
     assert.equal(unavailable.external[0].state, 'unavailable')

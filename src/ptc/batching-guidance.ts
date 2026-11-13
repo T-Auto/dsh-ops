@@ -10,11 +10,12 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Agent } from '../adapter/dsh/types.js'
+import { shellLiteralFileWork } from './shell-file-work.js'
 
 /** Identity of the guidance in the host message source. */
 export const BATCHING_GUIDANCE_ID = 'batching-guidance'
 /** Revision of the guidance text; bump it when the wording or the file format changes. */
-export const BATCHING_GUIDANCE_REVISION = '3'
+export const BATCHING_GUIDANCE_REVISION = '4'
 
 /** The shipped guidance file, resolved from this module's own location (src or lib). */
 const DEFAULT_GUIDANCE_FILE = new URL('../../prompts/batching-guidance.md', import.meta.url)
@@ -83,7 +84,6 @@ const BRANCHING = /\bif\s*\(|\btry\s*\{|\bswitch\s*\(|\?\s*[^:]{1,80}:/u
 const WAITING = /\bwait\s*:\s*true|job_output\s*\(/u
 const BYPASS = /node:fs|node:child_process|\bfs\./u
 const SHELL_TOOL = /^(?:pwsh|bash|shell|ops_bash|pwsh_persistent|bash_persistent)$/u
-const SHELL_FILE_WORK = /Get-ChildItem|Get-Content|Select-String|Test-Path|(?:^|[\s;&|"'`])(?:ls|dir|cat|type|grep|rg|find|head|tail|wc|sed|awk|cp|mv|rm|mkdir)\s/iu
 
 /** Program text with comments and string bodies separated from executable tokens. */
 interface ReadableProgram {
@@ -95,8 +95,6 @@ interface ReadableProgram {
   readonly tokens: string
   /** Literal spans, including complete templates, used to bound command values. */
   readonly literals: ReadonlyMap<number, number>
-  /** Statically known literal text; template expressions are never shell text. */
-  readonly literalText: ReadonlyMap<number, string>
 }
 
 /**
@@ -142,7 +140,6 @@ function readProgram(code: string): ReadableProgram {
   const bare = code.split('')
   const tokens = code.split('')
   const literals = new Map<number, number>()
-  const literalText = new Map<number, string>()
   const blank = (target: string[], from: number, to: number): void => {
     for (let index = from; index < to; index += 1) {
       const char = target[index]
@@ -177,7 +174,6 @@ function readProgram(code: string): ReadableProgram {
   const quotedEnd = (open: number, quote: string): number => {
     const end = stringEnd(open, quote)
     literals.set(open, end)
-    literalText.set(open, code.slice(open + 1, end - 1))
     blank(tokens, open, end)
     if (!isModuleSpecifier(code, open)) {
       const close = end > open && code[end - 1] === quote ? end - 1 : end
@@ -189,7 +185,6 @@ function readProgram(code: string): ReadableProgram {
     blank(tokens, open, open + 1)
     let index = open + 1
     let literal = index
-    const parts: string[] = []
     while (index < code.length) {
       const char = code[index]
       if (char === '\\') { index += 2; continue }
@@ -197,14 +192,11 @@ function readProgram(code: string): ReadableProgram {
         blank(bare, literal, index)
         blank(tokens, literal, index + 1)
         literals.set(open, index + 1)
-        parts.push(code.slice(literal, index))
-        literalText.set(open, parts.join('\0'))
         return index + 1
       }
       if (char === '$' && code[index + 1] === '{') {
         blank(bare, literal, index)
         blank(tokens, literal, index + 2)
-        parts.push(code.slice(literal, index))
         index = expressionEnd(index + 2)
         literal = index
         continue
@@ -240,14 +232,14 @@ function readProgram(code: string): ReadableProgram {
     if (char === '\x60') { index = templateEnd(index); continue }
     index += 1
   }
-  return { code: comments.join(''), bare: bare.join(''), tokens: tokens.join(''), literals, literalText }
+  return { code: comments.join(''), bare: bare.join(''), tokens: tokens.join(''), literals }
 }
 
 /** Inspect only a literal command in the first argument object of this shell call.
  * Dynamic values are deliberately not resolved: guidance must not guess at file IO.
  */
 function shellCommandUsesFiles(program: ReadableProgram, start: number): boolean {
-  const { code, tokens, literals, literalText } = program
+  const { code, tokens, literals } = program
   let index = start
   while (/\s/u.test(code[index] ?? "") && index < code.length) index += 1
   if (tokens[index] !== "{") return false
@@ -258,11 +250,16 @@ function shellCommandUsesFiles(program: ReadableProgram, start: number): boolean
     const char = code[index]!
     if (/\s/u.test(char)) { index += 1; continue }
     if (depth === 1 && propertyStart) {
-      // Quoted property names are valid, but nested objects and descriptions are not commands.
-      const key = /^(?:command|"command"|'command')\s*:\s*/u.exec(code.slice(index))
+      // Only a complete top-level command or script literal can be classified.
+      const key = /^(?:command|script|"command"|"script"|'command'|'script')\s*:\s*/u.exec(code.slice(index))
       if (key) {
-        const text = literalText.get(index + key[0].length)
-        if (text !== undefined && SHELL_FILE_WORK.test(text)) return true
+        const valueStart = index + key[0].length
+        const end = literals.get(valueStart)
+        if (end !== undefined) {
+          let after = end
+          while (after < code.length && /\s/u.test(code[after]!)) after += 1
+          if ((code[after] === ',' || code[after] === '}') && shellLiteralFileWork(code.slice(valueStart, end))) return true
+        }
       }
       propertyStart = false
     }
@@ -422,7 +419,7 @@ export function noticeText(category: BatchingCategory, shape: ProgramShape): str
     return [
       'Your last program did file work through the shell or Node IO, which bypasses path policy and the audit trail.',
       'List with `ops_glob`, search with `ops_grep`, read with `ops_read_files` or `ops_inspect_local_file`, edit with `ops_edit_file`.',
-      'Only `ops_inspect_local_file` is resident: load the others with `tools.ops_load_sdk` in the previous program, then call them here.',
+      'Use the APIs in the current SDK; load only missing names with `tools.ops_load_sdk` for the next program.',
     ].join('\n')
   }
   return [

@@ -28,6 +28,85 @@ fn fixture() -> (PathBuf, Request) {
     (root, request)
 }
 
+#[test]
+fn partial_directory_scan_reports_budget_and_bounded_gap_examples() {
+    let (root, request) = fixture();
+    for name in ["d1", "d2", "d3"] {
+        fs::create_dir(root.join(name)).unwrap();
+    }
+    let mut scan = Scan::new();
+    scan.max_depth = 0;
+    scan.include_directories = true;
+    let mut paths = Vec::new();
+    scan.walk(&root, &["**".into()], &request, |path, _, _| {
+        paths.push(path.to_owned());
+        Ok(())
+    })
+    .unwrap();
+    let output = report(&paths, scan, &request, 0, 100);
+    assert_eq!(output["scanComplete"], false);
+    assert_eq!(output["scannedFiles"], 3);
+    assert_eq!(output["matchedObserved"], 6);
+    assert_eq!(output["skipReasons"]["depth-limit"], 3);
+    assert!(output.get("continuation").is_none());
+    assert!(output.get("matchedTotal").is_none());
+    let action = output["nextAction"].as_str().unwrap();
+    let (_, samples) = action.split_once("Gap examples: ").unwrap();
+    let samples: Value = serde_json::from_str(samples).unwrap();
+    // Compare complete entries: a random fixture ancestor may itself contain "d3".
+    assert_eq!(
+        samples,
+        json!([
+            {"code":"depth-limit","path":root.join("d1")},
+            {"code":"depth-limit","path":root.join("d2")},
+        ])
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn io_gap_examples_preserve_stable_codes_without_changing_reason_counts() {
+    let mut scan = Scan::new();
+    scan.skip_io(
+        "unreadable-entry",
+        Path::new("denied"),
+        true,
+        &std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+    );
+    #[cfg(windows)]
+    let long_path = 206;
+    #[cfg(target_os = "linux")]
+    let long_path = 36;
+    #[cfg(target_os = "macos")]
+    let long_path = 63;
+    scan.skip_io(
+        "unreadable-entry",
+        Path::new("long"),
+        true,
+        &std::io::Error::from_raw_os_error(long_path),
+    );
+    assert_eq!(scan.reasons["unreadable-entry"], 2);
+    assert_eq!(scan.gap_examples[0]["code"], "EACCES");
+    assert_eq!(scan.gap_examples[1]["code"], "ENAMETOOLONG");
+}
+
+// Linux filesystems accept arbitrary name bytes; APFS rejects this fixture at creation.
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_non_utf8_directory_names_are_reported_as_gaps() {
+    use std::os::unix::ffi::OsStrExt;
+    let (root, request) = fixture();
+    fs::create_dir(root.join(std::ffi::OsStr::from_bytes(b"bad-\xff"))).unwrap();
+    let mut scan = Scan::new();
+    scan.include_directories = true;
+    scan.walk(&root, &["*".into()], &request, |_, _, _| Ok(()))
+        .unwrap();
+    assert!(!scan.complete());
+    assert_eq!(scan.reasons["non-utf8-path"], 1);
+    assert_eq!(scan.gap_examples[0]["path"], json!(root));
+    fs::remove_dir_all(root).unwrap();
+}
+
 /// Builds a relative path with the host separator, so a verbatim Windows
 /// fixture root never receives a forward slash inside a file name.
 fn rel_path(rel: &str) -> PathBuf {

@@ -12,6 +12,7 @@ import { safeDisposeAll } from '../../teardown.js'
 import { invoke, failure } from '../../execution/files.js'
 import { InvocationLifetime, InvocationNotStarted } from '../../lifecycle/invocations.js'
 import { canonicalOutput } from '../canonical-output.js'
+import { canonicalOutput as canonicalSchema } from '../ptc/canonical-schema.js'
 import { acquireResultAdmission } from '../../publication/result-admission.js'
 import { createNativeReadDedup } from './read-dedup.js'
 
@@ -38,9 +39,12 @@ export class NativeFileTools {
     this.file = undefined
     this.disposers = []
     this.stopped = false
-    // Provider and execution events originate at root, not the agent source scope.
-    // The runtime still owns (and disposes) its independent evidence observer.
-    this.readDedup = createNativeReadDedup(ctx.root ?? ctx)
+    // Provider and execution events originate at root, not the agent source scope;
+    // the observer therefore asks for `global` dispatch. It subscribes on this
+    // caller's context rather than the root, because dsh-tui's root-capability
+    // guard refuses `root.events.on` from a plugin activation. The runtime still
+    // owns (and disposes) its independent evidence observer.
+    this.readDedup = createNativeReadDedup(ctx)
     this.resultAdmission = acquireResultAdmission(ctx)
   }
 
@@ -59,7 +63,9 @@ export class NativeFileTools {
 
   definition(rawName: NativeToolName): ToolDefinition {
     const execute: ToolDefinition['execute'] = (args, exec) => this.call(rawName, args, exec)
-    return canonicalOutput(rawName, this.readDedup.wrap(rawName === 'result' ? resultDefinition(execute) : definition(rawName, execute)))
+    const source = this.readDedup.wrap(rawName === 'result' ? resultDefinition(execute) : definition(rawName, execute))
+    const typed = rawName === 'glob' || rawName === 'grep' || rawName === 'read_files'
+    return canonicalOutput(rawName, typed ? { ...source, output: { ...source.output, schema: canonicalSchema(rawName) } } : source)
   }
 
   async call(tool: NativeToolName, args: unknown, exec: Execution): Promise<unknown> {

@@ -14,7 +14,8 @@ import { presetOf } from '../consumer/identity.js'
 import { modeOf } from '../presets/detect.js'
 import { enabledModes } from '../presets/registry.js'
 import { publicationRegistration } from '../publication/reentry.js'
-export interface Diagnostic {
+import { runtimeVersion, type RuntimeVersion } from '../adapter/dsh/runtime-version.js'
+export interface Diagnostic extends RuntimeVersion {
   preset?: string
   state: 'not-selected' | 'disabled' | 'ready' | 'degraded'
   tools: string[]
@@ -82,7 +83,7 @@ export async function diagnose(ctx: Context, agent: Agent): Promise<Diagnostic> 
       : admitted.get(name)?.output === provider.capability.definition.output ? 'active' : pending?.has(provider.token) ? 'pending' : 'available' }
   })
   return { preset: presetOf(ctx, agent), state: !selected ? 'not-selected' : config?.enabled === false ? 'disabled' : issues.length ? 'degraded' : 'ready',
-    tools: [...names].sort(), issues, external }
+    tools: [...names].sort(), issues, external, ...await runtimeVersion(ctx) }
 }
 
 /** A real Desktop-accessible tool, not an offline binary-presence probe. */

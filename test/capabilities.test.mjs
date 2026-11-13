@@ -58,19 +58,19 @@ const snapshot = (names, definition) => names.map(name => {
     concurrent: d.isConcurrencySafe?.({}) ?? false, timeoutMs: d.timeoutMs ?? null }
 })
 await test('business file and batch definitions retain their reviewed serialized contracts', () => {
-  // Structural contracts stay pinned separately below; #817 deliberately compacts help while retaining the create-only literal.
+  // Structural contracts stay pinned separately below; #866 removes the misleading directory-read routing hint.
   const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
-  assert.equal(hash(snapshot(FILE_TOOLS.filter(name => !['glob', 'grep', 'read_files', 'edit_file', 'read_table', 'read_docx', 'read_pdf'].includes(name)), fileDefinition)), '222b2295891d541112e87ebfa155bac48ed48ea089b3cd9c5cbb497a9a7780e7')
+  assert.equal(hash(snapshot(FILE_TOOLS.filter(name => !['glob', 'grep', 'read_files', 'edit_file', 'read_table', 'read_docx', 'read_pdf'].includes(name)), fileDefinition)), 'a59d153dcb83555d4b9c724d0569a55b9cbea5ab87127a5c03ceeccf9b3eafb5')
   const batch = ptcDefinition('batch', async () => null)
   assert.equal(batch.parameters, ptcParameters.batch); assert.ok(batch.description.startsWith(ptcDescriptions.batch)); assert.match(batch.description, /PTC returns Outcome/)
   assert.ok(batch.output.schema.oneOf.every(branch => branch.properties.status))
 })
 
 await test('file parameter schemas preserve their reviewed structural constraints', () => {
-  // #384 intentionally adds the optional exactTotal boolean; the grep definition mode adds one
-  // outputMode enum value. All other constraints remain pinned.
+  // #865 adds only optional glob kind: file/directory/all; #734 adds the opt-in
+  // includeHidden boolean to glob and grep. Every other structural constraint stays pinned.
   const hash = createHash('sha256').update(JSON.stringify(withoutDescriptions(fileParameters))).digest('hex')
-  assert.equal(hash, '82075821c5e3dc12e234c09b1144713e5c28b21b5d2bf5d9acc73703a6948078')
+  assert.equal(hash, '0e700929dff3eb37c6f9d2ddf23bc1fcf8337b57c4b772dcc79626865803db8d')
 })
 
 await test('create-only help names the required literal instead of suggesting an omitted revision', () => {

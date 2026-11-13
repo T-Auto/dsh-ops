@@ -79,8 +79,8 @@ export function createNativeReadDedup(ctx: Context): { wrap(tool: ToolDefinition
     const after = proof()
     state.proof = new Map([...before].filter(([entry, id]) => after.get(entry) === id))
   }
-  disposers.push(ctx.on('tools/result', (exec, result) => { try { finalized(exec, result) } catch { if (exec.agent) forget(exec.agent) } }))
-  disposers.push(ctx.on('llm/stream', stream))
+  disposers.push(ctx.on('tools/result', (exec, result) => { try { finalized(exec, result) } catch { if (exec.agent) forget(exec.agent) } }, { global: true }))
+  disposers.push(ctx.on('llm/stream', stream, { global: true }))
   disposers.push(ctx.on('session/event', (session, event) => {
     try {
       for (const previous of [...states.values()]) {
@@ -98,9 +98,9 @@ export function createNativeReadDedup(ctx: Context): { wrap(tool: ToolDefinition
         }
       }
     } catch { for (const state of [...states.values()]) if (state.session === session) forget(state.agent) }
-  }))
-  disposers.push(ctx.on('agent/disposed', ({ agent }) => { forget(agent) }))
-  disposers.push(ctx.on('session/disposed', session => { for (const state of [...states.values()]) if (state.session === session) forget(state.agent) }))
+  }, { global: true }))
+  disposers.push(ctx.on('agent/disposed', ({ agent }) => { forget(agent) }, { global: true }))
+  disposers.push(ctx.on('session/disposed', session => { for (const state of [...states.values()]) if (state.session === session) forget(state.agent) }, { global: true }))
   return {
     wrap(tool) {
       if (!READS.has(tool.name) || tool.finalizeContent) return tool

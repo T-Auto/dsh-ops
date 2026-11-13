@@ -101,6 +101,22 @@ fn a_ready_source_produces_the_same_glob_output() {
 }
 
 #[test]
+fn directory_queries_walk_even_when_a_file_only_index_is_ready() {
+    let fixture = Fixture::new("directories");
+    fixture.file("a.txt", "a");
+    std::fs::create_dir(fixture.root.join("empty")).unwrap();
+    let mut args = glob_args(&fixture.root);
+    args["kind"] = json!("directory");
+    let output = glob_with_source(
+        &request(&fixture.root, Some(&fixture.root), args),
+        &source(&fixture.root, &["a.txt"]),
+    )
+    .unwrap();
+    assert_eq!(output["items"], json!([fixture.root.join("empty")]));
+    assert_eq!(output["scanComplete"], true);
+}
+
+#[test]
 fn a_cache_directory_without_a_ready_source_falls_back_to_the_walk() {
     let fixture = Fixture::new("fallback");
     fixture.file("a.txt", "a");

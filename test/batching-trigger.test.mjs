@@ -124,10 +124,13 @@ for (const code of [
 for (const code of [
   'await tools["ops_bash"]({ command: "cat file", description: "read" })',
   'await tools.ops_bash({ "command": "ls -la" })',
-  'await tools.ops_bash({ command: `cat ${path}` })',
-  'await tools.ops_bash({ command: "cat " + path })',
   'return `result: ${await tools.ops_bash({ command: "cat file" })}`',
   'await tools.pwsh({ command: "Get-Content file" })',
+  'await tools.pwsh({ script: "Get-Content file" })',
+  'await tools.pwsh({ "script": "Get-Content file" })',
+  'await tools.ops_bash({ workdir: ".", "command": "cat file" })',
+  'await tools.ops_bash({ metadata: { command: "npm test" }, command: "cat file" })',
+  'await tools.ops_bash({ command: `cat file` })',
   'const note = "😀"; /* 😀 */ await tools["ops_bash"]({ command: "cat file" })',
 ]) {
   await test(`shell command file work is retained: ${code}`, () => {
@@ -135,10 +138,42 @@ for (const code of [
   })
 }
 
+await test('escaped static commands are decoded before classification', () => {
+  assert.equal(analyzeProgram('await tools.ops_bash({ command: "cat\\u0020file" })').bypassesFileTools, true)
+})
+
+await test('dynamic shell command values are not definite file work', () => {
+  // An unknown suffix can make cat read stdin, so avoid a definite accusation.
+  assert.equal(analyzeProgram('await tools.ops_bash({ command: `cat ${path}` })').bypassesFileTools, false)
+  assert.equal(analyzeProgram('await tools.ops_bash({ command: "cat " + path })').bypassesFileTools, false)
+  assert.equal(analyzeProgram('await tools.ops_bash({ command: "cat file" + suffix })').bypassesFileTools, false)
+})
+
 await test('unicode offsets preserve raw IO detection and ignore literal IO', () => {
   assert.equal(analyzeProgram('const note = "😀"; return fs.readFileSync("a")').bypassesFileTools, true)
   assert.equal(analyzeProgram('// 😀\nconst fs = await import("node:fs")').bypassesFileTools, true)
   assert.equal(analyzeProgram('const note = "😀"; return "fs.readFileSync(a)"').bypassesFileTools, false)
+})
+
+await test('stdin filters do not accuse command output of bypassing file APIs', () => {
+  const shape = command => analyzeProgram(`await tools.ops_bash({ command: ${JSON.stringify(command)} })`)
+  for (const command of ['git diff | head -20', 'git diff | grep TODO | sed -n \'1,20p\'',
+    'printf "hello" | grep hello', 'printf "cat file" | tail -n 2', 'npm test | tail -20',
+    'git diff 2>&1 | head -20', 'git diff | grep --include "*.ts" TODO', 'git diff | Select-String TODO',
+    'git diff | grep -m 1 TODO', 'git diff | grep --max-count 1 TODO',
+    "git diff | sed --posix -n '1,8p'", 'sed --version', 'printf x | grep x <<< text',
+    'git diff | grep --unknown-option value TODO']) {
+    assert.equal(shape(command).bypassesFileTools, false, command)
+  }
+  for (const command of ['grep TODO src/file.ts', 'cat file | head -20', 'git diff | grep TODO file',
+    'printf x | sed -i s/x/y/ file', 'head -n 2 file', 'cat < file', 'git diff > output.txt',
+    'Get-Content file | Select-String TODO', 'Select-String -Path file -Pattern TODO']) {
+    assert.equal(shape(command).bypassesFileTools, true, command)
+  }
+  assert.equal(analyzeProgram('await tools.ops_bash({ description: "grep file", command: "git diff" })').bypassesFileTools, false)
+  assert.equal(analyzeProgram('const example = "tools.ops_bash({ command: \'cat file\' })"; return example').dispatchSites, 0)
+  assert.equal(analyzeProgram('// tools.ops_bash({ command: "cat file" })').bypassesFileTools, false)
+  assert.doesNotMatch(noticeText('bypass', shape('cat file')), /Only .* resident|load the others/)
 })
 
 await test('a program with no dispatch site earns no category', () => {

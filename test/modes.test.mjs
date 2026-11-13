@@ -389,11 +389,14 @@ await test('mode-ops-ptc dynamicTools off withdraws the loader but keeps the res
     const agent = await mint({ preset: 'ops-ptc', presentation: 'ptc', cwd })
     await waitFor(() => names(agent).includes(publicToolName(PTC_RESIDENT_TOOLS[0])), { what: 'resident PTC API' })
     await wait(300)
-    // The switch gates the loader only: the resident API and the executor hand-off
-    // stay, and the Native discovery face is never part of a PTC presentation.
+    // The switch removes progressive disclosure, never the APIs: the pool that would
+    // have waited behind the loader is published as resident instead, so a provider
+    // that cannot take dynamically added tools still sees the whole surface.
     assert.equal(names(agent).includes('ops_load_sdk'), false)
     for (const raw of PTC_RESIDENT_TOOLS) assert.ok(names(agent).includes(publicToolName(raw)), raw)
-    assert.ok(names(agent).includes(publicToolName('write_file')), 'the loaded file APIs stay published')
+    for (const raw of ['write_file', 'grep', 'glob', 'read_files', 'stat', 'result']) {
+      assert.ok(names(agent).includes(publicToolName(raw)), 'a loader-less scope publishes ' + raw + ' as resident')
+    }
     assert.equal(names(agent).includes(publicToolName('discover_tools')), false)
   } finally { await shutdown(ctx) }
 }))

@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 pub mod candidates;
 mod definitions;
+mod exclusions;
 pub mod index_source;
 mod paging;
 mod patterns;
@@ -11,6 +12,7 @@ mod search;
 use cap_fs_ext::DirExt;
 #[cfg(windows)]
 use cap_fs_ext::MetadataExt;
+use exclusions::{dotdir, internal, reject_internal_root, reserved};
 use ops_files as publication;
 use ops_files::{
     MAX_FILE_BYTES, MAX_OUTPUT_BYTES, UpdateLock, atomic_write, file_path, lock_for_update,
@@ -67,13 +69,6 @@ struct ReplaceArgs {
     max_replacements: usize,
     #[serde(default)]
     dry_run: bool,
-}
-fn hidden(path: &Path, root: &Path) -> bool {
-    path.strip_prefix(root)
-        .ok()
-        .into_iter()
-        .flat_map(|p| p.components())
-        .any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
 }
 fn host_link_or_reparse(path: &Path, skipped: &mut Vec<PathBuf>, truncated: &mut bool) -> bool {
     host_link_or_reparse_with(path, |path| fs::symlink_metadata(path), skipped, truncated)
@@ -177,12 +172,10 @@ fn visit_dir(
         if request.denies_path(&child) {
             continue;
         }
-        if hidden(&child, root)
-            || matches!(
-                name.as_str(),
-                ".git" | ".dsh-ops" | "node_modules" | "target" | ".venv"
-            )
-        {
+        // This traversal serves `ops_replace`, which rewrites files. It never
+        // takes the caller's `includeHidden`: an update lock is not editable
+        // content, so the answer here stays constant.
+        if dotdir(&child, root) || internal(&name) || reserved(&name) {
             continue;
         }
         if metadata.is_file() {
@@ -284,6 +277,7 @@ fn unc_display(display: &Path) -> bool {
 
 fn files_for(path: &str, patterns: &[String], request: &Request) -> Result<WalkResult> {
     let root = target(path, false)?;
+    reject_internal_root(&root)?;
     request.authorize_path(&root)?;
     if root.is_file() {
         return Ok(WalkResult {
