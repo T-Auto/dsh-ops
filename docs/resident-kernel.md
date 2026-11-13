@@ -253,6 +253,74 @@ containment and filesystem placement. Echo p50 ≤ 15 ms and p95 ≤ 40 ms are c
 not measured results or a claim of task-level improvement. No antivirus disabling, relaxed sandbox
 or cross-drive mismatch is an acceptable way to reach them.
 
+## Windows shell process substrate (C1)
+
+`ops-process::shell` now provides a Windows-only ownership and I/O substrate. It is exercised
+by `native/examples/shell_range.rs` and `bench/probes/probe-872-shell-range.mjs`; published shell
+tools still use their existing execution path. This slice does not establish persistent command
+completion, session queues, background jobs, permission readmission, or the final performance goal.
+
+The caller supplies the public sandbox provider's exact argv and a complete explicit environment,
+starting from public `scrubbedParentEnv()`. The native module does not resolve policy or inherit the
+resident kernel's ambient environment. It rejects relative executables, invalid Windows arguments
+and duplicate environment names, and removes the inherited control marker. `CreateProcessW` uses
+`CREATE_SUSPENDED`, an explicit three-handle stdin/stdout/stderr list, and atomic
+`PROC_THREAD_ATTRIBUTE_JOB_LIST` assignment before resuming the primary thread. Stdin is EOF.
+The nested Job has kill-on-close and no breakaway; child creation, including a detached child,
+remains inside this range. Its hidden private console is separate from sibling shell consoles.
+
+Each private channel has a random name, at most four precreated pipe instances, fixed pipe buffers,
+and a configurable retained prefix capped at 128 KiB. Observed-byte counts continue after the
+retention cap. The protected ACL grants the owner/SYSTEM and current logon SID, with a Low
+mandatory label; it does not grant Everyone write. The server verifies each actual pipe peer's Job
+membership before accepting bytes and closes rejected or finished instances. A failed identity
+observation is a channel error, not complete output. After confirmed Job emptiness, `drain()` seals
+unused connects and waits for admitted writers' real EOF; a deadline is an error. `close()` is abort,
+not a completion receipt. Ordinary process stdout/stderr are independently bounded and drained.
+
+Soft interruption uses a fixed, trusted, cancellation-only executable entry point. The controller
+is itself started through the atomic range launcher with an empty environment, a bounded receipt,
+and a deadline, and is joined on success, timeout and failure. Only that disposable process calls
+`AttachConsole` and `GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0)`; it exits without calling
+`FreeConsole` after signalling. The resident kernel never changes its console or handlers.
+This matters because Windows delivers console signals asynchronously and
+[FreeConsole resets the handler table](https://learn.microsoft.com/en-us/windows/console/setconsolectrlhandler).
+An earlier in-kernel attempt reproducibly killed the kernel with `STATUS_CONTROL_C_EXIT` before
+the next control request. The current probe retains the next-request and sibling checks that
+exposed it. A successful signal receipt means attempted delivery, not cooperation: the actual
+restricted wrappers retain their ignore-Ctrl+C behavior and require an owned range reset.
+
+Reproduce on Windows with a complete verified Niubash payload:
+
+```console
+npm run build
+cargo build --locked --manifest-path native/Cargo.toml --example shell_range --example shell_signal_fault
+cargo build --locked --manifest-path native/Cargo.toml -p ops-process --example shell_signal_cooperative
+cargo test --locked --manifest-path native/Cargo.toml -p ops-process
+node bench/probes/probe-872-shell-range.mjs <shell_range.exe> <pinned-niu.exe>
+```
+
+The probe uses only a fresh temporary workspace for the real public sandbox policies. The installed
+Windows backend reports `partial` enforcement for both restricted modes; the report preserves that
+fact rather than claiming absolute confinement. The default pinned runtime and dependency versions
+are unchanged; only existing `windows-sys` features are enabled. POSIX returns explicit unsupported
+for this new substrate because a new process group can escape the host's fallback ownership.
+Existing POSIX execution is unchanged. Native process-group/cgroup ownership needs separate proof.
+
+Local Windows validation: the public-host probe passes **13 checks**, including two later
+cooperative fixture shells trapping INT and exiting 42, restricted soft-attempt/hard-reset, helper timeout
+and crash, sibling isolation, hard kernel death, EOF teardown, four independently drained 1 MiB
+streams retaining 1024 bytes each, and no tracked survivors. The `ops-process` suite passes **17
+tests**, with one existing child fixture ignored by the harness and explicitly invoked by its
+lifecycle tests. The native workspace suite exits successfully. These are C1 results, not a
+completed #872 acceptance report.
+
+The positive INT fixture explicitly enables Ctrl+C before starting Niubash; its waiter uses a
+non-inherited handler. Git Bash/CI can pass an inherited ignore flag, which caused this assertion
+to fail despite a successful production signal attempt. The production launcher preserves that
+baseline, and ignored signals still require range termination. Both PowerShell and Git Bash run
+the same cooperative assertion; neither skips nor retries it.
+
 ## Validation record
 
 - Source audit: `e7244444`, covering the paths above; no source behavior changed by this document.

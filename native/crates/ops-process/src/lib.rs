@@ -1,6 +1,7 @@
 //! Platform boundary for inherited control and kernel-owned, one-request execution leaves.
 #![deny(unsafe_op_in_unsafe_fn)]
 pub mod leaf;
+pub mod shell;
 use std::io::{self, BufRead, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(unix)]
