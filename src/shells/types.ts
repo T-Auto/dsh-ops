@@ -6,7 +6,13 @@ import type { SandboxExecutionPolicy, SandboxProvider } from '../adapter/dsh/typ
 import type { SandboxPolicyService } from '../adapter/dsh/types.js'
 import type { SubprocessRuntime, SubprocessOutputReader } from '../adapter/dsh/types.js'
 
-export type ShellCall = Partial<Pick<ToolRunContext, 'agent' | 'callId' | 'signal' | 'token' | 'parent'>>
+export type ShellCall = Partial<Pick<ToolRunContext, 'agent' | 'callId' | 'signal' | 'token' | 'parent' | 'deferContext'>>
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'dsh-ops:shell-reset': { readonly kind: 'dsh-ops:shell-reset'; readonly callId?: string
+      readonly shellState: 'reset'; readonly cleanupConfirmed: true; readonly effectState: 'none' | 'unknown' }
+  }
+}
 export type ShellPolicy = SandboxExecutionPolicy
 export interface ShellStream { text: string; truncated: boolean; spillPath?: string; bytes?: number; bytesTotal?: number; lines?: number }
 export interface ShellResult {

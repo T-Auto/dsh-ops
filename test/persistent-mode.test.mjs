@@ -410,4 +410,42 @@ await test('the production runtime package gate keeps session publication disabl
   }, { providerOwned: true })
 })
 
+await test('caller cancellation defers one reset fact only after the joined receipt', async () => {
+  const f = fixture(), controller = new AbortController(), entered = Promise.withResolvers(), joined = Promise.withResolvers()
+  const contexts = [], call = { ...f.call, signal: controller.signal, deferContext: value => contexts.push(value) }
+  f.state.handler = async () => { entered.resolve(); return joined.promise }
+  const work = f.definition.execute(args({ command: 'sensitive-command-not-in-notice' }), call)
+  await entered.promise
+  controller.abort()
+  await turn()
+  assert.deepEqual(contexts, [], 'pending cancellation is not a confirmed reset')
+  joined.resolve(terminal({ status: 'cancelled', shellState: 'reset', cleanupConfirmed: true, exitCode: null,
+    error: { code: 'CANCELLED', message: 'joined' } }))
+  const result = await work
+  assert.equal(result.status, 'failed')
+  assert.equal(result.shellState, 'reset')
+  assert.equal(contexts.length, 1)
+  assert.equal(contexts[0].source.kind, 'dsh-ops:shell-reset')
+  assert.equal(contexts[0].source.callId, call.callId)
+  assert.match(JSON.stringify(contexts[0].content), /reset.*cleanup confirmed/i)
+  assert.match(JSON.stringify(contexts[0].content), /effect state: unknown/i)
+  assert.doesNotMatch(JSON.stringify(contexts[0]), /sensitive-command|session-result/)
+  validOutput(f.definition, result)
+})
+
+await test('unchanged, unknown, unconfirmed and fresh outcomes never claim a confirmed cancelled reset', async () => {
+  for (const extra of [{ shellState: 'preserved' }, { shellState: 'unchanged' }, { shellState: 'unknown' },
+    { cleanupConfirmed: false }]) {
+    const f = fixture(), contexts = [], controller = new AbortController()
+    f.state.handler = async () => { controller.abort(); return terminal({ status: 'cancelled', shellState: 'reset', ...extra }) }
+    await f.definition.execute(args(), { ...f.call, signal: controller.signal, deferContext: value => contexts.push(value) })
+    assert.deepEqual(contexts, [], JSON.stringify(extra))
+  }
+  const f = fixture(), contexts = [], call = { ...f.call, deferContext: value => contexts.push(value) }
+  f.state.result = terminal({ shellState: 'reset' })
+  await f.definition.execute(args(), call)
+  await f.definition.execute(args({ execution: 'fresh' }), { ...call, signal: AbortSignal.abort() })
+  assert.deepEqual(contexts, [], 'visible typed resets and fresh calls keep existing behavior')
+})
+
 report('persistent-mode')

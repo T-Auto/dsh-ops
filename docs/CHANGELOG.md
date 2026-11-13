@@ -9,6 +9,7 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - Keep the shared Native/PTC file admission budget inside its resident client, preserving two active/eight waiting calls per session and current-policy resolution after waiting. Stop/failure refuses pending callbacks while existing active-work and cleanup joins remain unchanged (#872).
 - 将 Native/PTC 共用的文件准入额度归所属常驻客户端持有，保留每会话两个活动/八个等待调用及等待后的当前策略解析。停止或失败拒绝尚未进入的回调，既有活动工作与清理等待保持不变（#872）。
+- Session-shell caller cancellation preserves the public `ABORTED` result and attaches one confirmed-reset notice through the public `deferContext` contract, including nested `run_code`; unchanged or unconfirmed cleanup never claims a reset. / 会话 shell 调用方取消保留公开 `ABORTED` 结果，并通过公开 `deferContext` 契约附加一条确认重置通知，嵌套 `run_code` 同样保留；状态未变或清理未确认时不宣称重置。
 
 - Route result put/page/release and batch plan/run/resume through the resident kernel on Windows, preserving the exact public confinement command and scrubbed runner environment. Full-access calls reuse the existing fixed worker on every platform; restricted POSIX calls retain their explicit platform runner until native range ownership is available. Admission failure never falls back or replays (#872).
 - Windows 的 result put/page/release 与 batch plan/run/resume 改由常驻内核执行，保留公开 confinement 的原始命令及清理后的 runner 环境。所有平台的完全访问调用复用既有固定 worker；受限 POSIX 调用在原生进程范围所有权可用前保留明确的平台 runner。准入失败不回退、不重放（#872）。

@@ -64,9 +64,13 @@ its owned shell and reports state loss. A queued expiration does not prove an un
 command stopped. Session calls never automatically become background jobs.
 
 DSH's public tool pipeline joins a caller-cancelled body, then returns its standard `ABORTED`
-envelope instead of the typed tool value. That envelope does not include `shellState`. The next
-admitted session call reports `stateLost: "shell-reset"`; callers must not assume prior state
-survived cancellation. A tool deadline without caller cancellation retains the typed reset result.
+envelope instead of the typed tool value. After a confirmed shell reset and joined cleanup,
+OPS attaches one `dsh-ops:shell-reset` notice to that result's `additionalContexts`, including
+the exact call ID, reset, cleanup and effect facts. Both Native and public `run_code` preserve
+this notice; the cancelled tool card remains `ABORTED`. The host queues the notice in its
+existing durable next-step inbox. Pre-dispatch cancellation, unchanged state and unconfirmed
+cleanup do not produce a confirmed-reset notice. The next admitted session call also reports
+`stateLost: "shell-reset"`. A tool deadline without caller cancellation retains the typed reset result.
 
 Session mode currently accepts `command` only. `script_path`, custom `graceMs`, and enabled
 `includeDiagnostics` are refused before execution with a fresh-mode remedy. `run_in_background:

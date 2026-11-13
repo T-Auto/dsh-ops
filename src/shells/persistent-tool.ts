@@ -1,5 +1,6 @@
 /** Explicit session dispatch before the unchanged fresh authority/jobs path. */
 import type { JsonSchemaNode } from '../adapter/dsh/types.js'
+import { loadUserMessage } from '../adapter/dsh/host.js'
 import type { ShellAdmissionResult } from '../execution/resident/shell-admission.js'
 import type { HostBashResult, HostSessionResult, HostShellDefinition, ShellCall } from './types.js'
 import { errorMessage } from './types.js'
@@ -39,6 +40,19 @@ function sessionResult(value: ShellAdmissionResult, timeoutMs: number): HostSess
     ...(value.denialObservation ? { denialObservation: value.denialObservation } : {}) }
 }
 const invalid = (detail: string): never => { throw new Error(`INVALID_BASH_ARGUMENT: ${detail}`) }
+
+async function deferReset(value: ShellAdmissionResult, call: ShellCall): Promise<void> {
+  if (!call.signal?.aborted || !call.deferContext || value.shellState !== 'reset' || !value.cleanupConfirmed) return
+  const createUserMessage = await loadUserMessage()
+  call.deferContext(createUserMessage({
+    source: { kind: 'dsh-ops:shell-reset', ...(call.callId ? { callId: call.callId } : {}),
+      shellState: 'reset', cleanupConfirmed: true, effectState: value.effectState },
+    content: [{ type: 'text', text: 'Persistent shell reset after cancellation; cleanup confirmed. '
+      + 'Its cwd, exports, functions and options were lost. Effect state: ' + value.effectState + '. '
+      + (value.effectState === 'unknown' ? 'Inspect prior effects before another command; do not repeat automatically.'
+        : 'Re-establish needed shell state before continuing.') }],
+  }))
+}
 
 export function withSessionExecution(fresh: HostShellDefinition, admission: Admission, active: (call: ShellCall) => boolean): HostShellDefinition {
   const properties = { ...(fresh.parameters as JsonSchemaNode).properties,
@@ -85,7 +99,9 @@ export function withSessionExecution(fresh: HostShellDefinition, admission: Admi
         if (!isActive()) throw new Error('EXECUTOR_UNAVAILABLE: the calling Bash publication or exact Agent is no longer active.')
         const { execution: _execution, script_path: _script, run_in_background: _background, graceMs: _grace, includeDiagnostics: _diagnostics, ...local } = args
         submitted = true
-        return sessionResult(await admission.execute({ ...local, timeoutMs }, call, isActive), timeoutMs)
+        const settled = await admission.execute({ ...local, timeoutMs }, call, isActive)
+        await deferReset(settled, call)
+        return sessionResult(settled, timeoutMs)
       } catch (error) {
         return { ...hostFailure(errorMessage(error), timeoutMs, submitted ? 'unknown' : 'none'), execution: 'session', shellState: submitted ? 'unknown' : 'unchanged',
           cleanupConfirmed: !submitted, retention: 'prefix' }
