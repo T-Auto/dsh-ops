@@ -26,6 +26,8 @@ struct Phase {
     pending: Option<std::sync::mpsc::Sender<()>>,
     #[cfg(test)]
     gate: Option<Arc<TestGate>>,
+    #[cfg(test)]
+    close_gate: Option<Arc<TestGate>>,
 }
 #[cfg(test)]
 pub(super) struct TestGate {
@@ -52,13 +54,32 @@ pub(super) struct Cancellation(Arc<Mutex<Phase>>);
 impl Cancellation {
     #[cfg(test)]
     pub fn gate_next_write(&self) -> (Arc<TestGate>, std::sync::mpsc::Receiver<()>) {
+        self.install_gate(false)
+    }
+    #[cfg(test)]
+    pub fn gate_next_close(&self) -> (Arc<TestGate>, std::sync::mpsc::Receiver<()>) {
+        self.install_gate(true)
+    }
+    #[cfg(test)]
+    pub fn wait_close_gate(&self) {
+        let gate = self.0.lock().unwrap().close_gate.take();
+        if let Some(gate) = gate {
+            gate.wait();
+        }
+    }
+    #[cfg(test)]
+    fn install_gate(&self, close: bool) -> (Arc<TestGate>, std::sync::mpsc::Receiver<()>) {
         let (entered, receiver) = std::sync::mpsc::channel();
         let gate = Arc::new(TestGate {
             entered,
             released: Mutex::new(false),
             changed: std::sync::Condvar::new(),
         });
-        self.0.lock().unwrap().gate = Some(gate.clone());
+        if close {
+            self.0.lock().unwrap().close_gate = Some(gate.clone());
+        } else {
+            self.0.lock().unwrap().gate = Some(gate.clone());
+        }
         (gate, receiver)
     }
     #[cfg(test)]

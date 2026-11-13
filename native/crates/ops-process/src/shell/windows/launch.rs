@@ -59,6 +59,15 @@ impl Range {
             }),
         )
     }
+    pub fn spilling_channel(
+        &self,
+        cap: usize,
+        prefix: &[u8],
+        store: SpillStore,
+        stream: &'static str,
+    ) -> io::Result<Channel> {
+        Channel::spilling(self.job.clone(), cap, prefix, store, stream)
+    }
     pub fn active_processes(&self) -> io::Result<u32> {
         self.job.active()
     }

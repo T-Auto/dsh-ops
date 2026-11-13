@@ -8,7 +8,7 @@ mod probe {
     use super::driver::Driver;
     use ops_process::{
         ControlPipe, read_frame,
-        shell::{Launch, signal_console_and_exit},
+        shell::{Launch, MAX_SPILL_BYTES, SpillStore, signal_console_and_exit},
     };
     use serde_json::{Value, json};
     use std::{
@@ -23,13 +23,21 @@ mod probe {
             .as_str()
             .ok_or_else(|| io::Error::other(format!("{name} string required")))
     }
-    fn execute(value: &Value, drivers: &mut BTreeMap<String, Driver>) -> io::Result<Value> {
+    fn execute(
+        value: &Value,
+        drivers: &mut BTreeMap<String, Driver>,
+        store: Option<&SpillStore>,
+        fatal: &ControlPipe,
+    ) -> io::Result<Value> {
         let id = text(value, "id")?;
         if value["op"] == "prepare" {
             if drivers.len() >= 4 || drivers.contains_key(id) {
                 return Err(io::Error::other("probe capacity/duplicate"));
             }
-            let driver = Driver::prepare()?;
+            let driver = match store {
+                Some(store) => Driver::prepare_with_spill(Some(store.clone()))?,
+                None => Driver::prepare()?,
+            };
             let endpoints = driver.bootstrap();
             drivers.insert(id.into(), driver);
             return Ok(endpoints);
@@ -72,6 +80,9 @@ mod probe {
                 );
                 if let Err(error) = result {
                     let cleanup = driver.stop();
+                    if driver.cleanup_unconfirmed() {
+                        fatal.shutdown()?;
+                    }
                     return Err(io::Error::other(format!("{error}; cleanup={cleanup:?}")));
                 }
                 Ok(json!({"ready":true}))
@@ -97,9 +108,20 @@ mod probe {
                         cleanup.get_or_insert(error.to_string());
                     }
                 }
+                if driver.cleanup_unconfirmed() || call.cleanup_unconfirmed() {
+                    // Independent transport shutdown precedes Drop, which retains
+                    // every unjoined channel reader until the public host kills us.
+                    fatal.shutdown()?;
+                    return Err(io::Error::other(
+                        "channel cleanup unconfirmed; host teardown required",
+                    ));
+                }
                 let outputs: Vec<_> = views.iter().map(|view| { let snapshot = view.snapshot();
-                    json!({"text":String::from_utf8_lossy(&snapshot.bytes),"observed":snapshot.observed,
-                        "truncated":snapshot.truncated,"ready":snapshot.ready,"eof":snapshot.writer_eof,"errors":snapshot.errors}) }).collect();
+                    let mut value = json!({"text":String::from_utf8_lossy(&snapshot.bytes),"observed":snapshot.observed,
+                        "truncated":snapshot.truncated,"ready":snapshot.ready,"eof":snapshot.writer_eof,"errors":snapshot.errors});
+                    if let Some(spill) = snapshot.spill { value["spillPath"]=json!(spill.path); value["spillOrigin"]=json!("ops-native-v1"); value["spillPid"]=json!(spill.pid); value["spillSealed"]=json!(spill.sealed); }
+                    if let Some(error) = snapshot.spill_error { value["spillError"]=json!(error); }
+                    value }).collect();
                 Ok(
                     json!({"exitCode":outcome.as_ref().ok(),"error":outcome.err().map(|error|error.to_string()),
                     "reset":driver.stopped(),"cleanupError":cleanup,"outputs":outputs}),
@@ -129,6 +151,10 @@ mod probe {
         let mut writer = ControlPipe::inherited()?;
         let mut reader = BufReader::new(writer.try_clone()?);
         let mut drivers = BTreeMap::new();
+        let store = std::env::args()
+            .any(|arg| arg == "--spill")
+            .then(|| SpillStore::new(&std::env::temp_dir(), MAX_SPILL_BYTES))
+            .transpose()?;
         writeln!(
             writer,
             "{}",
@@ -137,7 +163,7 @@ mod probe {
         let outcome = (|| {
             while let Some(bytes) = read_frame(&mut reader)? {
                 let value: Value = serde_json::from_slice(&bytes)?;
-                let response = match execute(&value, &mut drivers) {
+                let response = match execute(&value, &mut drivers, store.as_ref(), &writer) {
                     Ok(result) => json!({"ok":true,"result":result}),
                     Err(error) => json!({"ok":false,"error":error.to_string()}),
                 };

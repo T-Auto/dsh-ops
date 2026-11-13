@@ -1,5 +1,8 @@
-use super::{check, job::Job, owned, security};
-use crate::shell::{Capture, budget};
+use super::{
+    check, job::Job, output::Output, owned, security, spill_file::SpillStore,
+    spill_io::Cancellation,
+};
+use crate::shell::{Capture, CaptureView, Retention, SpillSnapshot, budget};
 use std::{
     ffi::OsString,
     io,
@@ -44,6 +47,38 @@ pub struct ChannelSnapshot {
     pub errors: Vec<String>,
     pub ready: bool,
     pub writer_eof: bool,
+    /// Authenticated pipe EOF, which can precede checked spill sealing.
+    pub writer_closed: bool,
+    pub storage_pending: bool,
+    pub spill: Option<SpillSnapshot>,
+    pub spill_error: Option<String>,
+    pub cleanup_unconfirmed: bool,
+}
+#[derive(Clone)]
+struct Spilling {
+    view: CaptureView,
+    store: SpillStore,
+    stream: &'static str,
+    busy: Arc<AtomicBool>,
+}
+struct ReaderOutput {
+    capture: Output,
+    busy: Arc<AtomicBool>,
+}
+impl ReaderOutput {
+    fn start(&mut self) {
+        self.capture.start();
+    }
+    fn append(&mut self, bytes: &[u8]) {
+        self.busy.store(true, Ordering::Release);
+        self.capture.append(bytes);
+        self.busy.store(false, Ordering::Release);
+    }
+    fn finish(self, result: &io::Result<()>) {
+        self.busy.store(true, Ordering::Release);
+        self.capture.finish(result);
+        self.busy.store(false, Ordering::Release);
+    }
 }
 #[derive(Clone)]
 pub(super) struct Prefix {
@@ -54,6 +89,7 @@ struct Connection<'a> {
     stop: &'a AtomicBool,
     seal: &'a AtomicBool,
     armed: mpsc::SyncSender<io::Result<()>>,
+    output: Option<ReaderOutput>,
 }
 #[cfg(test)]
 type ConnectGate = Arc<(Mutex<bool>, std::sync::Condvar)>;
@@ -66,6 +102,7 @@ struct State {
     errors: Vec<String>,
     ready: bool,
     writer_eof: bool,
+    writer_closed: bool,
     writer: Option<Weak<OwnedHandle>>,
 }
 pub struct Channel {
@@ -75,9 +112,16 @@ pub struct Channel {
     state: Arc<Mutex<State>>,
     handles: Vec<Weak<OwnedHandle>>,
     readers: Vec<JoinHandle<()>>,
+    spilling: Option<Spilling>,
+    cancellations: Vec<Cancellation>,
+    poisoned: bool,
 }
 #[derive(Clone)]
-pub struct ChannelView(Arc<Mutex<State>>);
+pub struct ChannelView(
+    Arc<Mutex<State>>,
+    Option<CaptureView>,
+    Option<Arc<AtomicBool>>,
+);
 impl Channel {
     pub(super) fn new(job: Arc<Job>, cap: usize) -> io::Result<Self> {
         Self::framed(job, cap, None)
@@ -87,6 +131,34 @@ impl Channel {
             job,
             cap,
             prefix,
+            None,
+            #[cfg(test)]
+            None,
+        )
+    }
+    pub(super) fn spilling(
+        job: Arc<Job>,
+        cap: usize,
+        prefix: &[u8],
+        store: SpillStore,
+        stream: &'static str,
+    ) -> io::Result<Self> {
+        if !matches!(stream, "stdout" | "stderr") {
+            return Err(io::Error::other("invalid output stream"));
+        }
+        Self::create(
+            job,
+            cap,
+            Some(Prefix {
+                bytes: prefix.to_vec(),
+                duplex: false,
+            }),
+            Some(Spilling {
+                view: CaptureView::new(cap, Retention::Prefix)?,
+                store,
+                stream,
+                busy: Arc::new(AtomicBool::new(false)),
+            }),
             #[cfg(test)]
             None,
         )
@@ -95,6 +167,7 @@ impl Channel {
         job: Arc<Job>,
         cap: usize,
         prefix: Option<Prefix>,
+        spilling: Option<Spilling>,
         #[cfg(test)] gate: Option<ConnectGate>,
     ) -> io::Result<Self> {
         budget(cap)?;
@@ -114,6 +187,9 @@ impl Channel {
             state: Arc::new(Mutex::new(State::default())),
             handles: Vec::new(),
             readers: Vec::new(),
+            spilling,
+            cancellations: Vec::new(),
+            poisoned: false,
         };
         // Bound open probes and real writers together; never admit unbounded connections.
         let mut handles = Vec::with_capacity(4);
@@ -144,6 +220,18 @@ impl Channel {
             #[cfg(test)]
             let gate = gate.clone();
             let prefix = prefix.clone();
+            let cancel = Cancellation::default();
+            let output = channel.spilling.as_ref().map(|spilling| ReaderOutput {
+                capture: Output::new(
+                    spilling.view.clone(),
+                    cap,
+                    Some(spilling.store.clone()),
+                    spilling.stream,
+                    cancel.clone(),
+                ),
+                busy: spilling.busy.clone(),
+            });
+            channel.cancellations.push(cancel);
             channel.handles.push(Arc::downgrade(handle));
             let (handle, stop, seal, state, job) = (
                 handle.clone(),
@@ -173,6 +261,7 @@ impl Channel {
                                 stop: &stop,
                                 seal: &seal,
                                 armed,
+                                output,
                             },
                         ) && !stop.load(Ordering::Acquire)
                         {
@@ -197,7 +286,18 @@ impl Channel {
         self.view().snapshot()
     }
     pub fn view(&self) -> ChannelView {
-        ChannelView(self.state.clone())
+        ChannelView(
+            self.state.clone(),
+            self.spilling.as_ref().map(|value| value.view.clone()),
+            self.spilling.as_ref().map(|value| value.busy.clone()),
+        )
+    }
+    pub fn cleanup_unconfirmed(&self) -> bool {
+        self.poisoned
+            || self
+                .spilling
+                .as_ref()
+                .is_some_and(|value| value.view.snapshot().cleanup_unconfirmed)
     }
     /// After Job emptiness or a trusted protocol forbids new writers, drain to EOF and retire
     /// unused connect operations. This proves physical drain, not a command receipt.
@@ -205,7 +305,7 @@ impl Channel {
         self.seal_connects.store(true, Ordering::Release);
         while self.readers.iter().any(|reader| !reader.is_finished()) {
             if Instant::now() >= deadline {
-                self.close();
+                self.close_until(Instant::now() + Duration::from_secs(1))?;
                 self.state
                     .lock()
                     .unwrap()
@@ -218,7 +318,7 @@ impl Channel {
             }
             thread::sleep(Duration::from_millis(2));
         }
-        self.close();
+        self.close_until(deadline)?;
         let state = self.state.lock().unwrap();
         if !state.errors.is_empty() {
             return Err(io::Error::other(state.errors.join("; ")));
@@ -245,12 +345,34 @@ impl Channel {
         })
     }
     pub fn close(&mut self) {
+        let _ = self.close_until(Instant::now() + Duration::from_secs(5));
+    }
+    /// Failed joining retains every reader; the coordinator must trigger fatal host teardown.
+    pub fn close_until(&mut self, deadline: Instant) -> io::Result<()> {
         self.stop.store(true, Ordering::Release);
         self.seal_connects.store(true, Ordering::Release);
-        for handle in &self.handles {
-            if let Some(handle) = handle.upgrade() {
-                unsafe { CancelIoEx(handle.as_raw_handle(), std::ptr::null()) };
+        while self.readers.iter().any(|reader| !reader.is_finished()) {
+            for cancel in &self.cancellations {
+                cancel.cancel();
             }
+            for handle in &self.handles {
+                if let Some(handle) = handle.upgrade() {
+                    unsafe { CancelIoEx(handle.as_raw_handle(), std::ptr::null()) };
+                }
+            }
+            if self.cleanup_unconfirmed() || Instant::now() >= deadline {
+                self.poisoned = true;
+                if let Some(spilling) = &self.spilling {
+                    spilling
+                        .view
+                        .poison("channel output cleanup unconfirmed".into());
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "channel cleanup unconfirmed; managed kernel teardown required",
+                ));
+            }
+            thread::sleep(Duration::from_millis(2));
         }
         for reader in self.readers.drain(..) {
             if reader.join().is_err() {
@@ -262,26 +384,58 @@ impl Channel {
             }
         }
         self.handles.clear();
+        if self.poisoned {
+            Err(io::Error::other("channel owner is poisoned"))
+        } else {
+            Ok(())
+        }
     }
 }
 impl Drop for Channel {
     fn drop(&mut self) {
         self.close();
+        // Never detach an operation that still owns a file or borrowed OVERLAPPED buffer.
+        for reader in self.readers.drain(..) {
+            let _ = reader.join();
+        }
     }
 }
 impl ChannelView {
     pub fn snapshot(&self) -> ChannelSnapshot {
         let state = self.0.lock().unwrap();
+        let output = self.1.as_ref().map(CaptureView::snapshot);
+        let mut errors = state.errors.clone();
+        if let Some(error) = output.as_ref().and_then(|value| value.error.as_ref())
+            && !errors.contains(error)
+        {
+            errors.push(error.clone());
+        }
         ChannelSnapshot {
-            bytes: state.capture.bytes.clone(),
-            observed: state.capture.observed,
-            truncated: state.capture.truncated,
+            bytes: output
+                .as_ref()
+                .map_or_else(|| state.capture.bytes.clone(), |value| value.bytes.clone()),
+            observed: output
+                .as_ref()
+                .map_or(state.capture.observed, |value| value.observed),
+            truncated: output
+                .as_ref()
+                .map_or(state.capture.truncated, |value| value.truncated),
             accepted: state.accepted.clone(),
             eof: state.eof,
             rejected: state.rejected,
-            errors: state.errors.clone(),
+            errors,
             ready: state.ready,
             writer_eof: state.writer_eof,
+            writer_closed: state.writer_closed,
+            storage_pending: self
+                .2
+                .as_ref()
+                .is_some_and(|busy| busy.load(Ordering::Acquire)),
+            spill: output.as_ref().and_then(|value| value.spill.clone()),
+            spill_error: output.as_ref().and_then(|value| value.spill_error.clone()),
+            cleanup_unconfirmed: output
+                .as_ref()
+                .is_some_and(|value| value.cleanup_unconfirmed),
         }
     }
 }
@@ -363,7 +517,12 @@ fn receive(
     prefix: Option<&Prefix>,
     connection: Connection<'_>,
 ) -> io::Result<()> {
-    let Connection { stop, seal, armed } = connection;
+    let Connection {
+        stop,
+        seal,
+        armed,
+        output,
+    } = connection;
     match operation(handle, seal, true, &mut [], Some(&armed)) {
         Err(error)
             if seal.load(Ordering::Acquire)
@@ -383,7 +542,7 @@ fn receive(
         return Ok(());
     }
     state.lock().unwrap().accepted.push(pid);
-    read_peer(handle, stop, state, cap, prefix)
+    read_peer(handle, stop, state, cap, prefix, output)
 }
 fn read_peer(
     handle: &Arc<OwnedHandle>,
@@ -391,47 +550,68 @@ fn read_peer(
     state: &Mutex<State>,
     cap: usize,
     prefix: Option<&Prefix>,
+    mut output: Option<ReaderOutput>,
 ) -> io::Result<()> {
     let mut bytes = [0; 8192];
     let mut prefix_read = 0;
     let mut ready = false;
-    loop {
-        match operation(handle, stop, false, &mut bytes, None) {
-            Ok(0) => break,
-            Ok(count) => {
-                let mut data = &bytes[..count as usize];
-                if let Some(prefix) = prefix {
-                    let take = data.len().min(prefix.bytes.len() - prefix_read);
-                    if data[..take] != prefix.bytes[prefix_read..prefix_read + take] {
-                        return Err(io::Error::other("channel prefix mismatch"));
+    let result = (|| {
+        loop {
+            match operation(handle, stop, false, &mut bytes, None) {
+                Ok(0) => break,
+                Ok(count) => {
+                    let mut data = &bytes[..count as usize];
+                    if let Some(prefix) = prefix {
+                        let take = data.len().min(prefix.bytes.len() - prefix_read);
+                        if data[..take] != prefix.bytes[prefix_read..prefix_read + take] {
+                            return Err(io::Error::other("channel prefix mismatch"));
+                        }
+                        prefix_read += take;
+                        data = &data[take..];
+                        if prefix_read == prefix.bytes.len() && !ready {
+                            let mut current = state.lock().unwrap();
+                            if current.ready {
+                                return Err(io::Error::other("duplicate channel writer"));
+                            }
+                            ready = true;
+                            current.ready = true;
+                            if prefix.duplex {
+                                current.writer = Some(Arc::downgrade(handle));
+                            }
+                            drop(current);
+                            if let Some(output) = &mut output {
+                                output.start();
+                            }
+                        }
                     }
-                    prefix_read += take;
-                    data = &data[take..];
-                    if prefix_read == prefix.bytes.len() && !ready {
-                        let mut current = state.lock().unwrap();
-                        if current.ready {
-                            return Err(io::Error::other("duplicate channel writer"));
+                    if let Some(output) = &mut output {
+                        if ready {
+                            output.append(data);
                         }
-                        ready = true;
-                        current.ready = true;
-                        if prefix.duplex {
-                            current.writer = Some(Arc::downgrade(handle));
-                        }
+                    } else {
+                        state.lock().unwrap().capture.append(data, cap);
                     }
                 }
-                state.lock().unwrap().capture.append(data, cap);
+                Err(error) if error.raw_os_error() == Some(ERROR_BROKEN_PIPE as i32) => break,
+                Err(error) => return Err(error),
             }
-            Err(error) if error.raw_os_error() == Some(ERROR_BROKEN_PIPE as i32) => break,
-            Err(error) => return Err(error),
         }
+        if prefix_read != 0 && !ready {
+            return Err(io::Error::other("incomplete channel prefix"));
+        }
+        Ok(())
+    })();
+    if ready && result.is_ok() {
+        state.lock().unwrap().writer_closed = true;
     }
+    if ready && let Some(output) = output {
+        output.finish(&result);
+    }
+    result?;
     let mut current = state.lock().unwrap();
     current.eof += 1;
     if ready {
         current.writer_eof = true;
-    }
-    if prefix_read != 0 && !ready {
-        return Err(io::Error::other("incomplete channel prefix"));
     }
     Ok(())
 }
@@ -451,6 +631,7 @@ mod tests {
             send.send(Channel::create(
                 Arc::new(Job::new().unwrap()),
                 64,
+                None,
                 None,
                 Some(worker_gate),
             ))
@@ -490,6 +671,7 @@ mod tests {
             &state,
             4,
             Some(&prefix),
+            None,
         )
         .unwrap();
         assert!(!state.lock().unwrap().ready);
@@ -503,6 +685,7 @@ mod tests {
             &state,
             4,
             Some(&prefix),
+            None,
         )
         .unwrap();
         let value = state.lock().unwrap();
@@ -528,7 +711,8 @@ mod tests {
                     &AtomicBool::new(false),
                     &state,
                     4,
-                    Some(&prefix)
+                    Some(&prefix),
+                    None,
                 )
                 .is_err()
             );
@@ -557,6 +741,7 @@ mod tests {
                     bytes: b"READY\n".to_vec(),
                     duplex: true,
                 }),
+                None,
             )
         });
         client.write_all(b"READY\n").unwrap();
@@ -607,7 +792,7 @@ mod tests {
         assert!(state.lock().unwrap().writer_eof);
     }
 
-    fn connected_pipe() -> (OwnedHandle, File) {
+    pub(super) fn connected_pipe() -> (OwnedHandle, File) {
         let name = security::private_name().unwrap();
         let security = security::Security::new().unwrap();
         let server = owned(unsafe {
@@ -697,7 +882,7 @@ mod tests {
         let (handle, reader_stop, reader_state) = (server.clone(), stop.clone(), state.clone());
         let reader = thread::spawn(move || {
             gate.recv().unwrap();
-            if let Err(error) = read_peer(&handle, &reader_stop, &reader_state, 64, None) {
+            if let Err(error) = read_peer(&handle, &reader_stop, &reader_state, 64, None, None) {
                 reader_state.lock().unwrap().errors.push(error.to_string());
             }
         });
@@ -708,6 +893,9 @@ mod tests {
             state,
             handles: vec![Arc::downgrade(&server)],
             readers: vec![reader],
+            spilling: None,
+            cancellations: Vec::new(),
+            poisoned: false,
         };
         drop(server);
         let seal = channel.seal_connects.clone();
@@ -731,3 +919,7 @@ mod tests {
         finish.join().unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "channel_spill_tests.rs"]
+mod spill_tests;

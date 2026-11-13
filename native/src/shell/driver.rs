@@ -1,5 +1,5 @@
 //! One owned persistent shell. Scheduling and policy admission belong to its caller.
-use ops_process::shell::{Baseline, Channel, ChannelView, Launch, Range};
+use ops_process::shell::{Baseline, Channel, ChannelView, Launch, Range, SpillStore};
 use serde_json::{Value, json};
 use std::{
     io,
@@ -16,6 +16,7 @@ pub struct Driver {
     diagnostics: [u64; 2],
     startup_bytes: u64,
     stopped: bool,
+    spill: Option<SpillStore>,
 }
 pub struct Call {
     id: String,
@@ -59,6 +60,9 @@ fn check_startup_environment(launch: &Launch) -> io::Result<()> {
 }
 impl Driver {
     pub fn prepare() -> io::Result<Self> {
+        Self::prepare_with_spill(None)
+    }
+    pub fn prepare_with_spill(spill: Option<SpillStore>) -> io::Result<Self> {
         let range = Range::new()?;
         let command = range.framed_channel(1024, b"COMMAND_READY\n", true)?;
         let startup = range.framed_channel(1024, b"SHELL_READY:", false)?;
@@ -70,6 +74,7 @@ impl Driver {
             diagnostics: [0; 2],
             startup_bytes: 0,
             stopped: false,
+            spill,
         })
     }
     pub fn bootstrap(&self) -> Value {
@@ -122,10 +127,8 @@ impl Driver {
     pub fn call(&self, id: &str, stdout: usize, stderr: usize) -> io::Result<Call> {
         self.check_live()?;
         let channels = [
-            self.range
-                .framed_channel(stdout, format!("OUT:{id}\n").as_bytes(), false)?,
-            self.range
-                .framed_channel(stderr, format!("ERR:{id}\n").as_bytes(), false)?,
+            self.output_channel(stdout, format!("OUT:{id}\n").as_bytes(), "stdout")?,
+            self.output_channel(stderr, format!("ERR:{id}\n").as_bytes(), "stderr")?,
             self.range
                 .framed_channel(4096, format!("BEGIN:{id}\n").as_bytes(), false)?,
         ];
@@ -133,6 +136,19 @@ impl Driver {
             id: id.into(),
             channels,
         })
+    }
+    fn output_channel(
+        &self,
+        cap: usize,
+        prefix: &[u8],
+        stream: &'static str,
+    ) -> io::Result<Channel> {
+        match &self.spill {
+            Some(store) => self
+                .range
+                .spilling_channel(cap, prefix, store.clone(), stream),
+            None => self.range.framed_channel(cap, prefix, false),
+        }
     }
     /// On failure the caller MUST stop this range, then drain Call, before settling.
     pub fn run(
@@ -165,8 +181,14 @@ impl Driver {
         loop {
             check_deadline(deadline, cancel)?;
             self.check_control()?;
+            if call.cleanup_unconfirmed() {
+                return Err(failure("output cleanup unconfirmed"));
+            }
             let outputs = call.channels.each_ref().map(Channel::snapshot);
-            if outputs.iter().any(|value| !value.errors.is_empty()) {
+            if outputs
+                .iter()
+                .any(|value| !value.errors.is_empty() || value.cleanup_unconfirmed)
+            {
                 return Err(failure("request output observation failed"));
             }
             let receipt = &outputs[2];
@@ -174,6 +196,13 @@ impl Driver {
                 return Err(failure("command receipt exceeded its bound"));
             }
             if let Some(code) = receipt_code(&call.id, &receipt.bytes)? {
+                if outputs.iter().any(|value| {
+                    value.storage_pending || (value.writer_closed && !value.writer_eof)
+                }) {
+                    // Known storage work is not evidence of a surviving shell job.
+                    // The independent request deadline above remains authoritative.
+                    settlement = Some(deadline.min(Instant::now() + Duration::from_millis(500)));
+                }
                 let limit = *settlement.get_or_insert_with(|| {
                     deadline.min(Instant::now() + Duration::from_millis(500))
                 });
@@ -217,17 +246,26 @@ impl Driver {
             self.range
                 .wait_empty(Instant::now() + Duration::from_secs(1))?;
         }
-        self.stopped = true;
-        self.command.close();
-        self.startup.close();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        self.command.close_until(deadline)?;
+        self.startup.close_until(deadline)?;
         self.range.captures()?;
+        self.stopped = true;
         Ok(())
+    }
+    pub fn cleanup_unconfirmed(&self) -> bool {
+        self.range.cleanup_unconfirmed()
+            || self.command.cleanup_unconfirmed()
+            || self.startup.cleanup_unconfirmed()
     }
     pub fn stopped(&self) -> bool {
         self.stopped
     }
     /// Check before reuse admission. An idle failure must be reported, not relaunched silently.
     pub fn check_live(&self) -> io::Result<()> {
+        if self.cleanup_unconfirmed() {
+            return Err(failure("shell cleanup unconfirmed"));
+        }
         let baseline = self
             .baseline
             .as_ref()
@@ -258,6 +296,9 @@ impl Driver {
     }
 }
 impl Call {
+    pub fn cleanup_unconfirmed(&self) -> bool {
+        self.channels.iter().any(Channel::cleanup_unconfirmed)
+    }
     pub fn views(&self) -> [ChannelView; 2] {
         [self.channels[0].view(), self.channels[1].view()]
     }
