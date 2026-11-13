@@ -2,8 +2,10 @@
 
 This #872 slice connects the existing resident control channel to fresh native tasks and the public
 DSH Jobs lifecycle. It is internal: the published fresh Bash executor, its defaults and its host
-subprocess path are unchanged. Native output spill parity and the production fresh authority/runtime
-bridge are prerequisites for switching that path. This is not persistent-shell eligibility evidence.
+subprocess path are unchanged. The [task output/retention integration](resident-task-spill.md) now
+connects recoverable native spill and sealed-origin ledger settlement. The production fresh
+authority/runtime bridge must still be connected before switching the published path. This is not
+persistent-shell eligibility evidence.
 
 `ResidentClient.task` negotiates `task-v1`; absent capability refuses task admission. The same scoped
 kernel remains responsible for file and shell traffic. A bounded correlation map in TypeScript tracks
@@ -48,11 +50,16 @@ with `eof:false` fails the producer explicitly while preserving observed bytes a
 stream. After Jobs performs its final pump and settles, published jobs retain its existing ring and
 spill metadata, not another retained pair of adapter tails. No host spill writer is added.
 
-Live `spillPath` is withdrawn when native no longer advertises an intact stream. At this stage the
-adapter does not establish recoverable-spill or native-origin ledger parity. The full retention,
-paging and budget contract remains a release prerequisite. Public fractional positive `graceMs` and
-timeout values remain valid within the host timer range; the public wrapper's existing limits remain
-its responsibility.
+Live `spillPath` is withdrawn when native no longer advertises an intact stream. A kernel advertising
+`task-spill-v1` alongside `task-v1` supplies complete raw files up to the 64 MiB cap; storage or cap
+failure withdraws the path while bounded tails continue draining. After final reads and confirmed
+cleanup, only EOF-confirmed, error-free, sealed streams enter the existing ledger with native origin,
+kernel PID, exact owner Session ID and raw byte total. The existing retention pass and shared
+settlement notification apply; neither a live path nor unknown cleanup establishes ledger ownership.
+The [separate spill proof](resident-task-spill.md) covers public Jobs metadata, file recovery and
+retention. It does not establish the still-pending production fresh approval/publication integration.
+Public fractional positive `graceMs` and timeout values remain valid within the host timer range;
+the public wrapper's existing limits remain its responsibility.
 
 The targeted suites distinguish evidence: `resident-task-channel` exercises the bounded scripted
 transport; `resident-task-execution` combines that boundary with real Agent/Cordis ownership;
@@ -63,7 +70,7 @@ native worker and official Jobs controller module, records their concrete outcom
 public sandbox confinement. Optional `--bash` adds fresh command/script fixture checks. It makes no
 performance, public-default migration or persistent-state claim.
 
-The 2026-11-14 local build passed, with 30 new targeted checks and 14 existing shell-channel checks
+The historical tail-only adapter build on 2026-11-14 passed, with 30 new targeted checks and 14 existing shell-channel checks
 passing without skips. A first ownership-test assertion expected Cordis fiber disposal to reject;
 Cordis contains that error, so the assertion was corrected to observe the adapter's explicit disposal
 promise. The separate real probe passed seven checks across nine enqueued tasks, including fresh

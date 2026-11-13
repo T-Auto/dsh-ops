@@ -88,6 +88,7 @@ export function createTaskExecutionHost(ctx: Context, transport: TaskTransport) 
       if (pending.size >= 32) throw new Error('EXECUTOR_BUSY: task capacity is full')
       const requestId = randomUUID(), admit = options.admit
       const execution = new NativeTaskExecution(transport, { ...options, requestId, ownerKey: owner.key, signal: call.signal,
+        sessionId: owner.session.id,
         spec: { ...options.spec },
         admit: async signal => { current(owner); const launch = await admit(signal); signal.throwIfAborted(); current(owner); return launch } })
       pending.set(requestId, { owner, execution })

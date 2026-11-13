@@ -90,7 +90,9 @@ real pending-I/O cancellation, lazy-store failure, reparse refusal, and write/
 seal failure. Ignored native child fixtures are explicitly executed by these
 tests/probes; they are not feature skips.
 
-Persistent private channels still use their existing prefix retention. Reusing
-this same store there and wiring complete native metadata into task/session
-adapters are subsequent slices. `task-v1` alone does not imply spill parity;
-production activation must require the completed `task-spill-v1` capability.
+The [task integration](resident-task-spill.md) now configures this same store
+before readiness, carries complete native metadata and settles sealed files in
+the existing ledger. Persistent private channels still use their existing prefix
+retention; their store and session-adapter integration remain pending. `task-v1`
+alone does not imply spill parity; production activation must also require the
+completed `task-spill-v1` capability.

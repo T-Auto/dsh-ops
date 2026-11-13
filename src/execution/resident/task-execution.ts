@@ -4,6 +4,7 @@ import { settledStream } from '../../shells/execution.js'
 import type { ShellLaunch } from './shell-protocol.js'
 import type { TaskCompleted, TaskFailure, TaskKernelMessage, TaskTransport } from './task-protocol.js'
 import { TaskOutputView } from './task-output.js'
+import { recordSettledSpills } from '../../shells/spill-settlement.js'
 
 export interface TaskExecution extends ShellExecution {
   readonly effectState: 'none' | 'unknown'
@@ -14,6 +15,7 @@ export interface TaskExecution extends ShellExecution {
 export interface TaskExecutionOptions {
   requestId: string; ownerKey: string; lifetime: 'foreground' | 'job'; source: string
   spec: ShellExecutionSpec; signal?: AbortSignal
+  sessionId?: string
   /** Current public authority/confine at the native head, rechecked after every await. */
   admit(signal: AbortSignal): Promise<ShellLaunch>
 }
@@ -158,6 +160,12 @@ export class NativeTaskExecution implements TaskExecution {
     this.options.signal?.removeEventListener('abort', this.callerAbort)
     clearTimeout(this.timer)
     this.effectState = completed.effectState; this.cleanupConfirmed = completed.cleanupConfirmed
+    recordSettledSpills(Object.values(this.observed).flatMap(stream =>
+      completed.cleanupConfirmed && stream.eof && !stream.error && stream.spillPath
+        && stream.spillSealed === true && stream.spillOrigin === 'ops-native-v1' && stream.spillPid !== undefined
+        ? [{ path: stream.spillPath, bytes: stream.total, origin: stream.spillOrigin, pid: stream.spillPid,
+          ...(this.options.sessionId === undefined ? {} : { sessionId: this.options.sessionId }) }]
+        : []))
     const outputError = this.observed.stdout.error ?? this.observed.stderr.error
     const error = completed.error ?? outputError ?? this.unavailable
     const value: ShellResult = {

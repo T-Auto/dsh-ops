@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Connect resident task output to the shared native spill store and existing settled-file retention. Complete native streams retain exact kernel/session ownership, while unknown cleanup remains poisoned. The new `task-spill-v1` capability gates later production fresh migration; persistent channels and public fresh activation remain pending (#872).
+- 将常驻任务输出接入共享原生 spill store 和既有终态文件保留流程。完整原生流保留精确内核/会话所有权，回收未知则保持中毒状态。新增 `task-spill-v1` capability 作为后续生产 fresh 迁移门槛；持久通道和公开 fresh 启用仍待完成（#872）。
+
 - Keep native output poison irreversible: late completion cannot restore EOF or a complete spill path; readers discard streams poisoned before sealing, and the managed owner remains unconfirmed until host teardown.
 - 原生输出的中毒状态保持不可逆：迟到完成不能恢复 EOF 或完整溢写路径；封存前已中毒的流会被丢弃，受管理所有者持续报告清理未确认，直至宿主整体终止。
 

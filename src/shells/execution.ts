@@ -5,8 +5,7 @@ import type { SubprocessHandle, SubprocessOutputReader, SubprocessOutputRead } f
 import type { ShellExecutorOptions, ShellExecutionSpec, ShellCall, ShellExecution, ShellResult, ShellStream } from './types.js'
 import { errorMessage } from './types.js'
 import { DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_SPILL_BYTES, shellEnvOverrides } from './constants.js'
-import { recordSettledSpill } from './spill-ledger.js'
-import { noteSpillSettled } from './spill-retention-runtime.js'
+import { recordSettledSpills } from './spill-settlement.js'
 import { formatBashSpawnError } from './spawn-error.js'
 
 const emptyRead = (): SubprocessOutputRead => ({ text: '', nextOffset: 0, lossy: false })
@@ -59,12 +58,9 @@ export function settledStream(reader: SubprocessOutputReader | undefined, includ
  * neither step may change its result or throw.
  */
 function recordSettledStreams(streams: readonly SettledStream[], exec: ShellCall): void {
-  for (const { stream, bytesTotal } of streams) {
-    if (typeof stream.spillPath !== 'string') continue
-    recordSettledSpill({ path: stream.spillPath, bytes: bytesTotal,
-      ...(typeof exec.agent?.session?.id === 'string' ? { sessionId: exec.agent.session.id } : {}) })
-  }
-  noteSpillSettled()
+  recordSettledSpills(streams.flatMap(({ stream, bytesTotal }) => typeof stream.spillPath !== 'string' ? []
+    : [{ path: stream.spillPath, bytes: bytesTotal,
+      ...(typeof exec.agent?.session?.id === 'string' ? { sessionId: exec.agent.session.id } : {}) }]))
 }
 
 /**

@@ -117,6 +117,10 @@ jobs:
         run: |
           cargo build --locked --manifest-path native/Cargo.toml --example task_capture
           node bench/probes/probe-872-task-capture.mjs native/target/debug/examples/task_capture.exe
+      - name: Windows resident task spill and Jobs retention
+        if: runner.os == 'Windows'
+        shell: bash
+        run: node bench/probes/probe-872-task-spill.mjs native/target/debug/dsh-ops-worker.exe task-spill-report.json
       - name: Windows native raw spill and fatal I/O ownership
         if: runner.os == 'Windows'
         shell: bash
