@@ -469,4 +469,32 @@ await test('a typed per-stream capture error preserves the channel and raw reads
   } finally { await host.dispose() }
 })
 
+await test('session spill receipts bind to negotiated support and the ready kernel PID', async () => {
+  const spill = { spillPath: '/fixture/dsh-ops-native-123-0123456789abcdef0123456789abcdef/stdout-0123456789abcdef0123456789abcdef.log',
+    spillOrigin: 'ops-native-v1', spillPid: 123, spillSealed: true }
+  const cases = [
+    ['valid', spill, true, true],
+    ['unnegotiated', spill, false, false],
+    ['wrong kernel PID', { ...spill, spillPid: 124 }, true, false],
+    ['wrong origin', { ...spill, spillOrigin: 'host' }, true, false],
+    ['missing seal', { ...spill, spillSealed: undefined }, true, false],
+    ['orphan metadata', { ...spill, spillPath: undefined }, true, false],
+    ['invalid path', { ...spill, spillPath: 'a\0b' }, true, false],
+    ['nontext degradation', { spillError: {} }, true, false],
+    ['spill degradation', { spillError: 'file cap exceeded' }, true, true],
+  ]
+  for (const [label, fields, supported, valid] of cases) {
+    const host = await fixture({ capabilities: ['shell-v1', ...supported ? ['shell-spill-v1'] : []] }), client = await host.starting
+    try {
+      client.shell.send(execute('spill')); await turn()
+      const read = client.shell.read('spill', 'stdout', 0, 64)
+      const settled = valid ? read : assert.rejects(read, /Invalid shell output/)
+      host.send(output('spill', 'stdout', 0, Buffer.from('prefix'), { eof: true, ...fields }))
+      await settled
+      assert.equal(client.available, valid, label)
+      if (!valid) assert.equal((await host.event('shell.unavailable')).cleanupConfirmed, true, label)
+    } finally { await host.dispose() }
+  }
+})
+
 report('resident-shell-channel')

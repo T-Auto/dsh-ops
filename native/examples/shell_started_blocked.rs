@@ -62,6 +62,10 @@ mod probe {
                 let _ = shutdown.shutdown();
             },
         )?;
+        manager.enable_spill(ops_process::shell::SpillStore::new(
+            &std::env::temp_dir(),
+            ops_process::shell::MAX_SPILL_BYTES,
+        )?)?;
         (manager.output())(
             json!({"type":"ready","pid":std::process::id(),"capabilities":shell::capabilities()}),
         )?;

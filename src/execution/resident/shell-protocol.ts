@@ -7,6 +7,7 @@ export interface ShellOutput {
   type: 'shell.output'; requestId: string; stream: ShellStream
   offset: number; nextOffset: number; bytesBase64: string; lossy: boolean; eof: boolean
   error?: ShellFailure
+  spillPath?: string; spillOrigin?: 'ops-native-v1'; spillPid?: number; spillSealed?: boolean; spillError?: string
 }
 export type ShellAdmission = { type: 'shell.admission'; requestId: string } & (
   | { decision: 'launch'; launch: ShellLaunch; closeAfter: boolean; commandCwd?: string }

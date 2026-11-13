@@ -236,7 +236,11 @@ impl Worker {
                     return self.failure(request, None, error, "SHELL_RESET");
                 }
             } else if self.driver.is_none() {
-                match Driver::prepare() {
+                let prepared = match self.state.spill.get() {
+                    Some(store) => Driver::prepare_with_spill(Some(store.clone())),
+                    None => Driver::prepare(),
+                };
+                match prepared {
                     Ok(driver) => self.driver = Some(driver),
                     Err(error) => {
                         return self.failure(request, None, error, "EXECUTOR_UNAVAILABLE");

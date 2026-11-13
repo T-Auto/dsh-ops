@@ -1,11 +1,11 @@
 use super::{protocol, session};
-use ops_process::shell::ChannelView;
+use ops_process::shell::{ChannelView, SpillStore};
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     io,
     sync::{
-        Arc, Condvar, Mutex,
+        Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
@@ -18,6 +18,7 @@ type Output = Arc<dyn Fn(Value) -> io::Result<()> + Send + Sync>;
 type Started = Arc<dyn Fn(Value) -> io::Result<mpsc::Receiver<io::Result<()>>> + Send + Sync>;
 type Response = (Value, Option<mpsc::SyncSender<io::Result<()>>>);
 pub(super) struct State {
+    pub spill: OnceLock<SpillStore>,
     pub output: Output,
     pub started: Started,
     pub fatal: Arc<dyn Fn() + Send + Sync>,
@@ -110,6 +111,7 @@ impl Manager {
         let cleanup_fatal = fatal.clone();
         Ok(Self {
             state: Arc::new(State {
+                spill: OnceLock::new(),
                 output: Arc::new(move |value| {
                     sender.try_send((value, None)).map_err(|error| {
                         // A deadline/session completion can fail after the last
@@ -143,6 +145,18 @@ impl Manager {
     #[cfg(test)]
     pub(super) fn test_state(&self) -> Arc<State> {
         self.state.clone()
+    }
+    /// Install the same allocation-only store used by tasks, before any shell admission.
+    pub fn enable_spill(&mut self, store: SpillStore) -> io::Result<()> {
+        if !self.state.requests.lock().unwrap().is_empty()
+            || !self.state.sessions.lock().unwrap().is_empty()
+        {
+            return Err(protocol::invalid("shell spill must precede admission"));
+        }
+        self.state
+            .spill
+            .set(store)
+            .map_err(|_| protocol::invalid("shell spill already configured"))
     }
     pub fn contains(&self, id: &str) -> bool {
         self.state.requests.lock().unwrap().contains_key(id)
@@ -394,6 +408,15 @@ impl Manager {
             });
             if let Some(error) = error {
                 response["error"] = json!({"code":"OUTPUT_INCOMPLETE","message":error});
+            }
+            if let Some(spill) = snapshot.spill {
+                response["spillPath"] = json!(spill.path);
+                response["spillOrigin"] = json!("ops-native-v1");
+                response["spillPid"] = json!(spill.pid);
+                response["spillSealed"] = json!(spill.sealed);
+            }
+            if let Some(error) = snapshot.spill_error {
+                response["spillError"] = json!(error);
             }
         } else {
             response["eof"] = json!(completed && offset == 0);

@@ -12,6 +12,8 @@ import { createShellAdmissionHost } from '../lib/execution/resident/shell-admiss
 import { residentShellAdmission } from '../lib/execution/resident/shell-owner.js'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { bootHost } from './lib/host.mjs'
+import { randomUUID } from 'node:crypto'
+import { getSpillLedger } from '../lib/shells/spill-ledger.js'
 
 let identity = 0
 const turn = () => new Promise(resolve => setImmediate(resolve))
@@ -923,6 +925,71 @@ await test('runtime environment merge cannot add a startup script before confine
     assert.equal(JSON.stringify(f.frames).includes(value), false)
     assert.equal(f.logs.join('\n').includes(value), false)
   }, { mode: 'read-only' })
+})
+
+await test('sealed session spill is retained only after both copies and attributed to the exact Session', async () => {
+  await fixture(async f => {
+    const owner = await f.agent(), sibling = await f.agent(), call = await f.submit(owner)
+    await f.admit(call)
+    const file = path.join(f.directory, `dsh-ops-native-123-${randomUUID().replaceAll('-', '')}`, `stdout-${randomUUID().replaceAll('-', '')}.log`)
+    const gate = Promise.withResolvers(), asked = Promise.withResolvers(), ledger = getSpillLedger()
+    f.state.outputRead = async request => {
+      if (request.stream === 'stderr') { asked.resolve(); await gate.promise }
+      return { type: 'shell.output', ...request, nextOffset: request.stream === 'stdout' ? 200000 : 0,
+        bytesBase64: request.stream === 'stdout' ? Buffer.from('prefix').toString('base64') : '',
+        lossy: request.stream === 'stdout', eof: true, ...(request.stream === 'stdout' ? {
+          spillPath: file, spillOrigin: 'ops-native-v1', spillPid: 123, spillSealed: true,
+        } : {}) }
+    }
+    const finishing = f.finish(call, { stdoutTotal: 200000 })
+    await bounded(asked.promise, 'sibling stream'); await turn()
+    assert.equal(ledger.entries().some(entry => entry.path === file), false)
+    gate.resolve()
+    const result = await finishing
+    assert.equal(result.stdout.spillPath, file); assert.equal(result.stdout.text, 'prefix')
+    assert.equal(result.stdout.bytesTotal, 200000); assert.equal(result.stdout.lossy, true)
+    const entry = ledger.entries().find(entry => entry.path === file)
+    assert.equal(entry.sessionId, owner.agent.session.id); assert.notEqual(entry.sessionId, sibling.agent.session.id)
+    assert.equal(entry.pid, 123); assert.equal(entry.origin, 'ops-native-v1'); assert.equal(entry.bytes, 200000)
+    assert.equal(f.frames.some(frame => frame.type === 'shell.release'), true)
+  })
+})
+
+for (const mode of ['raw error', 'spill degradation', 'unknown cleanup']) {
+  await test(`${mode} cannot publish or settle a session recovery path`, async () => {
+    await fixture(async f => {
+      const owner = await f.agent(), call = await f.submit(owner)
+      await f.admit(call)
+      const file = path.join(f.directory, `dsh-ops-native-123-${randomUUID().replaceAll('-', '')}`, `stdout-${randomUUID().replaceAll('-', '')}.log`)
+      f.state.outputRead = request => ({ type: 'shell.output', ...request, nextOffset: request.stream === 'stdout' ? 9 : 0,
+        bytesBase64: '', lossy: request.stream === 'stdout', eof: mode !== 'raw error' || request.stream !== 'stdout',
+        ...(request.stream === 'stdout' ? { spillPath: file, spillOrigin: 'ops-native-v1', spillPid: 123, spillSealed: true,
+          ...(mode === 'raw error' ? { error: { code: 'OUTPUT_INCOMPLETE', message: 'fixture capture failed' } } : {}),
+          ...(mode === 'spill degradation' ? { spillError: 'fixture complete-file close failed' } : {}),
+        } : {}) })
+      const result = await f.finish(call, { stdoutTotal: 9, cleanupConfirmed: mode !== 'unknown cleanup' })
+      assert.equal(result.stdout.spillPath, undefined)
+      assert.equal(getSpillLedger().entries().some(entry => entry.path === file), false)
+      assert.equal(f.aborts.length, 0)
+      if (mode === 'raw error') assert.equal(result.status, 'failed')
+      if (mode === 'spill degradation') assert.equal(result.stdout.spillError, 'fixture complete-file close failed')
+    })
+  })
+}
+
+await test('an unsealed terminal spill fails the protocol before ledger handoff', async () => {
+  await fixture(async f => {
+    const owner = await f.agent(), call = await f.submit(owner), aborted = Promise.withResolvers()
+    await f.admit(call)
+    f.state.onAbort = error => aborted.resolve(error)
+    f.state.outputRead = request => ({ type: 'shell.output', ...request, nextOffset: 0, bytesBase64: '', lossy: false, eof: true,
+      spillPath: '/unsealed', spillOrigin: 'ops-native-v1', spillPid: 123, spillSealed: false })
+    const finishing = f.finish(call)
+    assert.match((await bounded(aborted.promise, 'unsealed spill abort')).message, /not sealed/)
+    assert.equal(f.frames.some(frame => frame.type === 'shell.release'), false)
+    f.emit({ type: 'shell.unavailable', cleanupConfirmed: true, error: { code: 'EXECUTOR_UNAVAILABLE', message: 'fixture joined kernel' } })
+    assert.equal((await finishing).stdout.spillPath, undefined)
+  })
 })
 
 report('resident-shell-admission')

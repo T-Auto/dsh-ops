@@ -39,6 +39,28 @@ fn reject(manager: &mut Manager, id: &str) {
 }
 
 #[test]
+fn shared_spill_configuration_is_allocation_only_and_precedes_admission() {
+    let root =
+        std::env::temp_dir().join(format!("ops-uncreated-shell-store-{}", std::process::id()));
+    assert!(!root.exists());
+    let store = ops_process::shell::SpillStore::new(&root, 1024).unwrap();
+    let (mut manager, output) = fixture();
+    manager.enable_spill(store.clone()).unwrap();
+    assert!(
+        !root.exists(),
+        "configuration must not perform coordinator filesystem I/O"
+    );
+    assert!(manager.enable_spill(store.clone()).is_err());
+    manager.shutdown().unwrap();
+    let (mut manager, late_output) = fixture();
+    execute(&mut manager, "late", "owner", 30_000);
+    assert!(manager.enable_spill(store).is_err());
+    manager.shutdown().unwrap();
+    drop(output);
+    drop(late_output);
+}
+
+#[test]
 fn queued_expiry_and_cancellation_do_not_wait_for_the_active_approval() {
     let (mut manager, output) = fixture();
     execute(&mut manager, "head", "owner", 30_000);

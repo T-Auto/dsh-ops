@@ -18,7 +18,7 @@ export class ResidentShellChannel implements ShellTransport {
   private terminal?: Extract<ShellKernelMessage, { type: 'shell.unavailable' }>
   constructor(private readonly isAvailable: () => boolean,
     private readonly write: (value: ShellHostMessage, sending?: () => void) => () => boolean,
-    readonly abort: (error: Error) => void) {}
+    readonly abort: (error: Error) => void, private readonly kernelPid: () => number) {}
   get available(): boolean { return !this.terminal && this.isAvailable() }
   subscribe(listener: (message: ShellKernelMessage) => void): () => void {
     if (this.listener) throw new Error('Resident shell already has an admission owner')
@@ -98,7 +98,14 @@ export class ResidentShellChannel implements ShellTransport {
       const key = `${value.requestId}:${value.stream}`, read = this.reads.get(key)
       if (!read || value.offset !== read.offset || !count(value.nextOffset) || Number(value.nextOffset) < read.offset
         || typeof value.lossy !== 'boolean' || typeof value.eof !== 'boolean' || typeof value.bytesBase64 !== 'string'
-        || (value.error !== undefined && !error(value.error))) throw new Error('Invalid shell output receipt')
+        || (value.error !== undefined && !error(value.error))
+        || (value.spillError !== undefined && typeof value.spillError !== 'string')
+        || (value.spillPath === undefined
+          ? [value.spillOrigin, value.spillPid, value.spillSealed].some(item => item !== undefined)
+          : !this.capabilities.includes('shell-spill-v1') || value.spillOrigin !== 'ops-native-v1'
+            || value.spillPid !== this.kernelPid() || typeof value.spillSealed !== 'boolean'
+            || typeof value.spillPath !== 'string' || !value.spillPath || value.spillPath.length > 4096
+            || value.spillPath.includes('\0'))) throw new Error('Invalid shell output receipt')
       const bytes = Buffer.from(value.bytesBase64, 'base64'), delta = Number(value.nextOffset) - read.offset
       if (bytes.length > read.maxBytes || bytes.toString('base64') !== value.bytesBase64 || delta < bytes.length
         || (!value.lossy && delta !== bytes.length)) throw new Error('Invalid shell output bytes or offsets')
