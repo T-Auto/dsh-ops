@@ -125,6 +125,49 @@ await test('each of the three categories is decided independently', () => {
   assert.equal(violationsOf(long).shape, false)
 })
 
+await test('waiting on an agent is a dependency barrier, read only from a real dispatch site (#893)', () => {
+  // Dot and bracket calls to wait_agent are both waits, so no shape notice.
+  for (const code of [
+    '// plan: wait for the verification agent\nreturn await tools.wait_agent({ timeout_ms: 30000 })',
+    '// plan: wait for the verification agent\nreturn await tools["wait_agent"]({ timeout_ms: 30000 })',
+  ]) {
+    const shape = analyzeProgram(code)
+    assert.equal(shape.dispatchSites, 1, code)
+    assert.equal(shape.isWaiting, true, code)
+    assert.deepEqual(violationsOf(shape), { plan: false, bypass: false, shape: false }, code)
+  }
+  // The name inside a comment or a message string is not a call and exempts nothing.
+  for (const code of [
+    'const r = await tools.ops_read_files({ files: [{ path: "a" }] })\n// tools.wait_agent({})\nreturn r',
+    'const r = await tools.ops_read_files({ files: [{ path: "a" }] })\nreturn { r, note: "tools.wait_agent( later" }',
+  ]) {
+    const shape = analyzeProgram(code)
+    assert.equal(shape.isWaiting, false, code)
+    assert.equal(violationsOf(shape).shape, true, code)
+  }
+  // A wait does not exempt the plan or bypass checks.
+  assert.equal(violationsOf(analyzeProgram('return await tools.wait_agent({ timeout_ms: 1 })')).plan, true)
+  const shellWait = analyzeProgram('await tools.ops_bash({ description: "list", command: "ls -la" })\nreturn await tools.wait_agent({})')
+  assert.equal(violationsOf(shellWait).bypass, true)
+})
+
+await test('only a single dispatch site earns the single-operation shape notice (#893)', () => {
+  // A search whose result picks the next read cannot be batched ahead of time.
+  const dependent = analyzeProgram('// plan: search; read the matching file\nconst hits = await tools.grep({ pattern: "needle" })\nreturn await tools.read({ file_path: hits.matches[0].path })')
+  assert.equal(dependent.dispatchSites, 2)
+  assert.equal(dependent.isWaiting, false)
+  assert.deepEqual(violationsOf(dependent), { plan: false, bypass: false, shape: false })
+  // Bracket sites count the same way.
+  assert.equal(violationsOf(analyzeProgram('const a = await tools["ops_stat"]({ path: "a" })\nreturn await tools["ops_stat"]({ path: a.path })')).shape, false)
+  // Two sites do not exempt the plan or bypass checks.
+  const twoNoPlan = analyzeProgram('const a = await tools.ops_bash({ description: "list", command: "ls -la" })\nreturn await tools.ops_stat({ path: "a" })')
+  assert.deepEqual(violationsOf(twoNoPlan), { plan: true, bypass: true, shape: false })
+  // A commented-out second call does not lift a real single site out of the notice.
+  assert.equal(violationsOf(analyzeProgram('// plan: read\nconst r = await tools.read({ file_path: "a" })\n// await tools.read({ file_path: "b" })\nreturn r')).shape, true)
+  // The single read keeps its original notice.
+  assert.equal(violationsOf(analyzeProgram('// plan: read\nreturn await tools.read({ file_path: "a" })')).shape, true)
+})
+
 
 // ---- the per-turn latch (option 4a: re-armed by compliance, no per-turn cap) ----
 
