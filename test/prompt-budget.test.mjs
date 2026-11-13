@@ -9,7 +9,7 @@ import * as SearchTools from '@deepseek-ai/dsh-tool-fs-search'
 import * as ops from '../lib/index.js'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { selectExecutor, prepareStep } from './lib/executor.mjs'
-import { assert, test, report, withTempDir } from './lib/harness.mjs'
+import { assert, test, report, withTempDir, waitFor } from './lib/harness.mjs'
 
 // Includes all host text/wire, not just the plugin delta. No tokenizer/cache claims.
 // Pre-slice win32 baseline: minimal=10516, standard=19996, cordis=19996, ptc=29639.
@@ -26,6 +26,11 @@ await test('each default preset stays within its resident per-request byte budge
       const presets = new Map()
       ctx.provide('agentPresets', { composedPreset: scoped => presets.get(scopeParentOf(scopeOf(scoped))) })
       const agents = []
+      // This schema-only fixture does not execute commands, but complete-capability
+      // publication still requires the same explicit authority services as a host.
+      ctx.provide('agents', { list: () => agents.map(row => row.agent), get: id => agents.find(row => row.agent.id === id)?.agent })
+      ctx.provide('sessions', { get: id => agents.find(row => row.agent.session.id === id)?.agent.session })
+      ctx.provide('shellEnv', { collect: () => ({}) })
       const capture = async agent => {
         const prepared = await prepareStep(ctx, agent)
         try {
@@ -51,6 +56,7 @@ await test('each default preset stays within its resident per-request byte budge
       const shell = { bashPath: process.execPath }
       await ctx.plugin(ops, { minimal: shell, standard: shell, cordis: shell, ptc: shell })
       for (const { agent } of agents) await ctx.serial('agent/created', { agent, source: 'startup' })
+      if (process.platform === 'win32') await waitFor(() => agents.every(({ agent }) => ctx.tools.get('ops_bash', agent)), { what: 'Bash publication after root authority readiness' })
       for (const { preset, agent, before } of agents) {
         const after = await capture(agent)
         const admitted = await prepareStep(ctx, agent)

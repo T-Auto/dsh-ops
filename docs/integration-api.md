@@ -9,11 +9,12 @@ integration inside its own composition, or provide an explicit preset id.
 ## Minimal Native integration
 
 ```js
-import { integration, residentKernel } from 'dsh-ops/integration'
+import { integration, residentKernel, residentFreshTasks } from 'dsh-ops/integration'
 export default {
   inject: ['subprocess'],
   async apply(ctx) {
     await ctx.plugin(residentKernel())
+    await ctx.plugin(residentFreshTasks())
     await ctx.plugin(integration({ preset: 'acme-chat' }))
   },
 }
@@ -26,6 +27,11 @@ The main `dsh-ops` row already owns this provider, so integrations using that ro
 `integration()`. Do not mount a second provider in the same host. Missing setup or conflicting
 explicit `binaryPath` selections fail during activation. Pass `{ binaryPath: '/absolute/worker' }`
 to `residentKernel()` when selecting a worker; omitted consumer paths inherit that selection.
+
+`residentFreshTasks()` prepares the shared fresh authority service only when the worker declares
+both task and recoverable-spill capabilities. It waits for Agent/Session, policy and managed-environment
+services; consumers do not fall back while that authority is pending or after it is withdrawn. Workers
+without both capabilities retain their existing fresh executor. See the [bridge contract and evidence](resident-fresh-bridge.md).
 
 The default publishes the resident Native file surface and an `ops_discover_tools` entry for
 that exact preset. It does not replace official tools or publish Bash. Sibling preset compositions

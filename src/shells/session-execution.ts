@@ -3,11 +3,11 @@ import path from 'node:path'
 import { sameAuthority } from '../authority-paths.js'
 import type { ConfinedArgv } from '../adapter/dsh/types.js'
 import type { ShellContext, ShellCall, ShellPolicy, ExecutionOptions, ShellExecution, ShellResult } from './types.js'
-import { bashToolDefinition, withBashStatus } from './tool.js'
+import { bashToolDefinition } from './tool.js'
 import { confinedBash } from '../bash-ipc.js'
 import { executorUnavailableMessage } from '../bash-runtime-failure.js'
 import { prepareWorkspace } from '../workspace-preparation.js'
-import { executionRestriction } from '../permissions.js'
+import { confinementResult } from './confinement-result.js'
 import { isNiubashExecutable, prepareNiubash } from '../niubash/runtime.js'
 
 export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bash: { file: string; source: string }; active(): boolean },
@@ -51,21 +51,7 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
       assertAuthority()
       return confinement?.argv ?? argv
     },
-    projectResult: (value: ShellResult) => {
-      const stderr = `${value.stderr?.text ?? ''}\n${value.error ?? ''}`
-      const runnerFailed = value.exitCode !== 0 && confinement?.runnerFailureRules?.some(rule =>
-        (!rule.allowedExitCodes || (value.exitCode != null && rule.allowedExitCodes.includes(value.exitCode))) &&
-        stderr.split(/\r?\n/).filter(line => !rule.informationalLines?.some(info => info.toLowerCase() === line.toLowerCase()))
-          .some(line => rule.fatalSignatures?.some(signature => line.toLowerCase().includes(signature.toLowerCase()))))
-      const unavailable = runnerFailed || /couldn't create signal pipe|fatal error.*win32 error|sandbox_unavailable/i.test(stderr)
-      const denied = !unavailable && value.exitCode !== 0 && confinement?.denialSignatures?.some(signature => stderr.toLowerCase().includes(signature.toLowerCase()))
-      return withBashStatus({ ...value,
-        ...(unavailable ? { error: 'EXECUTOR_UNAVAILABLE: the sandbox runtime failed before the command ran; this is not a user authorization denial. Restore the runtime or confinement provider; changing the DSH selector is not a repair. Do not bypass confinement.' } : {}),
-        ...(denied ? { restriction: executionRestriction('command file effects') } : {}),
-        sandbox: { mode: policy.mode, denied: denied === true,
-          ...(confinement ? { enforcement: confinement.enforcement } : {}), ...(unavailable ? { runnerFailed: true } : {}) },
-      })
-    },
+    projectResult: (value: ShellResult) => confinementResult(value, policy, confinement),
   })
   return definition.start(args, exec, options)
 }

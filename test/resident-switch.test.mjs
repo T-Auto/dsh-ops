@@ -18,6 +18,7 @@ import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { assert, test, report, waitFor, withTempDir } from './lib/harness.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
+import { providePublicationAuthorities } from './lib/resident.mjs'
 
 await test('resident settings exist only on enhanced presets, default on, and have no global gate', () => {
   const config = resolveMergedConfig()
@@ -64,7 +65,7 @@ async function setup(cwd, mode, switches, global = {}, override = {}) {
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem); await ctx.plugin(NodePtc)
   ctx.provide('sandboxPolicy', { resolve: ({ session } = {}) => ({ mode: session?.mode ?? 'danger-full-access', workspaceRoot: cwd, sessionId: session?.id }) })
   const presets = new Map(), agents = []
-  ctx.provide('agents', { list: () => [...agents] })
+  providePublicationAuthorities(ctx, agents)
   ctx.provide('agentPresets', { composedPreset: inner => presets.get(scopeParentOf(scopeOf(inner))) })
   const config = { global, discovery: { binaryPath: WORKER, required: true } }
   for (const id of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis']) config[id] = { enabled: id === mode,

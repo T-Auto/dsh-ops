@@ -25,7 +25,8 @@ export interface ShellResult {
   diagnostics?: { durationMs: number; executor: { kind: string; source: string } }
   permission?: { code: string; message: string; nextAction: string }
   restriction?: { code: string; message: string; nextAction: string }
-  sandbox?: { mode: ShellPolicy['mode']; denied: boolean; enforcement?: 'full' | 'partial'; runnerFailed?: boolean }
+  sandbox?: { mode: ShellPolicy['mode']; denied: boolean; enforcement?: 'full' | 'partial'; runnerFailed?: boolean
+    denialObservation?: 'detected' | 'not-observed' | 'incomplete' }
 }
 export type SettledShellResult = ShellResult & { status: 'completed' | 'failed' }
 export type HostForeground = SettledShellResult & { kind: 'foreground'; exitCode: number | null; signal: string | null; aborted: boolean }
@@ -34,6 +35,7 @@ export type HostBashResult = (HostForeground | { kind: 'background'; jobId: stri
 export interface ShellExecution {
   status: 'running' | 'completed' | 'killed'
   readonly started: boolean
+  readonly effectState?: 'none' | 'unknown'
   observed: { stdout: SubprocessOutputReader; stderr: SubprocessOutputReader }
   kill(reason?: string): void
   result(): Promise<ShellResult>
@@ -43,6 +45,12 @@ export interface ShellExecution {
   sandbox?: ShellResult['sandbox']
 }
 export interface ExecutionOptions { onExpiry?: 'none' }
+export interface PreparedBashCall {
+  args: Record<string, unknown>; spec: ShellExecutionSpec; call: ShellCall
+  standing: ShellPolicy; policy: ShellPolicy; env: NodeJS.ProcessEnv; background: boolean
+  observe(execution: ShellExecution): void
+}
+export type BashExecutionStrategy = (prepared: PreparedBashCall) => Promise<HostBashResult>
 export interface ShellExecutionSpec extends ExecutionOptions {
   command?: string
   scriptPath?: string

@@ -43,6 +43,7 @@ export function mountFakeResident(ctx, options = {}) {
   return mount(ctx, options, async (inner, file) => {
     const client = {
       file, pid: options.pid ?? 1, available: options.available ?? true,
+      task: { capabilities: [], available: false },
       async invoke(envelope, signal, onStarted) {
         if (!client.available) throw new ResidentNotStarted('Resident fixture is unavailable')
         if (!options.invoke) throw new Error('Publication-only resident fixture must not execute')
@@ -53,6 +54,13 @@ export function mountFakeResident(ctx, options = {}) {
     inner.effect(() => () => client.stop(), 'fixture: resident kernel')
     return client
   })
+}
+
+/** Explicit authority shapes for schema/publication fixtures that mint their own Agents. */
+export function providePublicationAuthorities(ctx, agents) {
+  ctx.provide('agents', { list: () => [...agents], get: id => agents.find(agent => agent.id === id) })
+  ctx.provide('sessions', { get: id => agents.find(agent => agent.session.id === id)?.session })
+  ctx.provide('shellEnv', { collect: () => ({}) })
 }
 
 /** Convert existing raw-output subprocess mocks into explicit kernel receipts. */

@@ -1,7 +1,7 @@
 /** Plugin-owned bash layers; permission changes never mutate the shared registry. */
 import path from 'node:path'
 import type { Context, Fiber } from './adapter/dsh/types.js'
-import type { Agent } from './adapter/dsh/types.js'
+import type { Agent, JobRegistry } from './adapter/dsh/types.js'
 import type { ResolvedConfig } from './config.js'
 import type { ShellResolution } from './shells/paths.js'
 import type { HostShellDefinition, ShellJobs, ShellResult } from './shells/types.js'
@@ -15,6 +15,8 @@ import { withToolChange } from './publication/changes.js'
 import { publicationRegistration } from './publication/reentry.js'
 import { startSessionBash } from './shells/session-execution.js'
 import { resolveSessionDirectory } from './adapter/dsh/working-directory.js'
+import { supportsFreshTasks } from './execution/resident/fresh-provider.js'
+import type { FreshTaskHost } from './execution/resident/fresh-host.js'
 
 /**
  * Whether a session workspace is written in a Windows form.
@@ -181,8 +183,12 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
   // Bound once by the jobs injection below; the host's registry is a tracked service, so every
   // `ctx.get('jobs')` hands out a fresh traceable proxy and cannot be compared by identity.
   let jobs: ShellJobs | undefined
+  let publicJobs: JobRegistry | undefined, fresh: FreshTaskHost | undefined
+  // Once selected, provider loss revokes this layer; it never falls back to per-call spawning.
+  let nativeRequired = supportsFreshTasks(ctx.get('opsKernel')?.task.capabilities ?? [])
   const allowed = (agent: Agent) => {
     if (!ready || stopped || !agent?.session) return false
+    if (nativeRequired && !fresh?.available) return false
     if (!gate.allows(agent)) return false
     try {
       const policy = ctx.get('sandboxPolicy')?.resolve({ session: agent.session })
@@ -237,13 +243,16 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
       clear(entry)
       if (!publishable) continue
       const base = bashToolDefinition({ file: bash.file, source: bash.source, subprocess: ctx.get('subprocess') })
+      const selectedFresh = fresh, selectedJobs = publicJobs
+      const active = () => entry.published === true && entry.definition === definition && entries.has(agent) && allowed(agent)
       const definition = hostBashDefinition(ctx, base,
         (args, exec, standing, policy, dshEnv, options) => startSessionBash({ ctx, bash, active: () => entry.published === true && entry.definition === definition
           && exec.agent !== undefined && entries.has(exec.agent) && allowed(exec.agent) },
           args, exec, standing, policy, dshEnv, options), async (args, session, exec) => {
             const basis = await resolveSessionDirectory(ctx, exec.agent, exec.signal)
             return { workdir: sessionWorkdir(args, { header: { cwd: basis.cwd } }), basis }
-          }, jobs)
+          }, jobs, selectedFresh ? prepared => selectedFresh.run({ ...prepared, bash,
+            active: () => prepared.call.agent === agent && active() && fresh === selectedFresh }, selectedJobs) : undefined)
       publish(entry, definition)
       if (entry.dispose) { entry.published = true; entry.generation = generation }
     }
@@ -333,9 +342,20 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
   if (gate.watch) ctx.effect(() => gate.watch!(() => { void scheduleReconcile(true) }), 'dsh-ops: bash mode observer')
   ctx.inject(['sandbox'], () => { scheduleReconcile() })
   ctx.inject(['jobs'], jobsCtx => {
-    jobs = jobsCtx.get('jobs') as ShellJobs | undefined
+    publicJobs = jobsCtx.get('jobs')
+    jobs = publicJobs as ShellJobs | undefined
     scheduleReconcile(true)
-    jobsCtx.effect(() => () => { jobs = undefined; scheduleReconcile(true) })
+    jobsCtx.effect(() => () => { jobs = undefined; publicJobs = undefined; scheduleReconcile(true) })
+  })
+  ctx.inject(['opsKernel'], kernelCtx => {
+    nativeRequired ||= supportsFreshTasks(kernelCtx.opsKernel.task.capabilities)
+    scheduleReconcile(true)
+    kernelCtx.effect(() => () => { scheduleReconcile() })
+  })
+  ctx.inject(['opsFreshTasks'], taskCtx => {
+    fresh = taskCtx.opsFreshTasks; nativeRequired = true
+    scheduleReconcile(true)
+    taskCtx.effect(() => () => { fresh = undefined; scheduleReconcile() })
   })
   ctx.inject(['sandboxPolicy', 'subprocess'], authorityCtx => {
     ready = true

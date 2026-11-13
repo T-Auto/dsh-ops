@@ -16,6 +16,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Keep native output poison irreversible: late completion cannot restore EOF or a complete spill path; readers discard streams poisoned before sealing, and the managed owner remains unconfirmed until host teardown.
 - 原生输出的中毒状态保持不可逆：迟到完成不能恢复 EOF 或完整溢写路径；封存前已中毒的流会被丢弃，受管理所有者持续报告清理未确认，直至宿主整体终止。
 
+- Route fresh Bash through one shared native task provider when `task-v1` and recoverable `task-spill-v1` are available. Preserve validation/approval, exact confined argv, current-head authority, public Jobs handoff and existing spill recovery/retention; withdraw publication without fallback when the owner disappears. Native and PTC share this root-owned provider (#872).
+- 具备 `task-v1` 与可恢复 `task-spill-v1` 时，fresh Bash 统一通过共享原生任务 provider 执行。保留参数校验/批准、原样受约束 argv、队首当前权限、公开 Jobs 交接及既有 spill 恢复/保留；所有者消失时撤销发布，不回退。Native 与 PTC 共享主入口持有的 provider（#872）。
+
 - Add an internal Windows resident task queue with current-head admission, independent Job ownership, bounded tail reads and joined owner cleanup. Explicit job lifetime and promotion preserve the original process range; hard execution caps remain separate from host handoff timers. Production fresh/Jobs migration and recoverable spill remain pending (#872).
 - 添加 Windows 内部常驻任务队列：当前队首准入、独立 Job 所有权、有界尾部读取与等待完成的 owner 回收。显式 job 生命周期及提升保留原进程范围；硬执行上限与宿主移交计时分开。生产 fresh/Jobs 迁移及可恢复 spill 仍待完成（#872）。
 
