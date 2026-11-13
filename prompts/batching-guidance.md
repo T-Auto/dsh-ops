@@ -3,6 +3,19 @@
 Group independent calls in one run_code program and keep dependencies explicit.
 Return enough status and completion facts for the next decision.
 
+## One session, one scope
+
+A program's top-level `const`, `let`, `class` and `function` can outlive the program: a
+state-retaining runtime keeps them, and a second declaration of that name is a compile-time
+SyntaxError that discards the whole program before its first line runs, tool calls
+included. A program that throws keeps its names too, so re-sending a failed program
+verbatim dies on a name rather than on its arguments.
+
+- One name, one program. Never declare `load` twice.
+- Give each program its own top-level names; a name this session already used is spent.
+- Declare at top level only what a later program reads, and read it without re-declaring.
+- A program that died did nothing: change its arguments and its names before retrying.
+
 ## Core rules
 
 1. **Call tools only inside run_code**: write `await tools.<name>(args)`.
@@ -187,4 +200,6 @@ return { files: files.data?.items?.length, dirs: dirs.data?.items?.length,
 | One failure aborting the batch | Check Outcome status; catch dispatch exceptions and keep e.message |
 | Shell standing in for a file tool | Use the OPS file API for list, search, read and edit |
 | ops_read_files before it is loaded | ops_load_sdk in the previous program |
+| The same top-level name in a second program | Give the program its own names; a used name is spent |
+| Re-sending a failed program with new arguments | It left its names behind; rename first |
 | Using e.toolName as the error reason | Use e.message |

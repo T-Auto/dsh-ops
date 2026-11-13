@@ -20,7 +20,7 @@ await test('the shipped guidance is English Markdown with its host-source identi
   }
   assert.equal(BATCHING_GUIDANCE_ID, 'batching-guidance')
   // A wording or format change is a product change and must bump the revision.
-  assert.equal(BATCHING_GUIDANCE_REVISION, '4')
+  assert.equal(BATCHING_GUIDANCE_REVISION, '5')
 })
 
 await test('the guidance loader returns exactly the shipped Markdown file', () => {
@@ -103,7 +103,35 @@ await test('the teacher trajectory pins the first-line plan and a runnable load 
   assert.ok(text.includes('nextOffset'), 'paging advances by the cursor')
   // File work belongs to the OPS APIs; a shell example here would teach the bypass.
   for (const banned of ['find .', 'ls -la', 'grep -rn']) assert.ok(!text.includes(banned), banned)
-  assert.ok(text.length > 2500 && text.length < 9000, 'guidance stays bounded: ' + text.length)
+  assert.ok(text.length > 2500 && text.length < 10000, 'guidance stays bounded: ' + text.length)
+})
+
+await test('the guidance teaches the session scope every program shares', () => {
+  // A state-retaining runtime keeps a program's top-level declarations, so a second
+  // declaration of that name is a compile-time SyntaxError and the whole program never
+  // runs, tool calls included. That is the difference between a one-step retry and a
+  // discarded program, so the shipped text states it, names the failure, and warns that
+  // a failed program keeps its names.
+  const text = loadBatchingGuidance()
+  assert.ok(text.includes('One session, one scope'), 'the scope section is present')
+  assert.match(text, /state-retaining runtime keeps them/, 'persistence is stated')
+  assert.match(text, /compile-time\s+SyntaxError/, 'the failure mode is named')
+  assert.match(text, /before its first line runs/, 'the whole program is discarded')
+  assert.match(text, /keeps its names too/, 'a failed program is not rolled back')
+  assert.match(text, /Never declare `load` twice/, 'the rule is concrete, not abstract')
+  assert.ok(text.includes('read it without re-declaring'), 'a retained name is read, never re-declared')
+})
+
+await test('the mistake table names both ways a program is thrown away', () => {
+  // The table is what a skimming model reads, so the two traps the scope rule describes
+  // have to appear there too: a name this session already used, and the instinct to
+  // re-send a failed program untouched.
+  const text = loadBatchingGuidance()
+  assert.match(text, /same top-level name in a second program/u, 'the redeclaration trap is listed')
+  assert.match(text, /Re-sending a failed program/u, 'the poisoned-scope retry trap is listed')
+  // Examples stay runnable values: batching-examples executes them and asserts the
+  // returned summary, so no example may switch to printing instead of returning.
+  assert.match(text, /^return /mu, 'the examples still return their summary')
 })
 
 report('batching-guidance')

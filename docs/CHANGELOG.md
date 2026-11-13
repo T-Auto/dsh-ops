@@ -13,6 +13,26 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Bash 工具说明现在在模型读取它的地方写明 `stdout`/`stderr` 的解析契约：文本可能只是片段，`truncated` 标记的片段不得当作完整结构化输出解析，`spillPath` 是可选项且不保证完整。输出类型 schema 保持不变：在那里重复这段契约只会让每个 PTC 请求更贵，并不会多说明什么。命令语义、退出码、结果值、上限、落盘、权限与渲染均不变。
 - Turning a PTC preset's `dynamicTools` off now publishes the configured pool (`allowedTools` plus `result`) as resident instead of leaving the scope with no reachable API. The loader is gone, yet every callable API stays visible; this is the cache-friendly choice for providers that break on dynamically added tools. `residentTools: false` still publishes nothing, so the declaration-surface guard is preserved.
 - PTC 预设关闭 `dynamicTools` 后改为把配置池（`allowedTools` 与 `result`）作为常驻发布，而不是让作用域失去任何可达 API：加载器消失，但全部可调用 API 仍然可见，这是给不支持动态工具增删的提供商准备的缓存友好选项。`residentTools: false` 仍不发布任何启动 API，声明面守卫得以保留。
+- Teach the session scope in the batch-call guidance (revision 5). PTC can evaluate a program in a runtime
+  that retains state, where a top-level `const`/`let`/`class`/`function` outlives the program that declared it:
+  a second declaration of that name is a SyntaxError at compile time and the whole program is discarded before
+  its first line runs, tool calls included. A program that throws keeps its names as well, so re-sending a
+  failed program verbatim dies on a name rather than on its arguments — measured on one 127-program ops-ptc
+  session, 11 of 17 failed programs were this exact error and two of them were retries of a program that had
+  already failed, with names declared on turn 1 still colliding on turn 6. The guidance now states one scope per
+  session, makes each program own its top-level names, separates a retained name from a re-declared one, and
+  lists both traps in the mistake table. The examples keep their `return`: `batching-examples` executes them and
+  asserts the returned summary, so a printed example would silently stop being testable. A model-driven A/B over
+  one audit task in a retained REPL (`bench/probes/probe-scope-run.mjs`, 4 runs per arm, 14-program budget)
+  discards 7 of 56 programs on the 0.5.5 text and 3 of 56 after.
+- 批量引导补上会话作用域（revision 5）。PTC 的程序可能运行在保留状态的运行时里，顶层 `const`/`let`/`class`/`function`
+  会活在声明它的程序之外：同名再声明一次是编译期 `SyntaxError`，整个程序在第一行运行前就被丢弃，工具调用一个都不会发生；
+  中途抛错的程序同样留下自己的名字，所以把失败的程序原样重发，会死在名字上而不是死在参数上——在一个 127 程序的 ops-ptc
+  会话里实测，17 个失败程序中 11 个正是这个错误，其中两个是对已失败程序的重试，而 turn 1 声明的名字到 turn 6 仍在撞。
+  引导现在写明「一个会话一个作用域」，要求每个程序用自己的顶层名字，区分「留存的变量」与「重新声明」，并把两个坑都写进
+  常见错误表。示例保留 `return`：`batching-examples` 会真的执行它们并断言返回摘要，改成打印会让它们悄悄失去可测性。
+  同一个审计任务、同一台常驻 REPL 的模型驱动 A/B（`bench/probes/probe-scope-run.mjs`，每臂 4 轮、每轮 14 个程序预算）
+  在 0.5.5 文本下丢弃 56 个程序中的 7 个，改后 3 个。
 
 ## [0.5.5] — 2026-11-13 — Patch release
 
