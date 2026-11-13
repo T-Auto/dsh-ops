@@ -68,11 +68,11 @@ the host's `loadOverlayPatches`; there is no matching preset row in the plugin m
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | true | Publish this surface for sessions of the `ops-ptc` preset; page switch, also settable in YAML |
-| `residentTools` | true | Publish the startup APIs. With dynamic loading on, the PTC resident surface is only `ops_inspect_local_file` and everything else loads on demand through `ops_load_sdk`; with dynamic loading off, this switch also publishes the whole configured pool as resident |
+| `residentTools` | true | Publish the startup APIs. The PTC resident surface is only `ops_inspect_local_file`; everything else loads on demand through `ops_load_sdk` |
 | `bash` | true | Allow publishing `ops_bash` on Windows; POSIX sessions keep the host bash |
 | `hidePwsh` | true | Hide the official Windows shell while Bash is available; disabled entirely when `global.hidePwsh` is false |
 | `hideOfficialTools` | true | Hide the official file tools this mode replaces; disabled entirely when `global.hideOfficialTools` is false |
-| `dynamicTools` | true | Publish the progressive SDK loader `ops_load_sdk`; effective only while `global.dynamicTools` is also on (AND gate). Turning it off drops the loader and publishes `allowedTools` plus `result` as resident instead, so every API stays callable without dynamic tool addition; `residentTools: false` keeps publishing nothing |
+| `dynamicTools` | true | Publish the progressive SDK loader `ops_load_sdk`; effective only while `global.dynamicTools` is also on (AND gate) |
 | `batchingGuidance` | true for `ops-ptc`, false otherwise | Teach once at session start (logged history, system prompt untouched), then correct the shape of root `run_code` programs: `bypass`, `plan` and `shape` each latch once per turn and re-arm when the program complies; the notice rides the triggering result as `additionalContexts` and never blocks or rewrites the program. Text lives in the editable `prompts/batching-guidance.md`. YAML-only; an omitted `ops-ptc` section in a legacy whole-row profile override retains true; explicit false disables it |
 | `spillRetentionDays` | 30 | Host subprocess spill retention window; `0` reports only and never deletes |
 | `spillTotalBudgetMiB` | 256 | Total retained spill budget in MiB; `0` disables the budget |
