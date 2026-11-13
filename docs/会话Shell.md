@@ -53,6 +53,11 @@ shell。释放 Agent 会关闭所属 shell 和排队请求；释放共同 provid
 超时/取消会停止其所属 shell 并报告状态丢失。排队请求过期不证明另一个正在执行的命令被停止。
 会话调用不会自动转为后台 job。
 
+DSH 公开工具 pipeline 会等待调用方取消的工具 body 收敛，再用标准 `ABORTED` envelope 替代
+类型化工具值；该 envelope 不含 `shellState`。下一次获准的会话调用报告
+`stateLost: "shell-reset"`，调用方不能假设取消前状态仍保留。若仅工具自身期限到达、调用方未
+取消，仍返回类型化 reset 结果。
+
 当前会话模式仅接受 `command`。`script_path`、自定义 `graceMs` 和开启 `includeDiagnostics`
 会在执行前明确拒绝，并提示使用 fresh。`run_in_background: true` 同样拒绝；独立宿主 job 应使用
 fresh，且不继承持久 shell 的函数或 cwd 变化。留下隐式后台进程或私有描述符的命令不能被视为完成，
@@ -93,6 +98,15 @@ payload 校验；须明确提供 `--worker`、`--bash`、`--shell-env`、`--cont
 `4fc90c521b1850aa88c800b5e006ea10cf1bae8b828372f6e8f924a6f245b063`；
 `c5-qualification-receipt.json` 记录精确源码补丁与完整 payload。候选归档仍未发布，已提交的
 运行时 pin 与获准清单集合保持不变。
+
+随后四个实际 DSH CLI 实例以同一合格构建共享临时 home/workspace，各自保留独立 cwd、环境、
+函数和选项。定向公开取消仅停止对应会话子进程，兄弟命令继续存活，下一次调用报告状态丢失。
+公开控制断连、内核强制崩溃、正常 SDK 退出及宿主强制终止均收敛相关持久子进程和显式 Jobs，
+没有重放；另一实例继续工作并保留 shell 状态。修正版报告 `1794600220094-report.json` 记录
+54 个事件、41 个 Windows PID/创建时间身份，紧急清理前全部消失，且没有清理错误。SHA-256 为
+`c7488c1ddecb4849e5ff8d5df740ae4afdbe4e6f43935614b8a0546e26aa4041`。
+首份报告仍保留：它通过状态隔离，但错误地期待内部类型化取消结果，而非 DSH 的 `ABORTED`
+envelope。修正版使用短静默负载；之前的 fresh 任务证明另行覆盖了超过五分钟的静默区间。
 
 合入 fresh 任务与会话 spill 后，六个针对性套件的 92 个检查通过。提交前和排队准入时均检查
 精确的发布 Agent。在隔离编译副本中仅移除该相等性检查后，保留定义调用兄弟 Agent 的测试失败

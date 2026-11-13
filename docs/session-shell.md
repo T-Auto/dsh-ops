@@ -63,6 +63,11 @@ The deadline includes queue and admission time. A started command's timeout/canc
 its owned shell and reports state loss. A queued expiration does not prove an unrelated active
 command stopped. Session calls never automatically become background jobs.
 
+DSH's public tool pipeline joins a caller-cancelled body, then returns its standard `ABORTED`
+envelope instead of the typed tool value. That envelope does not include `shellState`. The next
+admitted session call reports `stateLost: "shell-reset"`; callers must not assume prior state
+survived cancellation. A tool deadline without caller cancellation retains the typed reset result.
+
 Session mode currently accepts `command` only. `script_path`, custom `graceMs`, and enabled
 `includeDiagnostics` are refused before execution with a fresh-mode remedy. `run_in_background:
 true` is refused: use fresh execution for an independent host job. That job does not inherit a
@@ -111,6 +116,19 @@ Cleanup was confirmed and the observed kernel exited. The local report `c5-quali
 has SHA-256 `4fc90c521b1850aa88c800b5e006ea10cf1bae8b828372f6e8f924a6f245b063`;
 `c5-qualification-receipt.json` records the exact source patch and complete payload. The candidate
 archive remains unpublished, and the shipped runtime pin and accepted inventory set are unchanged.
+
+Four actual DSH CLI instances then used that same qualified build with a shared temporary home
+and workspace. Each retained distinct cwd/environment/functions/options. Targeted public
+cancellation stopped only its session child; sibling commands remained live, and the next call
+reported state loss. Public control loss, hard kernel crash, normal SDK shutdown and forced host
+death stopped the relevant persistent children and explicit Jobs without replay. Another instance
+continued and retained its shell state. The corrected report `1794600220094-report.json` records
+54 events and 41 observed Windows PID/creation-time identities, all gone before emergency cleanup;
+there were no cleanup errors. SHA-256:
+`c7488c1ddecb4849e5ff8d5df740ae4afdbe4e6f43935614b8a0546e26aa4041`.
+The first report is retained: it passed state isolation but incorrectly expected the inner typed
+cancel result rather than DSH's `ABORTED` envelope. This corrected run used a short quiet workload;
+the earlier fresh-task proof separately covers a quiet interval over five minutes.
 
 After integration with fresh tasks and session spill, 92 checks across six focused suites passed.
 The exact publishing Agent is checked before submission and again during queued admission.
