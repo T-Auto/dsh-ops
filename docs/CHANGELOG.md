@@ -13,6 +13,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Add a Windows resident shell queue with per-request admission, deadlines, cancellation and explicit state-loss results. Bounded output replies preserve control-reader responsiveness, and a blocked start acknowledgement remains cancellable. Repository-only regressions exercise real public-host ownership; model-facing shell publication and DSH jobs remain pending (#872).
 - 添加 Windows 常驻 shell 队列，按请求准入、计时、取消并明确报告状态丢失。有界输出回复保持控制 reader 可响应，开始回执阻塞时仍能取消。仓库专用回归验证真实公开宿主所有权；模型可见 shell 发布与 DSH jobs 仍待完成（#872）。
 
+- Add internal live raw output views with independent byte cursors, explicit prefix/tail retention and held-handle root-exit observation. A Windows public-host task fixture verifies fresh descendant cleanup, explicit background lifetime, joined output and closed-pipe stdin; public tools and spill/job integration remain unchanged (#872).
+- 增加内部实时原始输出视图：独立字节游标、显式前缀/尾部保留，以及基于持有句柄的根进程退出观测。Windows 公开宿主任务 fixture 验证 fresh 后代回收、显式后台生命周期、输出 join 与关闭管道的 stdin；公开工具及 spill/job 集成保持不变（#872）。
+
 - Add an independently runnable Windows persistent-shell driver with authenticated duplex commands, separate bounded output/receipt channels, exact bootstrap process identities and bounded shell reset. Candidate-only public-host proofs cover retained state and honest failure cleanup; published tools and shipped runtime pins remain unchanged (#872).
 - 添加可独立运行的 Windows 持久 shell 驱动：验证后的双向命令通道、分离且有界的输出/收据通道、精确启动进程身份和有界 shell 重置。候选版本的公开宿主探针验证状态保留与真实失败回收；已发布工具和 runtime pin 保持不变（#872）。
 

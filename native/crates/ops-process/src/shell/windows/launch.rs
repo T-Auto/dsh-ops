@@ -1,5 +1,5 @@
 use super::{argv, channel::Channel, check, job::Job, owned};
-use crate::shell::{Capture, Launch, budget};
+use crate::shell::{Capture, CaptureView, Launch, Retention, budget};
 use std::{
     fs::File,
     io::{self, Read},
@@ -12,9 +12,8 @@ use std::{
     time::{Duration, Instant},
 };
 use windows_sys::Win32::{
-    Foundation::{HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation},
+    Foundation::{HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT},
     Security::SECURITY_ATTRIBUTES,
-    Storage::FileSystem::{CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING},
     System::{Pipes::CreatePipe, Threading::*},
 };
 
@@ -25,6 +24,7 @@ pub struct Range {
     pid: Option<u32>,
     readers: Vec<Reader>,
     observed: [Arc<AtomicU64>; 2],
+    outputs: Option<[CaptureView; 2]>,
     settled: bool,
 }
 impl Range {
@@ -35,6 +35,7 @@ impl Range {
             pid: None,
             readers: Vec::new(),
             observed: std::array::from_fn(|_| Arc::new(AtomicU64::new(0))),
+            outputs: None,
             settled: false,
         })
     }
@@ -60,19 +61,52 @@ impl Range {
     pub fn pid(&self) -> Option<u32> {
         self.pid
     }
-    pub fn exit_code(&self) -> io::Result<u32> {
-        if !self.settled {
-            return Err(io::Error::other("shell range is not confirmed empty"));
-        }
+    pub fn output_views(&self) -> Option<[CaptureView; 2]> {
+        self.outputs.clone()
+    }
+    /// Direct root exit only; descendants and output readers can still be alive.
+    pub fn root_exit(&self) -> io::Result<Option<u32>> {
+        self.observe_root(0)
+    }
+    /// Job emptiness can precede the root HANDLE becoming signalled on Windows.
+    pub fn wait_root_exit(&self, deadline: Instant) -> io::Result<u32> {
+        let timeout = deadline
+            .saturating_duration_since(Instant::now())
+            .as_millis()
+            .min((u32::MAX - 1) as u128) as u32;
+        self.observe_root(timeout)?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "root exit unconfirmed"))
+    }
+    fn observe_root(&self, timeout: u32) -> io::Result<Option<u32>> {
         let process = self
             .process
             .as_ref()
             .ok_or_else(|| io::Error::other("shell not started"))?;
-        let mut code = 0;
-        check(unsafe { GetExitCodeProcess(process.as_raw_handle(), &mut code) })?;
-        Ok(code)
+        match unsafe { WaitForSingleObject(process.as_raw_handle(), timeout) } {
+            WAIT_TIMEOUT => Ok(None),
+            WAIT_OBJECT_0 => {
+                let mut code = 0;
+                check(unsafe { GetExitCodeProcess(process.as_raw_handle(), &mut code) })?;
+                Ok(Some(code))
+            }
+            _ => Err(io::Error::last_os_error()),
+        }
     }
-    pub fn spawn(&mut self, mut spec: Launch) -> io::Result<u32> {
+    pub fn exit_code(&self) -> io::Result<u32> {
+        if !self.settled {
+            return Err(io::Error::other("shell range is not confirmed empty"));
+        }
+        self.root_exit()?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::WouldBlock, "root exit unconfirmed"))
+    }
+    pub fn spawn(&mut self, spec: Launch) -> io::Result<u32> {
+        self.spawn_with_retention(spec, Retention::Prefix)
+    }
+    pub fn spawn_with_retention(
+        &mut self,
+        mut spec: Launch,
+        retention: Retention,
+    ) -> io::Result<u32> {
         if self.process.is_some() || self.settled {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
@@ -80,6 +114,10 @@ impl Range {
             ));
         }
         budget(spec.output_cap)?;
+        let outputs = [
+            CaptureView::new(spec.output_cap, retention)?,
+            CaptureView::new(spec.output_cap, retention)?,
+        ];
         let mut command = argv::command_line(&spec.argv)?;
         let executable = argv::wide(&spec.argv[0])?;
         if !std::path::Path::new(&spec.argv[0]).is_absolute() {
@@ -99,18 +137,8 @@ impl Range {
             lpSecurityDescriptor: std::ptr::null_mut(),
             bInheritHandle: 1,
         };
-        let nul: Vec<u16> = "NUL\0".encode_utf16().collect();
-        let input = owned(unsafe {
-            CreateFileW(
-                nul.as_ptr(),
-                0x80000000,
-                FILE_SHARE_READ | FILE_SHARE_WRITE,
-                &sa,
-                OPEN_EXISTING,
-                0,
-                std::ptr::null_mut(),
-            )
-        })?;
+        // Match fresh host execution: EOF from a closed pipe, not a NUL device.
+        let input = eof_pipe(&sa)?;
         let (out_read, out_write) = pipe(&sa)?;
         let (err_read, err_write) = pipe(&sa)?;
         let inherited = [
@@ -163,6 +191,7 @@ impl Range {
         let main_thread = owned(info.hThread)?;
         self.pid = Some(info.dwProcessId);
         self.process = Some(process);
+        self.outputs = Some(outputs.clone());
         drop(input);
         drop(out_write);
         drop(err_write);
@@ -170,10 +199,16 @@ impl Range {
             if !self.job.contains_handle(self.process.as_ref().unwrap())? {
                 return Err(io::Error::other("atomic shell Job assignment failed"));
             }
-            self.readers
-                .push(drain(out_read, spec.output_cap, self.observed[0].clone())?);
-            self.readers
-                .push(drain(err_read, spec.output_cap, self.observed[1].clone())?);
+            self.readers.push(drain(
+                out_read,
+                outputs[0].clone(),
+                self.observed[0].clone(),
+            )?);
+            self.readers.push(drain(
+                err_read,
+                outputs[1].clone(),
+                self.observed[1].clone(),
+            )?);
             if unsafe { ResumeThread(main_thread.as_raw_handle()) } == u32::MAX {
                 return Err(io::Error::last_os_error());
             }
@@ -186,12 +221,13 @@ impl Range {
     }
     pub fn terminate(&mut self, deadline: Instant) -> io::Result<()> {
         self.job.terminate()?;
-        self.job.wait_empty(deadline)?;
-        self.settled = true;
-        Ok(())
+        self.wait_empty(deadline)
     }
     pub fn wait_empty(&mut self, deadline: Instant) -> io::Result<()> {
         self.job.wait_empty(deadline)?;
+        if self.process.is_some() {
+            self.wait_root_exit(deadline)?;
+        }
         self.settled = true;
         Ok(())
     }
@@ -266,22 +302,38 @@ fn pipe(sa: &SECURITY_ATTRIBUTES) -> io::Result<(OwnedHandle, OwnedHandle)> {
     check(unsafe { SetHandleInformation(read.as_raw_handle(), HANDLE_FLAG_INHERIT, 0) })?;
     Ok((read, write))
 }
-fn drain(handle: OwnedHandle, cap: usize, observed: Arc<AtomicU64>) -> io::Result<Reader> {
+fn eof_pipe(sa: &SECURITY_ATTRIBUTES) -> io::Result<OwnedHandle> {
+    let (input, writer) = pipe(sa)?;
+    check(unsafe {
+        SetHandleInformation(
+            input.as_raw_handle(),
+            HANDLE_FLAG_INHERIT,
+            HANDLE_FLAG_INHERIT,
+        )
+    })?;
+    drop(writer);
+    Ok(input)
+}
+fn drain(handle: OwnedHandle, output: CaptureView, observed: Arc<AtomicU64>) -> io::Result<Reader> {
     thread::Builder::new()
         .name("ops-shell-diagnostic".into())
-        .spawn(move || {
-            let mut file = File::from(handle);
-            let mut output = Capture::default();
-            let mut bytes = [0; 8192];
-            loop {
-                let count = file.read(&mut bytes)?;
-                if count == 0 {
-                    return Ok(output);
-                }
-                output.append(&bytes[..count], cap);
-                observed.store(output.observed, Ordering::Relaxed);
-            }
-        })
+        .spawn(move || collect(File::from(handle), output, observed))
+}
+fn collect(
+    mut reader: impl Read,
+    output: CaptureView,
+    observed: Arc<AtomicU64>,
+) -> io::Result<Capture> {
+    let mut bytes = [0; 8192];
+    let result = (|| loop {
+        let count = reader.read(&mut bytes)?;
+        if count == 0 {
+            return Ok(());
+        }
+        observed.store(output.append(&bytes[..count]), Ordering::Relaxed);
+    })();
+    let capture = output.finish(&result);
+    result.map(|()| capture)
 }
 
 fn join_readers(readers: &mut Vec<Reader>) -> io::Result<Vec<Capture>> {
@@ -311,6 +363,45 @@ mod tests {
         atomic::{AtomicBool, Ordering},
         mpsc,
     };
+
+    #[test]
+    fn default_input_is_a_closed_pipe_not_a_nul_device() {
+        use windows_sys::Win32::Storage::FileSystem::{FILE_TYPE_PIPE, GetFileType};
+        let sa = SECURITY_ATTRIBUTES {
+            nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: std::ptr::null_mut(),
+            bInheritHandle: 1,
+        };
+        let input = eof_pipe(&sa).unwrap();
+        assert_eq!(
+            unsafe { GetFileType(input.as_raw_handle()) },
+            FILE_TYPE_PIPE
+        );
+        assert_eq!(File::from(input).read(&mut [0]).unwrap(), 0);
+    }
+    #[test]
+    fn failed_reader_keeps_partial_live_bytes_without_claiming_eof() {
+        struct Failed(bool);
+        impl Read for Failed {
+            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+                if self.0 {
+                    return Err(io::Error::other("fixture read failed"));
+                }
+                self.0 = true;
+                bytes[..3].copy_from_slice(b"abc");
+                Ok(3)
+            }
+        }
+        let view = CaptureView::new(4, Retention::Tail).unwrap();
+        let observed = Arc::new(AtomicU64::new(0));
+        assert!(collect(Failed(false), view.clone(), observed.clone()).is_err());
+        let snapshot = view.snapshot();
+        assert_eq!(snapshot.bytes, b"abc");
+        assert_eq!(snapshot.observed, 3);
+        assert_eq!(observed.load(Ordering::Relaxed), 3);
+        assert!(!snapshot.eof);
+        assert_eq!(snapshot.error.as_deref(), Some("fixture read failed"));
+    }
 
     fn check_failure_still_joins_later_readers(panic_first: bool) {
         let (release, gate) = mpsc::channel();
