@@ -28,7 +28,8 @@ import { MODE_PLANS, residentTools } from '../lib/modes/plan.js'
 import { replacementTargets } from '../lib/modes/apply.js'
 import { mountReplacements } from '../lib/publication/replacements.js'
 import { WORKER } from './lib/boundary.mjs'
-import { mountResident } from './lib/resident.mjs'
+import { mountResident, providePublicationAuthorities } from './lib/resident.mjs'
+import { residentFreshTasks } from '../lib/execution/resident/fresh-provider.js'
 import { bootHost, shutdown, scopedToolNames } from './lib/host.mjs'
 import { assert, test, report, skipSuite, wait, waitFor, withTempDir } from './lib/harness.mjs'
 
@@ -57,7 +58,9 @@ async function boot() {
   ctx.provide('agentPresets', { composedPreset: scoped => presets.get(scopeParentOf(scopeOf(scoped))) })
   // The host's live-agent roster: reconcile passes relist it after a preset change.
   const live = []
-  ctx.provide('agents', { list: () => [...live] })
+  providePublicationAuthorities(ctx, live)
+  // Standalone rows share the same fresh-task authority as the package root.
+  await ctx.plugin(residentFreshTasks())
   const names = agent => scopedToolNames(ctx, agent)
   const assemble = async agent => { const step = await prepareStep(ctx, agent); try { return step.assembly } finally { step.dispose() } }
   const sections = async agent => (await assemble(agent)).sections
@@ -125,6 +128,7 @@ await test('mode-standard publishes resident OPS tools only for its preset and h
     const standard = await ctx.plugin(Standard, { required: true, promptPolicy: true })
     const own = await mint({ preset: 'standard', cwd })
     await waitFor(() => names(own).includes('ops_inspect_local_file'), { what: 'standard resident publication' })
+    if (process.platform === 'win32') await waitFor(() => names(own).includes('ops_bash'), { what: 'standard fresh Bash publication' })
     for (const name of RESIDENT) assert.ok(names(own).includes(name), `${name} in ${names(own).join(', ')}`)
     assert.ok(names(own).includes('write'), 'unreplaced official mutation tools stay visible')
     for (const name of OFFICIAL) assert.ok(names(own).includes(name), 'conditional counterpart retains official visibility')
@@ -297,6 +301,7 @@ await test('PTC mode publishes the scoped SDK surface and replaces only the Wind
     const row = await ctx.plugin(Ptc, { required: true })
     const agent = await mint({ preset: 'ptc', presentation: 'ptc', cwd })
     await waitFor(() => names(agent).includes('ops_load_sdk'), { what: 'PTC SDK publication' })
+    if (process.platform === 'win32') await waitFor(() => names(agent).includes('ops_bash'), { what: 'PTC fresh Bash publication' })
     for (const name of OFFICIAL) assert.ok(names(agent).includes(name), `PTC replaces no official file tool; ${name} stays visible`)
     assert.equal(names(agent).includes('ops_bash'), process.platform === 'win32', 'only the Windows shell is replaced')
     // A Standard-preset agent is not served by the PTC row.
