@@ -8,6 +8,7 @@
 export type { Context, Fiber } from '@deepseek-ai/cordis'
 export type { EntryOptions } from '@deepseek-ai/cordis-plugin-loader'
 export type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
+export type { JobRegistry, JobId, JobOutcome } from '@deepseek-ai/dsh-jobs'
 export type { FileSystem, FsTarget, FsInfo, FsObservation } from '@deepseek-ai/dsh-fs'
 export type { GenerateOptions, StreamChunk, UserMessage } from '@deepseek-ai/dsh-llm'
 export type { Session } from '@deepseek-ai/dsh-session'
