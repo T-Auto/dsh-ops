@@ -5,6 +5,8 @@ import { replacementTargets } from '../consumer/replacements.js'
 import { resolveIntegrationConfig, type IntegrationOptions, type IntegrationConfig } from '../consumer/options.js'
 import { mountDiagnostics } from './diagnostics.js'
 import { joinIntegration } from '../consumer/registry.js'
+import { requireResident, sharedWorkerSelection } from '../execution/resident/provider.js'
+export { residentKernel } from '../execution/resident/provider.js'
 export { diagnose } from './diagnostics.js'
 export type { Diagnostic } from './diagnostics.js'
 export { registerNativeCapability } from '../discovery/providers.js'
@@ -17,6 +19,7 @@ export async function apply(ctx: Context, raw: unknown): Promise<void> {
 }
 /** Internal resolved-plan entry: global gates suppress capabilities without revalidating saved intent. */
 export async function mountIntegration(ctx: Context, config: IntegrationConfig): Promise<void> {
+  if (config.enabled && (config.files || config.native.allowedTools.length || config.native.alwaysLoaded.length)) requireResident(ctx, sharedWorkerSelection([config.core]))
   const binding = await joinIntegration(ctx, config)
   ctx.effect(() => binding.dispose, 'dsh-ops: preset integration binding')
   let active = true

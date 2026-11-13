@@ -12,11 +12,18 @@ import * as DiscoveryModule from '../lib/components/discovery/index.js'
 import { bootHost, shutdown, scopedToolNames } from './lib/host.mjs'
 import { assert, test, report, waitFor, withTempDir } from './lib/harness.mjs'
 import { legacyComponent } from './lib/legacy-component.mjs'
+import { mountResident, mountFakeResident } from './lib/resident.mjs'
 const Discovery = legacyComponent(DiscoveryModule)
 const tool = name => ({ name, description: name, parameters: { type: 'object', properties: {} }, output: { schema: { type: 'object' }, render: () => [] }, execute: async () => ({}) })
-async function boot(subprocess) {
+async function boot(residentInvoke) {
   const { ctx } = await bootHost()
-  if (subprocess) ctx.provide('subprocess', subprocess); else await ctx.plugin(Subprocess)
+  if (residentInvoke) {
+    ctx.provide('subprocess', { spawn() { throw new Error('Resident cancellation fixture must not spawn') } })
+    await mountFakeResident(ctx, { invoke: residentInvoke })
+  } else {
+    await ctx.plugin(Subprocess)
+    await mountResident(ctx)
+  }
   await ctx.plugin(Sandbox, {})
   ctx.provide('sandboxPolicy', { resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: session.header.cwd, sessionId: session.id }) })
   ctx.provide('agentPresets', { composedPreset: () => undefined })
@@ -87,10 +94,11 @@ await test('independent preset discovery pools activate only after a committed s
     await next(ctx, pending); await waitFor(async () => (await names(pending)).includes('ops_diff'))
   } finally { await shutdown(ctx) }
 }))
-await test('a missing worker never hides the official alternatives (#436)', () => withTempDir('preset-no-worker', async cwd => {
+await test('a conflicting unavailable worker selection never hides the official alternatives (#436)', () => withTempDir('preset-no-worker', async cwd => {
   const { ctx, mint, names } = await boot()
   try {
-    await ctx.plugin(integration({ preset: 'acme-broken', binaryPath: path.join(cwd, 'missing-worker'), replaceOfficial: true }))
+    await assert.rejects(async () => await ctx.plugin(integration({ preset: 'acme-broken',
+      binaryPath: path.join(cwd, 'missing-worker'), replaceOfficial: true })), /Conflicting OPS kernel binaryPath/)
     const own = await mint('acme-broken', cwd)
     const assembly = await ctx.get('systemPrompt').assemble({ scope: own, agent: own })
     for (const name of ['read', 'glob', 'grep']) {
@@ -133,11 +141,12 @@ await test('PTC uses actual host presentation, keeps another native preset intac
 }))
 await test('PTC preset withdrawal aborts an in-flight worker call', () => withTempDir('preset-ptc-abort', async cwd => {
   let workerSignal
-  const { ctx, mint, names } = await boot({ spawn(spec) {
-    workerSignal = spec.signal
-    return { done: new Promise(resolve => spec.signal.addEventListener('abort', () => resolve({ exitCode: null, signal: 'SIGTERM' }), { once: true })),
-      collected: { stdout: { readFrom: () => ({ text: '', lossy: false }) }, stderr: { readFrom: () => ({ text: '', lossy: false }) } } }
-  } })
+  const { ctx, mint, names } = await boot((_envelope, signal, onStarted) => {
+    workerSignal = signal; onStarted?.()
+    return new Promise(resolve => signal.addEventListener('abort', () => resolve({
+      exitCode: null, interrupted: true, readers: true, lossy: false, stderr: '',
+    }), { once: true }))
+  })
   try {
     ctx.provide('ptcRuntime', { language: 'typescript' })
     await ctx.plugin(integration({ preset: 'abort-ptc', profile: 'ptc', discovery: false }))

@@ -15,6 +15,7 @@ import { modeOf } from '../presets/detect.js'
 import { enabledModes } from '../presets/registry.js'
 import { publicationRegistration } from '../publication/reentry.js'
 import { runtimeVersion, type RuntimeVersion } from '../adapter/dsh/runtime-version.js'
+import { requireResident } from '../execution/resident/provider.js'
 export interface Diagnostic extends RuntimeVersion {
   preset?: string
   state: 'not-selected' | 'disabled' | 'ready' | 'degraded'
@@ -45,8 +46,8 @@ export async function diagnose(ctx: Context, agent: Agent): Promise<Diagnostic> 
     const builtins = Boolean(config ? config.files || config.presentation === 'native' && (config.native.allowedTools.length || config.native.alwaysLoaded.length)
       : mode && enabledModes(ctx).has(mode) && mode !== 'minimal')
     if (builtins) {
-      try { resolveWorker(config?.core ?? enabledModes(ctx).get(mode!)!) }
-      catch { issue('RUNTIME_UNAVAILABLE', 'Native worker resolution failed. Check binaryPath and the packaged runtime; official alternatives remain available.') }
+      try { resolveWorker({ binaryPath: requireResident(ctx, config?.core ?? enabledModes(ctx).get(mode!)!).file }) }
+      catch { issue('RUNTIME_UNAVAILABLE', 'OPS kernel is unavailable. Check the owning resident provider and binaryPath, then explicitly reload its owner; official alternatives remain available.') }
     }
     if (builtins || config?.shell) for (const service of ['sandboxPolicy', 'subprocess']) if (!ctx.get(service as 'tools')) issue('HOST_SERVICE_UNAVAILABLE', `Execution service ${service} is unavailable; enable it and reload.`)
     if (config?.shell) {

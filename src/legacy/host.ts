@@ -12,7 +12,7 @@ import { mountSessionBash } from '../session-shells.js'
 import { mountSpillRetention } from '../shells/spill-retention-runtime.js'
 import { spillRetentionConfig } from '../shells/spill-retention.js'
 import { NativeFileTools } from '../projections/native/runtime.js'
-import { resolveWorker } from '../execution/runtime.js'
+import { requireResident } from '../execution/resident/provider.js'
 import { visibleNames } from '../publication/surface.js'
 import { mountWorkspacePreparation } from '../workspace-preparation.js'
 import { safeDispose, safeDisposeAll } from '../teardown.js'
@@ -104,7 +104,7 @@ export function applyComponent(root: Context, rawConfig: unknown, component: Com
   const config = resolveConfig(updatedConfig(rawConfig ?? {}))
   mountConfigUpdates(root, rawConfig)
   const nativeWorker = component === 'file' ? (() => {
-    try { return resolveWorker(config) }
+    try { return requireResident(root, config).file }
     catch (error) {
       report(root, `dsh-ops: native file worker unavailable: ${errorText(error)}`)
       if (config.required) throw new Error(`Native file worker unavailable for binaryPath ${config.binaryPath ?? '(automatic resolution)'}: ${errorText(error)}`)
@@ -137,7 +137,7 @@ export function applyComponent(root: Context, rawConfig: unknown, component: Com
       if (shells) mountSessionBash(ctx, config, shells)
       if (config.shellPolicy === 'deny-host-shell') installHostShellDenial(ctx, config)
     })
-  } else {
-    root.inject(['tools', 'sandboxPolicy', 'subprocess'], ctx => mountNativeFile(ctx, config, nativeWorker))
+  } else if (nativeWorker) {
+    root.inject(['tools', 'sandboxPolicy', 'subprocess', 'opsKernel'], ctx => mountNativeFile(ctx, config, nativeWorker))
   }
 }

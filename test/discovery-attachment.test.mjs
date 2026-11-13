@@ -1,3 +1,4 @@
+import { mountResident } from './lib/resident.mjs'
 /** Real registry/source lifetimes after discovery initialization and settings failures. */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -20,8 +21,9 @@ requireWorker('discovery-attachment')
 
 const settle = async () => { for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve)) }
 const STAT_TOOL = publicToolName('stat'), DISCOVER_TOOL = publicToolName('discover_tools'), GLOB_TOOL = publicToolName('glob')
-async function services(ctx, dir) {
+async function services(ctx, dir, file = WORKER) {
   for (const plugin of [Subprocess, Sandbox, FileSystem]) await ctx.plugin(plugin)
+  await mountResident(ctx, { file, cwd: dir })
   ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'workspace-write', workspaceRoot: dir }) })
 }
 function mint(ctx, dir) {
@@ -35,9 +37,6 @@ const stat = (ctx, agent) => executeCall(ctx, { agent, name: STAT_TOOL, argument
 for (const conflict of ['worker', 'credentials', 'timeout']) await test(`awaited ${conflict} conflict rolls back partial discovery and permits recovery`, () => withTempDir('discovery-conflict', async dir => {
   const { ctx, tools } = await bootHost()
   try {
-    await services(ctx, dir)
-    fs.writeFileSync(path.join(dir, 'note'), 'original source')
-    const agent = mint(ctx, dir)
     const sourceConfig = { workerPath: WORKER }
     if (conflict === 'credentials') sourceConfig.denyCredentialReads = false
     if (conflict === 'timeout') sourceConfig.toolCallTimeoutMs = WORKER_TIMEOUT_MS + 1000
@@ -45,13 +44,27 @@ for (const conflict of ['worker', 'credentials', 'timeout']) await test(`awaited
       sourceConfig.workerPath = path.join(dir, path.basename(WORKER))
       fs.copyFileSync(WORKER, sourceConfig.workerPath)
     }
+    await services(ctx, dir, sourceConfig.workerPath)
+    const kernel = ctx.get('opsKernel'), subprocess = ctx.get('subprocess'), spawn = subprocess.spawn.bind(subprocess)
+    let extraKernels = 0
+    subprocess.spawn = spec => { if (spec.argv.includes('--serve')) ++extraKernels; return spawn(spec) }
+    fs.writeFileSync(path.join(dir, 'note'), 'original source')
+    const agent = mint(ctx, dir)
     const source = await acquireSharedFile(agent, 'stat', sourceConfig)
     source.grant({ consumer: {}, agent, token: {}, entitled: true, present: () => true, dispatch: async () => undefined })
     const original = tools.get(STAT_TOOL, agent)
-    await ctx.plugin({ apply(inner) { mountDiscovery(inner, config, { allows: () => true }) } })
-    await settle()
-    await assert.rejects(ctx.serial('agent/created', { agent }), error =>
-      error instanceof Error && !(error instanceof AggregateError) && error.message === 'Conflicting shared file runtime configuration')
+    if (conflict === 'worker') {
+      await assert.rejects(async () => await ctx.plugin({ apply(inner) { mountDiscovery(inner, config, { allows: () => true }) } }),
+        /Conflicting OPS kernel binaryPath/)
+      assert.equal(ctx.get('opsKernel'), kernel)
+      assert.equal(kernel.available, true)
+      assert.equal(extraKernels, 0, 'a conflicting consumer cannot start another kernel')
+    } else {
+      await ctx.plugin({ apply(inner) { mountDiscovery(inner, config, { allows: () => true }) } })
+      await settle()
+      await assert.rejects(ctx.serial('agent/created', { agent }), error =>
+        error instanceof Error && !(error instanceof AggregateError) && error.message === 'Conflicting shared file runtime configuration')
+    }
     assert.equal(tools.get(DISCOVER_TOOL, agent), undefined, 'failed readiness must remove the discovery registration')
     assert.equal(pendingSelection(ctx, agent), undefined, 'failed readiness must remove the selection observation')
     assert.equal(tools.get(STAT_TOOL, agent), original, 'failure must preserve the preexisting source identity')
@@ -60,11 +73,18 @@ for (const conflict of ['worker', 'credentials', 'timeout']) await test(`awaited
     assert.equal(before.value.data.exists, true, JSON.stringify(before))
     source.dispose()
     assert.equal(tools.get(STAT_TOOL, agent), undefined, 'failed leases must not retain the source')
+    if (conflict === 'worker') {
+      await ctx.plugin({ apply(inner) {
+        mountDiscovery(inner, { ...config, binaryPath: sourceConfig.workerPath }, { allows: () => true })
+      } })
+      await settle()
+    }
     await ctx.serial('agent/created', { agent })
     assert.ok(tools.get(DISCOVER_TOOL, agent), 'the failed entry must not cache a rejected ready promise')
     const recovered = await stat(ctx, agent)
     assert.equal(recovered.isError, false, JSON.stringify(recovered))
     assert.equal(recovered.value.data.exists, true, JSON.stringify(recovered))
+    assert.equal(extraKernels, 0, 'recovery reuses the original kernel')
     await ctx.serial('agent/disposed', { agent })
     assert.equal(pendingSelection(ctx, agent), undefined)
     assert.equal(tools.get(STAT_TOOL, agent), undefined)
@@ -179,7 +199,7 @@ await test('withdrawal revokes captured shared-file authority before yielding to
 
 await test('mounted discovery permits real settings writes and reloads its pool on Cordis 4.1', () => withTempDir('discovery-settings-update', async dir => {
   const fixture = await profileFixture('discovery-settings-update', {
-    Config, apply(inner, value) { mountDiscovery(inner, value, { allows: () => true }) },
+    Config, inject: ['opsKernel'], apply(inner, value) { mountDiscovery(inner, value, { allows: () => true }) },
   }, config)
   const { ctx, snapshot, mutate, patchPath } = fixture
   const agents = []

@@ -12,6 +12,7 @@ import { mountPtc } from '../lib/publication/ptc.js'
 import { resolveConfig } from '../lib/config.js'
 import { publicToolName } from '../lib/policy.js'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { mountResident } from './lib/resident.mjs'
 import { selectExecutor, prepareStep, executeCall } from './lib/executor.mjs'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { requireWorker, WORKER } from './lib/boundary.mjs'
@@ -23,6 +24,7 @@ await test('Native and real run_code preserve mutation effects, CAS and read-onl
   let mode = 'danger-full-access'
   try {
     for (const plugin of [Subprocess, Sandbox, FileSystem, NodePtc]) await ctx.plugin(plugin)
+    await mountResident(ctx, { file: WORKER, cwd: root })
     ctx.provide('sandboxPolicy', { resolve: () => ({ mode, workspaceRoot: root }) })
     await ctx.plugin({ apply(inner) {
       mountNative(inner, resolveConfig({ binaryPath: WORKER, required: true }), {

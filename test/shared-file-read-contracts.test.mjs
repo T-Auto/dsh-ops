@@ -15,6 +15,7 @@ import { definition as ptcDefinition } from '../lib/projections/ptc/contract.js'
 import { resolveConfig } from '../lib/config.js'
 import { publicToolName } from '../lib/policy.js'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { mountResident } from './lib/resident.mjs'
 import { selectExecutor, prepareStep, executeCall } from './lib/executor.mjs'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { requireWorker, WORKER } from './lib/boundary.mjs'
@@ -30,16 +31,9 @@ await test('four audited reads preserve typed data, Native text and single worke
   const { ctx, tools } = await bootHost()
   const steps = [], envelopes = []
   try {
-    class ObservedSubprocess extends Subprocess {
-      spawn(spec) {
-        if (path.resolve(spec.argv[0]) === path.resolve(WORKER)) {
-          const input = spec.stdio?.stdin?.data
-          if (input) envelopes.push(JSON.parse(input))
-        }
-        return super.spawn(spec)
-      }
-    }
-    for (const plugin of [ObservedSubprocess, Sandbox, FileSystem, NodePtc]) await ctx.plugin(plugin)
+    for (const plugin of [Subprocess, Sandbox, FileSystem, NodePtc]) await ctx.plugin(plugin)
+    const kernel = await mountResident(ctx, { file: WORKER, cwd: root }), dispatch = kernel.invoke.bind(kernel)
+    kernel.invoke = (envelope, ...rest) => { envelopes.push(envelope); return dispatch(envelope, ...rest) }
     ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'read-only', workspaceRoot: root }) })
     await ctx.plugin({ apply(inner) {
       mountNative(inner, resolveConfig({ binaryPath: WORKER, required: true }), {

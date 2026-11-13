@@ -1,3 +1,4 @@
+import { mountFakeResident } from './lib/resident.mjs'
 import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 /** Real host/PTC loader integration; no native file operation is exercised here. */
 import { createScope } from '@deepseek-ai/dsh-scope'
@@ -23,6 +24,7 @@ async function setup(root, config = {}, gate = { allows: () => true }) {
   const agents = []; ctx.provide('agents', { list: () => agents })
   const state = { available: true }
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem)
+  await mountFakeResident(ctx, { file: process.execPath })
   await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: ({ session } = {}) => {
     if (!state.available) throw new Error('policy unavailable')
     return { mode: session?.mode ?? 'danger-full-access', workspaceRoot: root, sessionId: session?.id }

@@ -12,6 +12,7 @@ import * as Standard from '../lib/components/mode-standard/index.js'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
+import { mountResident } from './lib/resident.mjs'
 import { assert, test, report, withTempDir, waitFor } from './lib/harness.mjs'
 process.env.DSH_OPS_LEGACY_ROWS = '1'
 requireWorker('mode-contract-audit')
@@ -25,6 +26,7 @@ for (const [mode, component] of [['ptc-control', undefined], ['ptc', Ptc], ['ops
     const { ctx } = await bootHost()
     try {
       await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem); await ctx.plugin(NodePtc)
+      if (component) await mountResident(ctx, { file: WORKER, cwd })
       ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: cwd }) })
       ctx.provide('agentPresets', { composedPreset: () => undefined })
       for (const name of official) ctx.tools.register(definition(name))

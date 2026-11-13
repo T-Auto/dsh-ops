@@ -1,3 +1,4 @@
+import { mountResident } from './lib/resident.mjs'
 /** Shared PTC file sources must retain identity across unrelated no-change steps. */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -19,6 +20,7 @@ await test('unchanged ancestor step/end preserves descendant file identity and r
   let prepared
   try {
     for (const plugin of [Subprocess, Sandbox, FileSystem, NodePtc]) await ctx.plugin(plugin)
+    await mountResident(ctx, { file: WORKER, cwd: root })
     ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: root }) })
     await ctx.plugin({ apply(inner) {
       mountPtc(inner, { binaryPath: WORKER, required: true, alwaysLoaded: ['stat'] })

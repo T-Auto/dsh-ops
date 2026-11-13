@@ -10,11 +10,13 @@ import { assert } from './harness.mjs'
 import { publicToolName } from '../../lib/policy.js'
 import { integration } from '../../lib/integration/index.js'
 import { prepareStep, executeCall, selectExecutor } from './executor.mjs'
+import { mountResident } from './resident.mjs'
 let serial = 0
 export async function documentHost(root, names, { real = false } = {}) {
   const { ctx } = await bootHost()
   const agents = []; ctx.provide('agents', { list: () => agents })
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem)
+  await mountResident(ctx, { file: WORKER, cwd: root })
   ctx.provide('sandboxPolicy', { resolve: ({ session } = {}) => ({ mode: session?.mode ?? 'workspace-write', workspaceRoot: root, sessionId: session?.id }) })
   await ctx.plugin(NodePtc, {})
   for (const mode of ['native', 'ptc']) await ctx.plugin(integration({ preset: `documents-${mode}`, profile: mode,

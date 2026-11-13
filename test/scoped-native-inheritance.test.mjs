@@ -1,3 +1,4 @@
+import { mountFakeResident } from './lib/resident.mjs'
 /** Regression: an inactive scoped PTC definition must not erase inherited Native tools. */
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { mountPtc } from '../lib/publication/ptc.js'
@@ -10,6 +11,7 @@ await test('Native child executes an inherited grep without exposing the parent 
   const { ctx } = await bootHost()
   const steps = []
   try {
+    await mountFakeResident(ctx, { file: process.execPath })
     // No worker is needed: this Native provider owns its implementation; PTC is admission-only.
     ctx.provide('subprocess', { spawn() { throw new Error('PTC worker must not execute in a Native child') } })
     ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: TEST_HOME }) })

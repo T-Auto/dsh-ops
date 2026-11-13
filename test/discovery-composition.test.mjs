@@ -1,3 +1,4 @@
+import { mountResident } from './lib/resident.mjs'
 import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -26,6 +27,7 @@ async function setup(dir, discoveryFirst = true) {
   const { ctx } = await bootHost({ withWorkingDirectory: true })
   const agents = []; ctx.provide('agents', { list: () => agents })
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem); await ctx.plugin(NodePtc)
+  await mountResident(ctx, { file: WORKER, cwd: dir })
   await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: ({ session } = {}) => ({ mode: session?.mode ?? 'workspace-write', workspaceRoot: dir, sessionId: session?.id }) }))
   const config = { binaryPath: WORKER, required: true }
   const mountDiscovery = (target = ctx, extra = {}) => target.plugin({ apply(inner) { discovery.apply(inner, { ...config, ...extra }) } })

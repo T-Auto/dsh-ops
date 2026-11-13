@@ -1,3 +1,4 @@
+import { mountFakeResident } from './lib/resident.mjs'
 /** Conditional admission is read-only and independent across concurrent host resolves. */
 import { createScope, scopeChainOf } from '@deepseek-ai/dsh-scope'
 import * as ptcModule from '../lib/ptc/index.js'
@@ -21,6 +22,7 @@ function mint(ctx, id, parent) {
   return agent
 }
 async function services(ctx) {
+  await mountFakeResident(ctx, { file: process.execPath })
   await ctx.plugin(inner => {
     inner.provide('subprocess', { spawn() { throw new Error('admission test must not execute a worker') } })
     inner.provide('sandboxPolicy', { resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: TEST_HOME, sessionId: session.id }) })

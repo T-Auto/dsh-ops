@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { mountResident } from './lib/resident.mjs'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
 import { invoke } from '../lib/file/worker.js'
@@ -14,6 +15,7 @@ await test('workspace-write accepts an explicit physical grant without changing 
   const { ctx } = await bootHost()
   try {
     await ctx.plugin(Subprocess)
+    await mountResident(ctx, { file: WORKER, cwd: root })
     const policy = { mode: 'workspace-write', workspaceRoot: workspace, additionalWritableRoots: [extra] }
     ctx.provide('sandboxPolicy', { resolve: () => policy })
     const exec = { agent: { session: { id: 'extra-roots', header: { cwd: workspace } } }, signal: new AbortController().signal }

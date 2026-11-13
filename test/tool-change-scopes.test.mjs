@@ -9,6 +9,7 @@ import { WORKER, requireWorker } from './lib/boundary.mjs'
 import { isPresentationProbe } from '../lib/presentation.js'
 import { assert, test, report, wait, withTempDir } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { mountResident } from './lib/resident.mjs'
 
 const discovery = legacyComponent(discoveryModule)
 
@@ -19,6 +20,7 @@ await test('a host-attributed tools/change probes only the named scope, while a 
   const { ctx } = await bootHost()
   try {
     await ctx.plugin(Subprocess)
+    await mountResident(ctx, { file: WORKER, cwd: dir })
     await ctx.plugin(Sandbox, {})
     await ctx.plugin(inner => inner.provide('sandboxPolicy', {
       resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: session.header.cwd, sessionId: session.id }),

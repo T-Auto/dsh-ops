@@ -4,6 +4,7 @@ import { createScope } from '@deepseek-ai/dsh-scope'
 import { bootHost, shutdown, scopedToolNames } from './lib/host.mjs'
 import { assert, test, report, waitFor, withTempDir } from './lib/harness.mjs'
 import { executeCall, prepareStep } from './lib/executor.mjs'
+import { mountFakeResident } from './lib/resident.mjs'
 const dispatch = async (ctx, request) => {
   const step = await prepareStep(ctx, request.agent)
   try { return await executeCall(ctx, { ...request, toolSet: step.toolSet }) }
@@ -41,6 +42,8 @@ await test('built-in discovery diagnoses missing runtime and missing scoped publ
   try {
     const agents = []; ctx.provide('agents', { list: () => agents })
     ctx.provide('agentPresets', { composedPreset: () => undefined })
+    // Diagnostic resolution is tested separately from provider startup; this service cannot execute.
+    await mountFakeResident(ctx, { file: path.join(cwd, 'missing-worker') })
     await ctx.plugin(integration({ preset: 'broken-discovery', profile: 'discovery', binaryPath: path.join(cwd, 'missing-worker') }))
     const agent = { id: 'broken', session: { id: 'broken', mode: 'read-only', header: { cwd, agentPreset: 'broken-discovery' } } }
     await ctx.plugin({ inject: ['tools'], apply(inner) { agent.ctx = createScope(inner, agent).ctx } })

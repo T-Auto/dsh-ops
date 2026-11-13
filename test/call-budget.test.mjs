@@ -4,6 +4,7 @@ import { WORKER_TIMEOUT_MS } from '../lib/worker-protocol.js'
 import { invoke as fileCall } from '../lib/file/worker.js'
 import { invoke as ptcCall } from '../lib/ptc/worker.js'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { mountFakeResident } from './lib/resident.mjs'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
@@ -52,6 +53,11 @@ await test('Native and PTC bridges share admission and recheck authority after w
           stderr: { readFrom: () => ({ text: '', lossy: false }) },
         } }
       } }))
+      await mountFakeResident(ctx, { file: 'unused', invoke: async (_envelope, _signal, started) => {
+        active++; peak = Math.max(peak, active); started?.()
+        await gate.promise; active--
+        return { exitCode: 0, interrupted: false, readers: true, lossy: false, stderr: '', value: { status: 'completed', items: [] } }
+      } })
       const jobs = [fileCall(ctx, 'unused', 'stat', { path: 'a' }, exec), ptcCall(ctx, 'unused', 'batch', { action: 'plan', operations: [] }, exec)]
       await setImmediate()
       assert.equal(active, 2)

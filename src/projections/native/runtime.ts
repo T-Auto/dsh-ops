@@ -15,6 +15,7 @@ import { canonicalOutput } from '../canonical-output.js'
 import { canonicalOutput as canonicalSchema } from '../ptc/canonical-schema.js'
 import { acquireResultAdmission } from '../../publication/result-admission.js'
 import { createNativeReadDedup } from './read-dedup.js'
+import { requireResident } from '../../execution/resident/provider.js'
 
 type Execution = Parameters<ToolDefinition['execute']>[1]
 type NativeToolName = FileToolName | 'result'
@@ -49,9 +50,9 @@ export class NativeFileTools {
   }
 
   async start(names: readonly NativeToolName[] = NATIVE_FILE_TOOLS as readonly NativeToolName[]): Promise<string[]> {
-    this.file = this.config.workerPath
-    if (!this.file) {
-      if (this.config.required) throw new Error('Native file worker path is unavailable.')
+    try { this.file = requireResident(this.ctx, { binaryPath: this.config.workerPath }).file }
+    catch (error) {
+      if (this.config.required) throw error
       return []
     }
     const definitions = names.map(rawName => this.definition(rawName))

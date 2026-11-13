@@ -1,4 +1,4 @@
-/** Public subprocess provider gates real worker completion, never registry dispatch. */
+/** Gate real resident request completion without stopping the shared kernel. */
 import fs from 'node:fs'
 import path from 'node:path'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
@@ -12,29 +12,41 @@ import { bootHost, shutdown } from './lib/host.mjs'
 import { selectExecutor, prepareStep, executeCall } from './lib/executor.mjs'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { requireWorker, WORKER } from './lib/boundary.mjs'
+import { mountResident } from './lib/resident.mjs'
 requireWorker('shared-file-cancellation')
-const pending = [], waiters = [], purges = []
-class ControlledSubprocess extends Subprocess {
+const pending = [], waiters = [], purges = [], gates = new Set()
+let kernelStarts = 0
+class ObservedSubprocess extends Subprocess {
   spawn(spec) {
     const handle = super.spawn(spec)
     if (path.resolve(spec.argv[0]) !== path.resolve(WORKER)) return handle
+    if (spec.argv.includes('--serve')) { ++kernelStarts; return handle }
     const request = JSON.parse(spec.stdio.stdin.data).request
-    // Teardown owns real cache cleanup. Holding its purge would strand dispose()
-    // after the actual subprocess exits, with only an unref deadline left alive.
-    if (request.tool === 'result' && request.args?.action === 'purge') { purges.push(handle.done); return handle }
-    assert.equal(request.tool, 'stat', 'only the business operation is completion-gated')
+    assert.equal(request.tool, 'result', 'file calls must use the resident kernel')
+    assert.equal(request.args?.action, 'purge', 'only result-cache cleanup retains its own worker')
+    purges.push(handle.done)
+    return handle
+  }
+}
+function gateRequests(kernel) {
+  const invoke = kernel.invoke.bind(kernel)
+  kernel.invoke = (envelope, signal, onStarted) => {
+    assert.equal(envelope.request.tool, 'stat', 'only the business operation is completion-gated')
     let release
     const gate = new Promise(resolve => { release = resolve })
+    gates.add(release)
     const abort = () => release()
-    spec.signal.addEventListener('abort', abort, { once: true })
-    if (spec.signal.aborted) abort()
-    const call = { signal: spec.signal, release }
-    const waiter = waiters.shift()
-    if (waiter) waiter(call)
-    else pending.push(call)
-    const done = Promise.all([handle.done, gate]).then(([outcome]) => outcome)
-      .finally(() => spec.signal.removeEventListener('abort', abort))
-    return { ...handle, done }
+    signal.addEventListener('abort', abort, { once: true })
+    if (signal.aborted) abort()
+    const work = invoke(envelope, signal, () => {
+      onStarted?.()
+      const call = { signal, release }
+      const waiter = waiters.shift()
+      if (waiter) waiter(call)
+      else pending.push(call)
+    })
+    return Promise.all([work, gate]).then(([outcome]) => outcome)
+      .finally(() => { signal.removeEventListener('abort', abort); gates.delete(release) })
   }
 }
 async function next(work, label) {
@@ -42,20 +54,22 @@ async function next(work, label) {
   const started = pending.length ? Promise.resolve(pending.shift()) : new Promise(resolve => { receive = resolve; waiters.push(receive) })
   try {
     return await Promise.race([started,
-      work.then(result => { throw new Error(`${label} settled before real worker spawn: ${JSON.stringify(result)}`) },
-        error => { throw new Error(`${label} rejected before real worker spawn`, { cause: error }) }),
-      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} did not spawn the real worker within 10s`)), 10000) }),
+      work.then(result => { throw new Error(`${label} settled before real resident admission: ${JSON.stringify(result)}`) },
+        error => { throw new Error(`${label} rejected before real resident admission`, { cause: error }) }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} was not admitted by the real resident within 10s`)), 10000) }),
     ])
   } finally {
     clearTimeout(timer)
     if (receive) { const index = waiters.indexOf(receive); if (index !== -1) waiters.splice(index, 1) }
   }
 }
-await test('discovery lifetime, independent PTC, caller abort and source disposal reach real worker signals', () => withTempDir('file-cancellation', async root => {
+await test('discovery lifetime, independent PTC, caller abort and source disposal reach real resident request signals', () => withTempDir('file-cancellation', async root => {
   fs.writeFileSync(path.join(root, 'note'), 'fixture')
   const { ctx } = await bootHost(), steps = [], agents = []
   try {
-    for (const plugin of [ControlledSubprocess, Sandbox, FileSystem, NodePtc]) await ctx.plugin(plugin)
+    for (const plugin of [ObservedSubprocess, Sandbox, FileSystem, NodePtc]) await ctx.plugin(plugin)
+    const kernel = await mountResident(ctx, { file: WORKER, cwd: root })
+    gateRequests(kernel)
     ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: root }) })
     ctx.provide('agents', { list: () => agents })
     const discovery = ctx.plugin({ apply(inner) { mountDiscovery(inner, {
@@ -89,6 +103,7 @@ await test('discovery lifetime, independent PTC, caller abort and source disposa
     assert.equal(cancelled.value.error.effectState, 'unknown')
     independent.release()
     assert.equal((await ptcWork).value.result.status, 'completed')
+    assert.equal(kernel.available, true, 'consumer cancellation preserves the shared kernel')
     const caller = new AbortController(), callerWork = call(b, caller.signal), parent = await next(callerWork, 'caller cancellation PTC call')
     caller.abort(new Error('Parent cancelled'))
     assert.equal(parent.signal.aborted, true)
@@ -98,8 +113,10 @@ await test('discovery lifetime, independent PTC, caller abort and source disposa
     assert.equal(last.signal.aborted, true, 'source disposal cancels remaining work')
     await lastWork
     await ptc.dispose()
+    assert.equal(kernel.available, true, 'consumer disposal leaves the provider owner active')
+    assert.equal(kernelStarts, 1, 'Native and PTC requests share one resident startup')
     if (process.platform !== 'win32') assert.ok(purges.length > 0, 'POSIX session cache teardown reaches the real purge worker')
     for (const outcome of await Promise.all(purges)) assert.equal(outcome.exitCode, 0, 'trusted cache purge completes without the business gate')
-  } finally { for (const call of pending) call.release(); steps.forEach(step => step.dispose()); await shutdown(ctx) }
+  } finally { for (const release of gates) release(); steps.forEach(step => step.dispose()); await shutdown(ctx) }
 }))
 report('shared-file-cancellation')

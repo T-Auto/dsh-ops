@@ -28,6 +28,7 @@ import { MODE_PLANS, residentTools } from '../lib/modes/plan.js'
 import { replacementTargets } from '../lib/modes/apply.js'
 import { mountReplacements } from '../lib/publication/replacements.js'
 import { WORKER } from './lib/boundary.mjs'
+import { mountResident } from './lib/resident.mjs'
 import { bootHost, shutdown, scopedToolNames } from './lib/host.mjs'
 import { assert, test, report, skipSuite, wait, waitFor, withTempDir } from './lib/harness.mjs'
 
@@ -47,6 +48,7 @@ async function scopedContext(parent, key, parentKey) {
 async function boot() {
   const { ctx } = await bootHost()
   await ctx.plugin(Subprocess)
+  await mountResident(ctx, { file: WORKER })
   await ctx.plugin(Sandbox, {})
   // The native file row's injection prerequisites; a missing service would leave
   // it mounted but never activated, which looks exactly like a gating bug.

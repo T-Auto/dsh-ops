@@ -19,6 +19,7 @@ import { assert } from './harness.mjs'
 import { WORKER } from './boundary.mjs'
 import { legacyComponent } from './legacy-component.mjs'
 import { workingDirectoryOver } from './host.mjs'
+import { mountResident } from './resident.mjs'
 let identity = 0
 export async function bootLoop(root, { ptcMode = false, discoveryConfig = {} } = {}) {
   const ctx = new Context(); ctx.logger.level = 0
@@ -29,6 +30,7 @@ export async function bootLoop(root, { ptcMode = false, discoveryConfig = {} } =
   await ctx.plugin(Tools, {})
   await ctx.plugin(Policy, { mode: 'workspace-write', workspaceRoot: root })
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem, { cwd: root })
+  await mountResident(ctx, { file: discoveryConfig.binaryPath ?? WORKER, cwd: root })
   if (ptcMode) await ctx.plugin(NodePtc, {})
   await ctx.plugin(ptcMode ? PtcExecutor : NativeExecutor, {})
   await ctx.plugin(inner => {

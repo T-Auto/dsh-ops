@@ -6,6 +6,7 @@ import * as ptcModule from '../lib/ptc/index.js'
 import { mountSessionBash } from '../lib/session-shells.js'
 import { isPresentationProbe } from '../lib/presentation.js'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { mountFakeResident } from './lib/resident.mjs'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
 import { legacyComponent } from './lib/legacy-component.mjs'
@@ -16,6 +17,7 @@ const flush = async () => { for(let i=0;i<4;i++) await new Promise(resolve => se
 
 for (const mode of ['native', 'ptc']) await test(`new ${mode} sessions preserve unrelated definitions with bounded probes and registry events`, () => withTempDir('incremental-composition', async dir => {
   const {ctx,tools,prompt} = await bootHost()
+  await mountFakeResident(ctx, { file: WORKER })
   const agents=[], counts=new Map()
   ctx.provide('agents',{list:()=>agents})
   try {

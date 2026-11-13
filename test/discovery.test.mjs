@@ -8,6 +8,7 @@ import { publicToolName } from '../lib/policy.js'
 import { assert, test, report, withTempDir, waitFor } from './lib/harness.mjs'
 import { NativeFileTools } from '../lib/file/runtime.js'
 import { discoveryMountChecks } from './lib/discovery.mjs'
+import { mountFakeResident } from './lib/resident.mjs'
 
 await test('discovery config validates its own keys and copies bounded operator selections', () => {
   const config = resolveDiscoveryConfig()
@@ -42,28 +43,27 @@ await test('discovery-entry schema has a reproducible pinned token measurement, 
   console.log(`  discovery schema: ${tokens} cl100k_base tokens, ${Buffer.byteLength(wire)} UTF-8 bytes; js-tiktoken 1.0.21; compact JSON name/description/parameters; not provider billing or the whole OPS surface`)
   assert.equal(tokens, 114)
 })
-await test('scoped file cancellation aborts active workers and disposal waits for their completion', () => withTempDir('discovery-cancel', async dir => {
-  let spawned, complete
+await test('scoped file cancellation aborts active requests and disposal waits for their completion', () => withTempDir('discovery-cancel', async dir => {
+  let admitted, complete
   const done = new Promise(resolve => { complete = resolve })
-  const ctx = Object.assign(new Context(), { get(name) {
-    if (name === 'workingDirectory') return { get: () => dir, ensure: async () => dir }
-    if (name === 'sandboxPolicy') return { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: dir }) }
-    if (name === 'subprocess') return { spawn(options) {
-      spawned = options
-      return { done, collected: { stdout: { readFrom: () => ({ text: '{}', lossy: false }) }, stderr: { readFrom: () => ({ text: '', lossy: false }) } } }
-    } }
+  const ctx = new Context(); ctx.logger.level = 0
+  ctx.provide('workingDirectory', { get: () => dir, ensure: async () => dir })
+  ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: dir }) })
+  ctx.provide('subprocess', { spawn() { throw new Error('Resident request fixture must not spawn') } })
+  await mountFakeResident(ctx, { file: 'fixture', invoke(_envelope, signal, onStarted) {
+    admitted = { signal }; onStarted?.(); return done
   } })
   const runtime = new NativeFileTools({ ctx, config: { workerPath: 'fixture', denyCredentialReads: false } })
   await runtime.start([])
   const call = runtime.call('stat', { path: '.' }, { agent: { session: { id: 'cancel-test', header: { cwd: dir } } } })
-  await waitFor(() => spawned)
+  await waitFor(() => admitted)
   runtime.cancel('Authority changed')
-  assert.equal(spawned.signal.aborted, true)
+  assert.equal(admitted.signal.aborted, true)
   let stopped = false
   const stopping = runtime.stop().then(() => { stopped = true })
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(stopped, false, 'dispose must await worker completion, not AbortController values')
-  complete({ exitCode: 1, signal: 'SIGTERM' })
+  complete({ exitCode: 1, interrupted: true, readers: true, lossy: false, stderr: '' })
   const cancelled = await call
   assert.equal(cancelled.error.code, 'ABORTED')
   assert.equal(cancelled.error.effectState, 'none')
@@ -71,6 +71,7 @@ await test('scoped file cancellation aborts active workers and disposal waits fo
   assert.equal(stopped, true)
   assert.equal(runtime.active.size, 0)
   assert.equal((await runtime.call('stat', { path: '.' }, {})).status, 'rejected')
+  await ctx.fiber.dispose()
 }))
 await discoveryMountChecks()
 report('discovery')

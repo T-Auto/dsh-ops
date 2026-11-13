@@ -1,3 +1,4 @@
+import { mountFakeResident } from './lib/resident.mjs'
 import { Context } from '@deepseek-ai/cordis'
 /** Registry migration preserves the complete previously published host definitions. */
 import { createHash } from 'node:crypto'
@@ -85,9 +86,11 @@ await test('create-only help names the required literal instead of suggesting an
 
 await test('native registration consumes the catalogue while execute values stay unchanged', async () => {
   const registered = [], disposed = []
-  const runtime = new NativeFileTools({ ctx: Object.assign(new Context(), { tools: { register(definition) {
+  const ctx = Object.assign(new Context(), { tools: { register(definition) {
     registered.push(definition); return () => disposed.push(definition.name)
-  } } }), config: { workerPath: 'fixture-worker' } })
+  } } })
+  await mountFakeResident(ctx, { file: 'fixture-worker' })
+  const runtime = new NativeFileTools({ ctx, config: { workerPath: 'fixture-worker' } })
   assert.deepEqual(await runtime.start(), NATIVE_FILE_TOOLS.map(publicToolName))
   assert.deepEqual(registered.map(item => item.name), NATIVE_FILE_TOOLS.map(publicToolName))
   const canonical = { status: 'completed', items: [{ path: '/file', line: 1, text: 'text' }], complete: false }
@@ -104,6 +107,7 @@ await test('native registration consumes the catalogue while execute values stay
   }
   await runtime.stop()
   assert.deepEqual(disposed.sort(), registered.map(item => item.name).sort())
+  await ctx.fiber.dispose()
 })
 await test('unstarted Native runtimes return an unavailable value before creating call state', async () => {
   const runtime = new NativeFileTools({ ctx: new Context(), config: { workerPath: 'fixture-worker' } })

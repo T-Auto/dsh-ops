@@ -9,9 +9,23 @@ integration inside its own composition, or provide an explicit preset id.
 ## Minimal Native integration
 
 ```js
-import { integration } from 'dsh-ops/integration'
-export default integration({ preset: 'acme-chat' })
+import { integration, residentKernel } from 'dsh-ops/integration'
+export default {
+  inject: ['subprocess'],
+  async apply(ctx) {
+    await ctx.plugin(residentKernel())
+    await ctx.plugin(integration({ preset: 'acme-chat' }))
+  },
+}
 ```
+
+Standalone file integrations now require one explicit kernel provider in their common owning
+activation. Mount it before any consumers; multiple `integration()` plugins share it. Removing
+one consumer leaves its siblings active; removing the provider stops all dependent file tools.
+The main `dsh-ops` row already owns this provider, so integrations using that row only mount
+`integration()`. Do not mount a second provider in the same host. Missing setup or conflicting
+explicit `binaryPath` selections fail during activation. Pass `{ binaryPath: '/absolute/worker' }`
+to `residentKernel()` when selecting a worker; omitted consumer paths inherit that selection.
 
 The default publishes the resident Native file surface and an `ops_discover_tools` entry for
 that exact preset. It does not replace official tools or publish Bash. Sibling preset compositions
@@ -112,7 +126,7 @@ is no compatibility-mode component after the single-row migration.
 
 The same options can be saved under the single `dsh-ops` row's `presets` map. The map key is the
 exact preset id; omit the `preset` field inside it. Configured ids appear as native Switch cards
-on the row page. An explicit binding overrides a built-in id in either mount order. Unknown,
+on the row page. An explicit binding overrides a built-in id after the shared provider is ready. Unknown,
 unlisted presets remain unchanged.
 
 ```yaml
@@ -129,8 +143,11 @@ presets:
 ```
 
 Bundle gates also apply to these row-managed consumers; disabling dynamic discovery does not
-remove explicit startup selections. Standalone `integration()` belongs to its mounting plugin
-and does not depend on an unrelated OPS bundle row's settings. See [configuration](configuration-reference.md)
+remove explicit startup selections. Standalone `integration()` keeps its own preset settings and
+consumes the explicitly owned kernel above. Local file requests use that connection, with no
+one-shot fallback or automatic kernel restart. The optional WSL read backend, PTC batch/result
+operations and cache cleanup retain their existing runners; this does not make every OPS call
+free of per-call runners. See [configuration](configuration-reference.md)
 and [internal architecture](internal-architecture.md).
 
 ## External advanced tools

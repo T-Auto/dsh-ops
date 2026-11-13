@@ -13,11 +13,13 @@ import { DISCOVERY_TOOL_NAME } from '../../lib/capabilities/registry.js'
 import { assert, test, waitFor, withTempDir } from './harness.mjs'
 import { bootHost, registryHasOwnRegister, scopedToolNames, shutdown } from './host.mjs'
 import { legacyComponent } from './legacy-component.mjs'
+import { mountResident } from './resident.mjs'
 
 const DISCOVER = publicToolName(DISCOVERY_TOOL_NAME)
 async function boot(config = {}) {
   const { ctx } = await bootHost()
   await ctx.plugin(Subprocess)
+  await mountResident(ctx, { file: config.binaryPath })
   await ctx.plugin(Sandbox, {})
   await ctx.plugin(inner => inner.provide('sandboxPolicy', {
     resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: session.header.cwd, sessionId: session.id }),

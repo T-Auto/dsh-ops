@@ -4,6 +4,7 @@ import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
  */
 import { ownWindowsFixture, skipSuite, waitFor } from './lib/harness.mjs'
 import { workingDirectoryOver } from './lib/host.mjs'
+import { mountResident, mountFakeResident } from './lib/resident.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -186,6 +187,7 @@ try {
   const bridge = new Context(); bridge.logger.level = 0
   bridge.provide('workingDirectory', workingDirectoryOver(dir))
   await bridge.plugin(Subprocess)
+  await mountResident(bridge, { file, cwd: dir })
   await bridge.plugin(inner => { inner.provide('sandboxPolicy', { resolve: () => ({ mode: 'read-only', workspaceRoot: dir, sessionId: 'alias' }) }) })
   try {
     const aliasRoot = fs.realpathSync.native(dir) !== dir
@@ -234,6 +236,7 @@ try {
       } })
     })
     const live = []; ctx.provide('agents', { list: () => live })
+    await mountFakeResident(ctx, { file })
     const component = await ctx.plugin(ptc, { binaryPath: file, required: true, alwaysLoaded: ['batch', 'result'] })
     const makeAgent = async (id, presentation, parent) => {
       const agent = { id, session: { id, mode: 'workspace-write', header: { cwd: dir } } }
@@ -437,6 +440,7 @@ try {
     await real.plugin(SystemPrompt, {}); await real.plugin(ToolRuntime, {})
     await real.plugin(await import('@deepseek-ai/dsh-tool-executor-native'), {})
     await real.plugin(Subprocess)
+    await mountResident(real, { file, cwd: dir })
     await real.plugin(Sandbox, {})
     await real.plugin(FileSystem, {})
     const agent = { id: 'real-ptc', session: {id:'real-ptc',mode:'workspace-write',header:{cwd:dir},append(){return Promise.resolve()},read(){return []}} }

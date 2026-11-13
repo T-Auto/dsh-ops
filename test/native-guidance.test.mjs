@@ -1,3 +1,4 @@
+import { mountResident } from './lib/resident.mjs'
 /** The Native request's OPS-owned call guidance names its admitted tools. */
 import { createScope } from '@deepseek-ai/dsh-scope'
 import FileSystem from '@deepseek-ai/dsh-fs-local'
@@ -28,6 +29,7 @@ await test('Native guidance follows readiness, dynamic publication, hiding and m
   const gate = { allows: () => active, watch: notify => { refresh = notify; return () => {} } }
   try {
     for (const plugin of [Subprocess, Sandbox, FileSystem]) await ctx.plugin(plugin, {})
+    await mountResident(ctx, { file: WORKER, cwd })
     ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: cwd }) })
     ctx.provide('agents', { list: () => [...live] })
     await ctx.plugin(ToolFs, { read: true, readImage: false, write: false, edit: false, applyPatch: false,

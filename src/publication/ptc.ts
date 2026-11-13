@@ -17,7 +17,8 @@ import { BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, createProgramLatch, l
 import { InvocationLifetime, InvocationNotStarted } from '../lifecycle/invocations.js'
 import { monitoredInvoke } from '../execution/monitored.js'
 import { record } from '../execution/boundary.js'
-import { failure, resolveWorker } from '../execution/jobs.js'
+import { failure } from '../execution/jobs.js'
+import { requireResident } from '../execution/resident/provider.js'
 import { WORKER_TIMEOUT_MS } from '../execution/protocol.js'
 import { registerStepTailProvider } from '../prompt-injection/index.js'
 import { mountWorkspacePreparation } from '../workspace-preparation.js'
@@ -61,12 +62,12 @@ export function apply(root: Context, rawConfig: unknown, gate: PtcGate = { allow
 export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { allows: () => true }): void {
   const config = resolvePtcConfig(rawConfig)
   let file: string
-  try { file = resolveWorker(config) } catch (error) {
+  try { file = requireResident(root, config).file } catch (error) {
     if (config.required) throw error
     root.logger.warn(`dsh-ops: ${String(error)}`); return
   }
   mountWorkspacePreparation(root)
-  root.inject(['tools', 'systemPrompt', 'sandboxPolicy', 'subprocess'], async ctx => {
+  root.inject(['tools', 'systemPrompt', 'sandboxPolicy', 'subprocess', 'opsKernel'], async ctx => {
     const tools = ctx.get('tools')!, prompt = ctx.get('systemPrompt')!
     mountResultLifecycle(ctx)
     const entries = new Map<Agent, Entry>(), retired = new WeakSet<Agent>()

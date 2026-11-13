@@ -1,3 +1,4 @@
+import { mountFakeResident } from './lib/resident.mjs'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { mountDiscovery } from '../lib/discovery/controller.js'
 import { registerNativeCapability } from '../lib/discovery/providers.js'
@@ -28,6 +29,7 @@ async function setup(dir, { allowed = ['acme_lookup'], disabled = [], builtins =
   ctx.provide('agents', { list: () => agents })
   // Publication-only worker fixture: never invoked; no Rust runtime is needed by this suite.
   ctx.provide('subprocess', { spawn() { throw new Error('Catalog must not spawn a worker') } })
+  await mountFakeResident(ctx, { file: process.execPath })
   ctx.provide('sandboxPolicy', { resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: dir, sessionId: session.id }) })
   const mount = () => ctx.plugin({ apply(inner) {
     mountDiscovery(inner, { allowedTools: builtins, binaryPath: process.execPath }, {
