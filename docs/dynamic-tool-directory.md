@@ -79,12 +79,13 @@ Under the `ops-ptc` mode, therefore, the SDK loader is the only progressive-disc
 `global.dynamicTools` are on (an AND gate; the plugin page renders the bundle switch as the master switch).
 See the OPS PTC mode section of the [configuration reference](configuration-reference.md) for every key.
 
-- Turning `dynamicTools` off removes the loader, so no on-demand API can be newly loaded. Resident and
-  explicitly published APIs are untouched (`ops_inspect_local_file` and any `alwaysLoaded` API stay visible),
-  and APIs already loaded in this session keep working.
-- `result` is the loader's implicit selection exception (loadable even with `allowedTools: []`), but without a
-  loader there is no entry point. If result references must survive the switch, put `result` in that section's
-  `alwaysLoaded`.
+- Turning `dynamicTools` off removes the loader and publishes the configured pool as resident instead:
+  `allowedTools` plus `result` are visible from the first step, so a provider that cannot take dynamically added
+  tools still sees every API it may call. This is the cache-friendly alternative to progressive disclosure.
+- `residentTools: false` stays authoritative: a scope that asked for no startup APIs keeps publishing none,
+  which is the state the declaration-surface guard protects.
+- `result` is the loader's implicit selection exception (loadable even with `allowedTools: []`); with the loader
+  gone it arrives as resident together with the pool, so result references stay readable.
 - **Loaded APIs appear on the next turn.** `ops_load_sdk` only queues names; they are absent from the currently
   frozen SDK snapshot and become visible only after the owning session commits `step/end` and the next model step
   re-assembles. Do not call an API you just loaded in the same `run_code` — it always fails; `return` first and
