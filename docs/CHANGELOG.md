@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Add an independently runnable Windows persistent-shell driver with authenticated duplex commands, separate bounded output/receipt channels, exact bootstrap process identities and bounded shell reset. Candidate-only public-host proofs cover retained state and honest failure cleanup; published tools and shipped runtime pins remain unchanged (#872).
+- 添加可独立运行的 Windows 持久 shell 驱动：验证后的双向命令通道、分离且有界的输出/收据通道、精确启动进程身份和有界 shell 重置。候选版本的公开宿主探针验证状态保留与真实失败回收；已发布工具和 runtime pin 保持不变（#872）。
+
 - Add a Windows shell process substrate with atomic nested Job ownership, bounded authenticated private channels and an owned disposable signal controller. Repository-only probes exercise real public sandbox argv, cancellation and crash cleanup; published shell tools, pinned runtimes and POSIX execution remain unchanged (#872).
 - 添加 Windows shell 进程基础层：原子嵌套 Job 所有权、有界且验证 peer 的私有通道，以及所属范围内的一次性信号 controller。仓库专用探针实际验证公开 sandbox argv、取消与崩溃回收；已发布 shell 工具、固定 runtime 和 POSIX 执行保持不变（#872）。
 

@@ -38,7 +38,9 @@ pub(crate) fn budget(cap: usize) -> io::Result<()> {
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
-pub use windows::{Channel, ChannelSnapshot, Range, signal_console_and_exit};
+pub use windows::{
+    Baseline, Channel, ChannelSnapshot, ChannelView, Range, signal_console_and_exit,
+};
 
 /// POSIX group creation would escape the public host's PGID fallback owner.
 /// No reduced ownership implementation is silently substituted here.

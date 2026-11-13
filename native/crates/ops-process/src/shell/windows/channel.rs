@@ -10,6 +10,7 @@ use std::{
     sync::{
         Arc, Mutex, Weak,
         atomic::{AtomicBool, Ordering},
+        mpsc,
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -41,7 +42,21 @@ pub struct ChannelSnapshot {
     pub eof: u32,
     pub rejected: u32,
     pub errors: Vec<String>,
+    pub ready: bool,
+    pub writer_eof: bool,
 }
+#[derive(Clone)]
+pub(super) struct Prefix {
+    pub bytes: Vec<u8>,
+    pub duplex: bool,
+}
+struct Connection<'a> {
+    stop: &'a AtomicBool,
+    seal: &'a AtomicBool,
+    armed: mpsc::SyncSender<io::Result<()>>,
+}
+#[cfg(test)]
+type ConnectGate = Arc<(Mutex<bool>, std::sync::Condvar)>;
 #[derive(Default)]
 struct State {
     capture: Capture,
@@ -49,6 +64,9 @@ struct State {
     eof: u32,
     rejected: u32,
     errors: Vec<String>,
+    ready: bool,
+    writer_eof: bool,
+    writer: Option<Weak<OwnedHandle>>,
 }
 pub struct Channel {
     name: OsString,
@@ -58,9 +76,34 @@ pub struct Channel {
     handles: Vec<Weak<OwnedHandle>>,
     readers: Vec<JoinHandle<()>>,
 }
+#[derive(Clone)]
+pub struct ChannelView(Arc<Mutex<State>>);
 impl Channel {
     pub(super) fn new(job: Arc<Job>, cap: usize) -> io::Result<Self> {
+        Self::framed(job, cap, None)
+    }
+    pub(super) fn framed(job: Arc<Job>, cap: usize, prefix: Option<Prefix>) -> io::Result<Self> {
+        Self::create(
+            job,
+            cap,
+            prefix,
+            #[cfg(test)]
+            None,
+        )
+    }
+    fn create(
+        job: Arc<Job>,
+        cap: usize,
+        prefix: Option<Prefix>,
+        #[cfg(test)] gate: Option<ConnectGate>,
+    ) -> io::Result<Self> {
         budget(cap)?;
+        if prefix
+            .as_ref()
+            .is_some_and(|p| p.bytes.is_empty() || p.bytes.len() > 256)
+        {
+            return Err(io::Error::other("channel prefix must be 1..256 bytes"));
+        }
         let name = security::private_name()?;
         let descriptor = security::Security::new()?;
         let attributes = descriptor.attributes();
@@ -97,6 +140,10 @@ impl Channel {
             })?));
         }
         for handle in &handles {
+            let (armed, ready) = mpsc::sync_channel(1);
+            #[cfg(test)]
+            let gate = gate.clone();
+            let prefix = prefix.clone();
             channel.handles.push(Arc::downgrade(handle));
             let (handle, stop, seal, state, job) = (
                 handle.clone(),
@@ -109,13 +156,35 @@ impl Channel {
                 thread::Builder::new()
                     .name("ops-shell-channel".into())
                     .spawn(move || {
-                        if let Err(error) = receive(&handle, &job, &stop, &seal, &state, cap)
-                            && !stop.load(Ordering::Acquire)
+                        #[cfg(test)]
+                        if let Some(gate) = gate {
+                            let mut released = gate.0.lock().unwrap();
+                            while !*released {
+                                released = gate.1.wait(released).unwrap();
+                            }
+                        }
+                        if let Err(error) = receive(
+                            &handle,
+                            &job,
+                            &state,
+                            cap,
+                            prefix.as_ref(),
+                            Connection {
+                                stop: &stop,
+                                seal: &seal,
+                                armed,
+                            },
+                        ) && !stop.load(Ordering::Acquire)
                         {
                             state.lock().unwrap().errors.push(error.to_string());
                         }
                     })?,
             );
+            // Do not publish a name before ConnectNamedPipe is pending. A fast
+            // metadata open+close before that call produces ERROR_NO_DATA.
+            ready
+                .recv()
+                .map_err(|_| io::Error::other("channel connect worker stopped"))??;
         }
         // Readers alone retain their instances; EOF/rejection must retire each server.
         drop(handles);
@@ -125,18 +194,12 @@ impl Channel {
         &self.name
     }
     pub fn snapshot(&self) -> ChannelSnapshot {
-        let state = self.state.lock().unwrap();
-        ChannelSnapshot {
-            bytes: state.capture.bytes.clone(),
-            observed: state.capture.observed,
-            truncated: state.capture.truncated,
-            accepted: state.accepted.clone(),
-            eof: state.eof,
-            rejected: state.rejected,
-            errors: state.errors.clone(),
-        }
+        self.view().snapshot()
     }
-    /// After confirmed Job emptiness, drain admitted peers to natural EOF and retire
+    pub fn view(&self) -> ChannelView {
+        ChannelView(self.state.clone())
+    }
+    /// After Job emptiness or a trusted protocol forbids new writers, drain to EOF and retire
     /// unused connect operations. This proves physical drain, not a command receipt.
     pub fn drain(&mut self, deadline: Instant) -> io::Result<()> {
         self.seal_connects.store(true, Ordering::Release);
@@ -165,6 +228,22 @@ impl Channel {
         }
         Ok(())
     }
+    /// Only the authenticated peer that sends the exact prefix receives command bytes.
+    pub fn write(&self, bytes: &[u8], deadline: Instant, cancel: &AtomicBool) -> io::Result<()> {
+        let handle = self
+            .state
+            .lock()
+            .unwrap()
+            .writer
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::BrokenPipe, "command peer is not ready")
+            })?;
+        super::pipe_write::write(&handle, bytes, deadline, || {
+            self.stop.load(Ordering::Acquire) || cancel.load(Ordering::Acquire)
+        })
+    }
     pub fn close(&mut self) {
         self.stop.store(true, Ordering::Release);
         self.seal_connects.store(true, Ordering::Release);
@@ -190,11 +269,28 @@ impl Drop for Channel {
         self.close();
     }
 }
+impl ChannelView {
+    pub fn snapshot(&self) -> ChannelSnapshot {
+        let state = self.0.lock().unwrap();
+        ChannelSnapshot {
+            bytes: state.capture.bytes.clone(),
+            observed: state.capture.observed,
+            truncated: state.capture.truncated,
+            accepted: state.accepted.clone(),
+            eof: state.eof,
+            rejected: state.rejected,
+            errors: state.errors.clone(),
+            ready: state.ready,
+            writer_eof: state.writer_eof,
+        }
+    }
+}
 fn operation(
     handle: &OwnedHandle,
     stop: &AtomicBool,
     connect: bool,
     bytes: &mut [u8],
+    armed: Option<&mpsc::SyncSender<io::Result<()>>>,
 ) -> io::Result<u32> {
     if !connect && stop.load(Ordering::Acquire) {
         return Err(io::Error::new(io::ErrorKind::Interrupted, "channel closed"));
@@ -219,11 +315,20 @@ fn operation(
     if started == 0 {
         let error = io::Error::last_os_error();
         if connect && error.raw_os_error() == Some(ERROR_PIPE_CONNECTED as i32) {
+            if let Some(armed) = armed {
+                let _ = armed.send(Ok(()));
+            }
             return Ok(0);
         }
         if error.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
+            if let Some(armed) = armed {
+                let _ = armed.send(Err(io::Error::new(error.kind(), error.to_string())));
+            }
             return Err(error);
         }
+    }
+    if let Some(armed) = armed {
+        let _ = armed.send(Ok(()));
     }
     loop {
         if stop.load(Ordering::Acquire) {
@@ -251,14 +356,15 @@ fn cancel_join(handle: &OwnedHandle, ov: &OVERLAPPED) -> io::Result<u32> {
     Ok(count)
 }
 fn receive(
-    handle: &OwnedHandle,
+    handle: &Arc<OwnedHandle>,
     job: &Job,
-    stop: &AtomicBool,
-    seal: &AtomicBool,
     state: &Mutex<State>,
     cap: usize,
+    prefix: Option<&Prefix>,
+    connection: Connection<'_>,
 ) -> io::Result<()> {
-    match operation(handle, seal, true, &mut []) {
+    let Connection { stop, seal, armed } = connection;
+    match operation(handle, seal, true, &mut [], Some(&armed)) {
         Err(error)
             if seal.load(Ordering::Acquire)
                 && error.raw_os_error() == Some(ERROR_OPERATION_ABORTED as i32) =>
@@ -277,28 +383,56 @@ fn receive(
         return Ok(());
     }
     state.lock().unwrap().accepted.push(pid);
-    read_peer(handle, stop, state, cap)
+    read_peer(handle, stop, state, cap, prefix)
 }
 fn read_peer(
-    handle: &OwnedHandle,
+    handle: &Arc<OwnedHandle>,
     stop: &AtomicBool,
     state: &Mutex<State>,
     cap: usize,
+    prefix: Option<&Prefix>,
 ) -> io::Result<()> {
     let mut bytes = [0; 8192];
+    let mut prefix_read = 0;
+    let mut ready = false;
     loop {
-        match operation(handle, stop, false, &mut bytes) {
+        match operation(handle, stop, false, &mut bytes, None) {
             Ok(0) => break,
-            Ok(count) => state
-                .lock()
-                .unwrap()
-                .capture
-                .append(&bytes[..count as usize], cap),
+            Ok(count) => {
+                let mut data = &bytes[..count as usize];
+                if let Some(prefix) = prefix {
+                    let take = data.len().min(prefix.bytes.len() - prefix_read);
+                    if data[..take] != prefix.bytes[prefix_read..prefix_read + take] {
+                        return Err(io::Error::other("channel prefix mismatch"));
+                    }
+                    prefix_read += take;
+                    data = &data[take..];
+                    if prefix_read == prefix.bytes.len() && !ready {
+                        let mut current = state.lock().unwrap();
+                        if current.ready {
+                            return Err(io::Error::other("duplicate channel writer"));
+                        }
+                        ready = true;
+                        current.ready = true;
+                        if prefix.duplex {
+                            current.writer = Some(Arc::downgrade(handle));
+                        }
+                    }
+                }
+                state.lock().unwrap().capture.append(data, cap);
+            }
             Err(error) if error.raw_os_error() == Some(ERROR_BROKEN_PIPE as i32) => break,
             Err(error) => return Err(error),
         }
     }
-    state.lock().unwrap().eof += 1;
+    let mut current = state.lock().unwrap();
+    current.eof += 1;
+    if ready {
+        current.writer_eof = true;
+    }
+    if prefix_read != 0 && !ready {
+        return Err(io::Error::other("incomplete channel prefix"));
+    }
     Ok(())
 }
 
@@ -307,6 +441,171 @@ mod tests {
     use super::*;
     use std::{fs::File, io::Write, sync::mpsc};
     use windows_sys::Win32::Storage::FileSystem::{CreateFileW, OPEN_EXISTING};
+
+    #[test]
+    fn endpoint_is_not_published_before_every_connect_is_armed() {
+        let gate = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let worker_gate = gate.clone();
+        let (send, receive) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            send.send(Channel::create(
+                Arc::new(Job::new().unwrap()),
+                64,
+                None,
+                Some(worker_gate),
+            ))
+            .unwrap();
+        });
+        // Every reader is held before ConnectNamedPipe. Without the constructor's
+        // arming barrier, it publishes the endpoint while those readers are held.
+        let premature = receive.recv_timeout(Duration::from_millis(50)).ok();
+        let published_early = premature.is_some();
+        *gate.0.lock().unwrap() = true;
+        gate.1.notify_all();
+        let mut channel = premature
+            .unwrap_or_else(|| receive.recv_timeout(Duration::from_secs(2)).unwrap())
+            .unwrap();
+        channel
+            .drain(Instant::now() + Duration::from_secs(2))
+            .unwrap();
+        worker.join().unwrap();
+        assert!(
+            !published_early,
+            "pipe names escaped before their connect operations were armed"
+        );
+    }
+
+    #[test]
+    fn framed_prefix_is_not_output_and_empty_metadata_open_is_not_eof() {
+        let state = Mutex::new(State::default());
+        let prefix = Prefix {
+            bytes: b"OUT:id\n".to_vec(),
+            duplex: false,
+        };
+        let (server, client) = connected_pipe();
+        drop(client);
+        read_peer(
+            &Arc::new(server),
+            &AtomicBool::new(false),
+            &state,
+            4,
+            Some(&prefix),
+        )
+        .unwrap();
+        assert!(!state.lock().unwrap().ready);
+        assert!(!state.lock().unwrap().writer_eof);
+        let (server, mut client) = connected_pipe();
+        client.write_all(b"OUT:id\nabcdef").unwrap();
+        drop(client);
+        read_peer(
+            &Arc::new(server),
+            &AtomicBool::new(false),
+            &state,
+            4,
+            Some(&prefix),
+        )
+        .unwrap();
+        let value = state.lock().unwrap();
+        assert_eq!(value.capture.bytes, b"abcd");
+        assert_eq!(value.capture.observed, 6);
+        assert!(value.capture.truncated && value.ready && value.writer_eof);
+    }
+
+    #[test]
+    fn a_wrong_or_partial_prefix_cannot_authenticate_a_writer() {
+        for bytes in [b"WRONG\n".as_slice(), b"OUT:i".as_slice()] {
+            let (server, mut client) = connected_pipe();
+            client.write_all(bytes).unwrap();
+            drop(client);
+            let state = Mutex::new(State::default());
+            let prefix = Prefix {
+                bytes: b"OUT:id\n".to_vec(),
+                duplex: false,
+            };
+            assert!(
+                read_peer(
+                    &Arc::new(server),
+                    &AtomicBool::new(false),
+                    &state,
+                    4,
+                    Some(&prefix)
+                )
+                .is_err()
+            );
+            let value = state.lock().unwrap();
+            assert!(!value.ready);
+            assert_eq!(value.capture.observed, 0);
+        }
+    }
+
+    #[test]
+    fn duplex_write_uses_the_prefix_peer_and_cancels_backpressure() {
+        use std::io::Read;
+        let (server, mut client) = connected_pipe();
+        let server = Arc::new(server);
+        let state = Arc::new(Mutex::new(State::default()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (reader_handle, reader_state, reader_stop) =
+            (server.clone(), state.clone(), stop.clone());
+        let reader = thread::spawn(move || {
+            read_peer(
+                &reader_handle,
+                &reader_stop,
+                &reader_state,
+                64,
+                Some(&Prefix {
+                    bytes: b"READY\n".to_vec(),
+                    duplex: true,
+                }),
+            )
+        });
+        client.write_all(b"READY\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !state.lock().unwrap().ready && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        assert!(
+            state
+                .lock()
+                .unwrap()
+                .writer
+                .as_ref()
+                .and_then(Weak::upgrade)
+                .is_some()
+        );
+        super::super::pipe_write::write(&server, b"command", deadline, || false).unwrap();
+        let mut bytes = [0; 7];
+        client.read_exact(&mut bytes).unwrap();
+        assert_eq!(&bytes, b"command");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let writer_cancel = cancel.clone();
+        let writer_handle = server.clone();
+        let (done, result) = mpsc::channel();
+        let writer = thread::spawn(move || {
+            let result = super::super::pipe_write::write(
+                &writer_handle,
+                &vec![b'x'; 1024 * 1024],
+                Instant::now() + Duration::from_secs(2),
+                || writer_cancel.load(Ordering::Acquire),
+            );
+            done.send(result).unwrap();
+        });
+        assert!(matches!(
+            result.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        cancel.store(true, Ordering::Release);
+        assert!(
+            result
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .is_err()
+        );
+        writer.join().unwrap();
+        drop(client);
+        reader.join().unwrap().unwrap();
+        assert!(state.lock().unwrap().writer_eof);
+    }
 
     fn connected_pipe() -> (OwnedHandle, File) {
         let name = security::private_name().unwrap();
@@ -327,7 +626,7 @@ mod tests {
         let client = owned(unsafe {
             CreateFileW(
                 name.as_ptr(),
-                0x40000000,
+                0xc0000000,
                 0,
                 std::ptr::null(),
                 OPEN_EXISTING,
@@ -336,7 +635,7 @@ mod tests {
             )
         })
         .unwrap();
-        operation(&server, &AtomicBool::new(false), true, &mut []).unwrap();
+        operation(&server, &AtomicBool::new(false), true, &mut [], None).unwrap();
         (server, File::from(client))
     }
 
@@ -398,7 +697,7 @@ mod tests {
         let (handle, reader_stop, reader_state) = (server.clone(), stop.clone(), state.clone());
         let reader = thread::spawn(move || {
             gate.recv().unwrap();
-            if let Err(error) = read_peer(&handle, &reader_stop, &reader_state, 64) {
+            if let Err(error) = read_peer(&handle, &reader_stop, &reader_state, 64, None) {
                 reader_state.lock().unwrap().errors.push(error.to_string());
             }
         });

@@ -1,10 +1,13 @@
 mod argv;
 mod channel;
+mod identity;
 mod job;
 mod launch;
+mod pipe_write;
 mod security;
 mod signal;
-pub use channel::{Channel, ChannelSnapshot};
+pub use channel::{Channel, ChannelSnapshot, ChannelView};
+pub use identity::Baseline;
 pub use launch::Range;
 pub use signal::signal_console_and_exit;
 
