@@ -133,6 +133,14 @@ pub fn serve() -> io::Result<()> {
     let mut task_manager = crate::task::Manager::new(shells.output(), move || {
         let _ = task_shutdown.shutdown();
     })?;
+    #[cfg(windows)]
+    {
+        let spill_store = ops_process::shell::SpillStore::new(
+            &std::env::temp_dir(),
+            ops_process::shell::MAX_SPILL_BYTES,
+        )?;
+        task_manager.enable_spill(spill_store)?;
+    }
     let active: Active = Arc::default();
     let mut tasks: Vec<thread::JoinHandle<()>> = Vec::new();
     let mut capabilities = crate::shell::capabilities();

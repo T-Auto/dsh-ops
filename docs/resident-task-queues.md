@@ -13,8 +13,9 @@ The host sends `task.execute` with a unique `requestId`, exact private `ownerKey
 retain the existing fresh timer contract. The timeout is an independent hard
 execution cap, including queue time, and remains armed after promotion. A host
 Jobs adapter must own its observation/handoff timer and omit this hard cap for
-work intended to continue after that timer. The spill budget is validated but
-recoverable spill is not implemented by this slice: output is currently a tail.
+work intended to continue after that timer. The additional `task-spill-v1`
+capability establishes the [shared complete-stream spill and retention contract](resident-task-spill.md);
+`task-v1` alone promises only bounded memory output.
 
 Eight fixed workers consume a FIFO queue. There are at most 32 retained task
 records, 32 owners and 64 pending owner controls. Completed records occupy their

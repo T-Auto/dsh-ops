@@ -1,11 +1,11 @@
 use super::{protocol, worker};
-use ops_process::shell::{CaptureView, Range};
+use ops_process::shell::{CaptureView, Range, SpillStore};
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     io,
     sync::{
-        Arc, Condvar, Mutex,
+        Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
@@ -14,6 +14,7 @@ use std::{
 const RECORDS: usize = 32;
 type Output = Arc<dyn Fn(Value) -> io::Result<()> + Send + Sync>;
 pub(super) struct State {
+    pub spill: OnceLock<SpillStore>,
     pub output: Output,
     pub fatal: Arc<dyn Fn() + Send + Sync>,
     pub requests: Mutex<HashMap<String, Arc<Request>>>,
@@ -71,6 +72,7 @@ impl Manager {
     pub fn new(output: Output, fatal: impl Fn() + Send + Sync + 'static) -> io::Result<Self> {
         let mut manager = Self {
             state: Arc::new(State {
+                spill: OnceLock::new(),
                 output,
                 fatal: Arc::new(fatal),
                 requests: Mutex::default(),
@@ -91,6 +93,18 @@ impl Manager {
             );
         }
         Ok(manager)
+    }
+    /// Configure the kernel's shared, allocation-only store before admission.
+    pub fn enable_spill(&mut self, store: SpillStore) -> io::Result<()> {
+        if !self.state.requests.lock().unwrap().is_empty()
+            || !self.state.owners.lock().unwrap().is_empty()
+        {
+            return Err(protocol::invalid("task spill must precede admission"));
+        }
+        self.state
+            .spill
+            .set(store)
+            .map_err(|_| protocol::invalid("task spill already configured"))
     }
     pub fn contains(&self, id: &str) -> bool {
         self.state.requests.lock().unwrap().contains_key(id)
@@ -340,6 +354,15 @@ impl Manager {
             result["bytesBase64"] = json!(protocol::base64(&available[skip..]));
             result["lossy"] = json!(start > offset || skip != 0);
             result["eof"] = json!(snapshot.eof);
+            if let Some(spill) = snapshot.spill {
+                result["spillPath"] = json!(spill.path);
+                result["spillOrigin"] = json!("ops-native-v1");
+                result["spillPid"] = json!(spill.pid);
+                result["spillSealed"] = json!(spill.sealed);
+            }
+            if let Some(error) = snapshot.spill_error {
+                result["spillError"] = json!(error);
+            }
             let error = snapshot.error.or_else(|| {
                 (completed && !snapshot.eof)
                     .then(|| "Task output did not reach confirmed EOF".into())

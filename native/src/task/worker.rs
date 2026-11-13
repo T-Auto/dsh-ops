@@ -117,6 +117,18 @@ fn execute(state: &State, request: &Request) -> io::Result<()> {
             );
         }
     };
+    if let Some(store) = state.spill.get()
+        && let Err(error) = range.enable_spill(store.clone())
+    {
+        return finish(
+            state,
+            request,
+            "failed",
+            None,
+            true,
+            Some(("EXECUTOR_UNAVAILABLE", error.to_string())),
+        );
+    }
     {
         let mut data = request.data.lock().unwrap();
         if cancelled(state, request) {
@@ -141,8 +153,19 @@ fn execute(state: &State, request: &Request) -> io::Result<()> {
     }
     match monitor(state, request, &mut range) {
         Ok(code) => {
-            let error = range.captures().err();
+            let error = range
+                .captures_until(Instant::now() + Duration::from_secs(5))
+                .err();
             if let Some(error) = error {
+                if range.cleanup_unconfirmed() {
+                    return poison(
+                        state,
+                        request,
+                        range,
+                        error.to_string(),
+                        "OUTPUT_INCOMPLETE",
+                    );
+                }
                 return finish(
                     state,
                     request,
@@ -244,20 +267,13 @@ fn settle_failure(
     let cleanup = range.terminate(Instant::now() + Duration::from_secs(5));
     if let Err(cleanup_error) = cleanup {
         message.push_str(&format!("; cleanup: {cleanup_error}"));
-        request.data.lock().unwrap().poison = Some(range);
-        let result = finish(state, request, "failed", None, false, Some((code, message)));
-        // Keep the poisoned owner until the managed kernel range is terminated.
-        // No new range may reuse it, and this is not independent clean teardown.
-        {
-            let mut owner = request.owner.data.lock().unwrap();
-            owner.closed = true;
-            owner.unconfirmed = true;
-        }
-        (state.fatal)();
-        return result;
+        return poison(state, request, range, message, code);
     }
-    if let Err(capture) = range.captures() {
+    if let Err(capture) = range.captures_until(Instant::now() + Duration::from_secs(5)) {
         message.push_str(&format!("; output: {capture}"));
+    }
+    if range.cleanup_unconfirmed() {
+        return poison(state, request, range, message, "OUTPUT_INCOMPLETE");
     }
     let (status, code) = if cancelled(state, request) {
         let (code, reason) = cancellation(request);
@@ -275,3 +291,26 @@ fn settle_failure(
         Some((code, message)),
     )
 }
+fn poison(
+    state: &State,
+    request: &Request,
+    range: Range,
+    message: String,
+    code: &str,
+) -> io::Result<()> {
+    request.data.lock().unwrap().poison = Some(range);
+    // Seal before terminal publication: an unconfirmed owner cannot admit another
+    // queued request while the host observes its failure and retires the kernel.
+    {
+        let mut owner = request.owner.data.lock().unwrap();
+        owner.closed = true;
+        owner.unconfirmed = true;
+    }
+    let result = finish(state, request, "failed", None, false, Some((code, message)));
+    (state.fatal)();
+    result
+}
+
+#[cfg(test)]
+#[path = "spill_tests.rs"]
+mod spill_tests;

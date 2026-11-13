@@ -13,7 +13,11 @@ mod worker;
 pub use manager::Manager;
 
 pub fn capabilities() -> &'static [&'static str] {
-    if cfg!(windows) { &["task-v1"] } else { &[] }
+    if cfg!(windows) {
+        &["task-v1", "task-spill-v1"]
+    } else {
+        &[]
+    }
 }
 
 #[cfg(not(windows))]
