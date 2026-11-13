@@ -4,7 +4,10 @@
 mod probe {
     use ops_process::{
         ControlPipe, read_frame,
-        shell::{CaptureView, Launch, Range, Retention, signal_console_and_exit},
+        shell::{
+            CaptureView, Launch, MAX_SPILL_BYTES, Range, Retention, SpillStore,
+            signal_console_and_exit,
+        },
     };
     use serde_json::{Value, json};
     use std::{
@@ -25,7 +28,11 @@ mod probe {
         worker: Option<JoinHandle<io::Result<()>>>,
     }
     impl Task {
-        fn launch(value: &Value) -> io::Result<Self> {
+        fn launch(
+            value: &Value,
+            spill: Option<&SpillStore>,
+            fatal: ControlPipe,
+        ) -> io::Result<Self> {
             let argv = value["argv"]
                 .as_array()
                 .ok_or_else(|| io::Error::other("argv required"))?
@@ -47,6 +54,9 @@ mod probe {
                 })
                 .collect::<io::Result<_>>()?;
             let mut range = Range::new()?;
+            if let Some(store) = spill {
+                range.enable_spill(store.clone())?;
+            }
             let pid = range.spawn_with_retention(
                 Launch {
                     argv,
@@ -70,8 +80,12 @@ mod probe {
                 .spawn(move || {
                     let result = monitor(&mut range, &state2, &cancel2, explicit_background);
                     let mut state = state2.lock().unwrap();
-                    state["terminal"] = json!(true);
+                    let poisoned = range.cleanup_unconfirmed();
+                    state["terminal"] = json!(!poisoned);
                     state["error"] = json!(result.as_ref().err().map(ToString::to_string));
+                    if poisoned {
+                        fatal.shutdown()?;
+                    }
                     result
                 })?;
             Ok(Self {
@@ -157,13 +171,18 @@ mod probe {
             .as_str()
             .ok_or_else(|| io::Error::other(format!("{key} required")))
     }
-    fn execute(value: &Value, tasks: &mut BTreeMap<String, Task>) -> io::Result<Value> {
+    fn execute(
+        value: &Value,
+        tasks: &mut BTreeMap<String, Task>,
+        spill: Option<&SpillStore>,
+        fatal: &ControlPipe,
+    ) -> io::Result<Value> {
         let id = text(value, "id")?;
         if value["op"] == "launch" {
             if tasks.len() >= 4 || tasks.contains_key(id) {
                 return Err(io::Error::other("probe capacity/duplicate"));
             }
-            tasks.insert(id.into(), Task::launch(value)?);
+            tasks.insert(id.into(), Task::launch(value, spill, fatal.try_clone()?)?);
         }
         let task = tasks
             .get_mut(id)
@@ -177,9 +196,17 @@ mod probe {
                     .get(index)
                     .ok_or_else(|| io::Error::other("stream invalid"))?;
                 let read = view.read_from(value["offset"].as_u64().unwrap_or(0))?;
-                Ok(
-                    json!({"text":String::from_utf8_lossy(&read.bytes),"offset":read.offset,"nextOffset":read.next_offset,"lossy":read.lossy,"eof":read.eof,"error":read.error}),
-                )
+                let mut value = json!({"text":String::from_utf8_lossy(&read.bytes),"offset":read.offset,"nextOffset":read.next_offset,"lossy":read.lossy,"eof":read.eof,"error":read.error});
+                if let Some(spill) = read.spill {
+                    value["spillPath"] = json!(spill.path);
+                    value["spillPid"] = json!(spill.pid);
+                    value["spillOrigin"] = json!("ops-native-v1");
+                    value["spillSealed"] = json!(spill.sealed);
+                }
+                if let Some(error) = read.spill_error {
+                    value["spillError"] = json!(error);
+                }
+                Ok(value)
             }
             "stop" => {
                 task.stop()?;
@@ -225,6 +252,11 @@ mod probe {
         }
         let mut writer = ControlPipe::inherited()?;
         let mut reader = BufReader::new(writer.try_clone()?);
+        let spill = if std::env::args().any(|arg| arg == "--spill") {
+            Some(SpillStore::new(&std::env::temp_dir(), MAX_SPILL_BYTES)?)
+        } else {
+            None
+        };
         let mut tasks = BTreeMap::new();
         writeln!(
             writer,
@@ -234,7 +266,7 @@ mod probe {
         let result = (|| {
             while let Some(bytes) = read_frame(&mut reader)? {
                 let value: Value = serde_json::from_slice(&bytes)?;
-                let response = match execute(&value, &mut tasks) {
+                let response = match execute(&value, &mut tasks, spill.as_ref(), &writer) {
                     Ok(result) => json!({"ok":true,"result":result}),
                     Err(error) => json!({"ok":false,"error":error.to_string()}),
                 };

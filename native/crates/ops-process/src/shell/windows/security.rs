@@ -25,18 +25,28 @@ impl Drop for Local {
 pub(super) struct Security(Local);
 impl Security {
     pub(super) fn new() -> io::Result<Self> {
+        Self::descriptor(true)
+    }
+    pub(super) fn private() -> io::Result<Self> {
+        Self::descriptor(false)
+    }
+    fn descriptor(restricted_writer: bool) -> io::Result<Self> {
         let mut token = ptr::null_mut();
         // SAFETY: output pointer is valid and the current-process pseudo handle is borrowed.
         check(unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) })?;
         let token = owned(token)?;
         let owner = token_sid(token.as_raw_handle(), TokenUser)?;
-        let logon = token_sid(token.as_raw_handle(), TokenLogonSid)?;
+        let extra = if restricted_writer {
+            let logon = token_sid(token.as_raw_handle(), TokenLogonSid)?;
+            format!("(A;;GRGW;;;{logon})S:(ML;;NW;;;LW)")
+        } else {
+            String::new()
+        };
         // Restricted tokens retain the logon SID; no Everyone write ACE is needed.
-        let sddl: Vec<u16> =
-            format!("O:{owner}D:P(A;;GA;;;SY)(A;;GA;;;{owner})(A;;GRGW;;;{logon})S:(ML;;NW;;;LW)")
-                .encode_utf16()
-                .chain([0])
-                .collect();
+        let sddl: Vec<u16> = format!("O:{owner}D:P(A;;GA;;;SY)(A;;GA;;;{owner}){extra}")
+            .encode_utf16()
+            .chain([0])
+            .collect();
         let mut descriptor = ptr::null_mut();
         // SAFETY: the SDDL is terminated and output storage remains valid for the call.
         check(unsafe {
@@ -105,6 +115,12 @@ fn token_sid(token: HANDLE, class: TOKEN_INFORMATION_CLASS) -> io::Result<String
 }
 
 pub(super) fn private_name() -> io::Result<Vec<u16>> {
+    Ok(format!(r"\\.\pipe\ops-shell-{}", random_suffix()?)
+        .encode_utf16()
+        .chain([0])
+        .collect())
+}
+pub(super) fn random_suffix() -> io::Result<String> {
     let mut random = [0u8; 16];
     // SAFETY: the system-preferred RNG accepts a null algorithm and this writable buffer.
     let status = unsafe {
@@ -120,9 +136,5 @@ pub(super) fn private_name() -> io::Result<Vec<u16>> {
             "BCryptGenRandom failed: {status:#x}"
         )));
     }
-    let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
-    Ok(format!(r"\\.\pipe\ops-shell-{suffix}")
-        .encode_utf16()
-        .chain([0])
-        .collect())
+    Ok(random.iter().map(|byte| format!("{byte:02x}")).collect())
 }

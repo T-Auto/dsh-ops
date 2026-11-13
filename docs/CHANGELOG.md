@@ -13,6 +13,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Add an internal `task-v1` host adapter with bounded live output, exact Agent ownership and public Jobs registration/promotion handoff. Published fresh execution remains unchanged; native spill parity and the production fresh authority/runtime bridge are still required (#872).
 - 增加内部 `task-v1` 宿主适配器：有界实时输出、精确 Agent 所有权及公开 Jobs 登记/提升交接。已发布 fresh 执行保持不变；原生 spill 等价性与生产 fresh 权限/运行时桥接仍待完成（#872）。
 
+- Add the internal Windows native raw-spill foundation: lazy full-stream files up to 64 MiB, live complete-prefix metadata, sealed files in the existing retention ledger, and bounded tail degradation on spill failure. Unconfirmed I/O cleanup retains the poisoned owner until public host teardown. This slice does not publish task or persistent-shell output parity.
+- 新增内部 Windows 原生原始输出溢写基础：延迟创建完整流文件（上限 64 MiB），提供实时完整前缀元数据，将封存文件接入既有保留账本，溢写失败时降级保留有界尾部。I/O 清理未确认时保留已中毒的所有者，直至公共宿主终止内核。本切片不发布任务或持久 Shell 的完整输出能力。
+
 - Add an internal resident-shell host adapter that rechecks current authority at each native queue head, scopes one-call grants and awaits owner cleanup. Bounded transport and terminal output collection preserve explicit effect and state-loss facts; public session tools and recoverable spill remain pending (#872).
 - 添加内部常驻 shell 宿主适配器：每次原生队首准入重查当前权限、限制单次批准范围并等待所有者回收。有界通道与终态输出收集保留明确效果和状态丢失事实；公开会话工具与可恢复 spill 仍待完成（#872）。
 

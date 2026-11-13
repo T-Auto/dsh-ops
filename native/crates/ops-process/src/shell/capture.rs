@@ -1,6 +1,7 @@
 //! Bounded raw stream storage shared by private channels and process stdio.
 use std::{
     io,
+    path::PathBuf,
     sync::{Arc, Mutex},
 };
 
@@ -45,6 +46,12 @@ impl Capture {
 }
 
 #[derive(Clone, Debug)]
+pub struct SpillSnapshot {
+    pub path: PathBuf,
+    pub pid: u32,
+    pub sealed: bool,
+}
+#[derive(Clone, Debug)]
 pub struct CaptureSnapshot {
     pub bytes: Vec<u8>,
     pub observed: u64,
@@ -53,6 +60,9 @@ pub struct CaptureSnapshot {
     /// True only after the reader observed EOF. It does not certify range exit.
     pub eof: bool,
     pub error: Option<String>,
+    pub spill: Option<SpillSnapshot>,
+    pub spill_error: Option<String>,
+    pub cleanup_unconfirmed: bool,
 }
 #[derive(Debug)]
 pub struct CaptureRead {
@@ -63,6 +73,8 @@ pub struct CaptureRead {
     pub lossy: bool,
     pub eof: bool,
     pub error: Option<String>,
+    pub spill: Option<SpillSnapshot>,
+    pub spill_error: Option<String>,
 }
 
 struct State {
@@ -72,6 +84,9 @@ struct State {
     retention: Retention,
     eof: bool,
     error: Option<String>,
+    spill: Option<SpillSnapshot>,
+    spill_error: Option<String>,
+    cleanup_unconfirmed: bool,
 }
 /// Cloning a view shares a bounded buffer, never a consuming reader cursor.
 #[derive(Clone)]
@@ -86,6 +101,9 @@ impl CaptureView {
             retention,
             eof: false,
             error: None,
+            spill: None,
+            spill_error: None,
+            cleanup_unconfirmed: false,
         }))))
     }
     pub fn snapshot(&self) -> CaptureSnapshot {
@@ -100,6 +118,9 @@ impl CaptureView {
             truncated: state.capture.truncated,
             eof: state.eof,
             error: state.error.clone(),
+            spill: state.spill.clone(),
+            spill_error: state.spill_error.clone(),
+            cleanup_unconfirmed: state.cleanup_unconfirmed,
         }
     }
     pub fn read_from(&self, offset: u64) -> io::Result<CaptureRead> {
@@ -121,14 +142,34 @@ impl CaptureView {
                 || (end < snapshot.observed && offset < snapshot.observed),
             eof: snapshot.eof,
             error: snapshot.error,
+            spill: snapshot.spill,
+            spill_error: snapshot.spill_error,
         })
     }
-    #[cfg(any(windows, test))]
+    #[cfg(test)]
     pub(crate) fn append(&self, bytes: &[u8]) -> u64 {
+        self.commit(bytes, None, None)
+    }
+    #[cfg(any(windows, test))]
+    pub(crate) fn commit(
+        &self,
+        bytes: &[u8],
+        spill: Option<SpillSnapshot>,
+        spill_error: Option<String>,
+    ) -> u64 {
         let mut state = self.0.lock().unwrap();
         let (cap, retention) = (state.cap, state.retention);
         state.capture.append_with(bytes, cap, retention);
+        state.spill = spill;
+        state.spill_error = spill_error;
         state.capture.observed
+    }
+    #[cfg(windows)]
+    pub(crate) fn poison(&self, error: String) {
+        let mut state = self.0.lock().unwrap();
+        state.spill = None;
+        state.spill_error = Some(error);
+        state.cleanup_unconfirmed = true;
     }
     #[cfg(any(windows, test))]
     pub(crate) fn finish(&self, result: &io::Result<()>) -> Capture {
