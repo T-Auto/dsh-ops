@@ -380,7 +380,7 @@ for (const action of stalledActions) await test(`real native ${action} exits wit
         if (action === 'disconnect' && process.platform !== 'win32' && outcome.exitCode === 1) {
           // Closing a socket with unread output can reset the peer. The server
           // reports that transport error after joining leaves; it is not a kill.
-          assert.match(diagnostic, /^OPS kernel stopped: Connection reset by peer \(os error (54|104)\)$/m)
+          assert.match(diagnostic.trim(), /^OPS kernel stopped: Connection reset by peer \(os error (54|104)\)$/)
         } else assert.equal(outcome.exitCode, 0, `${action}: ${diagnostic}`)
         assert.equal(await handle.waitForExit(AbortSignal.timeout(10_000)), true)
       } catch (error) {

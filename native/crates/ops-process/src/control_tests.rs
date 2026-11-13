@@ -1,11 +1,16 @@
 use super::*;
 use std::{sync::mpsc, thread, time::Duration};
 
-fn shutdown_during_io(read: bool) {
+fn shutdown_during_io(read: bool, _half_close: bool) {
     let (pipe, peer) = platform::test_pair().unwrap();
     let mut stream = ControlPipe(pipe);
     let control = stream.try_clone().unwrap();
     let mut later = control.try_clone().unwrap();
+    #[cfg(unix)]
+    if _half_close {
+        peer.shutdown(std::net::Shutdown::Write).unwrap();
+        assert_eq!(later.read(&mut [0u8; 1]).unwrap(), 0);
+    }
     let (started, starting) = mpsc::channel();
     let (ended, ending) = mpsc::channel();
     let worker = thread::spawn(move || {
@@ -45,9 +50,15 @@ fn shutdown_during_io(read: bool) {
 }
 #[test]
 fn shutdown_unblocks_reads_and_prevents_later_io() {
-    shutdown_during_io(true);
+    shutdown_during_io(true, false);
 }
 #[test]
 fn shutdown_unblocks_writes_and_prevents_later_io() {
-    shutdown_during_io(false);
+    shutdown_during_io(false, false);
+}
+
+#[cfg(unix)]
+#[test]
+fn shutdown_stops_a_writer_after_receiving_peer_eof() {
+    shutdown_during_io(false, true);
 }
