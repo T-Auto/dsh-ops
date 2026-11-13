@@ -1,6 +1,8 @@
-# 在 Linux x64 上构建与运行 dsh-ops
+# 在 Linux x64 与 arm64 上构建与运行 dsh-ops
 
-Linux x64 是 **file**、**ptc**、**shell** 三个组件的受支持目标。Linux 上 shell
+Linux x64 是 **file**、**ptc**、**shell** 三个组件的发布目标；Linux arm64（aarch64）在解析器的
+`PLATFORMS` 里被接受但不在发布矩阵中，arm64 宿主自行构建并 stage worker（见
+[Linux arm64（本机 staged）](#linux-arm64本机-staged)）。Linux 上 shell
 组件的 `ops_bash` 使用发行版自带的 bash（见[配置 shell 通道](#配置-shell-通道)）；随包
 PowerShell 7 与 bash IPC 代理仍仅限 Windows x64。
 
@@ -8,7 +10,7 @@ Linux 上**没有任何东西随安装包下载**：原生 worker 一律由本�
 目录，这正是本文档存在的原因。npm 包仍然只携带 Windows x64 载荷
 （`@dsh-ops/*-win32-x64`），Linux 没有对应的载荷包可取。
 
-| 组件 | Linux x64 | 说明 |
+| 组件 | Linux x64 / arm64 | 说明 |
 | --- | --- | --- |
 | `dsh-ops/mode-standard` | 支持 | 常驻 OPS 文件工具，`ops_bash` 使用宿主 bash；Linux 上不替换官方工具 |
 | `dsh-ops/mode-cordis` | 支持 | 与 Standard 相同的工具面，使用自己的路由段 |
@@ -170,6 +172,35 @@ $ dsh plugin --profile <profile> add ./dsh-ops-0.3.1.tgz
 ```console
 $ dsh --profile <profile> --dump-config
 ```
+
+## Linux arm64（本机 staged）
+
+`linux-arm64` 只存在于解析器的 `PLATFORMS`，不在 `RELEASE_TARGETS` 里：发布 tarball 仍只携带
+`win32-x64`、`linux-x64`、`darwin-arm64` 与 `darwin-x64`，因此发布包里**没有**
+`runtime/linux-arm64` 的 worker，也不会去下载。arm64 宿主用包里自带的 `native/` 源码构建，再用带
+回执的方式 stage：
+
+```console
+$ npm run build:ptc -- stage --platform linux-arm64          # 先 cargo build --release --bin dsh-ops-worker
+$ node bin/native-runtime.mjs check --platform linux-arm64   # 回执、摘要与 ELF machine（183）
+$ node bin/native-runtime.mjs check --staged                 # 校验本树实际携带的全部运行时
+```
+
+`npm run build:ptc` 使用宿主工具链编译，因此需要 Rust 1.88 与 C 链接器。`runtime/linux-arm64/provenance.json`
+由 stage 写入；回执与 worker 摘要不符时解析器拒绝，把 x64 ELF 改标签冒充 arm64 也会被拒绝。只要
+`runtime/linux-arm64` 存在，`node bin/check-release.mjs` 就会失败——发布必须正好是四个
+`RELEASE_TARGETS`。
+
+支持范围要说明清楚：
+
+- **本机支持，不是发行支持。** `linux-arm64` 只在宿主源码构建里可用；npm 包、发布 workflow 与
+  `check-release.mjs` 仍按四个目标描述，不能把 staged 的 arm64 worker 理解为发行承诺。
+- **源码未打补丁。** staged worker 由随包 `native/` 源码原样构建，该宿主上 worker 原有的平台限制照样成立。
+- **Android/proot 证据很窄。** 在 Android arm64 的 proot 环境里只观察到读取与有界枚举可用；
+  rename、`linkat`、xattr 与 SELinux 行为尚未验证，因此不能推广到全部写入路径、非 proot 的
+  GNU/Linux arm64，或操作系统级沙箱验收。
+- **不会用别的架构顶替。** 放宽 `PLATFORMS` 不等于允许 x64 载荷顶替 arm64 宿主：解析器按
+  `runtime/<platform>-<arch>` 取文件，并同时校验回执与 ELF machine。
 
 ## 配置 shell 通道
 
