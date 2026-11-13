@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.5.5] — 2026-11-13 — Patch release
+
 - A loader-less PTC scope no longer registers the configured `allowedTools` pool: with dynamic loading off nothing could ever select those APIs, and a host assembly without a step tool set declared all sixteen in `tools:sdk`. Resident publication, the default inspect + loader set and selection behavior are unchanged (#887).
 - 关闭动态加载的 PTC 作用域不再注册 `allowedTools` 候选池：没有 loader 时这些 API 永远不可选，而缺少 step tool set 的宿主装配会把十六个全部写进 `tools:sdk`。常驻发布、默认 inspect + loader 与选择行为不变（#887）。
 - Glob accepts `kind: file | directory | all` (default `file`), including empty directories in shallow listings without following links or changing hidden-item policy. Partial Native searches retain paths, scan counters, skip reasons and bounded diagnostic examples; directory read refusals give usable guidance.
