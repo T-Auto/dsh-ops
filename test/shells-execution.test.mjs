@@ -63,24 +63,52 @@ await test('job-owned execution has no deadline and retains its cancellation sig
 })
 
 await test('the first stop cause wins when timeout and caller cancellation race', async () => {
-  const timeout = Promise.withResolvers()
   const finished = Promise.withResolvers()
   const caller = new AbortController()
+  let stopped = 0, expire
   const definition = bashToolDefinition({ file: process.execPath, source: 'config', subprocess: {
     spawn(spec) {
-      spec.signal.addEventListener('abort', () => timeout.resolve())
+      spec.signal.addEventListener('abort', () => { stopped++ })
       return { done: finished.promise, collected: { stdout: empty, stderr: empty } }
     },
   } })
-  const execution = definition.start({ command: 'true', timeoutMs: 1 }, { signal: caller.signal })
-  const keepAlive = setTimeout(() => {}, 1000)
-  await timeout.promise
+  const schedule = globalThis.setTimeout
+  let execution
+  try {
+    // Capture the real deadline callback without assuming a 1 ms budget survives preparation.
+    // This synchronous substitution is restored before any other test can schedule work.
+    globalThis.setTimeout = (callback, ms, ...args) => {
+      assert.equal(ms, 60000)
+      expire = () => callback(...args)
+      return schedule(callback, ms, ...args)
+    }
+    execution = definition.start({ command: 'true', timeoutMs: 60000 }, { signal: caller.signal })
+  } finally { globalThis.setTimeout = schedule }
+  assert.equal(execution.started, true)
+  assert.equal(typeof expire, 'function')
+  expire()
   caller.abort(new Error('later cancellation'))
   finished.resolve({ exitCode: null, signal: 'SIGTERM' })
   const value = await execution.result()
-  clearTimeout(keepAlive)
+  assert.equal(stopped, 1)
   assert.equal(value.timedOut, true)
   assert.equal(value.cancelled, undefined)
+})
+
+await test('pre-spawn deadline expiry settles without waiting for a subprocess abort listener', async () => {
+  let spawned = 0
+  const definition = bashToolDefinition({ file: process.execPath, source: 'config',
+    env: { get DSH_TEST_PREPARATION_DELAY() {
+      const end = performance.now() + 15
+      while (performance.now() < end) { /* Cross the 1 ms budget before the final pre-spawn check. */ }
+      return ''
+    } },
+    subprocess: { spawn() { spawned++; throw new Error('expired preparation must not spawn') } },
+  })
+  const execution = definition.start({ command: 'true', timeoutMs: 1 })
+  const value = await execution.result()
+  assert.equal(spawned, 0); assert.equal(execution.started, false)
+  assert.equal(value.timedOut, true); assert.equal(value.cancelled, undefined)
 })
 
 await test('an unavailable subprocess service settles without starting a command', async () => {
