@@ -2,8 +2,8 @@
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import type { Agent, Context, Session } from '../../adapter/dsh/types.js'
-import type { ShellCall, ShellPolicy } from '../../shells/types.js'
+import type { Agent, Context, Session, ConfinedArgv } from '../../adapter/dsh/types.js'
+import type { ShellCall, ShellPolicy, ShellResult } from '../../shells/types.js'
 import { errorMessage } from '../../shells/types.js'
 import { approveBashPolicy } from '../../shells/approval.js'
 import { DEFAULT_BASH_TIMEOUT_MS, MAX_BASH_TIMEOUT_MS } from '../../shells/constants.js'
@@ -14,26 +14,37 @@ import { prepareShellLaunch, shellEnvironment, environmentIdentity, type ShellLa
 import type { ShellAdmission, ShellCompleted, ShellFailure, ShellKernelMessage, ShellTransport } from './shell-protocol.js'
 import { collectShellOutput, type ShellOutputPair } from './shell-output.js'
 import { recordSettledSpills } from '../../shells/spill-settlement.js'
+import { confinementResult } from '../../shells/confinement-result.js'
 
 type Args = { command: string; workdir?: string; timeoutMs: number; sandbox_permissions?: string; justification?: string }
-interface Facts { standing: ShellPolicy; effective: ShellPolicy; environment: string }
+type Bash = ShellLaunchOptions['bash']
+export type ShellStateLoss = 'authority-changed' | 'runtime-changed' | 'environment-changed' | 'shell-reset'
+interface Facts { standing: ShellPolicy; effective: ShellPolicy; environment: string; bash: Bash; confinement?: ConfinedArgv }
 interface Owner {
   agent: Agent; session: Session; key: string; facts?: Facts; closed: boolean
-  closing?: Promise<void>; retiring?: Promise<void>
+  closing?: Promise<void>; retiring?: Promise<void>; stateLost?: ShellStateLoss
 }
 interface Pending {
   owner: Owner; args: Args; call: ShellCall; signal: AbortSignal; abort: AbortController
   sent: boolean; started: boolean; admitting: boolean; atHead?: boolean; terminal?: boolean; removeAbort(): void
   grant?: { standing: ShellPolicy; effective: ShellPolicy }
+  bash?: Bash; active?(): boolean; stateLost?: ShellStateLoss; facts?: Facts
   resolve(value: ShellAdmissionResult): void
 }
 interface Control { owner: Owner; resolve(): void; reject(error: Error): void }
-export interface ShellAdmissionOptions extends ShellLaunchOptions {
+export interface ShellAdmissionOptions extends Omit<ShellLaunchOptions, 'bash'> {
+  bash?: Bash
+  /** Resolve the currently selected consumer at the native queue head. */
+  selectBash?(agent: Agent): Bash | undefined
   transport: ShellTransport
   /** The owning publication may revoke access synchronously before its async reconciliation. */
   active?(agent: Agent): boolean
 }
-export type ShellAdmissionResult = ShellCompleted & ShellOutputPair
+export type ShellAdmissionResult = Omit<ShellCompleted, 'shellState'> & ShellOutputPair & {
+  shellState: ShellCompleted['shellState'] | 'unchanged'; stateLost?: ShellStateLoss
+  sandbox?: ShellResult['sandbox']; restriction?: ShellResult['restriction']
+  denialObservation?: 'detected' | 'not-observed' | 'incomplete'
+}
 const MAX_PENDING = 32
 const MAX_COMMAND_BYTES = 1024 * 1024
 const OUTPUT_BYTES = 128 * 1024
@@ -51,7 +62,7 @@ function emptyOutput(lossy = false): ShellOutputPair {
 }
 function refused(requestId: string, error: ShellFailure, sent = false, cleanupConfirmed = true): ShellAdmissionResult {
   return { type: 'shell.completed', requestId, status: sent ? 'failed' : 'rejected', exitCode: null,
-    effectState: sent ? 'unknown' : 'none', shellState: 'reset', cleanupConfirmed, stdoutTotal: 0, stderrTotal: 0, error, ...emptyOutput(sent) }
+    effectState: sent ? 'unknown' : 'none', shellState: sent ? 'reset' : 'unchanged', cleanupConfirmed, stdoutTotal: 0, stderrTotal: 0, error, ...emptyOutput(sent) }
 }
 function argumentsFor(input: Record<string, unknown>): Args {
   if (typeof input.command !== 'string' || !input.command.trim() || input.command.includes('\0')
@@ -67,12 +78,19 @@ function argumentsFor(input: Record<string, unknown>): Args {
 export function createShellAdmissionHost(ctx: Context, options: ShellAdmissionOptions) {
   const { transport } = options
   // Config replacement must dispose this owning context. Mutable caller config cannot relabel a live shell.
-  options = { ...options, bash: { ...options.bash } }
+  options = { ...options, ...(options.bash ? { bash: { ...options.bash } } : {}) }
   if (!transport.available || !transport.capabilities.includes('shell-v1')) throw new Error('EXECUTOR_UNAVAILABLE: the resident kernel does not support shell-v1.')
   const owners = new Map<Session, Owner>(), identities = new Map<string, Owner>()
   const disposed = new WeakSet<Agent>(), pending = new Map<string, Pending>(), controls = new Map<string, Control>()
   let stopped = false, disposal: Promise<void> | undefined
   let unavailable: Extract<ShellKernelMessage, { type: 'shell.unavailable' }> | undefined
+
+  const sameBash = (a: Bash, b: Bash) => a.file === b.file && a.source === b.source
+  function selected(owner: Owner): Bash {
+    const bash = options.selectBash ? options.selectBash(owner.agent) : options.bash
+    if (!bash) throw new Error('EXECUTOR_UNAVAILABLE: session Bash is no longer selected for this Agent.')
+    return { ...bash }
+  }
 
   function current(owner: Owner): ShellPolicy {
     if (stopped || owner.closed || disposed.has(owner.agent) || owner.agent.session !== owner.session
@@ -85,7 +103,9 @@ export function createShellAdmissionHost(ctx: Context, options: ShellAdmissionOp
   }
   function assertCurrent(item: Pending, standing: ShellPolicy) {
     item.signal.throwIfAborted()
+    if (item.active?.() === false) throw new Error('EXECUTOR_UNAVAILABLE: the calling Bash publication is no longer active.')
     if (!same(current(item.owner), standing)) throw new Error('AUTHORITY_CHANGED: session policy changed before admission; no command executed.')
+    if (item.bash && !sameBash(selected(item.owner), item.bash)) throw new Error('RUNTIME_CHANGED: selected Bash changed before admission; no command executed.')
   }
   function finish(requestId: string, value: ShellAdmissionResult) {
     const item = pending.get(requestId)
@@ -93,7 +113,19 @@ export function createShellAdmissionHost(ctx: Context, options: ShellAdmissionOp
     pending.delete(requestId)
     item.removeAbort()
     item.abort.abort()
-    item.resolve(value)
+    if (item.facts) {
+      const projected = confinementResult({ exitCode: value.exitCode, error: value.error?.message,
+        timeoutMs: item.args.timeoutMs, timedOut: value.error?.code === 'TIMEOUT',
+        stdout: { text: value.stdout.text, truncated: value.stdout.lossy },
+        stderr: { text: value.stderr.text, truncated: value.stderr.lossy } }, item.facts.effective, item.facts.confinement)
+      value = { ...value, sandbox: projected.sandbox,
+        denialObservation: projected.sandbox?.denied ? 'detected' : value.stderr.lossy ? 'incomplete' : 'not-observed',
+        ...(projected.restriction ? { restriction: projected.restriction } : {}) }
+      // Native owns effects and completion. A signature cannot prove an unstarted command.
+      if (!value.error && projected.sandbox?.runnerFailed) value = { ...value, status: 'failed',
+        error: { code: 'EXECUTOR_UNAVAILABLE', message: 'The sandbox runtime reported a failure. Prior effects remain as reported; restore the runtime without bypassing confinement.' } }
+    }
+    item.resolve({ ...value, ...(item.stateLost ? { stateLost: item.stateLost } : {}) })
   }
   function control(owner: Owner, type: 'shell.retire' | 'shell.close', reason: string): Promise<void> {
     const requestId = randomUUID()
@@ -103,9 +135,10 @@ export function createShellAdmissionHost(ctx: Context, options: ShellAdmissionOp
       catch (error) { transport.abort(new Error(errorMessage(error))) }
     })
   }
-  function retire(owner: Owner): Promise<void> {
+  function retire(owner: Owner, reason: ShellStateLoss = 'authority-changed'): Promise<void> {
     if (owner.closed) return owner.closing ?? Promise.resolve()
     if (!owner.retiring) {
+      owner.stateLost ??= reason
       owner.facts = undefined
       // Retire affects the current head only. Queued requests keep their own
       // admission opportunity under the next policy; late head callbacks stop.
@@ -164,30 +197,41 @@ export function createShellAdmissionHost(ctx: Context, options: ShellAdmissionOp
     let reply: ShellAdmission
     try {
       const standing = current(item.owner)
+      item.bash = selected(item.owner)
       assertCurrent(item, standing)
       const env = await shellEnvironment(ctx, { ...item.call, signal: item.signal })
       assertCurrent(item, standing)
       if (item.owner.retiring) { item.admitting = false; return }
       const environment = environmentIdentity(env)
       const facts = item.owner.facts
-      if (event.hasShell && (!facts || !same(facts.standing, standing) || facts.environment !== environment)) {
+      if (event.hasShell && (!facts || !same(facts.standing, standing) || facts.environment !== environment || !sameBash(facts.bash, item.bash))) {
+        item.stateLost = facts && !sameBash(facts.bash, item.bash) ? 'runtime-changed'
+          : facts && facts.environment !== environment ? 'environment-changed' : 'authority-changed'
         reply = { type: 'shell.admission', requestId: event.requestId, decision: 'retire' }
       } else {
         if (!item.grant) item.grant = { standing, effective: snapshot(await approveBashPolicy(ctx, item.args, { ...item.call, signal: item.signal }, standing)) }
         assertCurrent(item, item.grant.standing)
         const effective = item.grant.effective
         if (event.hasShell && !same(facts!.effective, effective)) {
+          item.stateLost = 'authority-changed'
           reply = { type: 'shell.admission', requestId: event.requestId, decision: 'retire' }
         } else {
           const cwd = !event.hasShell || item.args.workdir !== undefined ? await directory(item, standing) : undefined
           assertCurrent(item, standing)
-          if (event.hasShell) reply = { type: 'shell.admission', requestId: event.requestId, decision: 'reuse', ...(cwd ? { commandCwd: cwd } : {}) }
+          if (event.hasShell) {
+            item.facts = facts
+            reply = { type: 'shell.admission', requestId: event.requestId, decision: 'reuse', ...(cwd ? { commandCwd: cwd } : {}) }
+          }
           else {
             const endpoints = event.bootstrap
             if (!endpoints || Object.values(endpoints).some(value => typeof value !== 'string' || !value || value.includes('\0') || value.length > 512)) throw new Error('PROTOCOL_ERROR: missing trusted bootstrap endpoints.')
-            const prepared = await prepareShellLaunch(ctx, options, endpoints, cwd!, env, effective, item.signal, () => assertCurrent(item, standing))
+            const prepared = await prepareShellLaunch(ctx, { ...options, bash: item.bash }, endpoints, cwd!, env, effective, item.signal, () => assertCurrent(item, standing))
             assertCurrent(item, standing)
-            item.owner.facts = { standing, effective, environment }
+            item.stateLost ??= item.owner.stateLost
+            item.owner.stateLost = undefined
+            item.owner.facts = { standing, effective, environment, bash: item.bash,
+              ...(prepared.confinement ? { confinement: structuredClone(prepared.confinement) } : {}) }
+            item.facts = item.owner.facts
             reply = { type: 'shell.admission', requestId: event.requestId, decision: 'launch', launch: prepared.launch,
               closeAfter: !same(standing, effective), ...(item.args.workdir ? { commandCwd: cwd } : {}) }
           }
@@ -211,7 +255,10 @@ export function createShellAdmissionHost(ctx: Context, options: ShellAdmissionOp
       // Native may admit the next queued request while these terminal streams
       // are still being copied. Apply this receipt's state change now, never
       // after awaits that could overwrite the next shell's launch facts.
-      if (event.shellState === 'reset') item.owner.facts = undefined
+      if (event.shellState === 'reset') {
+        if (item.owner.facts) item.owner.stateLost ??= 'shell-reset'
+        item.owner.facts = undefined
+      }
       item.removeAbort()
       item.abort.abort(new Error('The kernel has settled this request.'))
       if (!transport.available) { finish(event.requestId, { ...event, ...emptyOutput(event.effectState !== 'none') }); return }
@@ -249,19 +296,25 @@ export function createShellAdmissionHost(ctx: Context, options: ShellAdmissionOp
     controls.clear()
   }
   const unsubscribe = transport.subscribe(receive)
-  const removeEvent = ctx.on('session/event', (session) => {
-    const owner = owners.get(session)
-    if (!owner || owner.closed || !owner.facts) return
-    try { if (!same(current(owner), owner.facts.standing)) void retire(owner).catch(() => {}) }
-    catch { void close(owner).catch(() => {}) }
-  })
+  function reconcile() {
+    for (const owner of owners.values()) {
+      if (owner.closed) continue
+      try {
+        const standing = current(owner), bash = selected(owner)
+        if (owner.facts && !sameBash(bash, owner.facts.bash)) void retire(owner, 'runtime-changed').catch(() => {})
+        else if (owner.facts && !same(standing, owner.facts.standing)) void retire(owner).catch(() => {})
+      } catch { void retire(owner).catch(() => {}) }
+    }
+  }
+  const removeEvent = ctx.on('session/event', reconcile)
   const removeDisposed = ctx.on('session/disposed', session => { const owner = owners.get(session); if (owner) void close(owner).catch(() => {}) })
 
-  function execute(input: Record<string, unknown>, call: ShellCall): Promise<ShellAdmissionResult> {
+  function execute(input: Record<string, unknown>, call: ShellCall, active?: () => boolean): Promise<ShellAdmissionResult> {
     const requestId = randomUUID()
     let args: Args, owner: Owner
     try {
       call.signal?.throwIfAborted()
+      if (active?.() === false) throw new Error('EXECUTOR_UNAVAILABLE: the calling Bash publication is no longer active.')
       if (stopped || !transport.available) throw new Error('EXECUTOR_UNAVAILABLE: resident shell transport is unavailable.')
       if (pending.size >= MAX_PENDING) throw new Error('EXECUTOR_BUSY: resident shell correlation capacity is full.')
       args = argumentsFor(input); owner = ownerFor(call.agent)
@@ -275,7 +328,7 @@ export function createShellAdmissionHost(ctx: Context, options: ShellAdmissionOp
         cancelled = true
         try { transport.send({ type: 'cancel', requestId }) } catch (error) { transport.abort(new Error(errorMessage(error))) }
       }
-      const item: Pending = { owner, args, call: { ...call, agent: owner.agent }, signal, abort, sent: false, started: false, admitting: false,
+      const item: Pending = { owner, args, call: { ...call, agent: owner.agent }, active, signal, abort, sent: false, started: false, admitting: false,
         removeAbort: () => signal.removeEventListener('abort', cancel), resolve }
       pending.set(requestId, item)
       signal.addEventListener('abort', cancel, { once: true })
@@ -300,5 +353,10 @@ export function createShellAdmissionHost(ctx: Context, options: ShellAdmissionOp
     return disposal
   }
   ctx.effect(() => dispose)
-  return { execute, dispose }
+  function availableFor(agent: Agent): boolean {
+    if (stopped || !transport.available || disposed.has(agent) || ctx.get('agents')?.get(agent.id) !== agent) return false
+    try { return options.active?.(agent) !== false && Boolean(options.selectBash ? options.selectBash(agent) : options.bash) }
+    catch { return false }
+  }
+  return { execute, dispose, reconcile, availableFor }
 }

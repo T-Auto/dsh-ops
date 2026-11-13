@@ -13,13 +13,14 @@ export function bashOperationDescription(platform: string = process.platform): s
 }
 
 /** Cross-call guidance belongs only to a scope that can actually call OPS Bash. */
-export function renderBashGuidance(background: boolean, platform: string = process.platform): string {
+export function renderBashGuidance(background: boolean, platform: string = process.platform, session = false): string {
   return [
     `# ${BASH_TOOL}: Bash command execution`,
     'Provide exactly one of command or script_path. For scripts longer than about 1 KB or containing heredocs, quotes, backslashes or non-ASCII text, write a script file first and pass script_path.',
     ...(platform === 'win32' ? ['On Windows, workdir accepts D:/repo or /d/repo; drive-less /tmp or / is not a Windows workdir. Within command, use MSYS paths such as /d/repo, quote paths with spaces, and use Bash rather than PowerShell path/variable syntax.'] : []),
     'The host session sandbox remains authoritative; a denial or rejected approval must not be bypassed by switching shells.',
     'A missing exitCode or failed status is not success. Truncation and spill paths describe retained output, not completeness.',
+    ...(session ? ['execution defaults to fresh. Choose session explicitly to retain cwd, exports, functions and options in this Agent; omitted workdir preserves cwd, explicit workdir changes it. Session accepts command only and stdin is EOF on each call. It rechecks authority at the native queue head. Check shellState and stateLost: a reset or authority/runtime change discards prior state. Session timeout stops the shell, never promotes it. Inline output retains a bounded prefix; use an available spillPath to recover the complete stream. For script_path or independent background jobs choose fresh; background jobs do not clone session state.'] : []),
     background
       ? 'Promotion is not command completion; collect through job_output and stop through job_kill.'
       : 'Host jobs are unavailable; the foreground timeout stops the command.',

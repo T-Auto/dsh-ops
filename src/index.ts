@@ -17,6 +17,7 @@ import { configureResultCacheGc } from './kernel/result-cache-gc.js'
 import { registerOpsPtcPreset } from './presets/ops-ptc/register.js'
 import { residentKernel, sharedWorkerSelection } from './execution/resident/provider.js'
 import { residentFreshTasks } from './execution/resident/fresh-provider.js'
+import { residentSessionShells } from './session-shell-provider.js'
 export { Config } from './settings/merged.js'
 export { applyComponent } from './legacy/host.js'
 export const name = 'dsh-ops'
@@ -43,6 +44,7 @@ export async function apply(root: Context, rawConfig: unknown): Promise<void> {
   ])
   await host.plugin(residentKernel(selection))
   await host.plugin(residentFreshTasks())
+  await host.plugin(residentSessionShells())
   const mount = async (module: { apply(...args: unknown[]): unknown }, state: { enabled: boolean; raw?: Record<string, unknown>; config: unknown }, slice?: Record<string, unknown>): Promise<void> => {
     if (!state.enabled) return
     const payload = slice ?? state.raw ?? state.config

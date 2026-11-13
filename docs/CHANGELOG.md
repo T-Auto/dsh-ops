@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Connect explicit session Bash results to sealed spill recovery, require `shell-spill-v1` before public activation, and bind retained session callbacks to their exact publishing Agent. Fresh and session projections share the existing root-owned kernel and preserve their separate semantics; accepted runtime distribution remains pending (#872).
+- 将显式会话 Bash 结果接入已封存的 spill 恢复，公开启用前要求 `shell-spill-v1`，并把保留的会话回调绑定到发布它的准确 Agent。Fresh 与会话投影共用既有根作用域内核，保留各自语义；合格运行时分发仍待完成（#872）。
+
 - Connect persistent session streams to the kernel's shared task spill store and existing retention ledger, with `shell-spill-v1`, actual-kernel-PID validation, sealed terminal recovery and exact Session ownership. Public activation still requires a qualified runtime; stock foreground CI does not qualify asynchronous output (#872).
 - 将持久会话输出接入内核与任务共享的溢写存储及现有保留账本，增加 `shell-spill-v1`、实际内核 PID 校验、封存终态恢复和准确 Session 归属。公共启用仍需已验证的运行时；现有运行时的前台 CI 不代表异步输出已合格（#872）。
 
@@ -45,6 +48,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - Add a Windows shell process substrate with atomic nested Job ownership, bounded authenticated private channels and an owned disposable signal controller. Repository-only probes exercise real public sandbox argv, cancellation and crash cleanup; published shell tools, pinned runtimes and POSIX execution remain unchanged (#872).
 - 添加 Windows shell 进程基础层：原子嵌套 Job 所有权、有界且验证 peer 的私有通道，以及所属范围内的一次性信号 controller。仓库专用探针实际验证公开 sandbox argv、取消与崩溃回收；已发布 shell 工具、固定 runtime 和 POSIX 执行保持不变（#872）。
+
+- Prepare explicit `ops_bash` execution selection for #872: fresh remains the default; a ready shell-capable resident provider can expose session state through the shared Native/PTC definition. Queue-head authority, runtime selection, state-loss and cleanup facts remain explicit. This integration is unpublished: recoverable session output spill/paging, kernel-owned jobs and full acceptance remain prerequisites.
+- 为 #872 准备 `ops_bash` 显式执行模式：默认仍为 fresh；支持 shell 且就绪的常驻 provider 可通过共用的 Native/PTC 定义暴露会话状态。队首权限、运行时选择、状态丢失与清理事实均明确返回。该集成尚未发布：可恢复的会话输出 spill/分页、内核拥有的 job 与完整验收仍是前置条件。
 
 - Add a repository-only regression that runs the production resident server with deliberately blocked fixture leaves. Targeted cancellation, disconnect, kernel crash and provider unload must join their owned leaves while unrelated work continues; the four-platform CI runs this check (#872). No shipped tool behavior changes.
 - 增加仓库专用回归探针：让生产常驻服务运行确定阻塞的测试执行子进程。定向取消、断连、内核崩溃和 provider 卸载必须回收所属执行，且不影响无关工作；四个平台的 CI 均运行此检查（#872）。不改变已发布工具行为。

@@ -45,6 +45,14 @@ export function renderHostBash(value: HostBashResult): string {
   const { exitCode, signal, ...rest } = value
   const body = renderBashResult(rest)
   const markers = []
+  if ('execution' in value && value.execution === 'session') {
+    markers.push(`[session shell: ${value.shellState}; cleanup confirmed: ${value.cleanupConfirmed}]`)
+    if (value.shellState === 'reset') markers.push('[shell state lost; a new shell is required before another session command]')
+    if (value.stateLost) markers.push(`[prior shell state discarded: ${value.stateLost}]`)
+    if (value.denialObservation === 'incomplete') markers.push('[denial detection incomplete: stderr was not fully retained]')
+    const unavailable = (['stdout', 'stderr'] as const).filter(stream => value[stream].truncated && !value[stream].spillPath)
+    if (unavailable.length) markers.push(`[only the retained ${unavailable.join('/')} prefix is available; omitted bytes have no spill recovery]`)
+  }
   if (value.failure) markers.push(`[${value.failure.code}; effects: ${value.failure.effectState}; retry: ${value.failure.retry}] ${value.failure.nextAction ?? ''}`)
   if (value.sandbox?.denied) markers.push(`[sandbox: file access denied under ${value.sandbox.mode} mode]`)
   if (value.sandbox?.denialObservation === 'incomplete') markers.push('[sandbox diagnostics incomplete: retained output cannot exclude a denial]')

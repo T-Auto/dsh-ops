@@ -44,7 +44,7 @@ export function mountConsumer(ctx: Context, plan: ConsumerPlan): void {
         const definition = inner.get('tools')?.get(BASH_TOOL, agent)
         if (!definition) return bashResolution.available ? '' : withExtra(renderBashUnavailable(bashResolution.source, bashResolution.detail))
         const background = Object.hasOwn(definition.parameters.properties ?? {}, 'run_in_background')
-        return withExtra(renderBashGuidance(background))
+        return withExtra(renderBashGuidance(background, process.platform, Object.hasOwn(definition.parameters.properties ?? {}, 'execution')))
       }
       inner.effect(() => inner.systemPrompt.section({ name: `${BASH_PROMPT_SECTION}:${plan.id}`, order: inner.systemPrompt.getSectionOrder('TOOL_BASH'), interpolate: false,
         text: context => renderShellGuidance(context.agent ?? context.scope as Agent),
