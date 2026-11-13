@@ -1,3 +1,4 @@
+import { mountFakeResident } from './lib/resident.mjs'
 /** PTC declarations must follow the step admission, including loader-less scopes. */
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { assert, test, report } from './lib/harness.mjs'
@@ -15,6 +16,7 @@ function declared(assembly) {
 
 async function setup(gate) {
   const { ctx } = await bootHost({ withWorkingDirectory: true, toolsMode: 'ptc' })
+  await mountFakeResident(ctx, { file: process.execPath })
   const agents = []
   ctx.provide('agents', { list: () => agents })
   await ctx.plugin(inner => {

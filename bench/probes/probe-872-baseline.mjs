@@ -1,5 +1,5 @@
 /**
- * Current complete-call baseline for #872; no model requests or improvement claim.
+ * Current complete-call measurement for #872; no model requests or improvement claim.
  * Build JS and the worker first. Supply --bash for a complete Windows payload;
  * use an explicit short TMP/TEMP directory if the host's sandbox temp path is too long.
  * --samples 2 --warmup 1 is a smoke check; the default records 200 hot calls/item.
@@ -43,12 +43,12 @@ fs.writeFileSync(path.join(workspace, 'note.txt'), payload + '\n')
 const hash = value => createHash('sha256').update(value).digest('hex')
 const command = (file, argv) => execFileSync(file, argv, { cwd: root, encoding: 'utf8', windowsHide: true, timeout: 15_000 }).trim()
 const report = {
-  issue: 872, kind: 'current-baseline', startedAt: new Date().toISOString(), samplesPerItem: samples, warmupPerItem: warmup,
+  issue: 872, kind: 'resident-file-measurement', startedAt: new Date().toISOString(), samplesPerItem: samples, warmupPerItem: warmup,
   meetsHotSampleMinimum: samples >= 200, percentileMethod: 'nearest rank',
   measurement: 'prepareStep (admission and prompt/SDK assembly) through tools.execute, canonical validation and model-facing rendering',
   composition: 'Real Cordis, Agents/Sessions/Loop, policy, subprocess/sandbox, jobs, Native/Node PTC executors; NativeFileTools and mountSessionBash. A probe-owned jobs controller admits foreground jobs; no Desktop, model or UI service.',
   limitations: [
-    'No comparison arm and no resident kernel; this report cannot establish an improvement.',
+    'Local file calls share one resident kernel; fresh commands and Node PTC retain their existing runners. There is no comparison arm, so this report cannot establish an improvement.',
     'Cold means the first call for each item after host setup, in listed order; shared services may already be warm. It is not OS-cache-cold or full application startup.',
     'CPU/RSS/OS handle counts describe this Node host only; child CPU, child peak RSS and whole process-tree handle counts are not measured.',
     'The probe retains sample records and completed Session events; host memory includes that instrumentation.',
@@ -90,12 +90,13 @@ try {
     JSON.parse(fs.readFileSync(path.join(root, 'node_modules/@deepseek-ai', name, 'package.json'), 'utf8')).version]))
   const [{ bootHost, shutdown }, { selectExecutor, executeCall }, { NativeFileTools }, { mountSessionBash }, { resolveShells }, { publicToolName },
     { default: Agents }, { default: Sessions }, { default: Projections }, { default: Loop }, { default: Subprocess },
-    { default: Sandbox }, { default: FileSystem }, { default: NodePtc }, { default: Jobs }, { default: Policy, setSandboxMode }] = await Promise.all([
+    { default: Sandbox }, { default: FileSystem }, { default: NodePtc }, { default: Jobs }, { default: Policy, setSandboxMode }, { residentKernel }] = await Promise.all([
     import('../../test/lib/host.mjs'), import('../../test/lib/executor.mjs'), import('../../lib/projections/native/runtime.js'),
     import('../../lib/session-shells.js'), import('../../lib/shells.js'), import('../../lib/policy.js'),
     import('@deepseek-ai/dsh-agent'), import('@deepseek-ai/dsh-session'), import('@deepseek-ai/dsh-session-projection'),
     import('@deepseek-ai/dsh-agent-loop'), import('@deepseek-ai/dsh-subprocess-local'), import('@deepseek-ai/dsh-sandbox-local'),
     import('@deepseek-ai/dsh-fs-local'), import('@deepseek-ai/dsh-ptc-runtime-node'), import('@deepseek-ai/dsh-jobs-local'), import('@deepseek-ai/dsh-sandbox-policy'),
+    import('../../lib/execution/resident/provider.js'),
   ])
   const bashPath = flags.get('--bash') ?? process.env.DSH_OPS_TEST_BASH
   const bash = resolveShells(bashPath ? { bashPath: path.resolve(bashPath) } : {}).bash
@@ -118,6 +119,8 @@ try {
       return handle
     } catch (error) { record.error = String(error); active.delete(record); throw error }
   }
+  await ctx.plugin(residentKernel({ binaryPath: worker }))
+  report.kernel = { pid: ctx.get('opsKernel').pid, file: ctx.get('opsKernel').file }
   runtime = new NativeFileTools({ ctx, config: { workerPath: worker, required: true } })
   await runtime.start(['inspect_local_file'])
   await ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { mountSessionBash(inner, { publishBashTool: true }, { bash }) } })

@@ -8,6 +8,7 @@ import { AclWriteGrant, assertTempRootOutsideWorkspace, tempWriteSid, workspaceW
 import { canonicalPath } from '@deepseek-ai/dsh-sandbox'
 import { assert, test, report, withTempDir, skipSuite } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { mountResident } from './lib/resident.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
 import { definition as fileDefinition } from '../lib/file/contract.js'
 import { definition as ptcDefinition } from '../lib/ptc/contract.js'
@@ -43,6 +44,7 @@ if (process.platform === 'win32') await test('native operations prepare only ses
     const {ctx} = await bootHost(), session = { id: 'cache-prep', header: { cwd: root } }, agent = { session }
     try {
       await ctx.plugin(Subprocess); await ctx.plugin(CacheSandbox)
+      await mountResident(ctx, { file: WORKER, cwd: root })
       const sandbox = ctx.get('sandbox')
       await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: () => ({ mode: 'workspace-write', workspaceRoot: root, sessionId: session.id }) }))
       await ctx.plugin(inner => mountResultLifecycle(inner))
@@ -82,6 +84,7 @@ if (process.platform === 'win32') await test('read-only never prepares storage a
     let mode = 'read-only'
     try {
       await ctx.plugin(Subprocess); await ctx.plugin(CacheSandbox)
+      await mountResident(ctx, { file: WORKER, cwd: root })
       const sandbox = ctx.get('sandbox'), policy = () => ({mode, workspaceRoot:root, sessionId:session.id})
       await ctx.plugin(inner => inner.provide('sandboxPolicy', {resolve:policy}))
       const denied = await resultStorage(ctx,session,undefined,WORKER,'glob',policy(),[],false)
@@ -101,6 +104,7 @@ if (process.platform === 'win32') await test('legacy host retains its normal con
     const {ctx} = await bootHost(), session = {id:'cache-legacy',header:{cwd:root}}
     try {
       await ctx.plugin(Subprocess); await ctx.plugin(CacheSandbox)
+      await mountResident(ctx, { file: WORKER, cwd: root })
       const sandbox = ctx.get('sandbox'); sandbox.prepareResultStorage = undefined
       const policy = {mode:'workspace-write', workspaceRoot:root, sessionId:session.id}
       const storage = await resultStorage(ctx,session,undefined,WORKER,'glob',policy,[],false)
@@ -114,6 +118,7 @@ if (process.platform === 'win32') await test('full-access legacy hosts never pre
     const {ctx} = await bootHost(), session = {id:'cache-full-access-legacy',header:{cwd:root}}, agent = {session}
     try {
       await ctx.plugin(Subprocess); await ctx.plugin(CacheSandbox)
+      await mountResident(ctx, { file: WORKER, cwd: root })
       const sandbox = ctx.get('sandbox'); sandbox.prepareResultStorage = undefined
       // Any confinement request is already a regression; never grant ACLs to hide it.
       sandbox.confine = async () => { sandbox.confines++; throw new Error('full-access must not request confinement') }
@@ -137,6 +142,7 @@ if (process.platform === 'win32') await test('full-access hosts with cache-only 
     const {ctx} = await bootHost(), session = {id:'cache-full-access',header:{cwd:root}}, agent = {session}
     try {
       await ctx.plugin(Subprocess); await ctx.plugin(CacheSandbox)
+      await mountResident(ctx, { file: WORKER, cwd: root })
       const sandbox = ctx.get('sandbox'), policy = {mode:'danger-full-access',workspaceRoot:root,sessionId:session.id}
       await ctx.plugin(inner=>inner.provide('sandboxPolicy',{resolve:()=>policy}))
       await ctx.plugin(inner=>{ inner.inject(['tools'],scoped=>{

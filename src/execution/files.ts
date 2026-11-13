@@ -14,7 +14,7 @@ import { credentialPath, credentialRefusal, credentialRoots } from '../credentia
 import { ensureSessionTemp, sessionTempDir } from '../session-temp.js'
 import { denied, authorityChanged, normalizeNativeDenial, credentialDenied } from '../permissions.js'
 import { inside, anchoredPath, sessionAnchors, sameAuthority, fileWriteRoots } from '../authority-paths.js'
-import { exchange } from './transport.js'
+import { requireResident } from './resident/provider.js'
 import { resolveWorker } from './runtime.js'
 import { FILE_MUTATIONS } from '../policy.js'
 import { normalizeArguments } from '../capabilities/arguments.js'
@@ -120,7 +120,7 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
   if (reads && 'error' in reads) return failure('INVALID_ARGUMENT', reads.error)
   const operationPath = absoluteTarget(args?.path ?? '.', cwd)
   if (!operationPath) return failure('INVALID_ARGUMENT', 'path must be a non-empty path.')
-  // Credential locations are refused before the worker is spawned, so no read of one ever reaches a
+  // Credential locations are refused before request admission, so no read of one ever reaches a
   // result. On by default; a row can turn the fence off for itself (report: credential fence).
   if ((config?.denyCredentialReads ?? true) !== false) {
     for (const target of reads ? reads.files.map(file => file.path) : [operationPath]) {
@@ -183,12 +183,11 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
   if (Buffer.byteLength(input) > 2 * 1024 * 1024) return failure('OUTPUT_LIMIT', tool === 'write_file'
     ? 'write_file content makes the request exceed the 2 MiB byte budget; split it into smaller writes.'
     : 'Request exceeds the 2 MiB byte budget.')
-  let spawned = false
+  let started = false
   try {
     // Trusted, fixed file operations follow DSH fs-sandbox's policy fence,
     // not an arbitrary-code runner. The worker accepts data, never shell/code.
     // This is the only file execution path, not a sandbox-failure fallback.
-    const argv = [file]
     signal?.throwIfAborted?.()
     const fsService = hostFs(ctx)
     // Stat before reading, like host read: a concurrent change records the older version and fails stale later.
@@ -206,7 +205,7 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
       const latest = policyService.resolve({ session })
       return sameAuthority(latest, policy)
     }, config)
-    let transportInput = input
+    let transportEnvelope = envelope
     if (signal.aborted) return failure('CANCELLED', 'The file call was cancelled before backend admission or result publication.')
     const latest = policyService.resolve({ session })
     if (!sameAuthority(latest, policy)) {
@@ -217,10 +216,10 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
     }
     if (!delegated.handled) {
       if (signal.aborted || delegated.remainingMs < 1) return failure('TIMEOUT', 'The original call budget expired during WSL preparation; no replay was attempted.')
-      transportInput = JSON.stringify({ ...envelope, budget: { ...envelope.budget, timeoutMs: delegated.remainingMs } })
+      transportEnvelope = { ...envelope, budget: { ...envelope.budget, timeoutMs: delegated.remainingMs } }
     }
     const result = delegated.handled ? { readers: true, interrupted: false, lossy: false, exitCode: 0, stderr: '', value: delegated.value, invalid: undefined }
-      : await exchange(subprocess, { argv, cwd, stdio: { stdin: { data: transportInput }, stdout: { maxBytes: envelope.budget.maxBytes }, stderr: { maxBytes: 16 * 1024 } }, graceMs: 1000, signal }, () => { spawned = true })
+      : await requireResident(ctx, { binaryPath: file }).invoke(transportEnvelope, signal, () => { started = true })
     if (!result.readers) return failure('RESULT_UNKNOWN', mutates ? 'Worker output readers are unavailable; inspect postconditions.' : 'Read-only worker output readers are unavailable; no files were changed.', 'verify', mutates ? 'unknown' : 'none')
     if (result.interrupted) {
       const code = mutates ? 'RESULT_UNKNOWN' : signal.reason instanceof InvocationDeadlineError ? 'TIMEOUT' : signal.aborted ? 'ABORTED' : 'RESULT_UNKNOWN'
@@ -244,6 +243,6 @@ async function invokeTrusted(ctx: Context, file: string, tool: string, args: unk
     const normalized = normalizeNativeDenial(value, policy, tool, mutates ? requiredMode(policy) : 'workspace-write')
     return { ...normalized, sandbox: { mode: policy.mode, enforcement: 'policy', boundary: 'trusted-native-file-operations' } }
   } catch (error) {
-    return failure(spawned && mutates ? 'RESULT_UNKNOWN' : 'EXECUTOR_UNAVAILABLE', `DSH trusted file executor failed; this is not a user authorization denial. ${errorText(error)}`, 'execute', spawned && mutates ? 'unknown' : 'none')
+    return failure(started && mutates ? 'RESULT_UNKNOWN' : 'EXECUTOR_UNAVAILABLE', `DSH trusted file executor failed; this is not a user authorization denial. ${errorText(error)}`, 'execute', started && mutates ? 'unknown' : 'none')
   }
 }

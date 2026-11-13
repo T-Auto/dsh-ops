@@ -4,6 +4,7 @@ import path from 'node:path'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { mountResident } from './lib/resident.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
 import { invoke } from '../lib/file/worker.js'
 import { resolveReadFiles } from '../lib/file/read-files.js'
@@ -26,7 +27,7 @@ await test('range normalization preserves caller data, invalid fields and the cu
   }
 })
 
-await test('one real spawn reads all ranges, refreshes cwd and observes only returned successful files', async () => {
+await test('one resident request reads all ranges, refreshes cwd and observes only returned successful files', async () => {
   await withTempDir('read-many-host', async root => {
     const first = path.join(root, 'first'), second = path.join(root, 'second')
     fs.mkdirSync(first); fs.mkdirSync(second)
@@ -45,7 +46,10 @@ await test('one real spawn reads all ranges, refreshes cwd and observes only ret
       }))
       ctx.on('fs/observed', (target, observation) => observed.push({ target, observation }))
       const processService = ctx.get('subprocess'), spawn = processService.spawn.bind(processService)
-      processService.spawn = spec => { sent.push(JSON.parse(spec.stdio.stdin.data)); return spawn(spec) }
+      let spawns = 0
+      processService.spawn = spec => { ++spawns; return spawn(spec) }
+      const kernel = await mountResident(ctx, { file: WORKER, cwd: root }), dispatch = kernel.invoke.bind(kernel)
+      kernel.invoke = (envelope, ...rest) => { sent.push(envelope); return dispatch(envelope, ...rest) }
       const exec = execution(first)
       const value = await invoke(ctx, WORKER, 'read_files', { files: [{ path: 'a.txt', offset: 2 }, { path: 'binary' }, { path: 'b.txt' }] }, exec, exec.signal)
       assert.equal(sent.length, 1)
@@ -62,6 +66,7 @@ await test('one real spawn reads all ranges, refreshes cwd and observes only ret
       exec.agent.session.header.cwd = second
       const next = await invoke(ctx, WORKER, 'read_files', { files: [{ path: 'a.txt' }] }, exec, exec.signal)
       assert.equal(sent.length, 2)
+      assert.equal(spawns, 1, 'both reads share the activation-owned kernel')
       assert.equal(next.items[0].items[0].text, 'changed cwd')
       assert.equal(sent[1].request.args.files[0].path, path.join(second, 'a.txt'))
       assert.deepEqual(fs.readdirSync(root).sort(), ['first', 'second'], 'read-only calls leave no audit or job files')

@@ -1,3 +1,4 @@
+import { mountFakeResident } from './lib/resident.mjs'
 /** Mode probes use public executor presentation once per resolve, never private modeFor. */
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { mountPtc } from '../lib/publication/ptc.js'
@@ -7,6 +8,7 @@ import { selectExecutor, prepareStep } from './lib/executor.mjs'
 import { assert, test, report, TEST_HOME } from './lib/harness.mjs'
 async function setup() {
   const { ctx, tools, prompt } = await bootHost()
+  await mountFakeResident(ctx, { file: process.execPath })
   ctx.provide('subprocess', { spawn() { throw new Error('mode admission never executes workers') } })
   ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: TEST_HOME }) })
   ctx.provide('ptcRuntime', { language: 'typescript' })

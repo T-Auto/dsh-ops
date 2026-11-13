@@ -6,6 +6,7 @@ import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { assert, test, report, withTempDir, skipSuite, waitFor } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { mountResident, mountFakeResident } from './lib/resident.mjs'
 import { invoke as fileCall } from '../lib/file/worker.js'
 import { invoke as ptcCall } from '../lib/ptc/worker.js'
 import { tryResolveWorker } from '../lib/ptc/runtime.js'
@@ -187,6 +188,10 @@ await test('both worker bridges normalize only typed native authorization and re
       await ctx.plugin(inner => inner.provide('subprocess', { spawn: () => ({ done: Promise.resolve({ exitCode: 0 }), collected: {
         stdout: { readFrom: () => ({ text: JSON.stringify(result), lossy: false }) }, stderr: { readFrom: () => ({ text: '', lossy: false }) },
       } }) }))
+      await mountFakeResident(ctx, { file: 'unused', invoke: async (_envelope, _signal, started) => {
+        started?.()
+        return { exitCode: 0, interrupted: false, readers: true, lossy: false, stderr: '', value: result }
+      } })
       for (const [call, tool, args] of [[fileCall, 'stat', { path: 'data.txt' }], [ptcCall, 'result', { action: 'page' }]]) {
         for (const reason of [undefined, 'future-reason', 'write-roots']) {
           result = { status: 'error', changed: 1, error: { code: 'POLICY_DENIED', reason, phase: 'publish', effectState: 'applied' } }
@@ -261,6 +266,7 @@ await test('real worker accepts trusted workspace aliases for reads/create/copy/
     let mode = 'workspace-write'
     try {
       await ctx.plugin(Subprocess)
+      await mountResident(ctx, { file: attempt.file, cwd: root })
       await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: () => ({ mode, workspaceRoot: alias }) }))
       const call = (tool, args) => fileCall(ctx, attempt.file, tool, args, execution(alias), signal())
       for (const current of ['read-only', 'workspace-write', 'danger-full-access']) {

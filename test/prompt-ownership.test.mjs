@@ -1,3 +1,4 @@
+import { mountFakeResident } from './lib/resident.mjs'
 /** Empty operator guidance needs no prompt construction merely to choose its owner (#792). */
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { mountNative } from '../lib/publication/native.js'
@@ -15,6 +16,7 @@ for (const extraGuidance of ['', 'Keep this operator guidance.']) {
     try {
       ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'read-only', workspaceRoot: root }) })
       ctx.provide('subprocess', { spawn() { throw new Error('ownership must not spawn') } })
+      await mountFakeResident(ctx, { file: process.execPath })
       await ctx.plugin({ apply(inner) {
         owns = mountNative(inner, { ...resolveConfig({ binaryPath: process.execPath }), extraGuidance }, {
           id: 'ownership-test', tools: ['inspect_local_file'], section: 'mode-standard', gate: { allows: () => true },
@@ -42,6 +44,7 @@ for (const extraGuidance of ['', 'Keep this operator guidance.']) {
     try {
       ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'read-only', workspaceRoot: root }) })
       ctx.provide('subprocess', { spawn() { throw new Error('ownership must not spawn') } })
+      await mountFakeResident(ctx, { file: process.execPath })
       await ctx.plugin({ apply(inner) {
         mountConsumer(inner, { id: 'ownership-test', gate: { allows: () => true },
           core: { ...resolveConfig({ binaryPath: process.execPath, bashPath: process.execPath }), extraGuidance },

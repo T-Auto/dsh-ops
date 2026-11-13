@@ -1,6 +1,8 @@
 /** Host worker boundaries treat arguments and process output as untrusted values. */
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { mountFakeResident } from './lib/resident.mjs'
+import { exchange } from '../lib/execution/transport.js'
 import { invoke as fileCall } from '../lib/file/worker.js'
 import { invoke as ptcCall } from '../lib/ptc/worker.js'
 import { InvocationDeadlineError } from '../lib/lifecycle/invocations.js'
@@ -19,6 +21,12 @@ async function fixture(body) {
           stderr: state.missing.has('stderr') ? undefined : { readFrom: () => ({ text: '', lossy: false }) },
         } }
       } }))
+      // These fixtures exercise the bridge's WorkerExchange refusal vocabulary.
+      // Reuse the raw-output fake only to construct those kernel receipts.
+      await mountFakeResident(ctx, { file: 'unused', invoke: (envelope, signal, started) => exchange(ctx.get('subprocess'), {
+        argv: ['unused'], cwd: root, signal, graceMs: 1000,
+        stdio: { stdin: { data: JSON.stringify(envelope) }, stdout: { maxBytes: envelope.budget.maxBytes }, stderr: { maxBytes: 16384 } },
+      }, started) })
       await ctx.plugin(inner => inner.provide('fs', {
         resolve: async file => file, stat: async () => ({ type: 'file', size: 0, version: 'observed-version' }),
       }))

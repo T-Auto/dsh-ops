@@ -2,6 +2,7 @@ import { setImmediate } from 'node:timers/promises'
 import path from 'node:path'
 import { assert, test, report, waitFor } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { mountExchangeResident } from './lib/resident.mjs'
 import {
   deferredCleanupCount, resultSessionNonce, registerResultCleanup, retryDeferredResultCleanup,
   withResultSession, expireResultSession, mountResultLifecycle,
@@ -133,6 +134,7 @@ await test('permission changes cancel the owning Native session while sibling wo
         if (++spawned === 2) entered.resolve()
         return { done, collected: { stdout: { readFrom: () => ({ text: '{"status":"completed"}' }) }, stderr: { readFrom: () => ({ text: '' }) } } }
       } }))
+      await mountExchangeResident(ctx, { cwd: root })
       await ctx.plugin(inner => mountResultLifecycle(inner))
       const work = fileCall(ctx, 'unused', 'edit_file', { path: 'file' }, { agent: { session: one } })
       const sibling = fileCall(ctx, 'unused', 'stat', { path: 'file' }, { agent: { session: two } })

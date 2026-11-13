@@ -4,8 +4,10 @@ import { integration, registerNativeCapability, diagnose } from 'dsh-ops/integra
 import { bootHost, shutdown, scopedToolNames } from './lib/host.mjs'
 import { assert, test, report, waitFor, withTempDir } from './lib/harness.mjs'
 import { prepareStep, executeCall } from './lib/executor.mjs'
-async function setup(cwd, options = {}) {
+import { mountFakeResident } from './lib/resident.mjs'
+async function setup(cwd, options = {}, prepare) {
   const { ctx } = await bootHost()
+  await prepare?.(ctx)
   const agents = []; ctx.provide('agents', { list: () => [...agents] })
   ctx.provide('agentPresets', { composedPreset: () => undefined })
   await ctx.plugin(integration({ preset: 'third-party-chat', profile: 'discovery', allowedTools: [], externalTools: ['acme_lookup'], ...options }))
@@ -55,6 +57,61 @@ await test('pure external Native discovery needs no worker, file, shell, subproc
     const stale = ctx.get('tools').get('acme_lookup', a)
     assert.equal((await stale.execute({}, { agent: b, signal: new AbortController().signal })).status, 'rejected')
   } finally { await shutdown(ctx) }
+}))
+await test('mixed discovery preserves external tools across late file policy and kernel disposal', () => withTempDir('external-mixed', async cwd => {
+  let owner, kernel, finish, entered, externalSignal, held = false, fileCalls = 0
+  const started = new Promise(resolve => { entered = resolve })
+  const { ctx, mint, names } = await setup(cwd, {
+    allowedTools: ['stat'], alwaysLoaded: ['stat'], externalAlwaysLoaded: ['acme_lookup'],
+  }, async ctx => {
+    ctx.provide('subprocess', { spawn() { throw new Error('Publication lifetime fixture must not spawn') } })
+    owner = await ctx.plugin({ async apply(inner) {
+      kernel = await mountFakeResident(inner, { invoke() {
+        ++fileCalls; throw new Error('Publication lifetime fixture must not execute files')
+      } })
+    } })
+  })
+  const agents = []
+  try {
+    await registerNativeCapability(ctx, capability(async (_args, exec) => {
+      if (held) {
+        externalSignal = exec.signal; entered()
+        await new Promise(resolve => { finish = resolve })
+      }
+      return { value: 'independent' }
+    }))
+    const agent = await mint('mixed-before-policy'); agents.push(agent)
+    assert.equal(ctx.get('sandboxPolicy'), undefined)
+    assert.ok(names(agent).includes('ops_discover_tools'))
+    assert.ok(names(agent).includes('acme_lookup'), 'file authority does not govern the external provider')
+    assert.equal(names(agent).includes('ops_stat'), false)
+    assert.equal((await call(ctx, agent, 'acme_lookup')).value.value, 'independent')
+    const retainedExternal = ctx.get('tools').get('acme_lookup', agent)
+    ctx.provide('sandboxPolicy', { resolve: ({ session }) => ({ mode: 'read-only', workspaceRoot: cwd, sessionId: session.id }) })
+    await commit(ctx, agent)
+    assert.ok(names(agent).includes('ops_stat'), 'late file policy admits the built-in pool')
+    const retainedFile = ctx.get('tools').get('ops_stat', agent), captured = agent.prepared.toolSet
+    held = true
+    const running = call(ctx, agent, 'acme_lookup')
+    await started
+    await owner.dispose()
+    assert.equal(kernel.available, false)
+    assert.equal(externalSignal.aborted, false, 'kernel disposal cannot cancel an unrelated external invocation')
+    assert.equal(ctx.get('tools').get('acme_lookup', agent), retainedExternal, 'external publication identity survives')
+    const stale = await retainedFile.execute({ path: '.' }, { agent, toolSet: captured, signal: new AbortController().signal })
+    assert.ok(['rejected', 'error'].includes(stale.status), 'captured file admission cannot outlive the kernel')
+    assert.equal(stale.error.effectState, 'none')
+    assert.equal(fileCalls, 0)
+    finish(); await running; held = false
+    await commit(ctx, agent)
+    assert.equal(names(agent).includes('ops_stat'), false)
+    assert.ok(names(agent).includes('ops_discover_tools'))
+    assert.equal((await call(ctx, agent, 'acme_lookup')).value.value, 'independent')
+    const fresh = await mint('mixed-after-kernel'); agents.push(fresh)
+    assert.equal(names(fresh).includes('ops_stat'), false)
+    assert.ok(names(fresh).includes('ops_discover_tools'))
+    assert.equal((await call(ctx, fresh, 'acme_lookup')).value.value, 'independent')
+  } finally { finish?.(); agents.forEach(agent => agent.prepared.dispose()); await shutdown(ctx) }
 }))
 await test('unload drops pending/active tokens; reinstalling the same name requires fresh selection', () => withTempDir('external-reload', async cwd => {
   const { ctx, mint, names } = await setup(cwd)

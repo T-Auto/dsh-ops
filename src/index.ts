@@ -15,9 +15,11 @@ import * as tuiModule from './components/tui/index.js'
 import * as downloadGuardModule from './components/download-guard/index.js'
 import { configureResultCacheGc } from './kernel/result-cache-gc.js'
 import { registerOpsPtcPreset } from './presets/ops-ptc/register.js'
+import { residentKernel, sharedWorkerSelection } from './execution/resident/provider.js'
 export { Config } from './settings/merged.js'
 export { applyComponent } from './legacy/host.js'
 export const name = 'dsh-ops'
+export const inject = ['subprocess']
 
 /**
  * Package-root entry: the single row the bundle inserts.
@@ -32,6 +34,13 @@ export const name = 'dsh-ops'
 export async function apply(root: Context, rawConfig: unknown): Promise<void> {
   const config = resolveMergedConfig(rawConfig)
   const host = root
+  const integrations = Object.values(config.presets).map(row => resolveIntegrationConfig(row.options))
+  const selection = sharedWorkerSelection([
+    ...MODE_IDS.filter(mode => config[mode].enabled).map(mode => config[mode].config),
+    ...(config.discovery.enabled ? [config.discovery.config] : []),
+    ...integrations.filter(value => value.enabled).map(value => value.core),
+  ])
+  await host.plugin(residentKernel(selection))
   const mount = async (module: { apply(...args: unknown[]): unknown }, state: { enabled: boolean; raw?: Record<string, unknown>; config: unknown }, slice?: Record<string, unknown>): Promise<void> => {
     if (!state.enabled) return
     const payload = slice ?? state.raw ?? state.config
@@ -64,9 +73,7 @@ export async function apply(root: Context, rawConfig: unknown): Promise<void> {
           dynamic: dynamicForMode(state, config.global) })
       } })
     }
-    for (const row of Object.values(config.presets)) {
-      const options = row.options
-      const resolved = resolveIntegrationConfig(options)
+    for (const resolved of integrations) {
       const linked = typeof config.other.raw?.pwsh7Link === 'boolean' ? config.other.raw.pwsh7Link : companionVersion({ sweep: false }) !== undefined
       const effective = gateConsumer(resolved, config.global, linked)
       await host.plugin({ name: `dsh-ops/custom-${resolved.preset}`, apply(ctx: Context) { return mountIntegration(ctx, effective) } })

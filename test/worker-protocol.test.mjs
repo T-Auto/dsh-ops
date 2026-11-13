@@ -5,6 +5,7 @@ import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { WORKER, requireWorker, request, callWorker, envelopeOf } from './lib/boundary.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { mountResident, mountExchangeResident } from './lib/resident.mjs'
 import { workerEnvelope, WORKER_OUTPUT_BYTES, WORKER_TIMEOUT_MS } from '../lib/worker-protocol.js'
 import { invoke as fileCall } from '../lib/file/worker.js'
 import { invoke as ptcCall } from '../lib/ptc/worker.js'
@@ -91,6 +92,7 @@ await test('each bridge emits fresh trusted metadata and collects the advertised
           stdout: { readFrom: () => ({ text: '{"status":"completed"}', lossy: false }) }, stderr: { readFrom: () => ({ text: '', lossy: false }) },
         } }
       } }))
+      await mountExchangeResident(ctx, { file: 'worker', cwd: root })
       const exec = execution(root)
       for (const [call, tool, args, component, timeout] of [
         [fileCall, 'grep', { path: root, pattern: 'x', requestId: 'model-value' }, 'file', 1234],
@@ -126,6 +128,7 @@ await test('a worker deadline interrupts the one-shot process and the write brid
     const { ctx } = await bootHost()
     try {
       await ctx.plugin(Subprocess)
+      await mountResident(ctx, { file: WORKER, cwd: root })
       await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: root }) }))
       const value = await fileCall(ctx, WORKER, 'replace', input.request.args, execution(root), signal(), { toolCallTimeoutMs: 1 })
       assert.equal(value.status, 'error'); assert.equal(value.error.code, 'RESULT_UNKNOWN')

@@ -1,3 +1,4 @@
+import { mountResident } from './lib/resident.mjs'
 import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 /** Real run_code calls reuse read facts; fixtures never reconstruct file bytes from numbered text. */
 import fs from 'node:fs'
@@ -22,6 +23,7 @@ async function fixture(root, run) {
   ctx.provide('agents', { list: () => agents })
   try {
     await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem)
+    await mountResident(ctx, { file: WORKER, cwd: root })
     await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: ({ session } = {}) => ({ mode: 'workspace-write', workspaceRoot: root, sessionId: session?.id }) }))
     // A separate writer is invoked at an exact point between the read and CAS, without sleeps.
     await ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) {

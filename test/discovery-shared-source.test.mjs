@@ -1,3 +1,4 @@
+import { mountResident } from './lib/resident.mjs'
 /** Real discovery and PTC consumers share the file kernel, not execution closures. */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -21,6 +22,7 @@ await test('discovery commits stat/grep next step and withdraws without stopping
   let mode = 'workspace-write'
   try {
     for (const plugin of [Subprocess, Sandbox, FileSystem, NodePtc]) await ctx.plugin(plugin)
+    await mountResident(ctx, { file: WORKER, cwd: root })
     ctx.provide('sandboxPolicy', { resolve: () => ({ mode, workspaceRoot: root }) })
     ctx.provide('agents', { list: () => agents })
     const discovery = ctx.plugin({ apply(inner) { mountDiscovery(inner, {

@@ -5,7 +5,8 @@
 This document tracks [#872](https://github.com/T-Auto/dsh-ops/issues/872), based on the
 `e7244444` source audit. It describes the complete target and the evidence needed to reach it.
 The explicit resident transport and its tests establish only the implementation described below.
-Plugin integration, persistent shells and the complete acceptance report remain pending.
+Local Native/PTC file routing now uses it; persistent shells and the complete acceptance report
+remain pending.
 
 ## Target and ownership
 
@@ -33,7 +34,8 @@ The scoped host client starts it once, waits for `ready`, correlates `started` a
 events, and sends cancellation by request ID. It admits at most 32 active requests, bounds
 request and response frames, and never reconnects or replays a failed invocation. The client
 observes process exit before settling interrupted requests; inability to confirm cleanup is
-reported as unknown. Activation and Native/PTC tool routing have not migrated yet.
+reported as unknown. The main row starts the provider before publishing Native/PTC file tools;
+local file requests reuse it. Conflicting enabled binary selections fail before startup.
 
 File operations can block in operating-system I/O. Each admitted request therefore runs the
 existing one-shot dispatch in a trusted child of the kernel, with its own termination handle.
@@ -43,10 +45,18 @@ The control loop remains responsive while a request runs, and a request deadline
 worker. Output drains retain bounded tails with explicit loss information. EOF and shutdown
 cancel and join admitted executions. No worker is detached or restarted.
 
-This removes repeated **host runner** startup only after tool migration; it still pays native
-child startup per file request. The final A/B report must measure that cost. This transport is
+This removes repeated **host runner** startup for local file dispatch; it still pays native
+child startup per file request. WSL reads, confined PTC batch/result operations and cache cleanup
+retain their existing runners because their enforced execution contexts cannot be replaced by the
+trusted local-file path. The final A/B report must measure all of those costs. This transport is
 not evidence that session shells, DSH jobs, complete multi-process cleanup or the performance
 targets have been delivered.
+
+Standalone integrations explicitly mount `residentKernel()` in their common owning activation
+before mounting consumers; see the [integration setup](integration-api.md). Removing a consumer
+does not dispose that shared provider. Removing the provider withdraws dependent file publication
+and retained callers fail without starting a replacement. Pure external discovery retains its
+independent lifetime and does not require an OPS kernel or file policy service.
 
 ## Requirement and evidence matrix
 
@@ -55,7 +65,7 @@ row remains a delivery requirement even if a smaller slice does not exercise it 
 
 | Requirement from #872 | Current evidence or gap | Acceptance still needed |
 | --- | --- | --- |
-| One kernel per actual DSH instance; startup readiness; no idle exit | Existing file transport starts one process per call. Resident ownership is pending. | One startup across Native/PTC/components; handshake gates publication; no per-call runner; idle persistence. |
+| One kernel per actual DSH instance; startup readiness; no idle exit | Real composition tests cover one startup across Native/official Node PTC file calls, pending-handshake reservation, publication gating, conflicting selections and independent consumer disposal. | Three complete host processes, long idle persistence and migration of remaining eligible paths. |
 | Three instances, including identical home/workspace, remain isolated | Public-host probe creates three independent Context roots and kernel processes in one test host; 75 requests use three initial spawns. | Independent connections, shell state, permissions, output and cancellation in at least three full host processes. |
 | Unload and normal DSH exit stop admission and clean descendants | Existing invocation owners cancel one-shot calls; they do not prove resident ownership. | Pending and running requests settle honestly; kernel, shells and owned tasks exit. |
 | Forced DSH death, control disconnect and kernel crash clean the owned tree | Synthetic public-host probe: Windows six checks pass; WSL five pass, blocked-kernel host-death check fails. See platform evidence below. | Native kernel and shell trees must pass each failure separately; no detached descendants or effects replay; other instances survive. |
@@ -73,7 +83,7 @@ row remains a delivery requirement even if a smaller slice does not exercise it 
 | Cancel first interrupts, then may reset only that shell tree | No inner process cancellation boundary exists. | Hard cancellation reports shell-reset/state loss; other sessions continue. |
 | Explicit background tasks use DSH job_list/job_output/job_kill | Rust `Job` is a file-batch audit record, not the DSH process-job service. | Immediate jobId, independent output, atomic startup/publication handoff, job-tree kill, session/host cleanup. |
 | Ordinary command descendants do not become implicit services | Pending shell/task ownership implementation. | Unregistered descendants cannot silently cross calls; published jobs are not killed merely because their startup request completed. |
-| Migration leaves one execution architecture | One-shot transport is currently the only implemented file path. | Remove superseded transport/state when replacement is accepted; no silent fallback, reconnect or duplicate management layers. |
+| Migration leaves one execution architecture | Local file calls use the shared client with no one-shot fallback. WSL and confined batch/result/cleanup paths remain explicit exceptions. | Complete shell/job ownership and eligible remaining migrations without weakening their execution constraints. |
 | End-to-end performance and resource evidence | Windows baseline: 824 calls, 0 failures, including 200 hot samples for each of four items. No resident benefit measured. | Resident A/B, Native/PTC, cold/warm, file/command/mixed/concurrent/long workloads; p50/p95/p99, CPU/RSS/handles and failures. |
 
 ## Rust reuse boundary
@@ -204,8 +214,8 @@ queue closes the probe on overload; this is not the production admission/backpre
 The handshake explicitly marks request cancellation and deadline enforcement unsupported. EOF
 terminates this entire read-only probe, and is not a per-request cancellation implementation.
 No blocked-dispatch, descendant, forced-host-death or plugin-unload claim follows from these six
-checks. The newer explicit serve implementation is described above; plugin startup, general file
-routing, persistent shells and task jobs remain pending.
+checks. The newer explicit serve implementation and local file integration are described above;
+persistent shells, task jobs and complete acceptance remain pending.
 
 ## Implementation slices and exit evidence
 
@@ -277,3 +287,9 @@ with a complete `--bash` payload and a short temporary directory, then run the p
 `--samples 200 --warmup 5`. A separate WSL feasibility probe overlapped the first few full-run rounds;
 no heavy Windows build overlapped. This is a current single-machine baseline, not a Windows/Linux
 comparison, dedicated-idle-machine result, resident A/B result or performance improvement claim.
+
+The archived baseline used the probe at `1fc5ba08`. The current probe explicitly mounts the
+resident provider and labels new reports `resident-file-measurement`; fresh commands keep their
+existing semantics. Its host spawn counter excludes native execution leaves, and its CPU/RSS
+counters exclude child processes. A current run alone does not establish an A/B improvement or
+the complete performance/resource acceptance required by #872.

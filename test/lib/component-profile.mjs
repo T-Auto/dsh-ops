@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import Loader from '@deepseek-ai/cordis-plugin-loader'
+import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { readProfilePatches, mountRootInclude, reconcileProfilePatches, loadProfileDirectory } from '@deepseek-ai/dsh-app-boot'
 import { bootHost } from './host.mjs'
 import { TEST_HOME, PACKAGE_ROOT, assert } from './harness.mjs'
@@ -24,6 +25,7 @@ export function componentProfile(label, bundleText, patches = []) {
   const profile = { home, dir, patchPath, installAnchor, overlays: [], startedBundles: ['dsh-ops'] }
   return { profile, bundlePath, baseFile, async boot(platform = process.platform) {
     const { ctx } = await bootHost()
+    await ctx.plugin(Subprocess)
     // A public Context value lets the real Loader evaluate the platform expression
     // for all target defaults. This tests composition, not another OS's sandbox.
     ctx.provide('process', { platform })

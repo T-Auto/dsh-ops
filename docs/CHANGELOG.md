@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Start one resident kernel before publishing the main row's Native/PTC file tools and reuse its connection for local file calls. Standalone integrations now explicitly mount `residentKernel()` once in their common owning activation. Removing a consumer preserves siblings; removing the provider withdraws file admission. WSL reads, confined PTC batch/result operations and cache cleanup retain their existing execution constraints and runners (#872).
+- 主入口先启动一个常驻内核，再发布 Native/PTC 文件工具；本地文件调用复用该连接。独立集成现在需要在共同所有者的激活作用域中显式挂载一次 `residentKernel()`。移除单个消费者不影响其余消费者；移除 provider 会撤销文件执行准入。WSL 读取、受约束的 PTC batch/result 操作与缓存清理仍保留原有执行约束及 runner（#872）。
+
 - Add an explicit native `--serve` transport and a scoped host client for #872. Correlated file requests use independently terminable trusted workers; cancellation does not stop the kernel. Activation and tool migration are still pending, so this slice does not change published tools or establish persistent shells.
 - 为 #872 添加显式原生 `--serve` transport 与作用域内宿主客户端。带关联 ID 的文件请求使用可独立终止的可信 worker，取消不会停止内核。激活与工具迁移仍待完成；本切片不改变已发布工具，也不代表持久 shell 已实现。
 

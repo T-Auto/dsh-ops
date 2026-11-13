@@ -4,7 +4,7 @@ import type { Agent } from '../adapter/dsh/types.js'
 import type {} from '../adapter/dsh/types.js'
 import { NativeFileTools } from '../projections/native/runtime.js'
 import { registerNativeProviderAtScope, nativeProviderReady } from './providers.js'
-import { resolveWorker } from '../execution/files.js'
+import { requireResident } from '../execution/resident/provider.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
 import { publicToolName, modeSectionName, MODE_SECTION_ORDERS, renderToolingPolicy } from '../policy.js'
 import { visibleNames } from './surface.js'
@@ -42,12 +42,12 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
   const { id: mode, tools: names, section, gate } = publication
   let ownsGuidance: (agent: Agent) => boolean = () => false
   let worker: string
-  try { worker = resolveWorker({ binaryPath: config.binaryPath }) } catch (error) {
+  try { worker = requireResident(root, config).file } catch (error) {
     if (config.required) throw error
     root.logger.warn(`dsh-ops: ${mode} mode cannot resolve its native worker; native file tools stay unpublished. ${String((error as Error)?.message ?? error)}`)
     return () => false
   }
-  root.inject(['tools', 'systemPrompt', 'sandboxPolicy', 'subprocess'], async ctx => {
+  root.inject(['tools', 'systemPrompt', 'sandboxPolicy', 'subprocess', 'opsKernel'], async ctx => {
     const tools = ctx.get('tools')
     const prompt = ctx.get('systemPrompt')
     if (!tools || !prompt) return

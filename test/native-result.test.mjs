@@ -10,6 +10,7 @@ import { ToolExecutionPipeline } from '@deepseek-ai/dsh-tools/pipeline'
 import { assertSupportedJsonSchema } from '@deepseek-ai/dsh-tools'
 import { assert, test, report, withTempDir, waitFor } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { mountResident } from './lib/resident.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
 import { invoke } from '../lib/ptc/worker.js'
 import * as ptcModule from '../lib/ptc/index.js'
@@ -48,6 +49,7 @@ let serial = 0
 async function setup(root) {
   const { ctx } = await bootHost()
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox)
+  await mountResident(ctx, { file: WORKER })
   await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: ({ session } = {}) => ({ mode: session?.mode ?? 'workspace-write', workspaceRoot: root, sessionId: session?.id }) }))
   inventory(ctx)
   const file = { fiber: await mountNativeCatalogue(ctx, { binaryPath: WORKER, required: true }) }
@@ -234,6 +236,7 @@ await test('agent-scoped file rows isolate sibling pagers and yield only their e
     const { ctx } = await bootHost()
     try {
       await ctx.plugin(Subprocess); await ctx.plugin(Sandbox)
+      await mountResident(ctx, { file: WORKER })
       await ctx.plugin(inner => {
         // NodePtc supplies the real runtime below.
         inner.provide('sandboxPolicy', { resolve: ({ session } = {}) => ({ mode: session?.mode ?? 'workspace-write', workspaceRoot: root, sessionId: session?.id }) })
@@ -318,7 +321,7 @@ for (const mode of ['changed', 'failed', 'cwd-changed', 'confine-changed']) awai
   }
   class CountingSubprocess extends Subprocess {
     spawn(spec) {
-      if (path.resolve(spec.argv[0]) === path.resolve(WORKER)) ++workerCalls
+      if (path.resolve(spec.argv[0]) === path.resolve(WORKER) && spec.argv[1] !== '--serve') ++workerCalls
       return super.spawn(spec)
     }
   }
@@ -333,6 +336,7 @@ for (const mode of ['changed', 'failed', 'cwd-changed', 'confine-changed']) awai
       async ensure(owner) { await hold('cwd'); return owner.session.header.cwd },
     })
     for (const plugin of [CountingSubprocess, HeldSandbox, FileSystem, NodePtc]) await ctx.plugin(plugin)
+    await mountResident(ctx, { file: WORKER })
     ctx.provide('sandboxPolicy', { resolve: ({ session } = {}) => ({ mode: 'workspace-write', workspaceRoot: root, sessionId: session?.id }) })
     inventory(ctx)
     await mountNativeCatalogue(ctx, { binaryPath: WORKER, required: true })

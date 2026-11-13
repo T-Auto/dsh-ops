@@ -148,6 +148,8 @@ await test('the file bridge refuses a credential path before the worker is spawn
       workingDirectory: { ensure: async agent => agent.session.header.cwd },
       sandboxPolicy: { resolve: () => ({ mode: 'read-only', workspaceRoot: workspace }) },
       subprocess: { spawn: () => { spawned = true; throw new Error('the fence must refuse before spawning') } },
+      opsKernel: { file: path.join(workspace, 'worker'), available: true,
+        invoke() { spawned = true; throw new Error('the fence must refuse before kernel admission') } },
     })[name] }
     const exec = { agent: { session: { id: 's-fence', header: { cwd: workspace } } } }
     await withFakeHome(home, async () => {

@@ -1,3 +1,4 @@
+import { mountFakeResident } from './lib/resident.mjs'
 import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 /** Real pinned-host declaration accounting, not a tokenizer or an LLM benchmark. */
 import fs from 'node:fs'
@@ -19,6 +20,7 @@ await test('measure PTC enhancement separately from the existing file/shell decl
   const scopes = []
   const samples = []
   try {
+    await mountFakeResident(ctx, { file: worker.file })
     await ctx.plugin(inner => {
       // Assembly needs the language contract, not an executing provider. No tool is executed.
       inner.provide('ptcRuntime', { language: 'typescript' })

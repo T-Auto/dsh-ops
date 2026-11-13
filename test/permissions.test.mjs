@@ -7,6 +7,7 @@ import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { assert, test, report, skipSuite, withTempDir, ownWindowsFixture } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { mountResident } from './lib/resident.mjs'
 import { prepareWorkspace, mountWorkspacePreparation, runPreparation, preparationEnvironment, preparationSpawnSpec } from '../lib/workspace-preparation.js'
 import { invoke as fileCall } from '../lib/file/worker.js'
 import { invoke as ptcCall } from '../lib/ptc/worker.js'
@@ -59,6 +60,7 @@ await test('the real worker behaves as the file-tool descriptions say (#44)', as
     const exec={agent,signal:new AbortController().signal}
     try {
       await ctx.plugin(Subprocess)
+      await mountResident(ctx, { file: worker })
       await ctx.plugin(inner=>inner.provide('sandboxPolicy',{defaultMode:'danger-full-access',resolve:()=>({mode:'danger-full-access',workspaceRoot:root})}))
       const call=(tool,args)=>fileCall(ctx,worker,tool,args,exec,exec.signal)
       const names=value=>value.items.map(item=>path.relative(root,typeof item==='string'?item:item.path).replaceAll('\\','/')).sort()
@@ -268,6 +270,7 @@ await test('ops reads and writes reach the host read-before-edit table (#17)', a
     const exec={agent,signal:new AbortController().signal}
     try {
       await ctx.plugin(Subprocess)
+      await mountResident(ctx, { file: worker })
       await ctx.plugin(inner=>inner.provide('sandboxPolicy',{defaultMode:'danger-full-access',resolve:()=>({mode:'danger-full-access',workspaceRoot:root})}))
       // Without the host fs service, ops tools still work and simply record nothing.
       const bare=await fileCall(ctx,worker,'inspect_local_file',{path:'a.txt'},exec,exec.signal)
@@ -313,6 +316,7 @@ await test('owned Modify-only workspace starts real DSH sandbox; three modes and
     agent.ctx=createScope(ctx,agent).ctx
     try {
       await ctx.plugin(Subprocess); await ctx.plugin(Sandbox,{})
+      await mountResident(ctx, { file: worker })
       await ctx.plugin(FileSystem,{})
       await ctx.plugin(inner=>inner.provide('sandboxPolicy',{defaultMode:'workspace-write',resolve:({session})=>({mode:session?.mode ?? agent.session.mode,workspaceRoot:root,sessionId:session?.id ?? agent.session.id})}))
       await ctx.plugin(inner=>mountWorkspacePreparation(inner))

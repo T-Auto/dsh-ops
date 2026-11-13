@@ -6,7 +6,7 @@ import { createScope, scopeOf, scopeParentOf } from '@deepseek-ai/dsh-scope'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import LocalJobs from '@deepseek-ai/dsh-jobs-local'
 import * as Bundle from '../lib/index.js'
-import { integration } from '../lib/integration/index.js'
+import { integration, residentKernel } from '../lib/integration/index.js'
 import { resolveIntegrationConfig } from '../lib/consumer/options.js'
 import { gateConsumer } from '../lib/consumer/gates.js'
 import { mountIntegration } from '../lib/integration/index.js'
@@ -153,6 +153,7 @@ for (const preset of ['standard', 'cordis']) {
       }
       await row.dispose(); await new Promise(resolve => setImmediate(resolve))
       const otherGuidance = 'Keep the discovery-only consumer independent.'
+      await ctx.plugin(residentKernel())
       const otherRow = await ctx.plugin(integration({ preset: 'directory-only', profile: 'discovery', extraGuidance: otherGuidance }))
       const other = await mint('directory-only', { preset: 'directory-only', pwsh: false })
       assert.equal(count(await assemble(other), otherGuidance), 1)

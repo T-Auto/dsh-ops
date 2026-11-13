@@ -7,6 +7,7 @@ import * as discoveryModule from '../lib/discovery/index.js'
 import { mountReplacements } from '../lib/publication/replacements.js'
 import { NativeFileTools } from '../lib/file/runtime.js'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { mountFakeResident } from './lib/resident.mjs'
 import { assert, test, report, waitFor, TEST_HOME } from './lib/harness.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
 import { legacyComponent } from './lib/legacy-component.mjs'
@@ -17,6 +18,7 @@ requireWorker('session-lifecycle')
 const flush = async () => { for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve)) }
 async function setup() {
   const host = await bootHost()
+  await mountFakeResident(host.ctx, { file: WORKER })
   const agents = []
   host.ctx.provide('agents', { list: () => agents })
   host.agents = agents

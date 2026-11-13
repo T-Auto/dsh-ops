@@ -10,11 +10,13 @@ import { TEST_HOME } from './harness.mjs'
 import { publicToolName } from '../../lib/policy.js'
 import { NativeFileTools } from '../../lib/projections/native/runtime.js'
 import { WORKER } from './boundary.mjs'
+import { mountResident } from './resident.mjs'
 
 export async function canonicalFixture() {
   const { ctx, tools } = await bootHost()
   const steps = []
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem)
+  await mountResident(ctx, { file: WORKER, cwd: TEST_HOME })
   ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: TEST_HOME }) })
   await ctx.plugin(NodePtc, {})
   const runtime = new NativeFileTools({ ctx, config: { workerPath: WORKER, required: true } })

@@ -15,6 +15,7 @@ import { InvocationLifetime, InvocationNotStarted } from '../lib/lifecycle/invoc
 import { searchCapabilities } from '../lib/discovery/candidates.js'
 import { bootHost, shutdown, scopedToolNames } from './lib/host.mjs'
 import { assert, test, report, waitFor, withTempDir } from './lib/harness.mjs'
+import { mountFakeResident } from './lib/resident.mjs'
 const capability = (execute = async () => ({ ok: true })) => ({ search: 'lookup external catalogue', authorize: () => true,
   definition: { name: 'acme_lookup', description: 'Look up external catalogue.', parameters: { type: 'object', properties: {} },
     output: { schema: { type: 'object' }, render: () => [] }, execute } })
@@ -61,13 +62,13 @@ await test('single-row custom consumers publish exact residents without discover
     assert.deepEqual(names(other), [])
   } finally { await shutdown(ctx) }
 }))
-for (const integrationFirst of [true, false]) await test(`explicit built-in identity overrides bundle discovery in either mount order (${integrationFirst})`, () => withTempDir('consumer-override', async cwd => {
+for (const integrationFirst of [true, false]) await test(`explicit built-in identity overrides bundle discovery after provider readiness (attempted before root: ${integrationFirst})`, () => withTempDir('consumer-override', async cwd => {
   const { ctx, mint, names } = await host(cwd)
   try {
     const explicit = () => ctx.plugin(integration({ preset: 'standard', discovery: false, residentNames: ['stat'] }))
-    if (integrationFirst) await explicit()
+    if (integrationFirst) await assert.rejects(async () => await explicit(), /provider is missing or not ready/)
     await ctx.plugin(Bundle, {})
-    if (!integrationFirst) await explicit()
+    await explicit()
     const agent = await mint()
     await ctx.get('systemPrompt').assemble({ scope: agent, agent })
     await waitFor(() => names(agent).includes('ops_stat'))
@@ -105,6 +106,7 @@ for (const retire of ['consumer', 'agent', 'preset', 'authority', 'presentation'
 await test('mixed discovery reads late policy services instead of capturing an absent service', () => withTempDir('consumer-late-policy', async cwd => {
   const { ctx, mint, names } = await host(cwd, false)
   try {
+    await mountFakeResident(ctx)
     await ctx.plugin(integration({ preset: 'acme', profile: 'discovery', allowedTools: ['stat'], alwaysLoaded: ['stat'], externalTools: ['acme_lookup'] }))
     const agent = await mint('acme')
     assert.equal(names(agent).includes('ops_stat'), false)
@@ -127,7 +129,9 @@ await test('invocation owner registers before user code and drains cooperative c
   assert.equal(calls.active.size, 0)
 })
 await test('public Native and typed PTC pre-dispatch cancellation return no-effect values', async () => {
-  const runtime = new NativeFileTools({ ctx: new Context(), config: { workerPath: 'unused' } })
+  const ctx = new Context(); ctx.logger.level = 0
+  await mountFakeResident(ctx, { file: 'unused' })
+  const runtime = new NativeFileTools({ ctx, config: { workerPath: 'unused' } })
   await runtime.start([])
   const controller = new AbortController(); controller.abort(new Error('cancelled'))
   const exec = { signal: controller.signal, agent: { session: { id: 'cancel' } } }
@@ -144,6 +148,7 @@ await test('public Native and typed PTC pre-dispatch cancellation return no-effe
   const outcome = await typed.execute({}, exec)
   assert.equal(outcome.error.code, 'ABORTED'); assert.equal(outcome.error.effectState, 'none')
   await runtime.stop()
+  await ctx.fiber.dispose()
 })
 await test('non-cooperative external execution cannot pin consumer unload or be replayed', () => withTempDir('consumer-uncooperative', async cwd => {
   const { ctx, mint, names } = await host(cwd, false)
@@ -167,12 +172,14 @@ await test('discovered built-in worker cancels when its preset consumer is withd
   const { ctx, mint } = await host(cwd, false)
   let workerSignal
   ctx.provide('sandboxPolicy', { resolve: ({ session }) => ({ mode: 'read-only', workspaceRoot: cwd, sessionId: session.id }) })
-  ctx.provide('subprocess', { spawn(spec) {
-    workerSignal = spec.signal
-    return { done: new Promise(resolve => spec.signal.addEventListener('abort', () => resolve({ exitCode: null, signal: 'SIGTERM' }), { once: true })),
-      collected: { stdout: { readFrom: () => ({ text: '', lossy: false }) }, stderr: { readFrom: () => ({ text: '', lossy: false }) } } }
-  } })
+  ctx.provide('subprocess', { spawn() { throw new Error('Resident cancellation fixture must not spawn') } })
   try {
+    await mountFakeResident(ctx, { invoke(_envelope, signal, onStarted) {
+      workerSignal = signal; onStarted?.()
+      return new Promise(resolve => signal.addEventListener('abort', () => resolve({
+        exitCode: null, interrupted: true, readers: true, lossy: false, stderr: '',
+      }), { once: true }))
+    } })
     await ctx.plugin(integration({ preset: 'acme', profile: 'discovery', allowedTools: ['stat'], alwaysLoaded: ['stat'] }))
     const agent = await mint('acme')
     await waitFor(() => ctx.get('tools').get('ops_stat', agent))

@@ -17,6 +17,7 @@ import { bootHost, callTool, mountPlugin, mountScopedToolPlugin, preExecute, pub
   shutdown } from './lib/host.mjs'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
+import { mountResident, mountFakeResident } from './lib/resident.mjs'
 import { officialToolHidingMountChecks } from './lib/official-tool-hiding.mjs'
 
 // Component 4 has no native runtime dependency; always exercise its real mounts.
@@ -53,6 +54,7 @@ async function fileMount(ctx, config = {}) {
   if (!ctx.get('sandboxPolicy')) await ctx.plugin(inner => inner.provide('sandboxPolicy', {
     resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: session.header.cwd, sessionId: session.id }),
   }))
+  await mountResident(ctx, { file: config.binaryPath ?? worker })
   return mountPlugin({ ctx, config, expectTools: EXPECTED.length })
 }
 async function agentForCall(ctx, cwd, mode = 'danger-full-access') {
@@ -76,6 +78,7 @@ async function executor(ctx) {
     inner.provide('sandboxPolicy', { resolve({ session }) { return { mode: session.mode, workspaceRoot: session.header.cwd } } })
     inner.provide('sandbox', { async confine(argv) { return { argv, enforcement: 'full' } } })
   })
+  await mountFakeResident(ctx, { file: worker })
 }
 async function agent(ctx, id, mode = 'danger-full-access', parent) {
   const { createScope } = await import('@deepseek-ai/dsh-scope')
@@ -221,6 +224,8 @@ await test('the file component renders its live tools and retires both legacy se
 await test('optional missing runtime degrades honestly, required runtime rejects activation', async () => {
   const { ctx } = await bootHost()
   try {
+    await ctx.plugin(Subprocess)
+    await mountResident(ctx, { file: worker })
     const binaryPath = path.join(process.cwd(), 'no-such-worker.exe')
     const { fiber } = await mountPlugin({ ctx, config: { binaryPath }, expectTools: 0 })
     assert.deepEqual(publicToolNames(ctx), [])
@@ -316,6 +321,7 @@ await test('a file row written by an earlier bundle still mounts and publishes i
   const { ctx } = await bootHost()
   try {
     await ctx.plugin(Subprocess)
+    await mountResident(ctx, { file: worker })
     await ctx.plugin(Sandbox, {})
     await ctx.plugin(inner => inner.provide('sandboxPolicy', {
       resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: session.header.cwd, sessionId: session.id }),

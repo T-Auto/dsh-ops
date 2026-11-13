@@ -1,3 +1,4 @@
+import { mountResident } from './lib/resident.mjs'
 import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -31,6 +32,7 @@ async function setup(root, { native = false, config = {}, real = false } = {}) {
   const { ctx } = await bootHost({ withWorkingDirectory: true })
   const agents = []; ctx.provide('agents', { list: () => agents })
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem)
+  await mountResident(ctx, { file: WORKER, cwd: root })
   await ctx.plugin(inner => {
     inner.provide('sandboxPolicy', { resolve: ({ session } = {}) => ({ mode: session?.mode ?? 'workspace-write', workspaceRoot: root, sessionId: session?.id }) })
     if (!real) inner.provide('ptcRuntime', { language: 'typescript' })

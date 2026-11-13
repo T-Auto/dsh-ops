@@ -1,3 +1,4 @@
+import { mountFakeResident } from './lib/resident.mjs'
 /** Actual publication controllers, real scoped registry, one held host refusal. */
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { mountSessionBash } from '../lib/session-shells.js'
@@ -57,6 +58,7 @@ for (const [name, row] of Object.entries(rows)) await test(`${name} controller r
   // No call is executed: these explicit paths only let each real controller
   // construct its publication. This suite certifies registry lifecycle only.
   ctx.provide('subprocess', { spawn() { throw new Error('publication fixture must never execute') } })
+  await mountFakeResident(ctx, { file: process.execPath })
   ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: process.cwd() }) })
   ctx.provide('ptcRuntime', { language: 'typescript' })
   ctx.logger.warn = message => messages.push(message)
@@ -130,6 +132,7 @@ await test('legacy Native startup rejects an ordinary deferred registration fail
   let scoped, runtime, locked = true, fail = true
   const original = new Error('ordinary deferred provider registration failure')
   try {
+    await mountFakeResident(ctx, { file: process.execPath })
     await ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { scoped = createScope(inner, agent).ctx } })
     ctx.on('tools/change', () => {
       if (locked) throw new Error('session append cannot reenter while another append is being published')

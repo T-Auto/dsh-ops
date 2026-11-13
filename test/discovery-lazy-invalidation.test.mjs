@@ -1,3 +1,4 @@
+import { mountResident } from './lib/resident.mjs'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
@@ -44,6 +45,7 @@ await test('unattributed tools/change probes one session, not every live session
   const created = []
   try {
     await ctx.plugin(Subprocess)
+    await mountResident(ctx, { file: WORKER, cwd: dir })
     await ctx.plugin(Sandbox, {})
     await ctx.plugin(inner => inner.provide('sandboxPolicy', {
       resolve: ({ session }) => ({ mode: session.mode, workspaceRoot: session.header.cwd, sessionId: session.id }),

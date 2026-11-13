@@ -1,3 +1,4 @@
+import { mountResident } from './lib/resident.mjs'
 /** Real consumers, one stat registration and official Node PTC execution. */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -26,6 +27,7 @@ for (const removed of ['native', 'ptc']) await test(`stat shares canonical sourc
   const steps = []
   try {
     for (const plugin of [Subprocess, Sandbox, FileSystem, NodePtc]) await ctx.plugin(plugin)
+    await mountResident(ctx, { file: WORKER, cwd: root })
     ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: root }) })
     const native = ctx.plugin({ apply(inner) { mountNative(inner, resolveConfig({ binaryPath: WORKER, required: true }), {
       id: 'shared-stat', tools: [...SHARED_FILE_APIS], section: null, gate: { allows: () => true },
@@ -100,6 +102,7 @@ for (const mode of ['native', 'ptc']) await test(`${mode} honors intermediate an
   const steps = []
   try {
     for (const plugin of [Subprocess, Sandbox, FileSystem, NodePtc]) await ctx.plugin(plugin)
+    await mountResident(ctx, { file: WORKER, cwd: root })
     ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: root }) })
     const publication = ctx.plugin({ apply(inner) {
       mountNative(inner, resolveConfig({ binaryPath: WORKER, required: true }), {
@@ -167,6 +170,7 @@ await test('background PTC conflict is observed, cleaned up and retryable after 
   const settle = async () => { for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve)) }
   try {
     for (const plugin of [Subprocess, Sandbox, FileSystem, NodePtc]) await ctx.plugin(plugin)
+    await mountResident(ctx, { file: WORKER, cwd: root })
     ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: root }) })
     ctx.provide('agents', { list: () => agents })
     const native = ctx.plugin({ apply(inner) { mountNative(inner, resolveConfig({ binaryPath: WORKER, required: true, denyCredentialReads: false }), {

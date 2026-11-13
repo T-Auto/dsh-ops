@@ -12,6 +12,7 @@ import { assert, waitFor, withTempDir } from './harness.mjs'
 import { bootHost, mountPlugin, shutdown } from './host.mjs'
 import { legacyComponent } from './legacy-component.mjs'
 import { prepareStep, executeCall } from './executor.mjs'
+import { mountResident } from './resident.mjs'
 
 export const READ = publicToolName('inspect_local_file')
 export const text = result => result.content.map(block => block.type === 'text' ? block.text : '').join('\n')
@@ -43,6 +44,7 @@ export async function fixture(run) {
       await ctx.plugin(SessionStore)
       await ctx.plugin(LlmRuntime)
       await ctx.plugin(Subprocess)
+      await mountResident(ctx, { cwd: dir })
       await ctx.plugin(Sandbox, {})
       const modes = new Map()
       const policyReads = { count: 0 }

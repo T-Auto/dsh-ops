@@ -6,7 +6,8 @@ import { ownScopes } from '../publication/ownership.js'
 import { activationIsPtc, isNativePresentation, isPresentationProbe } from '../publication/presentation.js'
 import { visibleNames } from '../publication/surface.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
-import { failure, resolveWorker } from '../execution/files.js'
+import { failure } from '../execution/files.js'
+import { requireResident } from '../execution/resident/provider.js'
 import { capability, DISCOVERY_TOOL_NAME } from '../capabilities/registry.js'
 import { DISCOVERY_DESCRIPTION, DISCOVERY_PARAMETERS, DISCOVERY_OUTPUT } from '../capabilities/discovery.js'
 import { publicToolName, renderToolingPolicy } from '../policy.js'
@@ -54,13 +55,13 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
   const config = resolveDiscoveryConfig(raw)
   const externalEnabled = Boolean(gate.external?.allowed.length)
   let worker: string | undefined
-  try { if (config.allowedTools.length || config.alwaysLoaded.length) worker = resolveWorker(config) }
+  try { if (config.allowedTools.length || config.alwaysLoaded.length) worker = requireResident(root, config).file }
   catch (error) {
     if (config.required) throw error
     root.logger.warn('dsh-ops: discovery worker unavailable; built-in tools stay unpublished.')
     if (!externalEnabled) return
   }
-  root.inject(externalEnabled ? ['tools', 'systemPrompt'] : ['tools', 'systemPrompt', 'sandboxPolicy', 'subprocess'], async ctx => {
+  root.inject(externalEnabled || !worker ? ['tools', 'systemPrompt'] : ['tools', 'systemPrompt', 'sandboxPolicy', 'subprocess', 'opsKernel'], async ctx => {
     const tools = ctx.get('tools')!, prompt = ctx.get('systemPrompt')!
     mountResultLifecycle(ctx)
     await prepareProviders(ctx)
@@ -69,8 +70,12 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
     let ownership: Awaited<ReturnType<typeof ownScopes>> | undefined
     const owns = (agent: Agent): boolean => !stopped && gate.allows(agent) && Boolean(ownership?.owns(agent))
     const residentSet = (agent: Agent): ReadonlySet<string> => new Set(gate.residentTools?.(agent) ?? [])
+    const workerReady = (): boolean => {
+      if (!worker) return false
+      try { return requireResident(ctx, { binaryPath: worker }).available } catch { return false }
+    }
     const permitted = (agent: Agent, api?: DiscoverableName): boolean => {
-      if (!owns(agent) || !worker || !ctx.get('subprocess')) return false
+      if (!owns(agent) || !workerReady() || !ctx.get('subprocess')) return false
       const policy = ctx.get('sandboxPolicy')?.resolve({ session: agent.session })
       return policy !== undefined && ['read-only', 'workspace-write', 'danger-full-access'].includes(policy.mode)
         && (!api || api === 'result' || !capability(api)?.mutates || policy.mode !== 'read-only')
@@ -177,10 +182,10 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
         entry.fiber = agent.ctx!.plugin({ inject: ['tools'], apply(scoped) { entry.ctx = scoped } })
         await entry.fiber
         if (!owns(agent) || entries.get(agent) !== entry || !entry.ctx) return
-        await entry.runtime.start([])
+        if (workerReady()) await entry.runtime.start([])
         if (!owns(agent) || entries.get(agent) !== entry || !entry.ctx) return
         if (config.enabled) publish(agent, entry, discover(agent, entry))
-        if (worker) for (const api of new Set([...config.allowedTools, ...config.alwaysLoaded])) {
+        if (worker && workerReady()) for (const api of new Set([...config.allowedTools, ...config.alwaysLoaded])) {
           if (residentSet(agent).has(publicToolName(api))) continue
           if (isSharedFileApi(api)) {
             const lease = await acquireSharedFile(agent, api, { workerPath: worker, required: config.required,

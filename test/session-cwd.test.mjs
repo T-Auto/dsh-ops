@@ -4,6 +4,7 @@ import path from 'node:path'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
+import { mountResident } from './lib/resident.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
 import { invoke } from '../lib/file/worker.js'
 import { definition } from '../lib/file/contract.js'
@@ -31,19 +32,19 @@ async function fixture(body) {
         stat: async file => ({ type: 'file', version: 'observed:' + file, size: fs.statSync(file).size }),
       }))
       ctx.on('fs/observed', target => observations.push(target))
-      const subprocess = ctx.get('subprocess'), spawn = subprocess.spawn.bind(subprocess)
-      subprocess.spawn = spec => { sent.push({ cwd: spec.cwd, ...JSON.parse(spec.stdio.stdin.data).request }); return spawn(spec) }
+      const kernel = await mountResident(ctx, { file: WORKER, cwd: root }), dispatch = kernel.invoke.bind(kernel)
+      kernel.invoke = (envelope, ...rest) => { sent.push(envelope.request); return dispatch(envelope, ...rest) }
       const call = (tool, args) => invoke(ctx, WORKER, tool, args, exec, exec.signal)
       await body({ root, tools, ctx, exec, call, sent, observations, setCwd: value => { cwd = value }, ensures: () => ensure })
     } finally { await shutdown(ctx) }
   })
 }
 
-await test('reads follow live cwd and share that base with worker spawn, envelope and host observation', () => fixture(async f => {
+await test('reads follow live cwd and share that base with the request and host observation', () => fixture(async f => {
   const value = await f.call('read_files', { files: [{ path: 'probe.txt' }] })
   assert.equal(value.status, 'completed', JSON.stringify(value))
   assert.equal(value.items[0].items[0].text, 'TOOLS')
-  assert.equal(f.sent[0].cwd, f.tools); assert.equal(f.sent[0].root, f.tools)
+  assert.equal(f.sent[0].root, f.tools)
   assert.deepEqual(f.observations, [path.join(f.tools, 'probe.txt')])
   assert.equal(f.ensures(), 1)
   assert.equal(value.resolvedFrom, f.tools); assert.equal(value.cwdSource, 'workingDirectory')

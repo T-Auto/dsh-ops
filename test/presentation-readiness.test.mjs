@@ -4,6 +4,7 @@ import path from 'node:path'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
+import { mountResident } from './lib/resident.mjs'
 import * as PtcModule from '../lib/ptc/index.js'
 import { mountNativeCatalogue } from './lib/native-catalogue.mjs'
 import * as DiscoveryModule from '../lib/components/discovery/index.js'
@@ -39,6 +40,7 @@ for (const official of ['read', 'glob']) for (const hidingFirst of [true, false]
   const { ctx } = await bootHost()
   try {
     await ctx.plugin(Subprocess); await ctx.plugin(Sandbox, {})
+    await mountResident(ctx)
     await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: cwd }) }))
     ctx.tools.register(tool('glob')); ctx.tools.register(tool('read'))
     const mountHiding = () => ctx.plugin(Hiding, { replaceTools: [official] })
@@ -102,6 +104,7 @@ await test('real shared Native sources keep exact ownership across PTC children 
   const { ctx } = await bootHost()
   try {
     await ctx.plugin(Subprocess); await ctx.plugin(Sandbox, {})
+    await mountResident(ctx)
     ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: cwd }) })
     ctx.provide('ptcRuntime', { language: 'typescript' })
     const native = await mountNativeCatalogue(ctx, { required: true })
