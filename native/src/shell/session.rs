@@ -21,6 +21,18 @@ struct Stopped {
     confirmed: bool,
     error: Option<String>,
 }
+trait CaptureCleanup {
+    fn drain(&mut self, deadline: Instant) -> io::Result<()>;
+    fn cleanup_unconfirmed(&self) -> bool;
+}
+impl CaptureCleanup for Call {
+    fn drain(&mut self, deadline: Instant) -> io::Result<()> {
+        Call::drain(self, deadline)
+    }
+    fn cleanup_unconfirmed(&self) -> bool {
+        Call::cleanup_unconfirmed(self)
+    }
+}
 
 pub(super) fn run(state: Arc<State>, session: Arc<Session>) -> io::Result<()> {
     let mut worker = Worker {
@@ -83,11 +95,21 @@ impl Worker {
             };
         };
         let error = driver.stop().err().map(|error| error.to_string());
-        let confirmed = driver.stopped();
+        let confirmed = driver.stopped() && !driver.cleanup_unconfirmed();
+        if !confirmed {
+            self.fatal_cleanup();
+        }
         if confirmed {
             self.driver = None;
         }
         Stopped { confirmed, error }
+    }
+    fn fatal_cleanup(&self) {
+        // Close admission before any owner with a retained I/O thread reaches Drop.
+        // A terminal receipt is not promised after transport loss; the host joins
+        // the managed kernel and settles admitted calls as unknown.
+        self.state.closing.store(true, Ordering::Release);
+        (self.state.fatal)();
     }
 
     fn controls(&mut self, controls: Vec<Control>) -> io::Result<bool> {
@@ -403,12 +425,21 @@ impl Worker {
     fn failure(
         &mut self,
         request: &Request,
-        call: Option<&mut Call>,
+        call: Option<&mut dyn CaptureCleanup>,
         failure: io::Error,
         code: &'static str,
     ) -> io::Result<()> {
         let stopped = self.stop();
-        let drain = call.and_then(|call| call.drain(Instant::now() + Duration::from_secs(5)).err());
+        let (drain, output_unknown) = call.map_or((None, false), |call| {
+            let error = call.drain(Instant::now() + Duration::from_secs(5)).err();
+            (error, call.cleanup_unconfirmed())
+        });
+        if !stopped.confirmed || output_unknown {
+            self.fatal_cleanup();
+            return Err(io::Error::other(
+                "shell cleanup unconfirmed; managed kernel teardown required",
+            ));
+        }
         let cancelled =
             request.cancelled.load(Ordering::Acquire) || Instant::now() >= request.deadline;
         let (code, mut message) = if cancelled {
@@ -434,3 +465,7 @@ impl Worker {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "session_cleanup_tests.rs"]
+mod cleanup_tests;

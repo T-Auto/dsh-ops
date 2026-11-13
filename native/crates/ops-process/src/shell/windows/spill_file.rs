@@ -182,6 +182,8 @@ impl SpillFile {
             // EX with ON_CLOSE and without DELETE clears the original delete-on-close
             // state. The old FILE_DISPOSITION_INFO does not clear that creation flag.
             self.cancel.operation(Some(handle), true, || {
+                #[cfg(test)]
+                self.cancel.wait_close_gate();
                 check(unsafe {
                     SetFileInformationByHandle(
                         handle,

@@ -20,6 +20,7 @@ type Response = (Value, Option<mpsc::SyncSender<io::Result<()>>>);
 pub(super) struct State {
     pub output: Output,
     pub started: Started,
+    pub fatal: Arc<dyn Fn() + Send + Sync>,
     pub sessions: Mutex<HashMap<String, Arc<Session>>>,
     pub requests: Mutex<HashMap<String, Arc<Request>>>,
     pub controls: Mutex<HashSet<String>>,
@@ -106,6 +107,7 @@ impl Manager {
             })?;
         let started_sender = sender.clone();
         let started_fatal = fatal.clone();
+        let cleanup_fatal = fatal.clone();
         Ok(Self {
             state: Arc::new(State {
                 output: Arc::new(move |value| {
@@ -129,6 +131,7 @@ impl Manager {
                         })?;
                     Ok(receipt)
                 }),
+                fatal: cleanup_fatal,
                 sessions: Mutex::default(),
                 requests: Mutex::default(),
                 controls: Mutex::default(),
@@ -136,6 +139,10 @@ impl Manager {
             }),
             tasks: vec![writer],
         })
+    }
+    #[cfg(test)]
+    pub(super) fn test_state(&self) -> Arc<State> {
+        self.state.clone()
     }
     pub fn contains(&self, id: &str) -> bool {
         self.state.requests.lock().unwrap().contains_key(id)

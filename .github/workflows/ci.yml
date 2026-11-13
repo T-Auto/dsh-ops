@@ -127,6 +127,10 @@ jobs:
         run: |
           node bench/probes/probe-872-spill.mjs native/target/debug/examples/task_capture.exe native/target/debug/dsh-ops-worker.exe
           node bench/probes/probe-872-spill-fatal.mjs
+      - name: Windows private-channel spill with stock foreground commands
+        if: runner.os == 'Windows'
+        shell: bash
+        run: node bench/probes/probe-872-channel-spill.mjs native/target/debug/examples/shell_driver.exe runtime/win32-x64/niubash/niu.exe runtime/win32-x64/niubash/niu.exe --stock-foreground
       - name: Assert the Linux worker is statically linked
         if: runner.os == 'Linux'
         shell: bash
