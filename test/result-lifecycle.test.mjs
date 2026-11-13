@@ -6,6 +6,7 @@ import { mountExchangeResident } from './lib/resident.mjs'
 import {
   deferredCleanupCount, resultSessionNonce, registerResultCleanup, retryDeferredResultCleanup,
   withResultSession, expireResultSession, mountResultLifecycle,
+  mountResidentResultLifecycle, resultCleanupAuthority,
 } from '../lib/kernel/result-lifecycle.js'
 import { listPendingCleanup, registerCleanupRoot, resetCleanupHostBoot, setCleanupRegistryDir } from '../lib/kernel/result-cleanup-registry.js'
 import { invoke as fileCall } from '../lib/file/worker.js'
@@ -53,6 +54,41 @@ await test('two component owners share the live session; last unload expires it'
     assert.notEqual(resultSessionNonce(ctx, session), nonce)
     assert.equal(await withResultSession(ctx, session, undefined, async () => 'resumed'), 'resumed')
     await reopened.dispose()
+  } finally { await shutdown(ctx) }
+})
+
+await test('cleanup sequencing is per owner and a refused purge releases the next session', async () => {
+  const gate = deferred(), events = [], first = { id: 'first' }, second = { id: 'second' }, sibling = { id: 'sibling' }
+  let warnings = 0
+  const ctx = { logger: { warn() { warnings++ } } }, other = {}
+  registerResultCleanup(ctx, first, 'cache', async () => { events.push('first'); await gate.promise; throw new Error('Cleanup authority unavailable') })
+  registerResultCleanup(ctx, second, 'cache', async () => { events.push('second') })
+  registerResultCleanup(other, sibling, 'cache', async () => { events.push('sibling') })
+  const closing = [expireResultSession(ctx, first), expireResultSession(ctx, second), expireResultSession(other, sibling)]
+  try {
+    await setImmediate()
+    assert.deepEqual(events, ['first', 'sibling'], 'only one owner waits behind its own cache purge')
+    gate.resolve(); await Promise.all(closing)
+    assert.deepEqual(events, ['first', 'sibling', 'second']); assert.equal(warnings, 1)
+  } finally { gate.resolve(); await Promise.allSettled(closing) }
+})
+
+await test('current policy stays available through root cleanup without an optional sandbox service', async () => {
+  const { ctx } = await bootHost(), session = { id: 'policy-only' }, events = []
+  let mode = 'danger-full-access'
+  try {
+    await ctx.plugin(inner => {
+      inner.provide('sandboxPolicy', { resolve() { events.push(mode); return { mode, workspaceRoot: '/workspace' } } })
+      inner.effect(() => () => { events.push('policy-released') }, 'fixture policy lifetime')
+    })
+    await ctx.plugin(inner => mountResidentResultLifecycle(inner))
+    registerResultCleanup(ctx, session, 'cache', async () => {
+      assert.equal(resultCleanupAuthority(ctx).sandbox, undefined)
+      assert.equal(resultCleanupAuthority(ctx).sandboxPolicy.resolve({ session }).mode, 'read-only')
+    })
+    mode = 'read-only'
+    await shutdown(ctx)
+    assert.deepEqual(events, ['read-only', 'policy-released'])
   } finally { await shutdown(ctx) }
 })
 

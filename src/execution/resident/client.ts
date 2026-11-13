@@ -2,7 +2,8 @@
 import type { Context, SubprocessHandle } from '../../adapter/dsh/types.js'
 import { InvocationNotStarted } from '../../lifecycle/invocations.js'
 import { record } from '../boundary.js'
-import type { workerEnvelope } from '../protocol.js'
+import { workerEnvelope, type WorkerStorage } from '../protocol.js'
+import { drainResultSessions, mountResidentResultLifecycle } from '../../kernel/result-lifecycle.js'
 import type { WorkerExchange } from '../transport.js'
 import { ENVELOPE_BYTES, ResidentFrames, encodeFrame } from './frames.js'
 import { ResidentShellChannel } from './shell-channel.js'
@@ -28,6 +29,7 @@ export interface ResidentClient {
   readonly shell: ShellTransport
   readonly task: TaskTransport
   invoke(envelope: Envelope, signal?: AbortSignal, started?: () => void): Promise<WorkerExchange>
+  purgeResults(root: string, scope: string, storage: WorkerStorage, signal: AbortSignal): Promise<WorkerExchange>
   stop(): Promise<void>
 }
 
@@ -140,8 +142,17 @@ class Client implements ResidentClient {
     })()
   }
   invoke(envelope: Envelope, signal?: AbortSignal, started?: () => void): Promise<WorkerExchange> {
+    return this.dispatch(envelope, signal, started)
+  }
+  /** Only already-owned cache teardown may use the live connection after ordinary admission closes. */
+  purgeResults(root: string, scope: string, storage: WorkerStorage, signal: AbortSignal): Promise<WorkerExchange> {
+    const envelope = workerEnvelope('ptc', { root, scope, tool: 'result', args: { action: 'purge' }, read_only: false }, 5000, storage)
+    envelope.budget.maxBytes = 4096
+    return this.dispatch(envelope, signal, undefined, true)
+  }
+  private dispatch(envelope: Envelope, signal?: AbortSignal, started?: () => void, cleanup = false): Promise<WorkerExchange> {
     if (signal?.aborted) return Promise.reject(new InvocationNotStarted())
-    if (!this.available) return Promise.reject(new ResidentNotStarted('Resident kernel is unavailable; reload the plugin to start a new instance'))
+    if (!(cleanup ? this.pid && !this.closing && !this.terminal : this.available)) return Promise.reject(new ResidentNotStarted('Resident kernel is unavailable; reload the plugin to start a new instance'))
     if (this.pending.size >= 32) return Promise.reject(new ResidentNotStarted('Resident kernel has 32 in-flight requests; admission is full'))
     let bytes: Buffer
     try {
@@ -212,8 +223,11 @@ export async function startResident(ctx: Context, file: string, cwd: string): Pr
   const subprocess = ctx.get('subprocess')
   if (!subprocess) throw new Error('Resident kernel requires the public subprocess service')
   let client: Client | undefined, handle: SubprocessHandle | undefined
+  mountResidentResultLifecycle(ctx)
   ctx.effect(() => async () => {
-    if (client) await client.stop()
+    if (client) {
+      try { await drainResultSessions(ctx, true) } finally { await client.stop() }
+    }
     else if (handle) { handle.terminate(); await handle.waitForExit(); await handle.done.catch(() => {}) }
   }, 'dsh-ops: resident kernel')
   try {

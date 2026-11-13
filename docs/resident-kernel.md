@@ -46,11 +46,44 @@ worker. Output drains retain bounded tails with explicit loss information. EOF a
 cancel and join admitted executions. No worker is detached or restarted.
 
 This removes repeated **host runner** startup for local file dispatch; it still pays native
-child startup per file request. WSL reads, confined PTC batch/result operations and cache cleanup
+child startup per file request. WSL reads and confined PTC batch/result operations
 retain their existing runners because their enforced execution contexts cannot be replaced by the
 trusted local-file path. The final A/B report must measure all of those costs. This transport is
 not evidence that session shells, DSH jobs, complete multi-process cleanup or the performance
 targets have been delivered.
+
+Owned result-cache cleanup uses the same resident connection and existing typed `result/purge`
+operation. It never starts a public one-shot worker. Session disposal stops its result work and
+joins it before purge; provider teardown also seals new work and joins pending session cleanup
+before shutting down the connection. This includes non-awaited host Session notifications and
+standalone consumers sharing an explicitly mounted provider.
+The existing per-owner lifecycle sequences cache purges even when many Session notifications arrive
+together; ordinary file work and other owners remain independent. A forty-session regression exercises
+the unchanged 32-request client limit, and a refused purge releases the next cleanup.
+
+The provider retains public sandbox and policy dependencies only through this cleanup barrier.
+Every purge resolves the current policy again, rejects read-only or changed authority, and checks
+the current Windows private-temp grant against the original root and SID. Native storage validation,
+no-follow directories, bounded cache names and the stable session lock are unchanged. Cleanup may
+use the still-owned connection after ordinary admission closes, but only through a method that
+constructs the fixed purge envelope. An absent/failed provider, changed grant or incomplete receipt
+keeps the existing deferred-cleanup record; it never creates a replacement worker or replays
+business operations.
+
+`resident-result-cleanup.test.mjs` exercises actual Agent/Session, policy, sandbox and subprocess
+services through package-root and shared standalone activation. Each keeps one public kernel spawn
+through file calls and disposal, holds cleanup to prove teardown waits, and observes both owned
+caches purged before kernel exit. It also replaces a cache session directory with a link and checks
+that the native refusal preserves the external target. These are ownership/safety checks, not
+performance measurements or evidence for the remaining #872 acceptance requirements.
+
+The Windows verification ran 89 checks across ten affected suites with zero failures or skips.
+Removing only the retained-authority hook from a separate compiled copy made the full-root check
+fail with zero of two caches purged; standalone and no-follow checks still passed. The forty-session
+test first completed only 32 purges, then passed after lifecycle sequencing. Removing only the
+client's duplicate drain call did not fail, because the retained dependency disposers also join
+cleanup. Fixture setup failures and that ineffective negative are retained separately from the
+meaningful controls; they are not counted as production regressions.
 
 Standalone integrations explicitly mount `residentKernel()` in their common owning activation
 before mounting consumers; see the [integration setup](integration-api.md). Removing a consumer

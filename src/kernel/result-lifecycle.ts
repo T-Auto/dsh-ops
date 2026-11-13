@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import type { Context } from '../adapter/dsh/types.js'
+import type { ResultCleanupAuthority } from './result-storage.js'
 import { CallBudgetError } from './call-budget.js'
 import { completeCleanupRoot, recordCleanupFailure, type CleanupReason } from './result-cleanup-registry.js'
 import { runConfiguredResultCacheGc, scheduleStartupResultCacheGc } from './result-cache-gc.js'
@@ -23,7 +25,8 @@ interface LiveSession {
   cleanup: Map<string, CleanupEntry>
   closing?: Promise<void>
 }
-interface Owner { mounts: number; sessions: Map<ResultSession, LiveSession>; expired: WeakSet<ResultSession> }
+interface Owner { mounts: number; sessions: Map<ResultSession, LiveSession>; expired: WeakSet<ResultSession>
+  closing?: boolean; cleaning?: Promise<void>; cleanupAuthority?: ResultCleanupAuthority }
 const owners = new WeakMap<object, Owner>()
 function owner(ctx: Pick<LifecycleHost, 'root'>): Owner {
   const key = ctx.root ?? ctx
@@ -33,6 +36,7 @@ function owner(ctx: Pick<LifecycleHost, 'root'>): Owner {
 }
 function live(ctx: Pick<LifecycleHost, 'root'>, session: ResultSession): LiveSession {
   const state = owner(ctx)
+  if (state.closing) throw new Error('Result owner is closing')
   if (state.expired.has(session)) throw new Error('Result session has expired')
   // The pinned SessionStore emits its exact stored Session object throughout one lifetime.
   if ([...state.sessions].some(([other, entry]) => other !== session && other.id === session.id && !entry.stopped)) {
@@ -49,6 +53,33 @@ function live(ctx: Pick<LifecycleHost, 'root'>, session: ResultSession): LiveSes
 /** A reopened persisted session receives a fresh authority binding, even with the same id. */
 export function resultSessionNonce(ctx: Pick<LifecycleHost, 'root'>, session: ResultSession): string {
   return live(ctx, session).nonce
+}
+/** A retained public dependency context remains valid through its awaited teardown. */
+export function resultCleanupAuthority(ctx: Pick<LifecycleHost, 'root'>): ResultCleanupAuthority | undefined {
+  return owner(ctx).cleanupAuthority
+}
+/** Keep current policy and its cache grants alive until the same owned purge barrier joins. */
+export function mountResidentResultLifecycle(ctx: Context): void {
+  const state = owner(ctx)
+  state.closing = false
+  // Full-access POSIX cache cleanup does not require a sandbox provider.
+  for (const name of ['sandboxPolicy', 'sandbox'] as const) ctx.inject([name], inner => {
+    // Injected properties retain the committed implementation until this disposer joins.
+    // ctx.get() would hide a withdrawing service before its grants are actually released.
+    const service = inner[name]
+    state.cleanupAuthority = { ...state.cleanupAuthority, [name]: service }
+    inner.effect(() => async () => {
+      await drainResultSessions(ctx)
+      if (state.cleanupAuthority?.[name] === service) delete state.cleanupAuthority[name]
+    }, 'dsh-ops: result cleanup authority')
+  })
+}
+/** The resident owner seals new work before draining sessions, then closes its transport. */
+export async function drainResultSessions(ctx: Pick<LifecycleHost, 'root' | 'logger'>, seal = false): Promise<void> {
+  const state = owner(ctx)
+  if (seal) state.closing = true
+  await Promise.allSettled([...state.sessions.keys()].map(session => expireResultSession(ctx, session, false)))
+  await retryDeferredResultCleanup(ctx).catch(() => undefined)
 }
 /**
  * Register the physical cleanup of one cache root.
@@ -148,22 +179,30 @@ export function expireResultSession(ctx: Pick<LifecycleHost, 'root' | 'logger'>,
   // Publish the barrier before abort listeners can synchronously reopen the same id.
   entry.closing = Promise.resolve().then(async () => {
     await Promise.allSettled(entry.work.values())
-    for (const cleanup of entry.cleanup.values()) {
-      try {
-        await cleanup.run()
-        if (cleanup.root !== undefined) completeCleanupRoot(cleanup.root)
-      } catch (error) {
-        const reason = classifyCleanupFailure(error)
-        if (cleanup.root !== undefined) {
-          recordCleanupFailure(cleanup.root, reason)
-          const attempts = (deferred.get(cleanup.root)?.attempts ?? 0) + 1
-          if (deferred.size < MAX_DEFERRED_CLEANUPS && attempts <= MAX_DEFERRED_ATTEMPTS) {
-            deferred.set(cleanup.root, { run: cleanup.run, attempts, reason, nextAt: Date.now() + backoffMs(attempts) })
+    // Session notifications may all precede provider teardown. Sequence only their
+    // cache purges, so they cannot overflow the resident request window together.
+    const preceding = state.cleaning
+    let release!: () => void
+    state.cleaning = new Promise<void>(resolve => { release = resolve })
+    await preceding
+    try {
+      for (const cleanup of entry.cleanup.values()) {
+        try {
+          await cleanup.run()
+          if (cleanup.root !== undefined) completeCleanupRoot(cleanup.root)
+        } catch (error) {
+          const reason = classifyCleanupFailure(error)
+          if (cleanup.root !== undefined) {
+            recordCleanupFailure(cleanup.root, reason)
+            const attempts = (deferred.get(cleanup.root)?.attempts ?? 0) + 1
+            if (deferred.size < MAX_DEFERRED_CLEANUPS && attempts <= MAX_DEFERRED_ATTEMPTS) {
+              deferred.set(cleanup.root, { run: cleanup.run, attempts, reason, nextAt: Date.now() + backoffMs(attempts) })
+            }
           }
+          reportDeferred(ctx, `dsh-ops: session result references expired; physical cache cleanup did not complete under current host authority (${reason}). Deferred cleanup is recorded and retried when this host regains write authority or at the next start-up sweep.`)
         }
-        reportDeferred(ctx, `dsh-ops: session result references expired; physical cache cleanup did not complete under current host authority (${reason}). Deferred cleanup is recorded and retried when this host regains write authority or at the next start-up sweep.`)
       }
-    }
+    } finally { release() }
     entry.cleanup.clear(); state.sessions.delete(session)
   })
   for (const controller of entry.work.keys()) controller.abort(new Error('Result session disposed'))

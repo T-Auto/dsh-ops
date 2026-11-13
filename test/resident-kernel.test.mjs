@@ -10,6 +10,7 @@ import { WORKER, requireWorker } from './lib/boundary.mjs'
 import { startResident, ResidentNotStarted } from '../lib/execution/resident/client.js'
 import { FRAME_BYTES } from '../lib/execution/resident/frames.js'
 import { workerEnvelope } from '../lib/execution/protocol.js'
+import { registerResultCleanup, expireResultSession } from '../lib/kernel/result-lifecycle.js'
 
 const receipt = { exitCode: 0, interrupted: false, readers: true, lossy: false, stderr: '', value: { status: 'completed', changed: 0 } }
 const envelope = id => ({ ...workerEnvelope('file', { tool: 'stat', args: {}, read_only: true }), requestId: id })
@@ -50,15 +51,42 @@ function fixture({ hold = false, ready = true, holdExit = false } = {}) {
     get: () => ({ spawn(value) { ++spawns; spec = value; return handle } }),
     fiber: { assertActive() { if (!active) throw new Error('activation is disposed') } },
     effect(body) { effects.push(body()) },
+    // This wire fixture has no cache authority; real dependency teardown is covered separately.
+    inject(names) { assert.equal(names.length, 1); assert.ok(['sandboxPolicy', 'sandbox'].includes(names[0])) },
   }
   const starting = startResident(ctx, '/worker', '/workspace')
   const send = value => input.write(`${JSON.stringify(value)}\n`)
   if (ready) send({ type: 'ready', version: 1, pid: 123 })
-  return { starting, send, input, frames, writes, handle, finish, releaseExit: () => exit(true),
+  return { ctx, starting, send, input, frames, writes, handle, finish, releaseExit: () => exit(true),
     get spawns() { return spawns }, get terminated() { return terminated }, get spec() { return spec },
     async dispose() { active = false; await Promise.all(effects.map(effect => effect())) },
   }
 }
+
+await test('forty simultaneous session expiry notifications drain through the bounded client without lost purges', async () => {
+  const host = fixture(), client = await host.starting
+  let completed = 0, cursor = 0, settled = false
+  const storage = { root: '/private-cache', authorityId: 'a'.repeat(64), allowedTools: ['result'] }
+  const sessions = Array.from({ length: 40 }, (_, index) => ({ id: `cleanup-${index}` }))
+  for (const session of sessions) registerResultCleanup(host.ctx, session, 'cache', async () => {
+    const value = await client.purgeResults('/workspace', session.id, storage, new AbortController().signal)
+    assert.equal(value.value.status, 'completed'); completed++
+  })
+  const closing = Promise.all(sessions.map(session => expireResultSession(host.ctx, session))).then(() => { settled = true })
+  try {
+    await within((async () => {
+      while (!settled) {
+        await flush()
+        for (; cursor < host.frames.length; cursor++) {
+          const frame = host.frames[cursor]
+          if (frame.type === 'execute') host.send({ type: 'completed', requestId: frame.envelope.requestId, exchange: receipt })
+        }
+      }
+      await closing
+    })())
+    assert.equal(completed, 40, 'routine session teardown must not lose purges to the 32-request admission limit')
+  } finally { await host.dispose() }
+})
 
 await test('one scoped handle waits for handshake and correlates repeated exchanges', async () => {
   const host = fixture({ ready: false })
