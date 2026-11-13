@@ -9,6 +9,7 @@ use dsh_ops_core::{
 use serde_json::json;
 use std::io::{Read, Write};
 mod resident;
+mod shell;
 
 fn may_mutate(request: &Request) -> bool {
     !request.read_only
@@ -32,6 +33,17 @@ fn may_mutate(request: &Request) -> bool {
                 == Some("page"))
 }
 fn main() {
+    #[cfg(windows)]
+    if std::env::args().nth(1).as_deref() == Some("--ops-signal-console") {
+        let args: Vec<_> = std::env::args().collect();
+        if args.len() != 3 {
+            std::process::exit(2);
+        }
+        match args[2].parse::<u32>() {
+            Ok(pid) if pid != 0 => ops_process::shell::signal_console_and_exit(pid),
+            _ => std::process::exit(2),
+        }
+    }
     if std::env::args().any(|a| a == "--serve") {
         if let Err(error) = resident::serve() {
             eprintln!("OPS kernel stopped: {error}");

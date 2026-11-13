@@ -121,14 +121,23 @@ pub fn serve() -> io::Result<()> {
     let pipe = ControlPipe::inherited()?;
     let mut reader = BufReader::new(pipe.try_clone()?);
     let output = Arc::new(Mutex::new(pipe));
+    let shell_output = output.clone();
+    let shell_shutdown = reader.get_ref().try_clone()?;
+    let mut shells = crate::shell::Manager::new(
+        move |value| send(&shell_output, value),
+        move || {
+            let _ = shell_shutdown.shutdown();
+        },
+    )?;
     let active: Active = Arc::default();
     let mut tasks: Vec<thread::JoinHandle<()>> = Vec::new();
     send(
         &output,
-        json!({"type":"ready","version":1,"pid":std::process::id()}),
+        json!({"type":"ready","version":1,"pid":std::process::id(),"capabilities":crate::shell::capabilities()}),
     )?;
     let result = (|| {
         while let Some(frame) = read_frame_limit(&mut reader, FRAME_BYTES)? {
+            shells.reap()?;
             // Join finished executions without keeping one thread handle per past call.
             let mut index = 0;
             while index < tasks.len() {
@@ -143,6 +152,9 @@ pub fn serve() -> io::Result<()> {
                 Some("execute") => {
                     let envelope = &message["envelope"];
                     let id = request_id(&envelope["requestId"])?;
+                    if shells.contains(&id) {
+                        return Err(io::Error::other("duplicate kernel requestId"));
+                    }
                     let input = serde_json::to_vec(envelope)?;
                     if input.len() > envelope::MAX_REQUEST_BYTES {
                         return Err(io::Error::other("request exceeds 2 MiB"));
@@ -181,8 +193,18 @@ pub fn serve() -> io::Result<()> {
                     if let Some(state) = state {
                         cancel(&state);
                     }
+                    shells.cancel(&id)?;
                 }
                 Some("shutdown") => break,
+                Some(kind) if kind.starts_with("shell.") => {
+                    let id = request_id(&message["requestId"])?;
+                    if active.lock().unwrap().contains_key(&id) {
+                        return Err(io::Error::other(
+                            "shell requestId conflicts with a file request",
+                        ));
+                    }
+                    shells.handle(&message)?;
+                }
                 _ => return Err(io::Error::other("unknown kernel control message")),
             }
         }
@@ -199,8 +221,9 @@ pub fn serve() -> io::Result<()> {
     for state in states {
         cancel(&state);
     }
+    let shell_shutdown = shells.shutdown();
     for task in tasks {
         let _ = task.join();
     }
-    result.and(shutdown)
+    result.and(shutdown).and(shell_shutdown)
 }

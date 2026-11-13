@@ -2,6 +2,8 @@
 //! actual production module; only the one-shot leaf has controlled blocking.
 #[path = "../src/resident.rs"]
 mod resident;
+#[path = "../src/shell/mod.rs"]
+mod shell;
 use std::{
     io::{Read, Write},
     time::Duration,
