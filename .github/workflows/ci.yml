@@ -95,6 +95,7 @@ jobs:
         shell: bash
         run: |
           cargo build --locked --manifest-path native/Cargo.toml --example shell_range --example shell_signal_fault
+          cargo build --locked --manifest-path native/Cargo.toml -p ops-process --example shell_signal_cooperative
           node bench/probes/probe-872-shell-range.mjs
       - name: Assert the Linux worker is statically linked
         if: runner.os == 'Linux'

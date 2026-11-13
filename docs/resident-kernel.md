@@ -295,6 +295,7 @@ Reproduce on Windows with a complete verified Niubash payload:
 ```console
 npm run build
 cargo build --locked --manifest-path native/Cargo.toml --example shell_range --example shell_signal_fault
+cargo build --locked --manifest-path native/Cargo.toml -p ops-process --example shell_signal_cooperative
 cargo test --locked --manifest-path native/Cargo.toml -p ops-process
 node bench/probes/probe-872-shell-range.mjs <shell_range.exe> <pinned-niu.exe>
 ```
@@ -307,12 +308,18 @@ for this new substrate because a new process group can escape the host's fallbac
 Existing POSIX execution is unchanged. Native process-group/cgroup ownership needs separate proof.
 
 Local Windows validation: the public-host probe passes **13 checks**, including two later
-unrestricted shells trapping INT and exiting 42, restricted soft-attempt/hard-reset, helper timeout
+cooperative fixture shells trapping INT and exiting 42, restricted soft-attempt/hard-reset, helper timeout
 and crash, sibling isolation, hard kernel death, EOF teardown, four independently drained 1 MiB
 streams retaining 1024 bytes each, and no tracked survivors. The `ops-process` suite passes **17
 tests**, with one existing child fixture ignored by the harness and explicitly invoked by its
 lifecycle tests. The native workspace suite exits successfully. These are C1 results, not a
 completed #872 acceptance report.
+
+The positive INT fixture explicitly enables Ctrl+C before starting Niubash; its waiter uses a
+non-inherited handler. Git Bash/CI can pass an inherited ignore flag, which caused this assertion
+to fail despite a successful production signal attempt. The production launcher preserves that
+baseline, and ignored signals still require range termination. Both PowerShell and Git Bash run
+the same cooperative assertion; neither skips nor retries it.
 
 ## Validation record
 

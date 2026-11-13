@@ -1,5 +1,6 @@
 /** Windows C1 ownership/channel probe; not a session tool or persistent-shell claim.
  * cargo build --locked --manifest-path native/Cargo.toml --example shell_range --example shell_signal_fault
+ * cargo build --locked --manifest-path native/Cargo.toml -p ops-process --example shell_signal_cooperative
  * npm run build
  * node bench/probes/probe-872-shell-range.mjs <example.exe> <pinned niu.exe>
  */
@@ -77,7 +78,12 @@ async function spawn(kernel, id, mode, shape, args = [], prepared) {
     ? `exec 3<>${quote(names[0])} 4<>${quote(names[1])} 5<>${quote(names[2])}; printf 'builtin-out' >&3; printf 'builtin-err' >&4; printf 'builtin-control' >&5`
     : shape === 'trap' ? `exec 3<>${quote(names[2])}; trap 'printf "caught-INT\\n" >&3; exit 42' INT; printf 'ready\\n' >&3; while :; do :; done`
     : [shellPath(process.execPath), shellPath(child), shape, ...names, ...args].map(quote).join(' ')
-  const argv = [support.file, '--noprofile', '--norc', '-c', script]
+  const shellArgv = [support.file, '--noprofile', '--norc', '-c', script]
+  // A cooperative target explicitly enables Ctrl+C; a Git Bash/CI parent may
+  // otherwise pass an ignore flag through the unchanged production launcher.
+  const argv = shape === 'trap'
+    ? [path.join(path.dirname(binary), 'shell_signal_cooperative.exe'), '--cooperative-shell-fixture', ...shellArgv]
+    : shellArgv
   const confined = mode === 'danger-full-access' ? { argv, enforcement: 'none' }
     : await ctx.get('sandbox').confine(argv, { mode, workspaceRoot: workspace, sessionId: `ops-c1-${mode}` }, AbortSignal.timeout(15000))
   assert.deepEqual(confined.argv.slice(-argv.length), argv, 'public host argv is passed unchanged')
@@ -167,7 +173,7 @@ try {
     assert.equal((await kernel.ask('ping', 'kernel')).pong, true)
     retained[1].forEach(pid => assert.equal(alive(pid), true))
   }
-  checks.push({ name: 'two later unconfined shells catch INT and exit42 without kernel or sibling console changes', status: 'pass' })
+  checks.push({ name: 'two cooperative fixture shells catch INT and exit42 without kernel or sibling console changes', status: 'pass' })
   assert.equal((await kernel.ask('stop', 'sibling')).active, 0); await gone(retained[1])
   checks.push({ name: 'soft attempt then bounded stop joins early detached descendant; sibling and later launch survive', status: 'pass' })
   const owned = await spawn(kernel, 'crash', 'workspace-write', 'hold')
