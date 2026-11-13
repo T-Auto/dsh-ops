@@ -74,9 +74,17 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     let presentationRevision = 0
     ctx.on('system-prompt/change', () => { ++presentationRevision })
     let ownership: Awaited<ReturnType<typeof ownPtcScopes>> | undefined
-    const resident = new Set<ApiName>(gate.resident === false ? [] : [...PTC_RESIDENT_TOOLS, ...config.alwaysLoaded])
-    // A loader-less scope can never select the allowed pool: registering it only
-    // lets a host that renders registered definitions declare unreachable APIs.
+    // Progressive disclosure off: the pool that would otherwise wait behind
+    // `ops_load_sdk` is published as resident instead. A provider that cannot take
+    // dynamically added tools then sees every API the scope may call, instead of a
+    // loader nothing can reach.
+    // `resident` stays authoritative: a scope that asked for no startup APIs keeps
+    // publishing none, which is the state #887 protects.
+    const exposed: ApiName[] = gate.dynamic === false && gate.resident !== false
+      ? [...config.allowedTools, 'result' as ApiName] : []
+    const resident = new Set<ApiName>(gate.resident === false ? [] : [...PTC_RESIDENT_TOOLS, ...config.alwaysLoaded, ...exposed])
+    // A loader-less scope can never *select* a pool, so it registers none as
+    // selectable; the same names already arrived through `exposed` above.
     const selectable: ApiName[] = gate.dynamic === false ? [] : [...config.allowedTools, 'result' as ApiName]
     const pool = new Set<ApiName>([...resident, ...selectable])
     const owns = (agent: Agent): boolean => !stopped && gate.allows(agent) && Boolean(ownership?.owns(agent))
