@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { PACKAGE_ROOT, assert, report, test, withTempDir } from './lib/harness.mjs'
 import { NIUBASH_PACKAGE_PATH } from '../lib/cli/niubash-payload.js'
-import { PLATFORMS, workerName } from '../lib/ptc/runtime.js'
+import { PLATFORMS, RELEASE_TARGETS, workerName } from '../lib/ptc/runtime.js'
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 function header(target) {
   const bytes = Buffer.alloc(80)
@@ -14,7 +14,7 @@ function header(target) {
   if (target === 'darwin-arm64' || target === 'darwin-x64') { bytes.writeUInt32LE(0xfeedfacf,0); bytes.writeUInt32LE(target.endsWith('x64') ? 0x1000007 : 0x100000c,4) }
   return bytes
 }
-function fixture(root, targets = PLATFORMS) {
+function fixture(root, targets = RELEASE_TARGETS) {
   const pkg = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT,'package.json'),'utf8'))
   const manifest = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT,'dsh-plugin.json'),'utf8'))
   fs.mkdirSync(path.join(root,'bin'),{recursive:true})
@@ -63,10 +63,43 @@ await test('each missing target fails strict release while staged source checks 
   fixture(root,['linux-x64']); assert.equal(run(root,'native-runtime.mjs',['--staged']).status,0)
   const result=run(root); assert.notEqual(result.status,0); assert.match(result.out,/missing win32-x64, darwin-arm64, darwin-x64/)
 }))
-await test('every foreign target is rejected',async()=>withTempDir('release-foreign',root=>{
-  fixture(root); for(const target of ['win32-arm64','linux-arm64','darwin-riscv64']) {
+await test('foreign targets are rejected and a local-only target is not a release payload',async()=>withTempDir('release-foreign',root=>{
+  fixture(root); for(const target of ['win32-arm64','darwin-riscv64']) {
     const result=run(root,'native-runtime.mjs',['--platform',target]); assert.notEqual(result.status,0); assert.match(result.out,/Unsupported target/)
   }
+  const localOnly=run(root,'native-runtime.mjs',['--platform','linux-arm64']); assert.notEqual(localOnly.status,0); assert.match(localOnly.out,/not staged/)
+}))
+await test('a locally staged arm64 worker passes the real stage → check chain and stays out of a release', async () => withTempDir('release-arm64-stage', root => {
+  const input = path.join(root, 'input')
+  fs.mkdirSync(input, { recursive: true })
+  const elf = machine => { const bytes = Buffer.alloc(80); Buffer.from([127, 69, 76, 70, 2, 1]).copy(bytes); bytes.writeUInt16LE(machine, 18); return bytes }
+  const stageInput = bytes => fs.writeFileSync(path.join(input, workerName('linux')), bytes)
+  const cli = args => { const result = spawnSync(process.execPath, [path.join(root, 'bin', 'native-runtime.mjs'), ...args, '--root', root], { encoding: 'utf8' }); return { status: result.status, out: `${result.stdout}${result.stderr}` } }
+  // One synthetic release target keeps this case off the Windows payload fixture;
+  // the closure question below is "is a staged arm64 target a release target", not IPC.
+  fixture(root, ['linux-x64'])
+  // Positive: a genuine aarch64 ELF plus the receipt `stage` writes for it.
+  stageInput(elf(183))
+  const staged = cli(['stage', '--platform', 'linux-arm64', '--input', input])
+  assert.equal(staged.status, 0, staged.out)
+  const receipt = path.join(root, 'runtime', 'linux-arm64', 'provenance.json')
+  assert.equal(JSON.parse(fs.readFileSync(receipt, 'utf8')).target, 'linux-arm64')
+  assert.equal(cli(['check', '--platform', 'linux-arm64']).status, 0)
+  assert.equal(cli(['check', '--staged']).status, 0)
+  // The closure is still the four release targets: staged arm64 is not a release payload.
+  assert.match(run(root).out, /Unexpected runtime targets in release: linux-arm64/)
+  // An x64 ELF relabeled as arm64 is refused at the stage step, before any receipt helps it.
+  stageInput(elf(62))
+  const mislabeled = cli(['stage', '--platform', 'linux-arm64', '--input', input])
+  assert.notEqual(mislabeled.status, 0)
+  assert.match(mislabeled.out, /Wrong ELF architecture/)
+  assert.match(cli(['check', '--platform', 'linux-arm64']).out, /Wrong ELF architecture/)
+  // A receipt that does not describe the bytes is refused.
+  stageInput(elf(183))
+  assert.equal(cli(['stage', '--platform', 'linux-arm64', '--input', input]).status, 0)
+  const tampered = JSON.parse(fs.readFileSync(receipt, 'utf8'))
+  fs.writeFileSync(receipt, JSON.stringify({ ...tampered, sha256: 'f'.repeat(64) }))
+  assert.match(cli(['check', '--platform', 'linux-arm64']).out, /provenance mismatch/)
 }))
 await test('non-host worker tampering is checked',async()=>withTempDir('release-tamper',root=>{
   fixture(root); fs.appendFileSync(path.join(root,'runtime/darwin-arm64/dsh-ops-worker'),'changed')
@@ -78,7 +111,9 @@ await test('Windows worker without IPC cannot pass',async()=>withTempDir('releas
 }))
 await test('half-staged and unexpected targets are never silently skipped',async()=>withTempDir('release-stray',root=>{
   fixture(root); fs.mkdirSync(path.join(root,'runtime/darwin-riscv64')); assert.match(run(root).out,/Unexpected runtime targets/)
-  fs.rmSync(path.join(root,'runtime/darwin-riscv64'),{recursive:true}); fs.unlinkSync(path.join(root,'runtime/darwin-arm64/provenance.json'))
+  fs.rmSync(path.join(root,'runtime/darwin-riscv64'),{recursive:true})
+  fs.mkdirSync(path.join(root,'runtime/linux-arm64')); assert.match(run(root).out,/Unexpected runtime targets/)
+  fs.rmSync(path.join(root,'runtime/linux-arm64'),{recursive:true}); fs.unlinkSync(path.join(root,'runtime/darwin-arm64/provenance.json'))
   assert.match(run(root,'native-runtime.mjs',['--staged']).out,/Half-staged runtime/)
 }))
 await test('manifest exact targets, npm platform filters and shell pins must agree',async()=>withTempDir('release-drift',root=>{

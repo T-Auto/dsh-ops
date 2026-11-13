@@ -1,8 +1,11 @@
-# Building and running dsh-ops on Linux x64
+# Building and running dsh-ops on Linux x64 and arm64
 
-Linux x64 is a supported target for the **file**, **ptc** and **shell**
-components. On Linux the shell component's `ops_bash` runs the distribution's own
-bash (see [Configuring the shell lane](#configuring-the-shell-lane)); the bundled
+Linux x64 is a published target for the **file**, **ptc** and **shell**
+components; Linux arm64 (aarch64) is a target the resolver accepts but the
+release does not carry, so an arm64 host builds and stages the worker itself (see
+[Linux arm64](#linux-arm64-locally-staged)). On Linux the shell component's
+`ops_bash` runs the distribution's own bash (see
+[Configuring the shell lane](#configuring-the-shell-lane)); the bundled
 PowerShell 7 and the bash IPC proxies remain Windows x64 only.
 
 Nothing on Linux is downloaded with the package: the native workers are staged
@@ -10,7 +13,7 @@ locally from source, which is why this page exists. The npm package still
 carries the Windows x64 payloads (`@dsh-ops/*-win32-x64`); Linux has no payload
 packages to fetch.
 
-| Component | Linux x64 | Notes |
+| Component | Linux x64 / arm64 | Notes |
 | --- | --- | --- |
 | `dsh-ops/mode-standard` | yes | resident OPS file tools and `ops_bash` over the host bash; no official tool is replaced on Linux |
 | `dsh-ops/mode-cordis` | yes | same surface as Standard, with its own routing section |
@@ -188,6 +191,45 @@ Confirm what the host composed:
 $ dsh --profile <profile> --dump-config
 ```
 
+## Linux arm64 (locally staged)
+
+`linux-arm64` is in the resolver's `PLATFORMS` but not in `RELEASE_TARGETS`: the
+published tarball carries `win32-x64`, `linux-x64`, `darwin-arm64` and
+`darwin-x64` only, so a release package has **no** `runtime/linux-arm64` worker.
+Nothing downloads one either — an arm64 host builds it from the package's own
+`native/` sources and stages it with a receipt:
+
+```console
+$ npm run build:ptc -- stage --platform linux-arm64          # after cargo build --release --bin dsh-ops-worker
+$ node bin/native-runtime.mjs check --platform linux-arm64   # receipt, digest and ELF machine (183)
+$ node bin/native-runtime.mjs check --staged                 # every runtime this tree carries
+```
+
+`npm run build:ptc` compiles with the host toolchain, so it needs a Rust 1.88
+toolchain and a C linker. Staging is what creates
+`runtime/linux-arm64/provenance.json`; the resolver refuses a directory whose
+receipt does not hash to the worker, and refuses an x64 ELF relabeled as arm64.
+A release closure (`node bin/check-release.mjs`) still fails when
+`runtime/linux-arm64` is present, because a release must carry exactly the four
+`RELEASE_TARGETS`.
+
+Scope of the support claim:
+
+- **Local, not published.** `linux-arm64` works from a source build on the host.
+  The npm package, the release workflow and `bin/check-release.mjs` continue to
+  describe four targets; do not read a staged arm64 worker as a release promise.
+- **Unpatched upstream source.** The staged worker is built from the shipped
+  `native/` tree with no source patches, so any platform limitation the worker
+  has on that host applies unchanged.
+- **Android/proot evidence is narrow.** Running under proot on Android arm64 was
+  observed only for reads and bounded enumeration. Rename, `linkat`, xattr and
+  SELinux behaviour on such a host is not validated here, so it is not evidence
+  for every write path, for a non-proot GNU/Linux arm64 host, or for OS sandbox
+  enforcement.
+- **A foreign worker is never substituted.** `PLATFORMS` widening the accepted
+  set does not let an x64 payload stand in for an arm64 host: the resolver keys
+  on `runtime/<platform>-<arch>` and verifies the receipt and the ELF machine.
+
 ## Configuring the shell lane
 
 `ops_bash` works on Linux out of the box: every enabled mode row resolves the
@@ -213,6 +255,8 @@ To use a different bash, name it explicitly on a mode row:
 | Symptom | Cause | Remedy |
 | --- | --- | --- |
 | `Unsupported runtime target linux-x64` | a build whose `PLATFORMS` list predates Linux support | use a version that lists `linux-x64`, or build from a checkout that does |
+| `Runtime for linux-arm64 is not staged` | `check` without `--staged` asks for the release targets, and an arm64 host has only its own | run `npm run build:ptc -- stage --platform linux-arm64`, or use `check --staged` |
+| `Wrong ELF architecture: linux-arm64` | an x64 (or other) binary was staged under `linux-arm64` | rebuild on the arm64 host; a relabeled binary is refused by design |
 | `Error: Unsupported target` from `build:ptc`, after a successful compile | the stage step rejected the target | same as above; the compile itself is fine |
 | `npm error code EBADPLATFORM` | the published tarball declares `os: ["win32"]` | install from a checkout/`npm pack` through `dsh plugin` |
 | file tools silently missing, no error | `resolveWorker()` threw and the component degraded: `required` defaults to `false` | set `required: true` on the `dsh-ops/mode-standard` row to make it loud |
