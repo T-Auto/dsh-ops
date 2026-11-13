@@ -90,7 +90,7 @@ try {
   await until(() => owners.every(({ agent }) => ctx.tools.get(publicToolName('bash'), agent)?.parameters.properties.execution), 'session tool publication')
 
   for (const presentation of ['native', 'ptc']) await check(`${presentation} cancelled shell publishes one joined reset fact`, async () => {
-    await first.ctx.plugin(inner => selectExecutor(inner, presentation))
+    if (presentation === 'ptc') await first.ctx.plugin(inner => selectExecutor(inner, presentation))
     const initial = okay(await run(first, presentation, sessionArgs('export OPS_RESET_KEEP=remembered; printf "%s" "$$"')))
     const pid = Number(initial.stdout.text)
     assert.ok(Number.isSafeInteger(pid) && pid > 0)
