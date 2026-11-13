@@ -24,6 +24,7 @@ import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
 import FileSystem from '@deepseek-ai/dsh-fs-local'
 import { invoke } from '../lib/ptc/worker.js'
 import { invoke as invokeFile } from '../lib/file/worker.js'
+import { CallBudget } from '../lib/kernel/call-budget.js'
 import { legacyComponent } from './lib/legacy-component.mjs'
 import { isPresentationProbe } from '../lib/presentation.js'
 const ptc = legacyComponent(ptcModule)
@@ -304,20 +305,24 @@ try {
     pure.session.mode = 'workspace-write'; sandboxAvailable = false
     assert.equal((await direct(pure, 'ops_batch', {action:'run',operations:[{op:'remove',path:'host-dest'}]})).error.code,'EXECUTOR_UNAVAILABLE')
     assert.equal(calls.length,before); assert.equal(hostJobs.size,0)
-    const fakeOutcome = (outcome, stderr = '', lossy = false) => ({ get(name) {
-      if (name === 'opsKernel') {
-        const invoke = async (_envelope, _signal, started) => {
-          started?.()
-          return { exitCode: outcome.exitCode, interrupted: Boolean(outcome.signal), readers: true, lossy, stderr, value: {} }
-        }
-        return { file, available: true, invoke, invokeConfined: (envelope, _launch, signal, started) => invoke(envelope, signal, started) }
+    const fakeOutcome = (outcome, stderr = '', lossy = false) => {
+      const budget = new CallBudget()
+      const invoke = async (_envelope, _signal, started) => {
+        started?.()
+        return { exitCode: outcome.exitCode, interrupted: Boolean(outcome.signal), readers: true, lossy, stderr, value: {} }
       }
-      if (name === 'subprocess') return { spawn() { return { done: Promise.resolve(outcome),
-        collected: { stdout: { readFrom: () => ({ text: '{}', lossy }) }, stderr: { readFrom: () => ({ text: stderr }) } } } } }
-      if (name === 'sandbox') return { confine: async argv => ({ argv, enforcement: 'full', denialSignatures: ['fixture access denied'],
-        runnerFailureRules: [{ fatalSignatures: ['fixture runner failed'], allowedExitCodes: [9] }] }) }
-      return ctx.get(name)
-    } })
+      const kernel = { file, available: true, invoke,
+        admitFileCall: (sessionId, signal, run) => budget.run(sessionId, signal, run),
+        invokeConfined: (envelope, _launch, signal, started) => invoke(envelope, signal, started) }
+      return { get(name) {
+        if (name === 'opsKernel') return kernel
+        if (name === 'subprocess') return { spawn() { return { done: Promise.resolve(outcome),
+          collected: { stdout: { readFrom: () => ({ text: '{}', lossy }) }, stderr: { readFrom: () => ({ text: stderr }) } } } } }
+        if (name === 'sandbox') return { confine: async argv => ({ argv, enforcement: 'full', denialSignatures: ['fixture access denied'],
+          runnerFailureRules: [{ fatalSignatures: ['fixture runner failed'], allowedExitCodes: [9] }] }) }
+        return ctx.get(name)
+      } }
+    }
     const fixtureCall = fixture => invoke(fixture, file, 'batch', { action: 'run', operations: [{ op: 'remove', path: 'host-dest' }] }, { agent: pure }, new AbortController().signal)
     const runnerError = await fixtureCall(fakeOutcome({ exitCode: 9 }, 'fixture runner failed'))
     assert.equal(runnerError.error.code, 'EXECUTOR_UNAVAILABLE'); assert.equal(runnerError.error.effectState, 'none')
@@ -362,13 +367,17 @@ try {
     const abortDuringWork = new AbortController()
     let enteredWorker
     const workerStarted = new Promise(resolve => { enteredWorker = resolve })
-    const interruptedCtx = { get(name) {
-      if (name === 'sandboxPolicy') return { resolve: () => ({mode:'danger-full-access',workspaceRoot:dir}) }
-      if (name === 'opsKernel') return { file, available: true, invoke(_envelope, _signal, started) {
+    const interruptedBudget = new CallBudget()
+    const interruptedKernel = { file, available: true,
+      admitFileCall: (sessionId, signal, run) => interruptedBudget.run(sessionId, signal, run),
+      invoke(_envelope, _signal, started) {
         started?.(); enteredWorker()
         return new Promise(resolve => abortDuringWork.signal.addEventListener('abort', () => resolve({ exitCode: null,
           interrupted: true, readers: true, lossy: false, stderr: '' }), { once: true }))
       } }
+    const interruptedCtx = { get(name) {
+      if (name === 'sandboxPolicy') return { resolve: () => ({mode:'danger-full-access',workspaceRoot:dir}) }
+      if (name === 'opsKernel') return interruptedKernel
       if (name === 'subprocess') return { spawn() {
         enteredWorker()
         return { collected: { stdout: {readFrom:()=>({text:'',lossy:false})},stderr:{readFrom:()=>({text:'',lossy:false})} },
