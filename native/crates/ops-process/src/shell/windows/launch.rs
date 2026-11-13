@@ -4,7 +4,10 @@ use std::{
     fs::File,
     io::{self, Read},
     os::windows::io::{AsRawHandle, OwnedHandle},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
@@ -21,6 +24,7 @@ pub struct Range {
     process: Option<OwnedHandle>,
     pid: Option<u32>,
     readers: Vec<Reader>,
+    observed: [Arc<AtomicU64>; 2],
     settled: bool,
 }
 impl Range {
@@ -30,14 +34,28 @@ impl Range {
             process: None,
             pid: None,
             readers: Vec::new(),
+            observed: std::array::from_fn(|_| Arc::new(AtomicU64::new(0))),
             settled: false,
         })
     }
     pub fn channel(&self, cap: usize) -> io::Result<Channel> {
         Channel::new(self.job.clone(), cap)
     }
+    pub fn framed_channel(&self, cap: usize, prefix: &[u8], duplex: bool) -> io::Result<Channel> {
+        Channel::framed(
+            self.job.clone(),
+            cap,
+            Some(super::channel::Prefix {
+                bytes: prefix.to_vec(),
+                duplex,
+            }),
+        )
+    }
     pub fn active_processes(&self) -> io::Result<u32> {
         self.job.active()
+    }
+    pub fn diagnostic_totals(&self) -> [u64; 2] {
+        self.observed.each_ref().map(|n| n.load(Ordering::Relaxed))
     }
     pub fn pid(&self) -> Option<u32> {
         self.pid
@@ -152,8 +170,10 @@ impl Range {
             if !self.job.contains_handle(self.process.as_ref().unwrap())? {
                 return Err(io::Error::other("atomic shell Job assignment failed"));
             }
-            self.readers.push(drain(out_read, spec.output_cap)?);
-            self.readers.push(drain(err_read, spec.output_cap)?);
+            self.readers
+                .push(drain(out_read, spec.output_cap, self.observed[0].clone())?);
+            self.readers
+                .push(drain(err_read, spec.output_cap, self.observed[1].clone())?);
             if unsafe { ResumeThread(main_thread.as_raw_handle()) } == u32::MAX {
                 return Err(io::Error::last_os_error());
             }
@@ -246,7 +266,7 @@ fn pipe(sa: &SECURITY_ATTRIBUTES) -> io::Result<(OwnedHandle, OwnedHandle)> {
     check(unsafe { SetHandleInformation(read.as_raw_handle(), HANDLE_FLAG_INHERIT, 0) })?;
     Ok((read, write))
 }
-fn drain(handle: OwnedHandle, cap: usize) -> io::Result<Reader> {
+fn drain(handle: OwnedHandle, cap: usize, observed: Arc<AtomicU64>) -> io::Result<Reader> {
     thread::Builder::new()
         .name("ops-shell-diagnostic".into())
         .spawn(move || {
@@ -259,6 +279,7 @@ fn drain(handle: OwnedHandle, cap: usize) -> io::Result<Reader> {
                     return Ok(output);
                 }
                 output.append(&bytes[..count], cap);
+                observed.store(output.observed, Ordering::Relaxed);
             }
         })
 }
