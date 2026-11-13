@@ -9,4 +9,4 @@ rust-version = "1.88"
 libc = "=0.2.190"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_Security"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Console", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography"] }

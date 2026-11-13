@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Add a Windows shell process substrate with atomic nested Job ownership, bounded authenticated private channels and an owned disposable signal controller. Repository-only probes exercise real public sandbox argv, cancellation and crash cleanup; published shell tools, pinned runtimes and POSIX execution remain unchanged (#872).
+- 添加 Windows shell 进程基础层：原子嵌套 Job 所有权、有界且验证 peer 的私有通道，以及所属范围内的一次性信号 controller。仓库专用探针实际验证公开 sandbox argv、取消与崩溃回收；已发布 shell 工具、固定 runtime 和 POSIX 执行保持不变（#872）。
+
 - Add a repository-only regression that runs the production resident server with deliberately blocked fixture leaves. Targeted cancellation, disconnect, kernel crash and provider unload must join their owned leaves while unrelated work continues; the four-platform CI runs this check (#872). No shipped tool behavior changes.
 - 增加仓库专用回归探针：让生产常驻服务运行确定阻塞的测试执行子进程。定向取消、断连、内核崩溃和 provider 卸载必须回收所属执行，且不影响无关工作；四个平台的 CI 均运行此检查（#872）。不改变已发布工具行为。
 
