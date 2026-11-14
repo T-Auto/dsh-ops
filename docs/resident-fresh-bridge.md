@@ -6,7 +6,9 @@ This #872 slice connects the existing `ops_bash` wrapper to the internal native 
 Production selection requires **both `task-v1` and `task-spill-v1`**. The Windows worker now provides
 [recoverable task spill and settled-file retention](resident-task-spill.md), so normal root activation
 uses the shared native task adapter for fresh calls. Workers without both capabilities retain their
-existing executor. There is no user or configuration bypass. Persistent session mode remains pending.
+existing executor. There is no user or configuration bypass. [Explicit session mode](session-shell.md)
+has a separate runtime-qualification gate; this branch's stock pin remains fresh-only. The recorded
+probe results below describe the fresh bridge slice, not complete #872 lifecycle or performance acceptance.
 
 The main row mounts one `residentFreshTasks()` provider after its `residentKernel()` provider.
 Standalone integrations can mount the same pair once in their common owning activation:

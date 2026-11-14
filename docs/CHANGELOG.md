@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Align bilingual Bash references with fresh defaults, qualified session arguments/state and confirmed-reset cancellation context. Mark resident audit/probe records as historical slices, link current integrations and retain the empty public runtime inventory plus unresolved Linux/Windows ownership gaps; no lifecycle or performance acceptance is claimed (#872).
+- 对齐中英文 Bash 参考文档中的 fresh 默认值、合格会话参数/状态及取消后的确认重置上下文。将常驻审计/探针记录明确标为历史切片，链接当前集成，保留公开运行时清单为空及 Linux/Windows 所有权缺口，不宣称生命周期或性能验收完成（#872）。
+
 - Keep the shared Native/PTC file admission budget inside its resident client, preserving two active/eight waiting calls per session and current-policy resolution after waiting. Stop/failure refuses pending callbacks while existing active-work and cleanup joins remain unchanged (#872).
 - 将 Native/PTC 共用的文件准入额度归所属常驻客户端持有，保留每会话两个活动/八个等待调用及等待后的当前策略解析。停止或失败拒绝尚未进入的回调，既有活动工作与清理等待保持不变（#872）。
 - Session-shell caller cancellation preserves the public `ABORTED` result and attaches one confirmed-reset notice through the public `deferContext` contract, including nested `run_code`; unchanged or unconfirmed cleanup never claims a reset. / 会话 shell 调用方取消保留公开 `ABORTED` 结果，并通过公开 `deferContext` 契约附加一条确认重置通知，嵌套 `run_code` 同样保留；状态未变或清理未确认时不宣称重置。
