@@ -1,0 +1,187 @@
+{
+  "base": "e0947b28db6fb5e65e45a8552379a3fc7fd5f1d3",
+  "compiler": "Rust 1.97.1 release; both drivers, isolated Cargo targets",
+  "sourceSha256": {
+    "native/crates/ops-process/src/shell/windows/channel_pool.rs": "bcb3fb57bc7f4bc73392d46991d2aca700617bba9afbd7a1a2decb5adba403e0",
+    "native/src/shell/driver.rs": "2c8af3828675913b0db8b8fe78e0ce212ef5b872e7782b5e9283c819c3d3f5d3",
+    "src/execution/resident/shell-protocol.ts": "4040a4842475bccf2e51ca8c19c7cba9e6f02ce0c398426dfa5f88c816ce187b",
+    "src/execution/resident/shell-channel.ts": "34143a2cf08526080f6d0ef301d681ad0340bb69ff8e79e2300b61064b87f5a1",
+    "src/execution/resident/shell-admission.ts": "34d0b926a77ff0153109722a6ff273fc0e6cc3a860190414927578ce2c62b33a",
+    "src/execution/resident/shell-bootstrap.ts": "c043494fe22cf7233d793b2e3156a4bf6076aed11946a87d3ea9915f1a438b06",
+    "test/resident-shell-channel.test.mjs": "b91a6282fc44c358af71bed8700d0339225d56153821e35d974bc904a8a442cd",
+    "test/resident-shell-integrity.test.mjs": "7fd9bc7982475e949a1219e56e14fe98ea8c33cc1fe8d5987eb70900cb92ab38",
+    "bench/probes/872/record-driver.mjs": "0e5edef04dffb58d3cad921c30d0d764abb07d8fc34796d3452c8b5f3bbd79e8",
+    "bench/probes/872/channel-wakeup-evidence/compare.mjs": "8461ebd90707f0171ed95e912cecd3d099f464820d7262f705bc1344a8913c03",
+    "bench/probes/872/scenario-driver.mjs": "9e9a60c842474483cb3871a94ea7458213686f334dea2e2069033fece5a4b2e9"
+  },
+  "normalization": "Source and stored logs use LF line endings with trailing whitespace removed; original local evidence hashes retained separately.",
+  "binaries": {
+    "before": {
+      "file": "E:\\01-Projects\\deepseek\\dsh-ops-shell-record-text\\native\\target\\release\\examples\\shell_driver.exe",
+      "sha256": "7a39ad8f87106c5f7dc5a90813fd32210a59aec9b714a9baf66d80f451303860"
+    },
+    "after": {
+      "file": "E:\\01-Projects\\deepseek\\dsh-ops-bound-shell-endpoints\\native\\target\\release\\examples\\shell_driver.exe",
+      "sha256": "e4531c440f091b29d7a9cd3fc58993f68f336e7742e82184828242b5c96aee6d"
+    },
+    "niu": {
+      "file": "E:\\01-Projects\\deepseek\\dsh-ops-bound-shell-endpoints\\runtime\\win32-x64\\niubash\\niu.exe",
+      "sha256": "7ec3ec04ce91bae64c23d7150e6b16574e9d91df8fcf0df997006e2b37bf2f1e"
+    }
+  },
+  "workerSha256": "b22c32878ea9bdf8a6ae844eea16477f0c84a02481442b0600f23cbb93285e52",
+  "environment": {
+    "platform": "win32",
+    "arch": "x64",
+    "release": "10.0.26300",
+    "cpu": "AMD Ryzen 7 6800HS with Radeon Graphics         ",
+    "node": "v26.12.1"
+  },
+  "paired": {
+    "empty": {
+      "before": {
+        "n": 300,
+        "p50Ms": 4.393000000000029,
+        "p95Ms": 5.468600000000151
+      },
+      "after": {
+        "n": 300,
+        "p50Ms": 3.50649999999996,
+        "p95Ms": 4.381399999999758
+      }
+    },
+    "printf": {
+      "before": {
+        "n": 100,
+        "p50Ms": 4.775699999999233,
+        "p95Ms": 6.3145000000004075
+      },
+      "after": {
+        "n": 100,
+        "p50Ms": 3.818699999999808,
+        "p95Ms": 5.056999999999789
+      }
+    },
+    "ascii4096": {
+      "before": {
+        "n": 30,
+        "p50Ms": 22.977199999999357,
+        "p95Ms": 27.75540000000001
+      },
+      "after": {
+        "n": 30,
+        "p50Ms": 22.03560000000016,
+        "p95Ms": 23.52310000000034
+      }
+    },
+    "ascii16384": {
+      "before": {
+        "n": 20,
+        "p50Ms": 79.14519999999902,
+        "p95Ms": 87.04780000000028
+      },
+      "after": {
+        "n": 20,
+        "p50Ms": 77.4418999999998,
+        "p95Ms": 87.24009999999998
+      }
+    }
+  },
+  "establishedHarness": {
+    "before": {
+      "empty": {
+        "label": "persistent session, empty command",
+        "n": 300,
+        "min": 3.82,
+        "p50": 4.3,
+        "p95": 5.32,
+        "p99": 6.19,
+        "max": 7.18,
+        "mean": 4.42
+      },
+      "printf": {
+        "label": "persistent session, printf x",
+        "n": 100,
+        "min": 3.9,
+        "p50": 4.4,
+        "p95": 5.45,
+        "p99": 5.63,
+        "max": 5.75,
+        "mean": 4.49
+      }
+    },
+    "after": {
+      "empty": {
+        "label": "persistent session, empty command",
+        "n": 300,
+        "min": 3.05,
+        "p50": 3.52,
+        "p95": 4.43,
+        "p99": 5.1,
+        "max": 5.91,
+        "mean": 3.62
+      },
+      "printf": {
+        "label": "persistent session, printf x",
+        "n": 100,
+        "min": 3.15,
+        "p50": 3.58,
+        "p95": 4.23,
+        "p99": 4.48,
+        "max": 5.13,
+        "mean": 3.67
+      }
+    }
+  },
+  "scenario": {
+    "before": {
+      "plainMs": 13566.381600000008,
+      "longMs": 46405.015599999984,
+      "withBuildsMs": 73566.38160000001
+    },
+    "after": {
+      "plainMs": 13297.763500000077,
+      "longMs": 45909.63550000005,
+      "withBuildsMs": 73297.76350000007
+    }
+  },
+  "evidence": {
+    "paired.json": {
+      "sha256": "2759e0edaa9693f25c633c5e6ef958766c7914dfb83012fe2b31ef07eb2f9865",
+      "sourceLogSha256": "2759e0edaa9693f25c633c5e6ef958766c7914dfb83012fe2b31ef07eb2f9865",
+      "source": "bound-final-paired.json"
+    },
+    "shell-before.json": {
+      "sha256": "e6f95c02b986e10fa169b4fcf7eb9e6417aaed7efb4c23b06665a75f6079e071",
+      "sourceLogSha256": "e6f95c02b986e10fa169b4fcf7eb9e6417aaed7efb4c23b06665a75f6079e071",
+      "source": "bound-final-shell-before.json"
+    },
+    "shell-after.json": {
+      "sha256": "297fde04f6f909a4d02a4493237ce52403a4a2f0368ef411e09b39f686813dbe",
+      "sourceLogSha256": "297fde04f6f909a4d02a4493237ce52403a4a2f0368ef411e09b39f686813dbe",
+      "source": "bound-final-shell-after.json"
+    },
+    "scenario.json": {
+      "sha256": "901f7edb13be9707c87611255c73790c98a665f2a6c437851625cb450a97a215",
+      "sourceLogSha256": "901f7edb13be9707c87611255c73790c98a665f2a6c437851625cb450a97a215",
+      "source": "bound-scenario.json"
+    },
+    "behavioral-red.log": {
+      "sha256": "ba75399c584760f8c8924b44f397f03f5fe2a3cad43e2c4f78f1cb1fe55bf189",
+      "sourceLogSha256": "48cb3aba903e8941711c06e1c61d71ff08c61a57356d7e072cfcc336bc54fe83",
+      "source": "bound-final-red.log"
+    },
+    "resident-green.log": {
+      "sha256": "f274430b515422697511122798914a4c705a2d31ece94195fb7025c998622e35",
+      "sourceLogSha256": "b627527351c31b593c7a9a21b1f5afe5047cb77a9d44557ad09b31a77383a6f0",
+      "source": "bound-focused-final.log"
+    }
+  },
+  "limits": [
+    "Final paired and established comparisons ran sequentially before clippy and the full gate; no overlapping builds/tests. Earlier overlapping diagnostic reports are excluded.",
+    "Scenario ran after the file-size checker exited and before the final regression runs; three samples per operation are not evidence of a material overall gain.",
+    "Established compare retains stale MSYS/receipt-file descriptions. Niubash is native Rust; the driver uses private named pipes. bash --version does not identify niu.exe.",
+    "The original fixture is missing from the supplied ZIP. Both listing forms and both build formulas remain separate.",
+    "No full-host, cold-start or Linux acceptance is established; session and scenario budgets remain unmet."
+  ]
+}

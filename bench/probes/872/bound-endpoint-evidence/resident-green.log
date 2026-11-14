@@ -1,0 +1,79 @@
+dsh-ops test: 3 suites, 16 worker(s); exclusive suites run afterwards
+
+=== resident-shell-channel.test.mjs (0.47s)
+  ok   bound endpoint literals cannot inject shell syntax into startup
+  ok   optional shell negotiation preserves file-only kernels and uses the existing control pipe
+  ok   malformed optional capabilities fail the handshake through owned cleanup
+  ok   file and shell responses interleave without crossing their correlations
+  ok   invalid bound endpoints fail admission through owned cleanup before launch
+  ok   shell ownership and the retained correlation window stay bounded until release
+  ok   unsent cancellation is local, has no effects, and retains only empty output until release
+  ok   sent failures remain unknown and unsent failures remain none until the outer range joins
+  ok   malformed or duplicate shell terminals fail the outer client and await joined cleanup
+  ok   bounded stream reads preserve binary bytes, stream separation and live empty output
+  ok   completed output supports explicit cursor reads and cannot release an active read
+  ok   invalid output receipts reject pending reads only after outer cleanup
+  ok   unconfirmed outer cleanup remains visible in shell failure receipts
+  ok   32 idle sessions keep their budget until a confirmed close frees one slot
+  ok   accepted file and shell traffic retains its reserved control capacity under backpressure
+  ok   a typed per-stream capture error preserves the channel and raw reads cannot bypass correlation
+  ok   session spill receipts bind to negotiated support and the ready kernel PID
+
+dsh-ops resident-shell-channel: all 17 checks passed
+
+=== resident-shell-admission.test.mjs (5.79s)
+  ok   the kernel owns FIFO admission and reads the current policy when a queued head arrives
+  ok   a committed mode change retires old shell state while preserving the kernel queue
+  ok   policy changes during delayed approval reject the queued command without effects
+  ok   allowed-once widening closes its shell and is never inherited by the next call
+  ok   reuse omits cwd recovery and passes explicit cwd to the existing shell
+  ok   Agent disposal awaits its close receipt while a sibling continues on the same host
+  ok   the owning Cordis plugin awaits kernel cleanup before disposal completes
+  ok   a pre-aborted call never enters the kernel queue
+  ok   a queued abort sends cancel and waits for the kernel completion receipt
+  ok   cancellation during approval ignores a grant arriving after kernel completion
+  ok   an environment baseline change retires old state without exposing its values in diagnostics
+  ok   transport loss preserves confirmed cleanup and never sends to the dead kernel
+  ok   transport loss preserves unconfirmed cleanup and never sends to the dead kernel
+  ok   a failed admission reply waits for transport cleanup instead of abandoning the kernel head
+  ok   disposal joins a delayed sibling close even when another owner cleanup fails
+  ok   32 idle owners consume the owner budget and disposal joins every close
+  ok   terminal collection copies both streams before release and before the result settles
+  ok   contradictory terminal output premature EOF aborts and waits for joined cleanup
+  ok   contradictory terminal output cursor beyond total aborts and waits for joined cleanup
+  ok   withdrawing the real Cordis sandbox provider awaits dependent shell cleanup
+  ok   a capture error retains bytes and joins the other stream without aborting sibling sessions
+  ok   an older reset completion cannot erase the next shell while its output drain is pending
+  ok   a locally refused enqueue preserves the existing shell launch facts
+  ok   native cancellation suppresses a late approval while terminal output still drains
+  ok   queued admission snapshots the original Agent and call identity before caller mutation
+  ok   caller cancellation suppresses approval replies before the native terminal receipt
+  ok   failed retirement closes only that owner and refuses reuse until cleanup is joined
+  ok   startup script variables reject before approval or runtime without disclosing their values
+  ok   runtime environment merge cannot add a startup script before confinement or bootstrap
+  ok   sealed session spill is retained only after both copies and attributed to the exact Session
+  ok   raw error cannot publish or settle a session recovery path
+  ok   spill degradation cannot publish or settle a session recovery path
+  ok   unknown cleanup cannot publish or settle a session recovery path
+  ok   an unsealed terminal spill fails the protocol before ledger handoff
+
+dsh-ops resident-shell-admission: all 34 checks passed
+
+=== resident-shell-integrity.test.mjs (8.37s)
+dsh-ops: native worker selected without provenance verification — explicit selection (config.binaryPath / DSH_OPS_WORKER_BIN) — trusting the named path is the whole point of selecting it: E:\01-Projects\deepseek\dsh-ops-bound-shell-endpoints\native\target\release\dsh-ops-worker.exe
+  ok   command records preserve Unicode and shell-quoted control and escape data
+  ok   an explicit Unicode working directory survives subsequent session commands
+  ok   channel endpoints persist across commands but remain private to one session
+  ok   ordinary output matching the current receipt cannot complete a failed command
+  ok   living background jobs reset only their session, including disowned redirected jobs
+  ok   stock asynchronous output outside registered channels is rejected explicitly
+  ok   a legacy bootstrap refuses the new command framing before user evaluation
+
+dsh-ops resident-shell-integrity: all 7 checks passed
+
+10 slowest suites:
+  8.37s resident-shell-integrity.test.mjs
+  5.79s resident-shell-admission.test.mjs
+  0.47s resident-shell-channel.test.mjs
+
+dsh-ops test: 3 suite(s) passed in 8s

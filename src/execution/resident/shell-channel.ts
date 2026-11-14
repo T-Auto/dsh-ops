@@ -1,5 +1,6 @@
 /** Bounded shell correlation on the existing resident control pipe; scheduling stays native. */
 import { record } from '../boundary.js'
+import { validShellBootstrap } from './shell-protocol.js'
 import type { ShellCompleted, ShellHostMessage, ShellKernelMessage, ShellOutput, ShellStream, ShellTransport } from './shell-protocol.js'
 
 interface Request { sent: boolean; started: boolean; completed?: boolean; local?: boolean; cancelled?: boolean; awaitingAdmission?: boolean; remove?: () => boolean }
@@ -123,8 +124,7 @@ export class ResidentShellChannel implements ShellTransport {
       const request = this.requests.get(value.requestId)
       if (!request?.sent || request.completed) throw new Error('Unknown, completed or unwritten shell response identity')
       if (value.type === 'shell.admit') {
-        if (request.started || request.awaitingAdmission || typeof value.hasShell !== 'boolean' || (!value.hasShell && (!record(value.bootstrap)
-          || ![value.bootstrap.commandPipe, value.bootstrap.receiptPipe].every(endpoint => typeof endpoint === 'string' && endpoint.length > 0 && endpoint.length <= 512 && !endpoint.includes('\0'))))) {
+        if (request.started || request.awaitingAdmission || typeof value.hasShell !== 'boolean' || (!value.hasShell && !validShellBootstrap(value.bootstrap))) {
           throw new Error('Invalid shell admission request')
         }
         request.awaitingAdmission = true

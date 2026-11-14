@@ -1,5 +1,17 @@
 /** Internal shell wire contract. No tool is published until the native driver supports it. */
-export interface ShellBootstrap { commandPipe: string; receiptPipe: string }
+import { record } from '../boundary.js'
+export interface ShellBootstrap {
+  commandPipe: string; receiptPipe: string
+  /** Fixed stdout/stderr/receipt pools select the three-record command envelope. */
+  outputPipes?: [string, string, string]
+}
+export function validShellBootstrap(value: unknown): value is ShellBootstrap {
+  const endpoint = (item: unknown): boolean => typeof item === 'string' && item.length > 0 && item.length <= 512 && !item.includes('\0')
+  return record(value) && [value.commandPipe, value.receiptPipe].every(endpoint)
+    && Object.entries(value).every(([key, item]) => key === 'outputPipes' || endpoint(item))
+    && (value.outputPipes === undefined || (Array.isArray(value.outputPipes) && value.outputPipes.length === 3
+      && value.outputPipes.every(endpoint) && new Set([value.commandPipe, value.receiptPipe, ...value.outputPipes]).size === 5))
+}
 export interface ShellLaunch { argv: string[]; cwd: string; env: Record<string, string> }
 export interface ShellFailure { code: string; message: string }
 export type ShellStream = 'stdout' | 'stderr'

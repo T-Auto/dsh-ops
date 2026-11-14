@@ -360,3 +360,50 @@ checks and packed-runtime closure. The final combining/private-use Unicode
 assertions additionally passed in the six-check resident integrity rerun.
 Formatting and worker/example clippy passed. Runtime pins and publication status
 remain unchanged.
+
+## Bound session endpoints — 2026-11-15
+
+Session channel pools already retain fixed private names. The driver now includes
+those three names in the trusted bootstrap metadata, and the host validates them
+before constructing the fixed startup script. Each call sends three records:
+request generation, encoded working directory and encoded command. Previously it
+also sent the same three endpoint names, which the runtime read byte by byte.
+
+The fixed script restores its endpoint variables from validated literals on every
+command, so an earlier command assigning those internal variables cannot redirect
+the next command. Only endpoint identifiers enter startup arguments; command text
+still arrives through the private command channel. Capture state, receipt prefixes,
+actual writer EOF, Job identity checks, cancellation and spill retirement remain
+per command. This change does not keep output writers open across generations.
+
+A bootstrap from an older worker without bound endpoints still selects the older
+six-record reader. The new worker and host are shipped together; an older host
+cannot use the new three-record writer and will time out before user evaluation.
+Malformed or duplicate bound endpoints fail through owned cleanup before launch.
+The new rejection regression fails against #951 and passes with this change.
+The real resident integrity suite also verifies endpoint restoration, session
+privacy, Unicode, receipt forgery, surviving jobs and unregistered output.
+
+On the same Ryzen 7 Windows host, with pinned Rust 1.97.1 release builds and no
+concurrent builds or tests, alternating empty calls measured p50/p95
+4.39/5.47 → 3.51/4.38 ms (300 pairs); printf measured 4.78/6.31 → 3.82/5.06 ms
+(100 pairs). The unchanged established harness independently measured empty
+4.30/5.32 → 3.52/4.43 ms. This roughly 20% paired gain still misses the session
+targets. The 4 KiB and 16 KiB cases measured 22.98/27.76 → 22.04/23.52 ms and
+79.15/87.05 → 77.44/87.24 ms respectively; longer records still dominate.
+
+The unchanged scenario adaptation measured plain-ls totals 13.566 → 13.298 s,
+ls-la 46.405 → 45.910 s, and plain ls plus two modeled 30 s builds
+73.566 → 73.298 s. Three samples per operation do not establish a material
+overall improvement. Candidate p50/p95 (ms) remain above budget: grep
+847.76/892.63, plain ls 79.84/86.61, copy100 287.22/303.22, and 64 KiB
+read-and-count 43.58/53.40. Raw samples, reproduction, source/binary identities
+and measurement limits are in
+[bound-endpoint-evidence](../bench/probes/872/bound-endpoint-evidence/).
+Full-host, cold-start and same-machine Linux acceptance remain open.
+
+The pinned Rust 1.97.1 Windows release gate passed all 13 steps: 753 Rust tests,
+9 ignored child fixtures, 265 JavaScript suites, 4 permitted skips, 92 manifest
+checks and packed-runtime closure. All 58 focused channel/admission/integrity
+checks passed; the new assertions were also included in the full gate. Formatting,
+worker/example clippy and the 960-file source-size check passed.

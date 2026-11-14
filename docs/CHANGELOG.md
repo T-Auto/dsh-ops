@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Bind Windows resident-shell output and receipt pipe names in the trusted startup script. Send only the request generation, working directory and command on each call; validate bound endpoints at both transport and admission boundaries, retaining per-command EOF, capture, cancellation and spill ownership (#872).
+- 在可信启动脚本中绑定 Windows 常驻 shell 的输出与收据管道名；每次调用仅发送请求代号、工作目录和命令。传输及准入边界均校验绑定端点，保留每命令的 EOF、捕获、取消及溢写归属（#872）。
+
 - Preserve UTF-8 text in Windows resident shell command and working-directory records, escaping only ASCII controls and backslashes. Fix explicit Unicode working directories resetting a live session and avoid fivefold expansion of ordinary ASCII payloads (#872).
 - Windows 常驻 shell 的命令及工作目录记录保留 UTF-8 文本，仅转义 ASCII 控制字符与反斜杠；修复显式 Unicode 工作目录导致会话重置的问题，并避免普通 ASCII 载荷膨胀五倍（#872）。
 
