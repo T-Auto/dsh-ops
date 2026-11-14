@@ -1,8 +1,10 @@
-//! Absolute host-resolved paths, opened component-by-component with no-follow.
+//! Absolute host-resolved paths, lexically checked before no-follow opens.
 use crate::contract::{Failure, Result};
+#[cfg(not(windows))]
+use cap_fs_ext::DirExt;
 #[cfg(windows)]
 use cap_fs_ext::OsMetadataExt;
-use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
+use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::{
     ambient_authority,
     fs::{Dir, File, Metadata, OpenOptions},
@@ -83,8 +85,34 @@ pub fn checked_leaf(raw: &str, allow_missing: bool) -> Result<Target> {
     let mut parent = Dir::open_ambient_dir(&anchor, ambient_authority())?;
     let name = names.pop().unwrap_or_else(|| ".".into());
     for component in names {
-        regular(&parent.symlink_metadata(&component)?, true)?;
-        parent = parent.open_dir_nofollow(&component)?;
+        #[cfg(windows)]
+        {
+            // Check every ancestor's read access, retaining the old denial behavior.
+            // One DIRECTORY_FILE + DONT_REPARSE open replaces its separate metadata
+            // query and cap-std open checks; the parent keeps the no-delete lease.
+            let opened = dsh_ops_windows_metadata::open_directory_no_reparse(
+                &parent.into_std_file(),
+                &component,
+            )
+            .map_err(|error| {
+                if error.raw_os_error() == Some(4395)
+                    || error.kind() == std::io::ErrorKind::NotADirectory
+                {
+                    Failure::new(
+                        "PATH_RESTRICTED",
+                        "A reparse point or non-directory ancestor was refused during path lookup",
+                    )
+                } else {
+                    error.into()
+                }
+            })?;
+            parent = Dir::from_std_file(opened);
+        }
+        #[cfg(not(windows))]
+        {
+            regular(&parent.symlink_metadata(&component)?, true)?;
+            parent = parent.open_dir_nofollow(&component)?;
+        }
     }
     regular(&parent.dir_metadata()?, true)?;
     match parent.symlink_metadata(&name) {

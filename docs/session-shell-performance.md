@@ -238,3 +238,68 @@ Rust using rubash, with WinuxCmd external commands. The comparison harness's
 `bash --version` command is not proof that the session engine is MSYS Bash.
 Per-command reconnect costs above refer to the actual Niubash runtime; attributing
 them to MSYS requires separate evidence.
+
+## Checked Windows parent opens — 2026-11-15
+
+Native file requests previously queried each ancestor's metadata and then opened
+it through cap-std, which performed further checks. Each ancestor now uses one
+handle-relative `NtCreateFile` directory open with `OBJ_DONT_REPARSE`. The opener
+accepts one component only: combining a path would bypass the previous read-access
+check on intermediate ancestors. Lexical validation still covers the entire path
+before I/O; the anchor, final parent metadata, leaf checks and content opens remain.
+The read-access mask and read/write sharing retain the existing no-delete parent
+lease. Reparse points and non-directory ancestors remain `PATH_RESTRICTED`, while
+real ACL denial remains `ACCESS_DENIED`.
+
+The [Windows object-attribute contract](https://learn.microsoft.com/en-us/windows/win32/api/ntdef/ns-ntdef-_object_attributes)
+defines reparse refusal. Real fixtures additionally verify junction rejection,
+per-ancestor ACL denial, missing-leaf lookup without creation and a held parent's
+rename refusal. Disabling `OBJ_DONT_REPARSE` makes the junction regression fail;
+restoring it passes. A separate regression caught and fixed an initial change from
+`PATH_RESTRICTED` to `IO_ERROR` for a regular file used as an ancestor.
+
+This change affects native file tools. It does not change the session driver or
+Niubash shell file commands; native-search measurements cannot stand in for the
+106-operation shell model or establish its acceptance.
+
+`bench/search-profile.mjs` compared #948 with the final release worker on the same
+2,000-file, 62,890-byte corpus, alternating arm order for 20 measured pairs after
+three initial pairs. No builds or tests ran concurrently. Every canonical result
+matched and the corpus hash remained unchanged. Nearest-rank percentiles include
+one-shot worker startup and opt-in stage instrumentation:
+
+| Native query | Before p50 / p95 | After p50 / p95 |
+| --- | --- | --- |
+| Exact grep | 2759.68 / 2839.61 ms | 1779.48 / 1907.16 ms |
+| Bounded grep | 33.37 / 36.41 ms | 29.57 / 31.53 ms |
+| Missing-pattern grep | 2715.17 / 2794.85 ms | 1771.08 / 1888.31 ms |
+| Glob | 218.98 / 243.87 ms | 215.96 / 245.62 ms |
+
+[Raw samples and provenance](../bench/probes/872/checked-parent-evidence/) record
+source, worker and corpus hashes. Exact grep improves about 36%; glob does not materially
+improve. Bounded grep intentionally requests partial coverage and cannot be used
+as the full-scan acceptance number. The 60 ms full-grep target remains unmet.
+
+### Separate shell recheck and validation
+
+Final native and shell comparisons explicitly use Rust 1.97.1 in both arms.
+The shell implementation is unchanged. With the same stock payload, 300 empty
+commands after 30 warmups and 100 printf samples, empty-command p50/p95 is
+4.58/5.57 → 4.54/5.85 ms; printf is 4.85/5.77 → 4.82/6.06 ms. The original
+256 MiB bulk arm remains in the raw reports. No shell gain is attributed to this
+native-file change.
+
+The same production-driver scenario adaptation validates all calls on one shared
+fixture, retaining three samples per operation and both build formulas. Plain-ls
+weighted totals are 13.720 → 13.824 s; ls-la totals are 47.080 → 46.311 s.
+Plain-ls plus two modeled 30 s builds is 73.720 → 73.824 s. Candidate p50/p95
+(ms): grep 870.97/889.05, plain ls 83.83/94.14, copy100 297.12/298.77, and
+64 KiB read-and-count 47.84/51.87. The session, scenario and file-operation budgets
+remain unmet. These are modeled totals, with the fixture limitations above.
+
+The full local release gate passed all 13 steps: 753 Rust tests, 9 ignored child
+fixtures, 265 JavaScript suites, 4 permitted skips, 92 manifest checks and packed
+runtime closure. Its root Cargo default was 1.99.0, while staging used 1.97.1.
+A separate explicit Rust 1.97.1 workspace run passed the same 753 tests, plus
+formatting and focused clippy. Final benchmarks use 1.97.1 in both arms;
+mixed-compiler trials were excluded. Receipts and hashes accompany the raw data.

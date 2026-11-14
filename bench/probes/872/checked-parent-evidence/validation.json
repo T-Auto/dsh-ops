@@ -1,0 +1,57 @@
+{
+  "gate": {
+    "command": "node scripts/verify-gate.mjs --skip-install",
+    "platform": "win32-x64",
+    "exitCode": 0,
+    "stepsPassed": 13,
+    "rustPassed": 753,
+    "rustFailed": 0,
+    "rustIgnoredChildFixtures": 9,
+    "javascriptSuitesPassed": 265,
+    "javascriptSuitesFailed": 0,
+    "allowedSkips": [
+      "linux-attributes",
+      "linux-shell",
+      "tui-host",
+      "tui-native"
+    ],
+    "manifestChecksPassed": 92,
+    "packedRuntimeClosure": true,
+    "workerSha256": "5f342f3b7137d43dec06710ce79e3641e917aba8a92fe305a1424fa47d62a226",
+    "logSha256": "a3ff21d284d4324fafbde53fd4834786c88e851fb03ab0729f4cd15eb1cc6178",
+    "toolchains": {
+      "gateRootCargoAndNativeTests": "1.99.0",
+      "stagedReleaseWorker": "1.97.1"
+    },
+    "note": "Frozen stock archive, explicit legacy Bash fixture and installed GNU tar. The root cargo default was 1.99.0; the staging build selected the native directory pin, 1.97.1. The full native tests and clippy were separately repeated with explicit Rust 1.97.1. Product sources unchanged after this gate; supplemental measurements and docs finalized afterward."
+  },
+  "pinnedRust": {
+    "toolchain": "1.97.1",
+    "passed": 753,
+    "failed": 0,
+    "ignoredChildFixtures": 9,
+    "logSha256": "0bfe7d69ef5e6fb87d47596eac06745da31325f88cb85628984a66c621233bad",
+    "format": "passed",
+    "clippy": "ops-files and dsh-ops-windows-metadata, all targets, warnings denied: passed"
+  },
+  "focusedCrates": {
+    "passed": 28,
+    "failed": 0,
+    "ignored": 0
+  },
+  "clippy": "ops-files and dsh-ops-windows-metadata, all targets, warnings denied: passed",
+  "redGreen": {
+    "test": "relative_lookup_refuses_junctions_and_combined_paths",
+    "mutation": "Remove only OBJ_DONT_REPARSE",
+    "red": {
+      "passed": 0,
+      "failed": 1
+    },
+    "restored": {
+      "passed": 1,
+      "failed": 0
+    }
+  },
+  "ancestorFileRegression": "Initial implementation returned IO_ERROR; corrected mapping passes PATH_RESTRICTED assertion",
+  "fixtureReproduction": "Generated 2000 files; canonical content hash matches measured corpus"
+}
