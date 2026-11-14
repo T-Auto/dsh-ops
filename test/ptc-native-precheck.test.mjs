@@ -51,4 +51,26 @@ await test('one shared public probe per resolve selects PTC and withdrawal does 
     })
   } finally { await shutdown(h.ctx) }
 })
+await test('ten admitted PTC calls reuse the step probe and a same-step executor change is refused', async () => {
+  const h = await setup()
+  let step
+  try {
+    const ptc = await h.agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, 'ptc') } })
+    step = await prepareStep(h.ctx, h.agent)
+    assert.equal(h.probes(), 1)
+    const definition = h.tools.executable('ops_load_sdk', h.agent, step.toolSet)
+    assert.ok(definition)
+    const exec = { agent: h.agent, signal: new AbortController().signal, toolSet: step.toolSet }
+    for (let i = 0; i < 10; i++) {
+      const value = await definition.execute({ tools: ['result'] }, exec)
+      assert.equal(value.status, 'completed', JSON.stringify(value))
+    }
+    assert.equal(h.probes(), 1, 'execution must not assemble the prompt once per subcall')
+    await ptc.dispose()
+    await h.agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, 'native') } })
+    const refused = await definition.execute({ tools: ['result'] }, exec)
+    assert.equal(refused.error.code, 'POLICY_DENIED', JSON.stringify(refused))
+    assert.equal(h.probes(), 2, 'the changed presentation requires a fresh public verdict')
+  } finally { step?.dispose(); await shutdown(h.ctx) }
+})
 report('ptc-native-precheck')

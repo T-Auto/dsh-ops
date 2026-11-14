@@ -1,0 +1,17 @@
+{
+  "harnessSha256": "6c5f57f065df7a9afdd96677966b42cac63e31b20187776c285bd496b08e4bcc",
+  "before": {
+    "src/publication/ptc.ts": "2f886587bedaf401357f3dda0021779c68936184c0e4b15d228492fc75a47610",
+    "src/publication/result-admission.ts": "6357a754a246661de4e88733aa5b689644f294332056d866d36cfff832553a99",
+    "src/publication/presentation.ts": "417290c0c00f2b23cf1058846fb9cafa28e2b62406a46aa94ad29fe28bb6d0a7",
+    "src/publication/native.ts": "8d83b182ac02dec051e98d29ed34d13ed3875636400bd6d765cd5a4f19715731",
+    "src/discovery/controller.ts": "3b34a71d1440ecbb9b09fdff3204d18ef37aeacecc101cfbe3a5db50ee938d70"
+  },
+  "after": {
+    "src/publication/ptc.ts": "4cf281125c51fc09e552f5150ae4d56857443b80b5b04376efaaf2b8247644e2",
+    "src/publication/result-admission.ts": "8209d9291e8024fb8bdfd6b0364df3f6b2380a0493daa27cd167def501428d55",
+    "src/publication/presentation.ts": "202c3c846498a1ee2e77e20fa085cc5f366af530f119210b151cd670794e27c8",
+    "src/publication/native.ts": "cb715fb1936d420963d49c4876144f92477b5ce2bde7457d3a7feafb87b3e8a9",
+    "src/discovery/controller.ts": "19f4a5ab33eefd1d8b3cedd6d1aae9c081bd479b5cf7d004a7156b7af762e487"
+  }
+}

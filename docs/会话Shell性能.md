@@ -75,3 +75,37 @@ Glob 改善约 36%，精确 grep 仅约 4%；下一步关注逐文件的受检�
 元数据查询计数回归在旧 worker 上失败、新 worker 上通过；目录链接/junction 排除、
 覆盖率、提前结束、分页、多行与定义查询共 30 项检查通过。这些数字不代表完整场景、
 shell 或文件操作验收完成。
+
+## 复用公开展示判定 — 2026-11-14
+
+B1 复用步骤准备阶段已经获得的最终公开展示判定。缓存按 prompt 服务和精确的 agent
+身份区分，公开的 `system-prompt/change`、`tools/change` 通知会使缓存失效。
+执行仍然检查已准入定义、所属作用域和有效授权。跨越失效时刻的异步探针不能授权执行，
+也不能覆盖更新的判定。未安装观察器的部署回退到重新公开装配；没有使用私有 executor
+API，每个新 resolve 仍进行正常探针。
+
+补充基准 `bench/probes/872/presentation.mjs` 使用真实 Cordis、工具及 prompt 服务、
+作用域内 PTC executor、步骤准备，以及每步十次已准入的 SDK loader 回调。
+常驻服务夹具拒绝 worker 执行。每组保留 30 步预热及 300 步测量，先旧版后新版，
+均在上述 Windows 主机上运行。两组各 3,000 次回调返回完全一致的结果；
+executor 改变后，两组均拒绝保留的旧回调。
+
+| 测量项 | 优化前 p50 / p95 | 优化后 p50 / p95 |
+| --- | --- | --- |
+| 单次 loader 回调 | 13.39 / 18.12 ms | 0.42 / 0.80 ms |
+| 步骤准备 | 15.49 / 22.28 ms | 15.61 / 20.24 ms |
+| 准备 + 十次回调 | 153.17 / 181.22 ms | 20.31 / 25.79 ms |
+| 每步装配次数（含探针） | 12 | 2 |
+
+[原始样本与源码哈希](../bench/probes/872/presentation-evidence/)。旧版为 PR #944，
+PR #945 的宿主源码相同；新版为 #945 上尚未提交时的展示判定改动，精确源码哈希记录于
+`provenance.json`。将相同 harness 复制到各 checkout 的
+`bench/probes/872/presentation.mjs`，构建该 checkout，然后运行
+`node bench/probes/872/presentation.mjs ABSOLUTE_CHECKOUT_ROOT`。
+每组进程必须从对应副本启动，使宿主依赖解析到被测 checkout。
+
+集成回归在旧版失败（探针 11 次而非 1 次）、新版通过，并检查同一步 executor 变化。
+单元测试覆盖作用域隔离、取消、观察器释放、公开变更通知，以及旧异步探针晚于新判定完成。
+
+这些数字不包含 worker 执行、`run_code` 编译、模型或 shell，不能证明完整编排 SLO
+或 shell 验收。本轮 106 操作场景总计仍为**未测量**。

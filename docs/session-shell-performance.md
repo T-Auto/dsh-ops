@@ -90,3 +90,44 @@ The metadata-count regression fails on the before worker and passes on the after
 worker. Directory-link/junction exclusion, coverage, early-exit, pagination,
 multiline and definitions suites pass (30 checks). No full scenario, shell or
 file-operation acceptance is claimed from these figures.
+
+## Public presentation reuse — 2026-11-14
+
+B1 reuses the final public presentation verdict already obtained during step
+preparation. The cache is keyed by prompt service and exact agent identity;
+public `system-prompt/change` and `tools/change` notifications invalidate it.
+Execution still checks the admitted definition, owning scope and live grants.
+An invalidated asynchronous probe cannot authorize execution or overwrite a new
+verdict. Unobserved deployments fall back to a fresh public assembly. No private
+executor API is used, and each new resolve still obtains its normal probe.
+
+The supplemental `bench/probes/872/presentation.mjs` uses real Cordis, tool and
+prompt services, a scoped PTC executor, step preparation and ten admitted SDK
+loader callbacks per step. Its resident fixture refuses worker execution.
+300 measured steps follow 30 retained warmups in each arm (before, then after),
+on the Windows host above. All 3,000 callbacks per arm returned the same result;
+both arms refused a retained callback after an executor change.
+
+| Measurement | Before p50 / p95 | After p50 / p95 |
+| --- | --- | --- |
+| One loader callback | 13.39 / 18.12 ms | 0.42 / 0.80 ms |
+| Step preparation | 15.49 / 22.28 ms | 15.61 / 20.24 ms |
+| Preparation + ten callbacks | 153.17 / 181.22 ms | 20.31 / 25.79 ms |
+| Assemblies per step, including probes | 12 | 2 |
+
+[Raw samples and source hashes](../bench/probes/872/presentation-evidence/).
+The before arm is PR #944; PR #945 has identical host source. The after arm is
+the uncommitted presentation change over #945; `provenance.json` records exact
+source hashes. Copy the same harness into each checkout's
+`bench/probes/872/presentation.mjs`, build that checkout, then run
+`node bench/probes/872/presentation.mjs ABSOLUTE_CHECKOUT_ROOT`. Each process must
+start from that copy so host dependencies resolve from the measured checkout.
+
+The integration regression fails on the before arm (11 probes instead of 1)
+and passes after the change. It also checks same-step executor invalidation.
+Unit cases cover scope separation, abort, observer disposal, public changes and
+an old asynchronous probe finishing after a new verdict.
+
+These figures exclude worker execution, `run_code` compilation, model work and
+the shell. They do not prove the full orchestration SLO or shell acceptance.
+The 106-operation scenario total for this iteration remains **unmeasured**.

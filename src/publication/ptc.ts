@@ -23,7 +23,7 @@ import { WORKER_TIMEOUT_MS } from '../execution/protocol.js'
 import { registerStepTailProvider } from '../prompt-injection/index.js'
 import { mountWorkspacePreparation } from '../workspace-preparation.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
-import { activationIsPtc, inspectPresentation, isPresentationProbe } from './presentation.js'
+import { activationIsPtc, isPtcPresentation, isPresentationProbe, observePresentation, presentationRevision as currentPresentationRevision } from './presentation.js'
 import { visibleNames } from './surface.js'
 import { publicationRegistration, publicationReady } from './reentry.js'
 import { retired as retiredLegacyRow } from '../settings/legacy.js'
@@ -69,6 +69,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
   mountWorkspacePreparation(root)
   root.inject(['tools', 'systemPrompt', 'sandboxPolicy', 'subprocess', 'opsKernel'], async ctx => {
     const tools = ctx.get('tools')!, prompt = ctx.get('systemPrompt')!
+    observePresentation(ctx, prompt)
     mountResultLifecycle(ctx)
     const entries = new Map<Agent, Entry>(), retired = new WeakSet<Agent>()
     let stopped = false
@@ -92,9 +93,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     const selected = (entry: Entry, api: ApiName | 'load_sdk'): boolean => api === 'load_sdk'
       ? gate.dynamic !== false : resident.has(api) || entry.selected.has(api)
     const isPtc = async (agent: Agent, signal?: AbortSignal): Promise<boolean> => {
-      const assembly = await inspectPresentation(prompt, agent, signal)
-      return assembly.tools.length === 1 && assembly.tools[0]?.name === 'run_code'
-        && assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
+      return isPtcPresentation(prompt, agent, signal)
     }
     // Repeated writes to one path signal a batching mistake. The guidance rides
     // the triggering tool result, so no system-prompt bytes are spent up front.
@@ -113,8 +112,10 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       // The public assembly may finish after its executor sections changed.
       // Refuse that stale verdict rather than dispatching under the old text.
       const revision = presentationRevision
+      const observedRevision = currentPresentationRevision(prompt)
       const current = () => entries.get(entry.agent) === entry && exec.agent === entry.agent && !exec.signal.aborted
         && revision === presentationRevision && permitted(entry.agent, api) && selected(entry, api)
+        && observedRevision === currentPresentationRevision(prompt)
         && (capability(api)?.component === 'file' || tools.executable(publicToolName(api), entry.agent, exec.toolSet) === entry.definitions.get(publicToolName(api)))
       if (!current() || !await isPtc(entry.agent, exec.signal).catch(() => false) || !current()) {
         return failure('POLICY_DENIED', 'This API must be admitted for the calling PTC scope; no action executed.')
