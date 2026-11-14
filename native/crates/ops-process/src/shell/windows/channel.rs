@@ -1,5 +1,10 @@
 use super::{
-    check, job::Job, output::Output, owned, security, spill_file::SpillStore,
+    channel_wake::{ConnectSeal, wait_readers},
+    check,
+    job::Job,
+    output::Output,
+    owned, security,
+    spill_file::SpillStore,
     spill_io::Cancellation,
 };
 use crate::shell::{Capture, CaptureView, Retention, SpillSnapshot, budget};
@@ -32,7 +37,7 @@ use windows_sys::Win32::{
             ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
             PIPE_REJECT_REMOTE_CLIENTS,
         },
-        Threading::{CreateEventW, WaitForSingleObject},
+        Threading::{CreateEventW, INFINITE, WaitForMultipleObjects, WaitForSingleObject},
     },
 };
 
@@ -87,7 +92,7 @@ pub(super) struct Prefix {
 }
 struct Connection<'a> {
     stop: &'a AtomicBool,
-    seal: &'a AtomicBool,
+    seal: &'a ConnectSeal,
     armed: mpsc::SyncSender<io::Result<()>>,
     output: Option<ReaderOutput>,
 }
@@ -108,7 +113,7 @@ struct State {
 pub struct Channel {
     name: OsString,
     stop: Arc<AtomicBool>,
-    seal_connects: Arc<AtomicBool>,
+    seal_connects: Arc<ConnectSeal>,
     state: Arc<Mutex<State>>,
     handles: Vec<Weak<OwnedHandle>>,
     readers: Vec<JoinHandle<()>>,
@@ -183,7 +188,7 @@ impl Channel {
         let mut channel = Self {
             name: OsString::from_wide(&name[..name.len() - 1]),
             stop: Arc::new(AtomicBool::new(false)),
-            seal_connects: Arc::new(AtomicBool::new(false)),
+            seal_connects: Arc::new(ConnectSeal::new()?),
             state: Arc::new(Mutex::new(State::default())),
             handles: Vec::new(),
             readers: Vec::new(),
@@ -302,21 +307,18 @@ impl Channel {
     /// After Job emptiness or a trusted protocol forbids new writers, drain to EOF and retire
     /// unused connect operations. This proves physical drain, not a command receipt.
     pub fn drain(&mut self, deadline: Instant) -> io::Result<()> {
-        self.seal_connects.store(true, Ordering::Release);
-        while self.readers.iter().any(|reader| !reader.is_finished()) {
-            if Instant::now() >= deadline {
-                self.close_until(Instant::now() + Duration::from_secs(1))?;
-                self.state
-                    .lock()
-                    .unwrap()
-                    .errors
-                    .push("channel drain deadline exceeded".into());
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "channel drain deadline exceeded",
-                ));
-            }
-            thread::sleep(Duration::from_millis(2));
+        self.seal_connects.set()?;
+        if !wait_readers(&self.readers, deadline)? {
+            self.close_until(Instant::now() + Duration::from_secs(1))?;
+            self.state
+                .lock()
+                .unwrap()
+                .errors
+                .push("channel drain deadline exceeded".into());
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "channel drain deadline exceeded",
+            ));
         }
         self.close_until(deadline)?;
         let state = self.state.lock().unwrap();
@@ -350,7 +352,7 @@ impl Channel {
     /// Failed joining retains every reader; the coordinator must trigger fatal host teardown.
     pub fn close_until(&mut self, deadline: Instant) -> io::Result<()> {
         self.stop.store(true, Ordering::Release);
-        self.seal_connects.store(true, Ordering::Release);
+        self.seal_connects.set()?;
         while self.readers.iter().any(|reader| !reader.is_finished()) {
             for cancel in &self.cancellations {
                 cancel.cancel();
@@ -372,7 +374,10 @@ impl Channel {
                     "channel cleanup unconfirmed; managed kernel teardown required",
                 ));
             }
-            thread::sleep(Duration::from_millis(2));
+            wait_readers(
+                &self.readers,
+                deadline.min(Instant::now() + Duration::from_millis(2)),
+            )?;
         }
         for reader in self.readers.drain(..) {
             if reader.join().is_err() {
@@ -445,6 +450,7 @@ fn operation(
     connect: bool,
     bytes: &mut [u8],
     armed: Option<&mpsc::SyncSender<io::Result<()>>>,
+    connect_wake: Option<&OwnedHandle>,
 ) -> io::Result<u32> {
     if !connect && stop.load(Ordering::Acquire) {
         return Err(io::Error::new(io::ErrorKind::Interrupted, "channel closed"));
@@ -488,11 +494,21 @@ fn operation(
         if stop.load(Ordering::Acquire) {
             return cancel_join(handle, &ov);
         }
-        let waited = unsafe { WaitForSingleObject(event.as_raw_handle(), 10) };
+        // A sealed connector wakes immediately. Active reads retain their own
+        // cancellation scope and still drain to EOF; sealing cannot cancel them.
+        let waited = if let Some(wake) = connect_wake {
+            let events = [event.as_raw_handle(), wake.as_raw_handle()];
+            unsafe { WaitForMultipleObjects(2, events.as_ptr(), 0, INFINITE) }
+        } else {
+            unsafe { WaitForSingleObject(event.as_raw_handle(), 10) }
+        };
         if waited == WAIT_OBJECT_0 {
             let mut count = 0;
             check(unsafe { GetOverlappedResult(handle.as_raw_handle(), &ov, &mut count, 0) })?;
             return Ok(count);
+        }
+        if connect_wake.is_some() && waited == WAIT_OBJECT_0 + 1 {
+            return cancel_join(handle, &ov);
         }
         if waited != WAIT_TIMEOUT {
             let error = io::Error::last_os_error();
@@ -523,9 +539,16 @@ fn receive(
         armed,
         output,
     } = connection;
-    match operation(handle, seal, true, &mut [], Some(&armed)) {
+    match operation(
+        handle,
+        &seal.flag,
+        true,
+        &mut [],
+        Some(&armed),
+        Some(&seal.event),
+    ) {
         Err(error)
-            if seal.load(Ordering::Acquire)
+            if seal.flag.load(Ordering::Acquire)
                 && error.raw_os_error() == Some(ERROR_OPERATION_ABORTED as i32) =>
         {
             return Ok(());
@@ -557,7 +580,7 @@ fn read_peer(
     let mut ready = false;
     let result = (|| {
         loop {
-            match operation(handle, stop, false, &mut bytes, None) {
+            match operation(handle, stop, false, &mut bytes, None, None) {
                 Ok(0) => break,
                 Ok(count) => {
                     let mut data = &bytes[..count as usize];
@@ -820,7 +843,7 @@ mod tests {
             )
         })
         .unwrap();
-        operation(&server, &AtomicBool::new(false), true, &mut [], None).unwrap();
+        operation(&server, &AtomicBool::new(false), true, &mut [], None, None).unwrap();
         (server, File::from(client))
     }
 
@@ -889,7 +912,7 @@ mod tests {
         let mut channel = Channel {
             name: OsString::new(),
             stop,
-            seal_connects: Arc::new(AtomicBool::new(false)),
+            seal_connects: Arc::new(ConnectSeal::new().unwrap()),
             state,
             handles: vec![Arc::downgrade(&server)],
             readers: vec![reader],
@@ -905,10 +928,10 @@ mod tests {
             finished.send((drained, channel.snapshot())).unwrap();
         });
         let deadline = Instant::now() + Duration::from_secs(1);
-        while !seal.load(Ordering::Acquire) && Instant::now() < deadline {
+        while !seal.flag.load(Ordering::Acquire) && Instant::now() < deadline {
             thread::yield_now();
         }
-        assert!(seal.load(Ordering::Acquire));
+        assert!(seal.flag.load(Ordering::Acquire));
         assert!(matches!(result.try_recv(), Err(mpsc::TryRecvError::Empty)));
         release.send(()).unwrap();
         let (drained, snapshot) = result.recv_timeout(Duration::from_secs(3)).unwrap();

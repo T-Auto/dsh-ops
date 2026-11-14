@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Wake pending Windows shell channel connects when sealing and wait on reader thread handles when draining, preserving authenticated EOF and spill settlement. Add resident-worker regressions for forged stdout receipts, surviving background jobs and unregistered stock asynchronous output (#872).
+- Windows shell 通道封存时唤醒待连接操作，排空时等待读取线程句柄，保留认证 EOF 与溢写结算；新增常驻 worker 回归测试，覆盖 stdout 伪造收据、存活后台任务及 stock 异步输出未注册检测（#872）。
+
 - Record the qualified Windows session runtime inventory for review while retaining the published stock runtime pin, fresh-only public behavior and existing CI runtime. Candidate assets remain unpublished; enabling the qualified inventory requires a separate pin adoption (#872).
 - 记录已验证的 Windows 会话运行时清单供审查，同时保留已发布的 stock 运行时 pin、仅 fresh 的公开行为及现有 CI 运行时。候选资产尚未发布；启用合格清单仍需单独采用新 pin（#872）。
 - Record the [Windows qualification handoff](windows-session-qualification.md) for unpublished `511f992`: full gate, four-CLI lifecycle and ten activation pairs, with incomplete performance work, deferred Linux qualification and pending runtime publication stated explicitly (#872).

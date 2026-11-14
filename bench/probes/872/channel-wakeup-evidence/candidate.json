@@ -1,0 +1,133 @@
+{
+  "kind": "niubash-vs-wsl",
+  "startedAt": "2026-11-14T14:56:57.167Z",
+  "head": "06c22a65b93e89d3a452724dc0a2e813f6b80af9",
+  "host": {
+    "platform": "win32",
+    "arch": "x64",
+    "node": "v26.12.1",
+    "cpu": "AMD Ryzen 7 6800HS with Radeon Graphics         ",
+    "cores": 16,
+    "totalMemGB": 15.2
+  },
+  "rounds": {
+    "samples": 300,
+    "warmup": 30,
+    "bulkMB": 256
+  },
+  "artifacts": {
+    "driverSha256": "66aaa96ce4067d8409d7a6d336ff1296d2c11dec3ae9d6e7105ff1beb4f01bdd",
+    "niuSha256": "7ec3ec04ce91bae64c23d7150e6b16574e9d91df8fcf0df997006e2b37bf2f1e"
+  },
+  "limitations": [
+    "driver arm: the #872 native shell_driver at detached HEAD 06c22a65 (release), one shell per session, anonymous-pipe endpoints plus per-call receipt files.",
+    "naive arm: the same niu.exe payload driven over one stdin/stdout pipe with an echo sentinel; no per-call pipes, no receipt files. This isolates payload cost from driver design.",
+    "wsl arm: Ubuntu bash over the same stdin/stdout sentinel, so naive and wsl arms share framing exactly.",
+    "All arms exclude DSH host, Cordis assembly, kernel frames and model-facing rendering; a real tool call adds equal overhead on every arm.",
+    "Bulk I/O compares NTFS through the Niubash MSYS layer against ext4 inside the WSL2 vhdx on the same physical machine, not the same filesystem or cache state."
+  ],
+  "arms": {
+    "driver": {
+      "label": "niubash persistent session via #872 native driver",
+      "version": "GNU bash, version 5.3.20(1)-release (x86_64-pc-msys)",
+      "control": {
+        "label": "driver control round trip (no shell)",
+        "n": 100,
+        "min": 0.16,
+        "p50": 0.22,
+        "p95": 0.35,
+        "p99": 0.36,
+        "max": 0.44,
+        "mean": 0.23
+      },
+      "roundtrip": {
+        "label": "persistent session, empty command",
+        "n": 300,
+        "min": 13.04,
+        "p50": 16.05,
+        "p95": 17.22,
+        "p99": 18.26,
+        "max": 22.61,
+        "mean": 16.09
+      },
+      "printf": {
+        "label": "persistent session, printf x",
+        "n": 100,
+        "min": 14.94,
+        "p50": 16.54,
+        "p95": 28.25,
+        "p99": 93.32,
+        "max": 105.56,
+        "mean": 19.54
+      },
+      "oneshot": {
+        "label": "one-shot niu.exe process",
+        "n": 50,
+        "min": 48.09,
+        "p50": 61.42,
+        "p95": 74.81,
+        "p99": 76.29,
+        "max": 76.29,
+        "mean": 61.82
+      },
+      "bulk": {
+        "writeMs": 8518.7,
+        "readMs": 1212.6,
+        "mb": 256
+      },
+      "pipeline": {
+        "ms": 167.3,
+        "mibPerSec": 47.8
+      },
+      "loop": "real\t0m0.313s\nuser\t0m0.219s\nsys\t0m0.047s\n"
+    },
+    "naive": {
+      "label": "niubash payload over one stdin/stdout pipe",
+      "version": "0\nGNU bash, version 5.3.20(1)-release (x86_64-pc-msys)",
+      "roundtrip": {
+        "label": "persistent shell, empty command",
+        "n": 300,
+        "min": 0.56,
+        "p50": 0.75,
+        "p95": 1.12,
+        "p99": 1.32,
+        "max": 1.57,
+        "mean": 0.79
+      },
+      "printf": {
+        "label": "persistent shell, printf x",
+        "n": 100,
+        "min": 0.71,
+        "p50": 0.88,
+        "p95": 1.21,
+        "p99": 1.31,
+        "max": 3.97,
+        "mean": 0.94
+      },
+      "oneshot": {
+        "label": "one-shot niu.exe process",
+        "n": 50,
+        "min": 47.47,
+        "p50": 56.2,
+        "p95": 68.89,
+        "p99": 243.38,
+        "max": 243.38,
+        "mean": 60.84
+      },
+      "bulk": {
+        "writeMs": 8120,
+        "readMs": 919.2,
+        "mb": 256
+      },
+      "pipeline": {
+        "ms": 145.5,
+        "mibPerSec": 55
+      },
+      "loop": "0\nreal\t0m0.207s\nuser\t0m0.109s\nsys\t0m0.062s",
+      "stderr": ""
+    }
+  },
+  "ok": true,
+  "driverSource": "06c22a65b93e89d3a452724dc0a2e813f6b80af9 plus channel-wakeup working tree; isolated Rust 1.97.1 release",
+  "finishedAt": "2026-11-14T14:57:38.282Z"
+}

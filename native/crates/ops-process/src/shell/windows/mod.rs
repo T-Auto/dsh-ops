@@ -1,5 +1,6 @@
 mod argv;
 mod channel;
+mod channel_wake;
 mod identity;
 mod job;
 mod launch;
