@@ -403,8 +403,12 @@ try {
       }
       return assembled
     })
+    // Force the fallback probe after installing the barrier. A valid cached
+    // verdict intentionally avoids per-call assembly; this case exercises an
+    // invalidated probe whose result becomes obsolete while it is awaiting.
+    ctx.emit('system-prompt/change')
     const race = removedDefinition.execute({ action: 'plan', operations: [] }, { agent: ptcChild, toolSet: raceStep.toolSet, signal: new AbortController().signal })
-    await blocked
+    await Promise.race([blocked, race.then(() => { throw new Error('invalidated execution did not reach the presentation barrier') })])
     const callsBeforeRace = calls.length
     ptcChild.liftPresentation()
     selectExecutor(ptcChild.executorContext, 'native')
