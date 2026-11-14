@@ -7,6 +7,12 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Record the [Windows qualification handoff](windows-session-qualification.md) for unpublished `511f992`: full gate, four-CLI lifecycle and ten activation pairs, with incomplete performance work, deferred Linux qualification and pending runtime publication stated explicitly (#872).
+- 记录未发布 `511f992` 的 [Windows 资格交接](Windows会话资格交接.md)：完整 gate、四 CLI 生命周期和十组激活配对；明确性能工作未完成、Linux 资格验证延后及运行时发布待办（#872）。
+
+- Align bilingual Bash references with fresh defaults, qualified session arguments/state and confirmed-reset cancellation context. Mark resident audit/probe records as historical slices, link current integrations and retain the empty public runtime inventory plus unresolved Linux/Windows ownership gaps; no lifecycle or performance acceptance is claimed (#872).
+- 对齐中英文 Bash 参考文档中的 fresh 默认值、合格会话参数/状态及取消后的确认重置上下文。将常驻审计/探针记录明确标为历史切片，链接当前集成，保留公开运行时清单为空及 Linux/Windows 所有权缺口，不宣称生命周期或性能验收完成（#872）。
+
 - Report a Windows update sidecar pending deletion as `REVISION_CONFLICT`, preserving genuine access denial and leaving the target unchanged. The relative no-follow opener retains the exact native deletion status without retries or additional privileges (#872).
 - Windows 更新锁旁文件处于待删除状态时返回 `REVISION_CONFLICT`，保留真实访问拒绝且不修改目标。相对目录句柄的禁止跟随打开操作保留准确的原生待删除状态，不重试、不增加权限（#872）。
 

@@ -1,11 +1,12 @@
 # Internal resident task adapter
 
-This #872 slice connects the existing resident control channel to fresh native tasks and the public
-DSH Jobs lifecycle. It is internal: the published fresh Bash executor, its defaults and its host
-subprocess path are unchanged. The [task output/retention integration](resident-task-spill.md) now
-connects recoverable native spill and sealed-origin ledger settlement. The production fresh
-authority/runtime bridge must still be connected before switching the published path. This is not
-persistent-shell eligibility evidence.
+This #872 document describes the internal adapter connecting the resident control channel to fresh
+native tasks and the public DSH Jobs lifecycle. The probe records below retain the scope of the
+2026-11-14 internal adapter slice. Current Windows fresh execution uses the
+[production fresh bridge](resident-fresh-bridge.md) when both task capabilities are available,
+including [output/retention integration](resident-task-spill.md). Session mode has a separate
+[runtime-qualification gate](session-shell.md); the public stock pin remains fresh-only. Internal
+adapter evidence does not establish complete #872 lifecycle or performance acceptance.
 
 `ResidentClient.task` negotiates `task-v1`; absent capability refuses task admission. The same scoped
 kernel remains responsible for file and shell traffic. A bounded correlation map in TypeScript tracks
@@ -17,9 +18,9 @@ remain reserved until their final reads and explicit release.
 The internal `createTaskExecutionHost()` factory belongs to one owning activation. Its caller supplies
 an asynchronous per-head `admit(signal)` callback that must obtain current public confinement. The
 adapter rechecks exact Agent/Session ownership around that callback and ignores late answers after
-cancellation. This callback is an integration seam, not a model-facing arbitrary-argv API. Production
-fresh argument/cwd/script validation, approval-before-background-publication, environment preparation,
-policy-change handling and result classification must be connected before publication changes.
+cancellation. This callback is an integration seam, not a model-facing arbitrary-argv API. The
+production fresh bridge owns argument/cwd/script validation, approval-before-background-publication,
+environment preparation, policy-change handling and result classification.
 
 Each accepted execution implements the existing `ShellExecution` contract plus explicit effect and
 cleanup facts and native `promote()`. `started` means observed physical launch. Accepted traffic with
@@ -41,7 +42,8 @@ listener may run before `jobs.start()` returns: caller cancellation checks the a
 while registry cancellation already controls the producer. Published jobs survive their starter's
 disposal. Exact Agent, Jobs service or common kernel ownership still governs cleanup. A foreground
 caller abort during promotion cancels and joins before returning; an observation-only Jobs wait timeout
-does not cancel a published job. Native and PTC can later share this adapter without changing Jobs IDs.
+does not cancel a published job. Native and PTC share this adapter through the fresh bridge without
+changing Jobs IDs.
 
 Native owns raw capture and spill. The host holds at most 64000 raw bytes per stream to serve the public
 synchronous `readFrom` API; it pulls a non-consuming snapshot at a bounded cadence and performs final
@@ -57,7 +59,7 @@ cleanup, only EOF-confirmed, error-free, sealed streams enter the existing ledge
 kernel PID, exact owner Session ID and raw byte total. The existing retention pass and shared
 settlement notification apply; neither a live path nor unknown cleanup establishes ledger ownership.
 The [separate spill proof](resident-task-spill.md) covers public Jobs metadata, file recovery and
-retention. It does not establish the still-pending production fresh approval/publication integration.
+retention. Production fresh approval/publication has separate evidence in the fresh bridge guide.
 Public fractional positive `graceMs` and timeout values remain valid within the host timer range;
 the public wrapper's existing limits remain its responsibility.
 

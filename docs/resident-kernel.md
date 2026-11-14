@@ -2,11 +2,22 @@
 
 中文：[常驻内核](常驻内核.md).
 
-This document tracks [#872](https://github.com/T-Auto/dsh-ops/issues/872), based on the
-`e7244444` source audit. It describes the complete target and the evidence needed to reach it.
-The explicit resident transport and its tests establish only the implementation described below.
-Local Native/PTC file routing now uses it; persistent shells and the complete acceptance report
-remain pending.
+This document tracks [#872](https://github.com/T-Auto/dsh-ops/issues/872). It retains the
+`e7244444` source audit and subsequent slice evidence; historical tables below are not a current
+feature checklist.
+
+As of 2026-11-14, Native/PTC local files, Windows [fresh Bash and DSH Jobs](resident-fresh-bridge.md),
+and eligible [result/batch calls](resident-confined-workers.md) share the resident kernel.
+[Explicit session Bash](session-shell.md) and its output/cleanup integration are implemented,
+but this branch's accepted-runtime inventory is empty: the stock pin remains fresh-only until a
+qualified complete runtime is accepted and distributed. Session cancellation preserves `ABORTED`
+and, after confirmed cleanup, carries the reset notice in `additionalContexts`; the tool card
+itself remains cancelled. See the session guide for the exact contract.
+
+Full lifecycle and performance acceptance remains open. Linux stopped-kernel host-death cleanup
+is unresolved. The public Windows host's create-to-Job-assignment crash interval is also outside
+the established-process cleanup evidence; OPS's atomic inner ranges do not close that outer window.
+No private host patch, detached process or weaker confinement substitutes for those guarantees.
 
 ## Target and ownership
 
@@ -100,12 +111,13 @@ does not dispose that shared provider. Removing the provider withdraws dependent
 and retained callers fail without starting a replacement. Pure external discovery retains its
 independent lifetime and does not require an OPS kernel or file policy service.
 
-## Requirement and evidence matrix
+## Historical requirement and evidence matrix
 
-“Source audit” identifies current code, not an acceptance test for the new architecture. A pending
-row remains a delivery requirement even if a smaller slice does not exercise it yet.
+This is the original source/file-transport slice audit, retained to explain the acceptance plan.
+Its “pending” and “not implemented” entries describe that stage, not the current implementation
+linked above. Slice evidence is not complete #872 acceptance.
 
-| Requirement from #872 | Current evidence or gap | Acceptance still needed |
+| Requirement from #872 | Evidence or gap at that stage | Planned acceptance |
 | --- | --- | --- |
 | One kernel per actual DSH instance; startup readiness; no idle exit | Real composition tests cover one startup across Native/official Node PTC file calls, pending-handshake reservation, publication gating, conflicting selections and independent consumer disposal. | Three complete host processes, long idle persistence and migration of remaining eligible paths. |
 | Three instances, including identical home/workspace, remain isolated | Public-host probe creates three independent Context roots and kernel processes in one test host; 75 requests use three initial spawns. | Independent connections, shell state, permissions, output and cancellation in at least three full host processes. |
@@ -128,7 +140,7 @@ row remains a delivery requirement even if a smaller slice does not exercise it 
 | Migration leaves one execution architecture | Local files, result cleanup and Windows batch/result calls use the shared client without one-shot fallback. Restricted POSIX batch/result and explicit WSL reads retain their platform runners. | Complete remaining platform migrations without weakening their execution constraints. |
 | End-to-end performance and resource evidence | Windows baseline: 824 calls, 0 failures, including 200 hot samples for each of four items. No resident benefit measured. | Resident A/B, Native/PTC, cold/warm, file/command/mixed/concurrent/long workloads; p50/p95/p99, CPU/RSS/handles and failures. |
 
-## Rust reuse boundary
+## Historical Rust reuse audit (`e7244444`)
 
 | Source | Existing behavior | Consequence for a serve entry point |
 | --- | --- | --- |
@@ -153,7 +165,7 @@ sets read_only/write_roots/denied credential roots and validates authority after
 preparation. Model arguments do not supply that authority. The resident file path must preserve
 this model; a shell path requires its own effective host confinement.
 
-## Request lifetime design constraints
+## Original request lifetime design constraints
 
 A control reader must remain able to receive cancellation while execution or output is blocked.
 A bounded frame reader and bounded result writer can serve that purpose; unlimited thread spawning,
@@ -179,10 +191,11 @@ execution should use typed contexts and direct calls, rather than adding paralle
 systems. State should be request-, session- or instance-owned; immutable code constants and the
 existing credential-pattern cache are not execution ownership.
 
-## Public host capability questions
+## Historical public host capability audit
 
-The host feasibility probe must answer these before a production transport is selected. The Rust
-audit alone cannot establish them.
+These were the host feasibility questions for the first transport slice. The results below retain
+their original scope; later integration is linked in the current status above. The Rust audit alone
+cannot establish host ownership guarantees.
 
 | Question | Status |
 | --- | --- |
@@ -363,7 +376,10 @@ to fail despite a successful production signal attempt. The production launcher 
 baseline, and ignored signals still require range termination. Both PowerShell and Git Bash run
 the same cooperative assertion; neither skips nor retries it.
 
-## Validation record
+## Historical validation record
+
+This record accompanies the original audit and 2026-11-13 baseline. It is not the validation status
+of the later fresh, session, Jobs or result/batch integrations linked above.
 
 - Source audit: `e7244444`, covering the paths above; no source behavior changed by this document.
 - Public host feasibility: synthetic probe passes six checks on Windows; WSL process-group fallback passes five and fails blocked-kernel host-death cleanup. Cgroup and `/proc` diagnostics establish two live sleeping survivors, not zombies. Native Linux scope ownership remains untested.
@@ -372,7 +388,7 @@ the same cooperative assertion; neither skips nor retries it.
 - Persistent shell/background jobs: pending implementation and tests.
 - Cross-platform cleanup, multi-instance isolation and full A/B report: pending.
 
-### Current Windows full-call baseline
+### Windows full-call baseline (2026-11-13)
 
 On 2026-11-13, [the baseline probe](../bench/probes/probe-872-baseline.mjs) measured source
 `e7244444`, a freshly built worker, Node `v26.12.1` and the verified Niubash payload. The

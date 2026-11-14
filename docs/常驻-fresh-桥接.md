@@ -5,7 +5,8 @@
 本 #872 切片把现有 `ops_bash` wrapper 接到内部原生任务适配器。生产选择必须同时具备
 **`task-v1` 和 `task-spill-v1`**。Windows worker 现已提供[可恢复任务 spill 与终态文件保留](常驻任务输出与保留.md)，
 正常主入口会为 fresh 调用选择共享原生任务适配器。缺少任一能力的 worker 保留原有执行器。
-不提供用户或配置绕过；持久会话模式仍待交付。
+不提供用户或配置绕过。[显式会话模式](会话Shell.md) 另有运行时资格门槛；本分支的 stock pin
+仍仅支持 fresh。下方探针结果是 fresh 桥接切片的证据，不代表 #872 完整生命周期或性能验收。
 
 主入口在 `residentKernel()` 之后挂载一个 `residentFreshTasks()` provider。独立集成可在共同
 所有者的激活作用域中各挂载一次：
