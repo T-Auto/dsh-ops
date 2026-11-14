@@ -2,6 +2,7 @@
 //! model paths, shells, privilege enabling, or publication policy live here.
 #![cfg(windows)]
 mod inheritance;
+mod update_lock;
 pub use inheritance::inherit_new_file_dacl;
 use std::{
     ffi::c_void,
@@ -11,6 +12,7 @@ use std::{
     os::windows::io::{AsRawHandle, FromRawHandle},
     ptr::{addr_of_mut, null_mut},
 };
+pub use update_lock::open_update_lock;
 use winapi::shared::ntdef::{OBJECT_ATTRIBUTES, UNICODE_STRING};
 use windows_permissions::{
     LocalBox, SecurityDescriptor,

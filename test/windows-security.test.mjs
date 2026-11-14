@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { assert, report, skipSuite, test, withTempDir } from './lib/harness.mjs'
 import { callTool, envelopeOf, requireWorker } from './lib/boundary.mjs'
 
@@ -134,6 +135,45 @@ await test('W1g/h: held sidecar deterministically refuses writer but not target/
     assert.equal(done.status, 'completed', JSON.stringify(done)); assert.equal(done.changed, 1)
     assert.equal(fs.readFileSync(target, 'utf8'), 'DONE\n')
     clean(root, [name])
+  })
+})
+await test('a sidecar pending deletion refuses as contention until its last handle closes', async () => {
+  await withTempDir('lock-delete-pending', async root => {
+    const target = path.join(root, 'target.txt'); fs.writeFileSync(target, 'TOKEN\n')
+    const sidecar = path.join(root, '.dsh-ops-update-' + createHash('sha256').update('target.txt').digest('hex') + '.lock')
+    fs.writeFileSync(sidecar, '')
+    const helper = fileURLToPath(new URL('./lib/delete-pending-sidecar.ps1', import.meta.url))
+    await withHolder(`. '${quote(helper)}' -Path '${quote(sidecar)}'`, async () => {
+      refused(await replace(target, root), 'REVISION_CONFLICT')
+      assert.equal(fs.readFileSync(target, 'utf8'), 'TOKEN\n')
+    })
+    const done = await replace(target, root)
+    assert.equal(done.status, 'completed', JSON.stringify(done))
+    assert.equal(done.changed, 1)
+    assert.equal(fs.readFileSync(target, 'utf8'), 'DONE\n')
+    clean(root, ['target.txt'])
+  })
+})
+
+await test('a real sidecar DACL denial remains ACCESS_DENIED', async () => {
+  await withTempDir('lock-access-denied', async root => {
+    const target = path.join(root, 'target.txt'); fs.writeFileSync(target, 'TOKEN\n')
+    const sidecar = path.join(root, '.dsh-ops-update-' + createHash('sha256').update('target.txt').digest('hex') + '.lock')
+    fs.writeFileSync(sidecar, '')
+    const original = sddlOf(sidecar)
+    try {
+      powershell(`$acl=Get-Acl -LiteralPath '${quote(sidecar)}'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $deny=New-Object Security.AccessControl.FileSystemAccessRule($sid,'WriteData','Deny'); $acl.AddAccessRule($deny); Set-Acl -LiteralPath '${quote(sidecar)}' -AclObject $acl`)
+      const denied = sddlOf(sidecar)
+      refused(await replace(target, root), 'ACCESS_DENIED')
+      assert.equal(fs.readFileSync(target, 'utf8'), 'TOKEN\n')
+      assert.equal(sddlOf(sidecar), denied, 'refusal must not alter sidecar permissions')
+    } finally {
+      powershell(`$acl=Get-Acl -LiteralPath '${quote(sidecar)}'; $acl.SetSecurityDescriptorSddlForm('${quote(original)}'); Set-Acl -LiteralPath '${quote(sidecar)}' -AclObject $acl`)
+    }
+    const done = await replace(target, root)
+    assert.equal(done.status, 'completed', JSON.stringify(done))
+    assert.equal(done.changed, 1)
+    clean(root, ['target.txt'])
   })
 })
 report('windows-security')
