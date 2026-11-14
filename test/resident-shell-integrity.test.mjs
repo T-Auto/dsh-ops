@@ -42,8 +42,24 @@ await withTempDir('resident-shell-integrity', async workspace => {
         { workspaceRoot: policy.workspaceRoot }),
     }))
     admission = ctx.get('opsShellAdmission')
-    const call = (agent, command) => admission.execute({ command, timeoutMs: 10000 },
+    const call = (agent, command, extra = {}) => admission.execute({ command, timeoutMs: 10000, ...extra },
       { agent, signal: AbortSignal.timeout(15000) })
+    await test('command records preserve Unicode and shell-quoted control and escape data', async () => {
+      const values = ['中文 café 😀 e\u0301', '\uE000\uE31A\uE3FF', 'line one\nline two', 'tab\tvalue', 'carriage\rreturn',
+        'literal\\n\\c\\0377', '"quoted" $HOME `printf injected` | ; #']
+      const command = `builtin printf '%s\\n' ${values.map(quote).join(' ')}`
+      completed(await call(agents[0], command), values.join('\n') + '\n')
+      completed(await call(agents[0], "builtin printf 'A\\000B'"), 'A\0B')
+      completed(await call(agents[0], 'printf after-record'), 'after-record')
+    })
+    await test('an explicit Unicode working directory survives subsequent session commands', async () => {
+      const child = path.join(workspace, 'space 中文 😀')
+      fs.mkdirSync(child)
+      const expected = child.replaceAll('\\', '/').replace(/^([A-Za-z]):/, (_all, drive) => `/${drive.toLowerCase()}`)
+      completed(await call(agents[0], 'builtin printf %s "$PWD"', { workdir: child }), expected)
+      completed(await call(agents[0], 'builtin printf %s "$PWD"'), expected)
+      completed(await call(agents[0], 'printf restored', { workdir: workspace }), 'restored')
+    })
     await test('channel endpoints persist across commands but remain private to one session', async () => {
       const command = 'builtin printf "%s\\n" "$_ops_out" "$_ops_err" "$_ops_receipt"'
       const endpoints = [], requests = []

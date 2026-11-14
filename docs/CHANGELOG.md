@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Preserve UTF-8 text in Windows resident shell command and working-directory records, escaping only ASCII controls and backslashes. Fix explicit Unicode working directories resetting a live session and avoid fivefold expansion of ordinary ASCII payloads (#872).
+- Windows 常驻 shell 的命令及工作目录记录保留 UTF-8 文本，仅转义 ASCII 控制字符与反斜杠；修复显式 Unicode 工作目录导致会话重置的问题，并避免普通 ASCII 载荷膨胀五倍（#872）。
+
 - Open each Windows file-path ancestor with one handle-relative directory lookup that refuses reparse points, replacing duplicate metadata/open checks. Preserve per-ancestor read access, no-delete parent leases, lexical policy and existing path-error classifications (#872).
 - Windows 文件路径的每层祖先改为一次相对句柄的目录打开，并拒绝 reparse 点，替代重复的元数据与打开检查；保留逐层读取权限、父目录禁止删除租约、词法策略及既有路径错误分类（#872）。
 

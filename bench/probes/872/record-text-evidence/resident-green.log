@@ -1,0 +1,17 @@
+dsh-ops test: 1 suites, 16 worker(s); exclusive suites run afterwards
+
+=== resident-shell-integrity.test.mjs (6.40s)
+dsh-ops: native worker selected without provenance verification — explicit selection (config.binaryPath / DSH_OPS_WORKER_BIN) — trusting the named path is the whole point of selecting it: E:\01-Projects\deepseek\dsh-ops-shell-record-text\native\target\release\dsh-ops-worker.exe
+  ok   command records preserve Unicode and shell-quoted control and escape data
+  ok   an explicit Unicode working directory survives subsequent session commands
+  ok   channel endpoints persist across commands but remain private to one session
+  ok   ordinary output matching the current receipt cannot complete a failed command
+  ok   living background jobs reset only their session, including disowned redirected jobs
+  ok   stock asynchronous output outside registered channels is rejected explicitly
+
+dsh-ops resident-shell-integrity: all 6 checks passed
+
+10 slowest suites:
+  6.40s resident-shell-integrity.test.mjs
+
+dsh-ops test: 1 suite(s) passed in 6s

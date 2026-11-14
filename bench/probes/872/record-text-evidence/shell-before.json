@@ -1,0 +1,132 @@
+{
+  "kind": "niubash-vs-wsl",
+  "startedAt": "2026-11-14T18:29:51.594Z",
+  "head": "755c83cb61bd7eeb27886cfabc5f5ead75182d22",
+  "host": {
+    "platform": "win32",
+    "arch": "x64",
+    "node": "v26.12.1",
+    "cpu": "AMD Ryzen 7 6800HS with Radeon Graphics         ",
+    "cores": 16,
+    "totalMemGB": 15.2
+  },
+  "rounds": {
+    "samples": 300,
+    "warmup": 30,
+    "bulkMB": 256
+  },
+  "artifacts": {
+    "driverSha256": "678a85692e3e731bfbce1465dd809bc5efd08ef779db80fc021f354ca644c3d0",
+    "niuSha256": "7ec3ec04ce91bae64c23d7150e6b16574e9d91df8fcf0df997006e2b37bf2f1e"
+  },
+  "limitations": [
+    "driver arm: the #872 native shell_driver at detached HEAD 06c22a65 (release), one shell per session, anonymous-pipe endpoints plus per-call receipt files.",
+    "naive arm: the same niu.exe payload driven over one stdin/stdout pipe with an echo sentinel; no per-call pipes, no receipt files. This isolates payload cost from driver design.",
+    "wsl arm: Ubuntu bash over the same stdin/stdout sentinel, so naive and wsl arms share framing exactly.",
+    "All arms exclude DSH host, Cordis assembly, kernel frames and model-facing rendering; a real tool call adds equal overhead on every arm.",
+    "Bulk I/O compares NTFS through the Niubash MSYS layer against ext4 inside the WSL2 vhdx on the same physical machine, not the same filesystem or cache state."
+  ],
+  "arms": {
+    "driver": {
+      "label": "niubash persistent session via #872 native driver",
+      "version": "GNU bash, version 5.3.20(1)-release (x86_64-pc-msys)",
+      "control": {
+        "label": "driver control round trip (no shell)",
+        "n": 100,
+        "min": 0.16,
+        "p50": 0.26,
+        "p95": 0.4,
+        "p99": 0.48,
+        "max": 0.73,
+        "mean": 0.26
+      },
+      "roundtrip": {
+        "label": "persistent session, empty command",
+        "n": 300,
+        "min": 3.93,
+        "p50": 4.76,
+        "p95": 6.13,
+        "p99": 6.99,
+        "max": 8.03,
+        "mean": 4.87
+      },
+      "printf": {
+        "label": "persistent session, printf x",
+        "n": 100,
+        "min": 4.29,
+        "p50": 5.01,
+        "p95": 6.04,
+        "p99": 6.72,
+        "max": 7.04,
+        "mean": 5.06
+      },
+      "oneshot": {
+        "label": "one-shot niu.exe process",
+        "n": 50,
+        "min": 44.06,
+        "p50": 47.24,
+        "p95": 51.33,
+        "p99": 52.88,
+        "max": 52.88,
+        "mean": 47.81
+      },
+      "bulk": {
+        "writeMs": 6716,
+        "readMs": 811.7,
+        "mb": 256
+      },
+      "pipeline": {
+        "ms": 134.2,
+        "mibPerSec": 59.6
+      },
+      "loop": "real\t0m0.181s\nuser\t0m0.078s\nsys\t0m0.031s\n"
+    },
+    "naive": {
+      "label": "niubash payload over one stdin/stdout pipe",
+      "version": "0\nGNU bash, version 5.3.20(1)-release (x86_64-pc-msys)",
+      "roundtrip": {
+        "label": "persistent shell, empty command",
+        "n": 300,
+        "min": 0.51,
+        "p50": 0.63,
+        "p95": 0.96,
+        "p99": 1.15,
+        "max": 2.04,
+        "mean": 0.67
+      },
+      "printf": {
+        "label": "persistent shell, printf x",
+        "n": 100,
+        "min": 0.71,
+        "p50": 0.82,
+        "p95": 1.13,
+        "p99": 1.2,
+        "max": 1.44,
+        "mean": 0.87
+      },
+      "oneshot": {
+        "label": "one-shot niu.exe process",
+        "n": 50,
+        "min": 44.29,
+        "p50": 46.88,
+        "p95": 50.53,
+        "p99": 53.66,
+        "max": 53.66,
+        "mean": 47.29
+      },
+      "bulk": {
+        "writeMs": 6299.2,
+        "readMs": 790.2,
+        "mb": 256
+      },
+      "pipeline": {
+        "ms": 135,
+        "mibPerSec": 59.3
+      },
+      "loop": "0\nreal\t0m0.169s\nuser\t0m0.078s\nsys\t0m0.047s",
+      "stderr": ""
+    }
+  },
+  "ok": true,
+  "finishedAt": "2026-11-14T18:30:20.157Z"
+}

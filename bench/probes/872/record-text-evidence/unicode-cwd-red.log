@@ -1,0 +1,31 @@
+dsh-ops test: 1 suites, 16 worker(s); exclusive suites run afterwards
+
+=== resident-shell-integrity.test.mjs (6.40s)
+dsh-ops: native worker selected without provenance verification — explicit selection (config.binaryPath / DSH_OPS_WORKER_BIN) — trusting the named path is the whole point of selecting it: E:/01-Projects/deepseek/dsh-ops-checked-parent-open/runtime/win32-x64/dsh-ops-worker.exe
+  ok   command records preserve Unicode and shell-quoted control and escape data
+  FAIL an explicit Unicode working directory survives subsequent session commands
+       AssertionError [ERR_ASSERTION]: {"cleanupConfirmed":true,"effectState":"unknown","error":{"code":"SHELL_RESET","message":"persistent control synchronization lost"},"exitCode":null,"requestId":"966faa16-0a4d-4524-8add-bd3479a7c609","shellState":"reset","status":"failed","stderrTotal":201,"stdoutTotal":0,"type":"shell.completed","stdout":{"text":"","bytesTotal":0,"lossy":false},"stderr":{"text":"niu: line 17: cd: C:\\Users\\pc\\AppData\\Local\\Temp\\dsh-ops-test-home-sOrpoE\\resident-shell-integrity-nwDxvp\\space  : No such file or directory\n","bytesTotal":201,"lossy":false},"sandbox":{"mode":"danger-full-access","denied":false},"denialObservation":"not-observed"}
+       + actual - expected
+
+       + 'failed'
+       - 'completed'
+
+           at completed (file:///E:/01-Projects/deepseek/dsh-ops-shell-record-text/test/resident-shell-integrity.test.mjs:21:10)
+           at file:///E:/01-Projects/deepseek/dsh-ops-shell-record-text/test/resident-shell-integrity.test.mjs:59:7
+           at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+           at async test (file:///E:/01-Projects/deepseek/dsh-ops-shell-record-text/test/lib/harness.mjs:79:5)
+           at async file:///E:/01-Projects/deepseek/dsh-ops-shell-record-text/test/resident-shell-integrity.test.mjs:55:5
+           at async withTempDir (file:///E:/01-Projects/deepseek/dsh-ops-shell-record-text/test/lib/harness.mjs:115:12)
+--- resident-shell-integrity.test.mjs exited 1
+
+dsh-ops test: 1 of 1 suite(s) failed in 6s
+           at async file:///E:/01-Projects/deepseek/dsh-ops-shell-record-text/test/resident-shell-integrity.test.mjs:28:1
+  ok   channel endpoints persist across commands but remain private to one session
+  ok   ordinary output matching the current receipt cannot complete a failed command
+  ok   living background jobs reset only their session, including disowned redirected jobs
+  ok   stock asynchronous output outside registered channels is rejected explicitly
+
+dsh-ops resident-shell-integrity: 1 of 6 check(s) failed
+
+10 slowest suites:
+  6.40s resident-shell-integrity.test.mjs
