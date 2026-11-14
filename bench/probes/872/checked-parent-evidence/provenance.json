@@ -1,0 +1,99 @@
+{
+  "base": "72c387d0ba257dbfb8469086cebb9285ee5dd1bd",
+  "harness": "bench/search-profile.mjs",
+  "harnessSha256": "d89a211c5ad47c493effc71fab1679fd55d8f0f36b048d213c4d83fe2cfc47f6",
+  "sourceSha256": {
+    "native/crates/ops-files/src/file_path.rs": "4e5d55e28308d2643d6f3642f74a7cca3103301298bc112187279a2d0e3c5d43",
+    "native/windows-metadata/src/open_directory.rs": "7e487b982f7811628679036cf9184d9d25b8da1f128d6cca9d2052f5859b8ecf",
+    "native/windows-metadata/src/lib.rs": "69f953aaec90f9a338da06e2d18eb432dc79d9f2127344e58b509e4e808142f7"
+  },
+  "measuredWorkers": {
+    "before": "a22c88ef53fbb537d8e10c82e9e524e2fb736ede5815872dba9c2cf002ab8636",
+    "after": "5f342f3b7137d43dec06710ce79e3641e917aba8a92fe305a1424fa47d62a226"
+  },
+  "corpus": {
+    "files": 2000,
+    "bytes": 62890,
+    "sha256": "de2bfa98c7e58d8203154462ef513fb88cf27fbab13d2b517d178ee10a31a3c3"
+  },
+  "environment": {
+    "platform": "win32",
+    "arch": "x64",
+    "release": "10.0.26300",
+    "node": "v26.12.1",
+    "cpu": "AMD Ryzen 7 6800HS with Radeon Graphics         ",
+    "rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+    "cargo": "1.97.1 (c980f4866 2026-06-30)"
+  },
+  "sampling": "20 measured pairs per query, preceded by first-touch and two warmup pairs; alternating arm order; nearest-rank percentiles; no concurrent builds or tests",
+  "summary": {
+    "exact": {
+      "before": {
+        "samples": 20,
+        "p50Ms": 2759.6842000000033,
+        "p95Ms": 2839.6149999999907
+      },
+      "after": {
+        "samples": 20,
+        "p50Ms": 1779.4849000000104,
+        "p95Ms": 1907.1610999999975
+      }
+    },
+    "bounded": {
+      "before": {
+        "samples": 20,
+        "p50Ms": 33.367800000007264,
+        "p95Ms": 36.40570000000298
+      },
+      "after": {
+        "samples": 20,
+        "p50Ms": 29.57159999999567,
+        "p95Ms": 31.5283000000054
+      }
+    },
+    "miss": {
+      "before": {
+        "samples": 20,
+        "p50Ms": 2715.173299999995,
+        "p95Ms": 2794.8538000000117
+      },
+      "after": {
+        "samples": 20,
+        "p50Ms": 1771.0756999999867,
+        "p95Ms": 1888.311400000006
+      }
+    },
+    "glob": {
+      "before": {
+        "samples": 20,
+        "p50Ms": 218.98029999999562,
+        "p95Ms": 243.86699999999837
+      },
+      "after": {
+        "samples": 20,
+        "p50Ms": 215.961100000015,
+        "p95Ms": 245.62129999999888
+      }
+    }
+  },
+  "limits": [
+    "Native one-shot worker including process startup; not the shell scenario or complete host orchestration.",
+    "Bounded query deliberately requests a partial result and is not the full-scan acceptance measurement.",
+    "Earlier local mixed-compiler measurements and the stopped sandbox benchmark are excluded. Final arms both use the explicitly selected Rust 1.97.1 toolchain.",
+    "No shell-driver implementation change; the session and 106-operation targets remain open."
+  ],
+  "shellRecheck": {
+    "rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+    "microHarness": "bench/probes/872/channel-wakeup-evidence/compare.mjs",
+    "microHarnessSha256": "8461ebd90707f0171ed95e912cecd3d099f464820d7262f705bc1344a8913c03",
+    "scenarioHarness": "bench/probes/872/scenario-driver.mjs",
+    "scenarioHarnessSha256": "9e9a60c842474483cb3871a94ea7458213686f334dea2e2069033fece5a4b2e9",
+    "artifacts": {
+      "before": "20f0dd9bc70d8b784e66cc20b4472d7b334b72b695c38a2e9edbed9ab2edd441",
+      "after": "678a85692e3e731bfbce1465dd809bc5efd08ef779db80fc021f354ca644c3d0",
+      "niu": "7ec3ec04ce91bae64c23d7150e6b16574e9d91df8fcf0df997006e2b37bf2f1e",
+      "harness": "9e9a60c842474483cb3871a94ea7458213686f334dea2e2069033fece5a4b2e9"
+    },
+    "note": "Shell implementation directories have no diff from baseline 72c387d0. Native-file and shell performance boundaries remain separate."
+  }
+}

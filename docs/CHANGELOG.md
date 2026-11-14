@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Open each Windows file-path ancestor with one handle-relative directory lookup that refuses reparse points, replacing duplicate metadata/open checks. Preserve per-ancestor read access, no-delete parent leases, lexical policy and existing path-error classifications (#872).
+- Windows 文件路径的每层祖先改为一次相对句柄的目录打开，并拒绝 reparse 点，替代重复的元数据与打开检查；保留逐层读取权限、父目录禁止删除租约、词法策略及既有路径错误分类（#872）。
+
 - Wake Windows session command and bootstrap waits on channel progress, with revision tickets to prevent missed notifications. Receipt, EOF, spill and ownership checks remain authoritative; cancellation and non-channel changes retain a bounded fallback wait (#872).
 - Windows 会话命令及启动等待改由通道进展唤醒，通过版本票据防止丢失通知；收据、EOF、溢写及所有权检查仍决定完成，取消和非通道变化保留有界回退等待（#872）。
 

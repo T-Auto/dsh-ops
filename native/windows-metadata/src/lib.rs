@@ -2,8 +2,10 @@
 //! model paths, shells, privilege enabling, or publication policy live here.
 #![cfg(windows)]
 mod inheritance;
+mod open_directory;
 mod update_lock;
 pub use inheritance::inherit_new_file_dacl;
+pub use open_directory::open_directory_no_reparse;
 use std::{
     ffi::c_void,
     fs::File,
