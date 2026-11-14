@@ -170,7 +170,7 @@ spill files, task-resource retirement and permanent poison after panic.
 
 Pooling reduces median empty-command time by about 20%, but **does not meet** the
 1 ms / 3 ms target. It retains twelve readers per active session, reconnects the
-MSYS endpoints each command and retains the driver's completion poll. The full
+runtime endpoints each command and retains the driver's completion poll. The full
 106-operation scenario, cold startup and end-to-end host cost remain unmeasured.
 The next work must reduce those remaining fixed costs without replacing EOF with
 an unauthenticated output marker or dropping ownership guarantees.
@@ -232,3 +232,9 @@ Candidate p50/p95 (ms): grep 943.39/987.12; plain ls 96.34/114.71; copy100
 file-operation budget. This round improves empty commands but does not materially
 improve the dominant file costs or meet the scenario target. Cold startup, complete
 host orchestration and same-machine WSL comparisons remain unverified.
+
+Runtime attribution: the pinned Niubash README identifies the shell as native
+Rust using rubash, with WinuxCmd external commands. The comparison harness's
+`bash --version` command is not proof that the session engine is MSYS Bash.
+Per-command reconnect costs above refer to the actual Niubash runtime; attributing
+them to MSYS requires separate evidence.
