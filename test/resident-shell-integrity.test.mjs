@@ -44,6 +44,29 @@ await withTempDir('resident-shell-integrity', async workspace => {
     admission = ctx.get('opsShellAdmission')
     const call = (agent, command) => admission.execute({ command, timeoutMs: 10000 },
       { agent, signal: AbortSignal.timeout(15000) })
+    await test('channel endpoints persist across commands but remain private to one session', async () => {
+      const command = 'builtin printf "%s\\n" "$_ops_out" "$_ops_err" "$_ops_receipt"'
+      const endpoints = [], requests = []
+      for (const agent of agents) {
+        let previous
+        for (let generation = 0; generation < 3; generation++) {
+          const value = await call(agent, command)
+          assert.equal(value.status, 'completed', JSON.stringify(value))
+          assert.equal(value.shellState, 'preserved')
+          assert.equal(value.cleanupConfirmed, true)
+          const names = value.stdout.text.trim().split('\n')
+          assert.equal(names.length, 3)
+          assert.equal(new Set(names).size, 3)
+          assert.ok(names.every(name => name.length > 0))
+          if (previous) assert.deepEqual(names, previous, 'one session must reuse its channel endpoints')
+          previous = names
+          requests.push(value.requestId)
+        }
+        endpoints.push(previous)
+      }
+      assert.equal(new Set(endpoints.flat()).size, 6, 'session endpoints must not overlap')
+      assert.equal(new Set(requests).size, requests.length, 'pooling must not reuse command generations')
+    })
     await test('ordinary output matching the current receipt cannot complete a failed command', async () => {
       // Use the actual request generation, so a stdout parser would accept the
       // forged exit zero. The private receipt must instead report exit seven.

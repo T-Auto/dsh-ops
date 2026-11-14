@@ -1,5 +1,5 @@
 //! One owned persistent shell. Scheduling and policy admission belong to its caller.
-use ops_process::shell::{Baseline, Channel, ChannelView, Launch, Range, SpillStore};
+use ops_process::shell::{Baseline, Channel, ChannelPool, ChannelView, Launch, Range, SpillStore};
 use serde_json::{Value, json};
 use std::{
     io,
@@ -12,6 +12,7 @@ pub struct Driver {
     range: Range,
     command: Channel,
     startup: Channel,
+    pools: [ChannelPool; 3],
     baseline: Option<Baseline>,
     diagnostics: [u64; 2],
     startup_bytes: u64,
@@ -66,7 +67,13 @@ impl Driver {
         let range = Range::new()?;
         let command = range.framed_channel(1024, b"COMMAND_READY\n", true)?;
         let startup = range.framed_channel(1024, b"SHELL_READY:", false)?;
+        let pools = [
+            range.channel_pool()?,
+            range.channel_pool()?,
+            range.channel_pool()?,
+        ];
         Ok(Self {
+            pools,
             range,
             command,
             startup,
@@ -129,8 +136,7 @@ impl Driver {
         let channels = [
             self.output_channel(stdout, format!("OUT:{id}\n").as_bytes(), "stdout")?,
             self.output_channel(stderr, format!("ERR:{id}\n").as_bytes(), "stderr")?,
-            self.range
-                .framed_channel(4096, format!("BEGIN:{id}\n").as_bytes(), false)?,
+            self.pools[2].framed(4096, format!("BEGIN:{id}\n").as_bytes())?,
         ];
         Ok(Call {
             id: id.into(),
@@ -143,11 +149,10 @@ impl Driver {
         prefix: &[u8],
         stream: &'static str,
     ) -> io::Result<Channel> {
+        let pool = &self.pools[usize::from(stream == "stderr")];
         match &self.spill {
-            Some(store) => self
-                .range
-                .spilling_channel(cap, prefix, store.clone(), stream),
-            None => self.range.framed_channel(cap, prefix, false),
+            Some(store) => pool.spilling(cap, prefix, store.clone(), stream),
+            None => pool.framed(cap, prefix),
         }
     }
     /// On failure the caller MUST stop this range, then drain Call, before settling.

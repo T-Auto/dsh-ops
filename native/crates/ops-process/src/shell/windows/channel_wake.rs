@@ -4,7 +4,6 @@ use std::{
     io,
     os::windows::io::{AsRawHandle, OwnedHandle},
     sync::atomic::{AtomicBool, Ordering},
-    thread::JoinHandle,
     time::Instant,
 };
 use windows_sys::Win32::{
@@ -12,9 +11,10 @@ use windows_sys::Win32::{
     System::Threading::{CreateEventW, SetEvent, WaitForMultipleObjects},
 };
 
-/// Wait for physical reader termination, including thread-local destructors.
-/// Borrowed handles remain owned by their JoinHandles until the wait returns.
-pub(super) fn wait_readers(readers: &[JoinHandle<()>], deadline: Instant) -> io::Result<bool> {
+/// Wait for physical operation retirement. Dedicated thread handles include
+/// thread-local destructors; pooled events follow complete task/capture teardown.
+/// The reader owners keep every borrowed wait handle alive until this returns.
+pub(super) fn wait_readers<R: AsRawHandle>(readers: &[R], deadline: Instant) -> io::Result<bool> {
     if readers.is_empty() {
         return Ok(true);
     }
@@ -24,8 +24,8 @@ pub(super) fn wait_readers(readers: &[JoinHandle<()>], deadline: Instant) -> io:
         .as_nanos()
         .div_ceil(1_000_000)
         .min(u32::MAX as u128 - 1) as u32;
-    // Channel creation bounds this set to four readers. Wait-all observes actual
-    // exit without racing an application notification sent just before exit.
+    // Channel creation bounds this set to four readers. Each pooled event belongs
+    // to one generation and is signalled only after its operations have retired.
     match unsafe { WaitForMultipleObjects(handles.len() as u32, handles.as_ptr(), 1, millis) } {
         WAIT_OBJECT_0 => Ok(true),
         WAIT_TIMEOUT => Ok(false),
@@ -101,6 +101,6 @@ mod tests {
         for reader in readers {
             reader.join().unwrap();
         }
-        assert!(wait_readers(&[], Instant::now()).unwrap());
+        assert!(wait_readers::<std::thread::JoinHandle<()>>(&[], Instant::now()).unwrap());
     }
 }
