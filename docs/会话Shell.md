@@ -54,9 +54,11 @@ shell。释放 Agent 会关闭所属 shell 和排队请求；释放共同 provid
 会话调用不会自动转为后台 job。
 
 DSH 公开工具 pipeline 会等待调用方取消的工具 body 收敛，再用标准 `ABORTED` envelope 替代
-类型化工具值；该 envelope 不含 `shellState`。下一次获准的会话调用报告
-`stateLost: "shell-reset"`，调用方不能假设取消前状态仍保留。若仅工具自身期限到达、调用方未
-取消，仍返回类型化 reset 结果。
+类型化工具值。确认 shell 重置且清理已收敛后，OPS 在该结果的 `additionalContexts` 中附加一条
+`dsh-ops:shell-reset` 通知，携带确切调用 ID、重置、清理与副作用事实。Native 和公开 `run_code`
+均保留此通知；取消工具卡片仍显示 `ABORTED`。宿主将通知加入现有的持久化下一步收件箱。
+派发前取消、状态未变或清理未确认时，不会生成确认重置通知。下一次获准的会话调用仍报告
+`stateLost: "shell-reset"`。若仅工具自身期限到达、调用方未取消，仍返回类型化 reset 结果。
 
 当前会话模式仅接受 `command`。`script_path`、自定义 `graceMs` 和开启 `includeDiagnostics`
 会在执行前明确拒绝，并提示使用 fresh。`run_in_background: true` 同样拒绝；独立宿主 job 应使用
