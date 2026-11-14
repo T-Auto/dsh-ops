@@ -6,6 +6,7 @@
  * the fragment must yield the full host preset, disposal must release it, one
  * root must never register twice, and a broken fragment must only warn.
  */
+import { AsyncLocalStorage } from 'node:async_hooks'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -422,6 +423,112 @@ await test('a live Loader remount keeps the forced default and a disable restore
     await host.refresh()
     await waitFor(() => registry.state.selected === 'standard', { what: 'the default restored when the row is disabled' })
   } finally { await shutdown(host.ctx) }
+})
+
+await test('live HMR transactions and profile file locks do not block or reject default restoration (#881)', async () => {
+  await withTempDir('preset-registration-hmr', async profileDir => {
+    const lockFile = path.join(profileDir, 'package.json.lock')
+    const hmr = {
+      operations: Promise.resolve(),
+      executing: new AsyncLocalStorage(),
+      runExclusive(operation) {
+        if (this.executing.getStore() === true) {
+          return Promise.reject(new Error('HMR transactions cannot be nested'))
+        }
+        const run = () => this.executing.run(true, operation)
+        const task = this.operations.then(run, run)
+        this.operations = task.then(() => undefined, () => undefined)
+        return task
+      },
+    }
+    const events = []
+    const makeSettings = registry => ({
+      async update(namespace, patch) {
+        return hmr.runExclusive(async () => {
+          if (fs.existsSync(lockFile)) {
+            throw new Error(`Timed out waiting for lock: ${lockFile}`)
+          }
+          events.push(`settings:${patch.selectedDefault}`)
+          registry.state.updates.push({ namespace, patch: { ...patch } })
+          registry.state.selected = patch.selectedDefault
+        })
+      },
+    })
+
+    // 1. First boot inside hmr.runExclusive: forceDefault exits the HMR store and persists ops-ptc.
+    const firstRegistry = stubRegistry()
+    const firstWarnings = []
+    const firstCtx = new Context()
+    firstCtx.logger.level = 0
+    firstCtx.provide('profile', { dir: profileDir })
+    firstCtx.provide('hmr', hmr)
+    firstCtx.provide('agentPresets', firstRegistry)
+    firstCtx.provide('settings', makeSettings(firstRegistry))
+    await hmr.runExclusive(async () => {
+      registerOpsPtcPreset(firstCtx, { warn: message => firstWarnings.push(message) })
+    })
+    await waitFor(() => firstRegistry.state.selected === 'ops-ptc', { what: 'the forced default after an HMR boot transaction' })
+    assert.deepEqual(firstWarnings, [])
+    await shutdown(firstCtx)
+
+    // 2. Second boot where selectedDefault is already ops-ptc on disk, followed by a
+    // PluginManager.removeBundle-style two-phase HMR transaction under package.json.lock.
+    const secondRegistry = stubRegistry('ops-ptc')
+    const secondWarnings = []
+    const secondCtx = new Context()
+    secondCtx.logger.level = 0
+    secondCtx.provide('profile', { dir: profileDir })
+    secondCtx.provide('hmr', hmr)
+    secondCtx.provide('agentPresets', secondRegistry)
+    secondCtx.provide('settings', makeSettings(secondRegistry))
+    registerOpsPtcPreset(secondCtx, { warn: message => secondWarnings.push(message) })
+    await settle(secondRegistry)
+    assert.deepEqual(secondRegistry.state.updates, [], 'second boot with ops-ptc already selected does not rewrite on startup')
+
+    events.length = 0
+    fs.writeFileSync(lockFile, `${process.pid}\n`)
+    try {
+      await hmr.runExclusive(async () => {
+        events.push('phase1:unload')
+        await secondCtx.fiber.dispose()
+      })
+      // Simulate `pnpm remove dsh-ops` between the two HMR phases while `package.json.lock` stays held.
+      await new Promise(resolve => setTimeout(resolve, 25))
+      events.push('between-phases')
+      await hmr.runExclusive(async () => {
+        events.push('phase2:reload')
+      })
+    } finally {
+      fs.rmSync(lockFile, { force: true })
+    }
+
+    await waitFor(() => secondRegistry.state.selected === 'standard', { what: 'the restored official default after removeBundle' })
+    assert.deepEqual(secondWarnings, [])
+    assert.deepEqual(events, ['phase1:unload', 'between-phases', 'phase2:reload', 'settings:standard'])
+    await shutdown(secondCtx)
+
+    // 3. When package.json.lock never clears before the deadline, restoreDefault warns and skips the write.
+    const thirdRegistry = stubRegistry('ops-ptc')
+    const thirdWarnings = []
+    const thirdCtx = new Context()
+    thirdCtx.logger.level = 0
+    thirdCtx.provide('profile', { dir: profileDir })
+    thirdCtx.provide('hmr', hmr)
+    thirdCtx.provide('agentPresets', thirdRegistry)
+    thirdCtx.provide('settings', makeSettings(thirdRegistry))
+    registerOpsPtcPreset(thirdCtx, { idleTimeoutMs: 20, warn: message => thirdWarnings.push(message) })
+    await settle(thirdRegistry)
+    fs.writeFileSync(lockFile, `${process.pid}\n`)
+    try {
+      await thirdCtx.fiber.dispose()
+      await waitFor(() => thirdWarnings.length === 1, { what: 'the lock timeout warning' })
+      assert.match(thirdWarnings[0], /timed out waiting for the profile lock to clear/)
+      assert.equal(thirdRegistry.state.updates.length, 0, 'the write is skipped when the profile lock never clears')
+    } finally {
+      fs.rmSync(lockFile, { force: true })
+      await shutdown(thirdCtx)
+    }
+  })
 })
 
 await test('the host entry anchor resolves app-boot when the install does not hoist it', async () => {
