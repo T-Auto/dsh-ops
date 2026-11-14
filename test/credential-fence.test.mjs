@@ -37,6 +37,7 @@ import { callWorker, envelopeOf, request, requireWorker } from './lib/boundary.m
 import { credentialPath, credentialRoots, credentialRefusal, DENY_ENV } from '../lib/credential-policy.js'
 import { invoke } from '../lib/file/worker.js'
 import { sessionTempDir, SESSION_TEMP_PREFIX } from '../lib/session-temp.js'
+import { CallBudget } from '../lib/kernel/call-budget.js'
 
 requireWorker('credential-fence')
 
@@ -144,12 +145,15 @@ await test('the file bridge refuses a credential path before the worker is spawn
     const key = path.join(home, '.ssh', 'id_ed25519')
     fs.writeFileSync(key, 'PRIVATE')
     let spawned = false
+    const calls = new CallBudget()
+    const kernel = { file: path.join(workspace, 'worker'), available: true,
+      admitFileCall: (sessionId, signal, run) => calls.run(sessionId, signal, run),
+      invoke() { spawned = true; throw new Error('the fence must refuse before kernel admission') } }
     const ctx = { get: name => ({
       workingDirectory: { ensure: async agent => agent.session.header.cwd },
       sandboxPolicy: { resolve: () => ({ mode: 'read-only', workspaceRoot: workspace }) },
       subprocess: { spawn: () => { spawned = true; throw new Error('the fence must refuse before spawning') } },
-      opsKernel: { file: path.join(workspace, 'worker'), available: true,
-        invoke() { spawned = true; throw new Error('the fence must refuse before kernel admission') } },
+      opsKernel: kernel,
     })[name] }
     const exec = { agent: { session: { id: 's-fence', header: { cwd: workspace } } } }
     await withFakeHome(home, async () => {
@@ -241,10 +245,15 @@ await test('the fence refuses writes and copy destinations, and the wording name
     fs.writeFileSync(key, 'PRIVATE\n')
     fs.writeFileSync(path.join(workspace, 'plain.txt'), 'PLAIN\n')
     let spawned = false
+    const calls = new CallBudget()
+    const kernel = { file: path.join(workspace, 'worker'), available: true,
+      admitFileCall: (sessionId, signal, run) => calls.run(sessionId, signal, run),
+      invoke() { spawned = true; throw new Error('the fence must refuse before kernel dispatch') } }
     const ctx = { get: name => ({
       workingDirectory: { ensure: async agent => agent.session.header.cwd },
       sandboxPolicy: { resolve: () => ({ mode: 'workspace-write', workspaceRoot: workspace }) },
       subprocess: { spawn: () => { spawned = true; throw new Error('the fence must refuse before spawning') } },
+      opsKernel: kernel,
     })[name] }
     const exec = { agent: { session: { id: 's-directions', header: { cwd: workspace } } } }
     const worker = path.join(workspace, 'worker')
@@ -285,12 +294,17 @@ await test('the fence refuses every direction on a credential path, including wr
     fs.writeFileSync(source, 'payload')
 
     let spawned = 0
+    const calls = new CallBudget()
+    const kernel = { file: path.join(workspace, 'worker'), available: true,
+      admitFileCall: (sessionId, signal, run) => calls.run(sessionId, signal, run),
+      invoke() { spawned += 1; throw new Error('the fence must refuse before kernel dispatch') } }
     // danger-full-access is the decisive case: the DSH permission mode allows the write, so a
     // refusal here can only come from this fence.
     const ctx = { get: name => ({
       workingDirectory: { ensure: async agent => agent.session.header.cwd },
       sandboxPolicy: { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: workspace }) },
       subprocess: { spawn: () => { spawned += 1; throw new Error('the fence must refuse before spawning') } },
+      opsKernel: kernel,
     })[name] }
     const exec = { agent: { session: { id: 's-directions', header: { cwd: workspace } } } }
     const worker = path.join(workspace, 'worker')

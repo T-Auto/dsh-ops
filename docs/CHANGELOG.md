@@ -7,6 +7,12 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Report a Windows update sidecar pending deletion as `REVISION_CONFLICT`, preserving genuine access denial and leaving the target unchanged. The relative no-follow opener retains the exact native deletion status without retries or additional privileges (#872).
+- Windows 更新锁旁文件处于待删除状态时返回 `REVISION_CONFLICT`，保留真实访问拒绝且不修改目标。相对目录句柄的禁止跟随打开操作保留准确的原生待删除状态，不重试、不增加权限（#872）。
+
+- Keep the shared Native/PTC file admission budget inside its resident client, preserving two active/eight waiting calls per session and current-policy resolution after waiting. Stop/failure refuses pending callbacks while existing active-work and cleanup joins remain unchanged (#872).
+- 将 Native/PTC 共用的文件准入额度归所属常驻客户端持有，保留每会话两个活动/八个等待调用及等待后的当前策略解析。停止或失败拒绝尚未进入的回调，既有活动工作与清理等待保持不变（#872）。
+
 - Route result put/page/release and batch plan/run/resume through the resident kernel on Windows, preserving the exact public confinement command and scrubbed runner environment. Full-access calls reuse the existing fixed worker on every platform; restricted POSIX calls retain their explicit platform runner until native range ownership is available. Admission failure never falls back or replays (#872).
 - Windows 的 result put/page/release 与 batch plan/run/resume 改由常驻内核执行，保留公开 confinement 的原始命令及清理后的 runner 环境。所有平台的完全访问调用复用既有固定 worker；受限 POSIX 调用在原生进程范围所有权可用前保留明确的平台 runner。准入失败不回退、不重放（#872）。
 

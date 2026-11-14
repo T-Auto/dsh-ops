@@ -19,7 +19,7 @@ import { resolveWorker } from './runtime.js'
 import { FILE_MUTATIONS } from '../policy.js'
 import { normalizeArguments } from '../capabilities/arguments.js'
 import { resolveReadFiles } from './read-files.js'
-import { withCallBudget, CallBudgetError } from '../kernel/call-budget.js'
+import { CallBudgetError } from '../kernel/call-budget.js'
 import { InvocationDeadlineError } from '../lifecycle/invocations.js'
 import { withResultSession } from '../kernel/result-lifecycle.js'
 import { resultStorage } from '../kernel/result-storage.js'
@@ -84,7 +84,7 @@ export async function invoke(ctx: Context, file: string, tool: string, args: unk
     const session = exec?.agent?.session
     if (!session?.id) return failure('EXECUTOR_UNAVAILABLE', 'An authoritative session identity is required.')
     return await withResultSession(ctx, session, signal, currentSignal =>
-      withCallBudget(ctx.root ?? ctx, String(session.id), currentSignal,
+      requireResident(ctx, { binaryPath: file }).admitFileCall(String(session.id), currentSignal,
         async () => {
           const basis = await resolveSessionDirectory(ctx, exec.agent, currentSignal)
           const value = await invokeTrusted(ctx, file, tool, args, exec, currentSignal, basis.cwd, config)

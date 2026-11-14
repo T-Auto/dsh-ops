@@ -35,16 +35,12 @@ pub(super) fn open_update_lock(parent: &Dir, name: &str, conflict: &str) -> Resu
         File::from_std(std::fs::File::from(fd))
     };
     #[cfg(windows)]
-    let file = parent
-        .open_with(
-            name,
-            OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .follow(FollowSymlinks::No),
-        )
-        .map_err(|error| lock_failure(error, conflict))?;
+    let file = {
+        let parent = parent.try_clone()?.into_std_file();
+        dsh_ops_windows_metadata::open_update_lock(&parent, name)
+            .map(File::from_std)
+            .map_err(|error| lock_failure(error, conflict))?
+    };
     crate::file_path::regular(&file.metadata()?, false)?;
     Ok(file.into_std())
 }
@@ -78,10 +74,10 @@ fn lock_unsupported(error: &std::io::Error) -> bool {
     matches!(error.raw_os_error(), Some(1 | 50 | 87 | 120))
 }
 
-/// Another handle already holds the sidecar, or its byte-range lock.
+/// Another handle holds the sidecar, its byte-range lock, or its pending deletion.
 #[cfg(windows)]
 fn lock_failure(error: std::io::Error, conflict: &str) -> Failure {
-    if matches!(error.raw_os_error(), Some(32 | 33)) {
+    if matches!(error.raw_os_error(), Some(32 | 33 | 303)) {
         return Failure::new("REVISION_CONFLICT", conflict);
     }
     Failure::from(error)
@@ -356,6 +352,16 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn unsupported_lock_errors_are_classified_apart_from_contention() {
+        for code in [32, 33, 303] {
+            assert_eq!(
+                lock_failure(std::io::Error::from_raw_os_error(code), "held").code,
+                "REVISION_CONFLICT"
+            );
+        }
+        assert_eq!(
+            lock_failure(std::io::Error::from_raw_os_error(5), "held").code,
+            "ACCESS_DENIED"
+        );
         for code in [1, 50, 87, 120] {
             assert!(
                 lock_unsupported(&std::io::Error::from_raw_os_error(code)),

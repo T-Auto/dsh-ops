@@ -3,6 +3,7 @@ import path from 'node:path'
 import { startResident, ResidentNotStarted } from '../../lib/execution/resident/client.js'
 import { WORKER } from './boundary.mjs'
 import { exchange } from '../../lib/execution/transport.js'
+import { CallBudget } from '../../lib/kernel/call-budget.js'
 
 const starting = new WeakMap()
 const identity = file => {
@@ -41,9 +42,17 @@ export function mountResident(ctx, options = {}) {
 /** Publication-only fixtures reject execution unless a test supplies its exact exchange. */
 export function mountFakeResident(ctx, options = {}) {
   return mount(ctx, options, async (inner, file) => {
+    const calls = new CallBudget()
     const client = {
       file, pid: options.pid ?? 1, available: options.available ?? true,
       task: { capabilities: [], available: false },
+      async admitFileCall(sessionId, signal, run) {
+        if (!client.available) throw new ResidentNotStarted('Resident fixture is unavailable')
+        return calls.run(sessionId, signal, () => {
+          if (!client.available) throw new ResidentNotStarted('Resident fixture is unavailable')
+          return run()
+        })
+      },
       async invoke(envelope, signal, onStarted) {
         if (!client.available) throw new ResidentNotStarted('Resident fixture is unavailable')
         if (!options.invoke) throw new Error('Publication-only resident fixture must not execute')
@@ -54,7 +63,10 @@ export function mountFakeResident(ctx, options = {}) {
         if (!options.invoke) throw new Error('Publication-only resident fixture must not execute')
         return options.invoke(envelope, signal, onStarted, launch)
       },
-      async stop() { client.available = false },
+      async stop() {
+        client.available = false
+        calls.close(new ResidentNotStarted('Resident fixture is unavailable'))
+      },
     }
     inner.effect(() => () => client.stop(), 'fixture: resident kernel')
     return client

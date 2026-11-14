@@ -9,7 +9,7 @@ import type { WorkerInvokeConfig } from './boundary.js'
 import { record, errorText } from './boundary.js'
 import { exchange } from './transport.js'
 import { indexCacheRequest, workerEnvelope } from './protocol.js'
-import { withCallBudget, CallBudgetError } from '../kernel/call-budget.js'
+import { CallBudgetError } from '../kernel/call-budget.js'
 import { InvocationDeadlineError } from '../lifecycle/invocations.js'
 import { withResultSession } from '../kernel/result-lifecycle.js'
 import { exposePosixCache, resultStorage } from '../kernel/result-storage.js'
@@ -46,7 +46,7 @@ export async function invoke(ctx: Context, file: string, tool: string, args: unk
     const session = exec?.agent?.session
     if (!session?.id) return failure('EXECUTOR_UNAVAILABLE', 'An authoritative session identity is required.')
     return await withResultSession(ctx, session, signal, currentSignal =>
-      withCallBudget(ctx.root ?? ctx, String(session.id), currentSignal,
+      requireResident(ctx, { binaryPath: file }).admitFileCall(String(session.id), currentSignal,
         () => invokeTrusted(ctx, file, tool, args, exec, currentSignal, config, admission)))
   }
   catch (error) {

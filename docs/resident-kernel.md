@@ -37,6 +37,14 @@ observes process exit before settling interrupted requests; inability to confirm
 reported as unknown. The main row starts the provider before publishing Native/PTC file tools;
 local file requests reuse it. Conflicting enabled binary selections fail before startup.
 
+The existing host file admission limit remains **two active and eight waiting calls per session**,
+shared by Native and PTC. Its FIFO state belongs to that resident client, not a module-level host
+map. Waiting calls have no native request or authority snapshot: their callback resolves current
+policy only after a permit is available. This is host tool admission; accepted execution queues,
+output and completion remain kernel-owned. Client stop/failure rejects waiting callbacks before
+they run, while the existing lifecycle still joins active work and cache cleanup. A new client has
+independent permits; unloading one provider cannot release another provider's waiting work.
+
 File operations can block in operating-system I/O. Each admitted request therefore runs the
 existing one-shot dispatch in a trusted child of the kernel, with its own termination handle.
 Windows leaves have nested Jobs; POSIX leaves retain the host-owned process group and target

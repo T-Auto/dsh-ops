@@ -77,6 +77,7 @@ await test('missing sessions and credentials are not selector authorization fail
     try {
       await ctx.plugin(Subprocess)
       await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: root }) }))
+      await mountFakeResident(ctx, { file: 'unused' })
       const value = await fileCall(ctx, 'unused', 'stat', { path: '.env' }, execution(root), signal())
       assert.equal(value.error.code, 'CREDENTIAL_DENIED')
       assert.equal(value.error.permission, undefined)
@@ -92,6 +93,7 @@ await test('file snapshot changes distinguish actual insufficiency from still-al
     try {
       await ctx.plugin(inner => inner.provide('subprocess', { spawn() { spawned++; throw new Error('must not spawn') } }))
       await ctx.plugin(inner => inner.provide('sandboxPolicy', { resolve: () => ({ mode: ++resolves === 1 ? mode : next, workspaceRoot: root }) }))
+      await mountFakeResident(ctx, { file: 'unused' })
       const outside = path.join(path.dirname(root), 'external.txt')
       for (const [initial, current, tool, args, code, required] of [
         ['danger-full-access', 'workspace-write', 'write_file', writeArgs(outside), 'POLICY_DENIED', 'danger-full-access'],

@@ -1,5 +1,5 @@
 import { setImmediate } from 'node:timers/promises'
-import { withCallBudget, MAX_ACTIVE_CALLS, MAX_WAITING_CALLS } from '../lib/kernel/call-budget.js'
+import { CallBudget, MAX_ACTIVE_CALLS, MAX_WAITING_CALLS } from '../lib/kernel/call-budget.js'
 import { WORKER_TIMEOUT_MS } from '../lib/worker-protocol.js'
 import { invoke as fileCall } from '../lib/file/worker.js'
 import { invoke as ptcCall } from '../lib/ptc/worker.js'
@@ -9,32 +9,33 @@ import { assert, test, report, withTempDir } from './lib/harness.mjs'
 
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 
-await test('one host/session has bounded FIFO admission and an explicit overflow result', async () => {
-  const owner = {}, gate = deferred(), entered = []
+await test('one resident/session has bounded FIFO admission and an explicit overflow result', async () => {
+  const owner = new CallBudget(), gate = deferred(), entered = []
+  assert.equal(MAX_ACTIVE_CALLS, 2); assert.equal(MAX_WAITING_CALLS, 8)
   const jobs = Array.from({ length: MAX_ACTIVE_CALLS + MAX_WAITING_CALLS }, (_, index) =>
-    withCallBudget(owner, 'same', undefined, async () => { entered.push(index); await gate.promise; return index }))
+    owner.run('same', undefined, async () => { entered.push(index); await gate.promise; return index }))
   await setImmediate()
   assert.deepEqual(entered, [0, 1])
-  await assert.rejects(withCallBudget(owner, 'same', undefined, async () => assert.fail('overflow must not run')),
+  await assert.rejects(owner.run('same', undefined, async () => assert.fail('overflow must not run')),
     error => error.code === 'CALL_LIMIT' && /no effects/.test(error.message))
   gate.resolve()
   assert.deepEqual(await Promise.all(jobs), Array.from({ length: 10 }, (_, index) => index))
   assert.deepEqual(entered, Array.from({ length: 10 }, (_, index) => index))
-  assert.equal(await withCallBudget(owner, 'same', undefined, async () => 'released'), 'released')
+  assert.equal(await owner.run('same', undefined, async () => 'released'), 'released')
 })
 
-await test('queued cancellation never runs; thrown work releases its permit; sessions and hosts stay independent', async () => {
-  const owner = {}, gate = deferred()
-  const running = Array.from({ length: MAX_ACTIVE_CALLS }, () => withCallBudget(owner, 'one', undefined, () => gate.promise))
+await test('queued cancellation never runs; thrown work releases its permit; sessions and residents stay independent', async () => {
+  const owner = new CallBudget(), gate = deferred()
+  const running = Array.from({ length: MAX_ACTIVE_CALLS }, () => owner.run('one', undefined, () => gate.promise))
   await setImmediate()
   const controller = new AbortController()
-  const waiting = withCallBudget(owner, 'one', controller.signal, async () => assert.fail('cancelled ticket ran'))
+  const waiting = owner.run('one', controller.signal, async () => assert.fail('cancelled ticket ran'))
   controller.abort()
   await assert.rejects(waiting, error => error.code === 'CANCELLED')
-  assert.equal(await withCallBudget(owner, 'two', undefined, async () => 'other session'), 'other session')
-  assert.equal(await withCallBudget({}, 'one', undefined, async () => 'other host'), 'other host')
-  await assert.rejects(withCallBudget(owner, 'two', undefined, async () => { throw new Error('work failed') }), /work failed/)
-  assert.equal(await withCallBudget(owner, 'two', undefined, async () => 'after error'), 'after error')
+  assert.equal(await owner.run('two', undefined, async () => 'other session'), 'other session')
+  assert.equal(await new CallBudget().run('one', undefined, async () => 'other resident'), 'other resident')
+  await assert.rejects(owner.run('two', undefined, async () => { throw new Error('work failed') }), /work failed/)
+  assert.equal(await owner.run('two', undefined, async () => 'after error'), 'after error')
   gate.resolve(); await Promise.all(running)
 })
 
@@ -61,9 +62,11 @@ await test('Native and PTC bridges share admission and recheck authority after w
       const jobs = [fileCall(ctx, 'unused', 'stat', { path: 'a' }, exec), ptcCall(ctx, 'unused', 'batch', { action: 'plan', operations: [] }, exec)]
       await setImmediate()
       assert.equal(active, 2)
+      const policyReads = policies.length
       const queuedWrite = fileCall(ctx, 'unused', 'edit_file', { path: 'a' }, exec)
       const queuedRead = fileCall(ctx, 'unused', 'stat', { path: 'b' }, exec)
       await setImmediate(); assert.equal(active, 2)
+      assert.equal(policies.length, policyReads, 'queued callbacks must not resolve authority before admission')
       mode = 'read-only'; gate.resolve()
       const [write, read] = await Promise.all([queuedWrite, queuedRead])
       await Promise.all(jobs)

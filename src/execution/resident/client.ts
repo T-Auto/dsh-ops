@@ -4,6 +4,7 @@ import { InvocationNotStarted } from '../../lifecycle/invocations.js'
 import { record } from '../boundary.js'
 import { workerEnvelope, type WorkerStorage } from '../protocol.js'
 import { drainResultSessions, mountResidentResultLifecycle } from '../../kernel/result-lifecycle.js'
+import { CallBudget } from '../../kernel/call-budget.js'
 import type { WorkerExchange } from '../transport.js'
 import { ENVELOPE_BYTES, ResidentFrames, encodeFrame } from './frames.js'
 import { ResidentShellChannel } from './shell-channel.js'
@@ -29,6 +30,7 @@ export interface ResidentClient {
   readonly available: boolean
   readonly shell: ShellTransport
   readonly task: TaskTransport
+  admitFileCall<T>(sessionId: string, signal: AbortSignal | undefined, run: () => Promise<T>): Promise<T>
   invoke(envelope: Envelope, signal?: AbortSignal, started?: () => void): Promise<WorkerExchange>
   invokeConfined(envelope: Envelope, launch: ConfinedWorkerLaunch, signal?: AbortSignal, started?: () => void): Promise<WorkerExchange>
   purgeResults(root: string, scope: string, storage: WorkerStorage, signal: AbortSignal): Promise<WorkerExchange>
@@ -53,6 +55,7 @@ class Client implements ResidentClient {
   readonly shell: ResidentShellChannel
   readonly task: ResidentTaskChannel
   private readonly pending = new Map<string, Pending>()
+  private readonly fileAdmission = new CallBudget()
   private readonly frames: ResidentFrames
   private readonly hello: Promise<void>
   private ready!: () => void
@@ -117,6 +120,7 @@ class Client implements ResidentClient {
     if (this.terminal) return
     this.terminal = error
     this.closing = true
+    this.fileAdmission.close(new ResidentNotStarted(error.message))
     clearTimeout(this.timer)
     this.frames.stop()
     this.refused(error)
@@ -142,6 +146,13 @@ class Client implements ResidentClient {
       this.shell.unavailable(error.message.slice(0, 1000), cleanupFailure === '')
       this.task.unavailable(error.message.slice(0, 1000), cleanupFailure === '')
     })()
+  }
+  async admitFileCall<T>(sessionId: string, signal: AbortSignal | undefined, run: () => Promise<T>): Promise<T> {
+    if (!this.available) throw new ResidentNotStarted('Resident kernel is unavailable before file admission')
+    return this.fileAdmission.run(sessionId, signal, () => {
+      if (!this.available) throw new ResidentNotStarted('Resident kernel is unavailable before file admission')
+      return run()
+    })
   }
   invoke(envelope: Envelope, signal?: AbortSignal, started?: () => void): Promise<WorkerExchange> {
     return this.dispatch(envelope, signal, started)
@@ -200,6 +211,7 @@ class Client implements ResidentClient {
   stop(): Promise<void> {
     if (this.stopping) return this.stopping
     this.closing = true
+    this.fileAdmission.close(new ResidentNotStarted('Resident kernel stopped before file admission'))
     clearTimeout(this.timer)
     this.stopping = (async () => {
       if (!this.terminal) {

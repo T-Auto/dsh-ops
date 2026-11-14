@@ -63,6 +63,49 @@ function fixture({ hold = false, ready = true, holdExit = false, capabilities = 
   }
 }
 
+for (const termination of ['stop', 'failure']) await test(`file admission ${termination} rejects waiters before authority or native dispatch and joins accepted calls`, async () => {
+  const host = fixture({ holdExit: true }), client = await host.starting
+  const sibling = fixture(), independent = await sibling.starting
+  let entered = 0, activeSettled = false, stopping
+  try {
+    const active = [0, 1].map(index => client.admitFileCall('same-session', undefined, () => {
+      entered++; return client.invoke(envelope(`admitted-${index}`))
+    }))
+    const joined = Promise.all(active).then(values => { activeSettled = true; return values })
+    await flush(); assert.equal(entered, 2)
+    const queued = client.admitFileCall('same-session', undefined, async () => {
+      entered++; assert.fail('closed file admission entered its authority callback')
+    })
+    const refused = assert.rejects(queued, ResidentNotStarted)
+    await flush()
+    assert.equal(host.frames.filter(frame => frame.type === 'execute').length, 2)
+    if (termination === 'stop') stopping = client.stop()
+    else host.finish()
+    await within(refused)
+    assert.equal(entered, 2)
+    assert.equal(activeSettled, false, 'accepted calls must still join their owned range')
+    await assert.rejects(client.admitFileCall('other-session', undefined, async () => assert.fail('closed client admitted work')), ResidentNotStarted)
+    assert.equal(await independent.admitFileCall('same-session', undefined, async () => 'independent'), 'independent')
+    host.releaseExit()
+    assert.ok((await within(joined)).every(value => value.interrupted))
+    if (stopping) await stopping
+    assert.equal(entered, 2, 'releasing active permits must not revive rejected tickets')
+    assert.equal(host.frames.filter(frame => frame.type === 'execute').length, 2)
+    assert.equal(await independent.admitFileCall('same-session', undefined, async () => 'still independent'), 'still independent')
+  } finally { host.releaseExit(); await Promise.all([host.dispose(), sibling.dispose()]) }
+})
+
+await test('file admission rechecks an immediately acquired permit when its owner stops', async () => {
+  const host = fixture(), client = await host.starting
+  try {
+    const pending = client.admitFileCall('same-session', undefined, async () => assert.fail('disposed owner entered callback'))
+    const refused = assert.rejects(pending, ResidentNotStarted)
+    const stopping = client.stop()
+    await refused; await stopping
+    assert.equal(host.frames.some(frame => frame.type === 'execute'), false)
+  } finally { await host.dispose() }
+})
+
 await test('confined worker capability and launch bounds refuse before admission without fallback', async () => {
   const host = fixture(), client = await host.starting
   const request = { ...envelope('confined-old'), component: 'ptc', request: { tool: 'batch', args: { action: 'plan' } } }

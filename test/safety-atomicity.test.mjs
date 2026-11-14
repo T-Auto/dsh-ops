@@ -8,11 +8,17 @@ import { invoke } from '../lib/file/worker.js'
 import { ensureSessionTemp, sessionTempDir } from '../lib/session-temp.js'
 import { anchoredPath } from '../lib/authority-paths.js'
 import { normalizeNativeDenial } from '../lib/permissions.js'
+import { CallBudget } from '../lib/kernel/call-budget.js'
 
 await test('authority snapshots stop before spawn without inventing selector denials', async () => {
   await withTempDir('safety-authority', async root => {
     let resolves = 0, spawns = 0, current = 'workspace-write'
+    const calls = new CallBudget()
+    const kernel = { file: 'unused', available: true,
+      admitFileCall: (id, signal, run) => calls.run(id, signal, run),
+      invoke() { spawns++; throw new Error('must not dispatch') } }
     const ctx = { get(name) {
+      if (name === 'opsKernel') return kernel
       if (name === 'workingDirectory') return { ensure: async agent => agent.session.header.cwd }
       if (name === 'sandboxPolicy') return { resolve: () => ({ mode: ++resolves === 1 ? 'danger-full-access' : current, workspaceRoot: root }) }
       if (name === 'subprocess') return { spawn() { spawns++; throw new Error('must not spawn') } }
