@@ -275,8 +275,9 @@ reference pages retains the declared main-body scope independently of stored-row
 
 The internal PDF container parser accepts a restricted PDF 1.0-1.7 subset: one classic
 xref table, an exact final startxref/EOF footer, unique dictionary keys and object
-identities, and directly declared stream lengths. Every active xref offset must point
-exactly at its object header. Objects cannot overlap; gaps must contain only whitespace
+identities, and stream lengths that may be direct or indirect. Every active xref offset
+must point exactly at its object header. Objects cannot overlap; every gap between
+constructs, and the gap before the xref table, is lexed so it may contain only whitespace
 or comments. This deliberately rejects incremental updates, encryption, object/xref
 streams, recovery scans and ambiguous duplicate data. `/Encrypt`, `/ObjStm` and `/XRef`
 are refused wherever they appear, decoded escapes included, while `/Prev` and `/XRefStm` are
@@ -284,12 +285,14 @@ refused only as trailer keys — the one place they denote an earlier xref secti
 dictionary that merely names them, such as an outline item's previous sibling, stays readable.
 
 Bounds are checked before indexed allocation: 16 MiB per input, 10,000 xref entries,
-100,000 metadata values, depth 64, 4,096 keys per dictionary, 256 bytes per name/token,
-and 1 MiB per string or encoded/decoded stream. Reference chains have cycle detection
-and a depth bound. Streams support no filter or one FlateDecode only; external streams,
+100,000 metadata values across the xref section and objects, depth 64, 4,096 keys per
+dictionary, 256 bytes per name/token, and 1 MiB per string or encoded/decoded stream.
+Reference chains have cycle detection and a depth bound. Streams support no filter or one
+FlateDecode only; external streams,
 filter chains and DecodeParms are declined. Actual decompression stops at the decoded
 limit plus one byte and requires a valid checksum, zlib terminator and exact consumption
-of the input. No size advertised by a PDF author bypasses these limits.
+of the input. The container scan has its own 20-second sub-deadline inside the 30-second
+read deadline. No size advertised by a PDF author bypasses these limits.
 
 This slice exposes no tool and makes no text-coverage claim. Page-tree interpretation,
 the supported font/encoding subset, partial results and worker authority checks are
