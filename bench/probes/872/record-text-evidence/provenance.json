@@ -1,0 +1,148 @@
+{
+  "base": "755c83cb61bd7eeb27886cfabc5f5ead75182d22",
+  "compiler": "Rust 1.97.1 release; both before and after drivers; isolated Cargo targets",
+  "sourceSha256": {
+    "native/src/shell/driver.rs": "55267ad3bd70451e5b1e6822ec372b829d684cdc07bb751e63e66fe34687b220",
+    "src/execution/resident/shell-bootstrap.ts": "8a7ca363c33ede5603ff8d2c06a7c66970c1ea4cb53ccd5146e881efdac6ad26",
+    "test/resident-shell-integrity.test.mjs": "69ab1c631eb47c6ec2bd9b027d15c0b880a8adaaab069762186be0db6a853368",
+    "bench/probes/872/record-driver.mjs": "0e5edef04dffb58d3cad921c30d0d764abb07d8fc34796d3452c8b5f3bbd79e8",
+    "bench/probes/872/channel-wakeup-evidence/compare.mjs": "8461ebd90707f0171ed95e912cecd3d099f464820d7262f705bc1344a8913c03",
+    "bench/probes/872/scenario-driver.mjs": "9e9a60c842474483cb3871a94ea7458213686f334dea2e2069033fece5a4b2e9"
+  },
+  "binaries": {
+    "before": {
+      "file": "E:\\01-Projects\\deepseek\\dsh-ops-checked-parent-open\\native\\target\\release\\examples\\shell_driver.exe",
+      "sha256": "678a85692e3e731bfbce1465dd809bc5efd08ef779db80fc021f354ca644c3d0"
+    },
+    "after": {
+      "file": "E:\\01-Projects\\deepseek\\dsh-ops-shell-record-text\\native\\target\\release\\examples\\shell_driver.exe",
+      "sha256": "7a39ad8f87106c5f7dc5a90813fd32210a59aec9b714a9baf66d80f451303860"
+    },
+    "niu": {
+      "file": "E:\\01-Projects\\deepseek\\dsh-ops-shell-record-text\\runtime\\win32-x64\\niubash\\niu.exe",
+      "sha256": "7ec3ec04ce91bae64c23d7150e6b16574e9d91df8fcf0df997006e2b37bf2f1e"
+    }
+  },
+  "workerSha256": "6d1ec9507a4121512650a6468b29e0ca91ee2e40f23263a9949b5534d3824587",
+  "environment": {
+    "platform": "win32",
+    "arch": "x64",
+    "release": "10.0.26300",
+    "cpu": "AMD Ryzen 7 6800HS with Radeon Graphics         ",
+    "node": "v26.12.1"
+  },
+  "paired": {
+    "empty": {
+      "before": {
+        "n": 300,
+        "p50Ms": 4.64449999999988,
+        "p95Ms": 5.567500000000109
+      },
+      "after": {
+        "n": 300,
+        "p50Ms": 4.535800000000108,
+        "p95Ms": 5.79970000000003
+      }
+    },
+    "printf": {
+      "before": {
+        "n": 100,
+        "p50Ms": 5.059900000000198,
+        "p95Ms": 6.450399999999718
+      },
+      "after": {
+        "n": 100,
+        "p50Ms": 4.7917999999999665,
+        "p95Ms": 5.9997999999995955
+      }
+    },
+    "ascii4096": {
+      "before": {
+        "n": 30,
+        "p50Ms": 103.04640000000109,
+        "p95Ms": 114.15640000000167
+      },
+      "after": {
+        "n": 30,
+        "p50Ms": 23.73960000000079,
+        "p95Ms": 28.34059999999954
+      }
+    },
+    "ascii16384": {
+      "before": {
+        "n": 20,
+        "p50Ms": 381.34430000000066,
+        "p95Ms": 395.5109999999986
+      },
+      "after": {
+        "n": 20,
+        "p50Ms": 79.2548999999999,
+        "p95Ms": 86.03399999999965
+      }
+    }
+  },
+  "establishedHarness": {
+    "before": {
+      "empty": {
+        "label": "persistent session, empty command",
+        "n": 300,
+        "min": 3.93,
+        "p50": 4.76,
+        "p95": 6.13,
+        "p99": 6.99,
+        "max": 8.03,
+        "mean": 4.87
+      },
+      "printf": {
+        "label": "persistent session, printf x",
+        "n": 100,
+        "min": 4.29,
+        "p50": 5.01,
+        "p95": 6.04,
+        "p99": 6.72,
+        "max": 7.04,
+        "mean": 5.06
+      }
+    },
+    "after": {
+      "empty": {
+        "label": "persistent session, empty command",
+        "n": 300,
+        "min": 3.92,
+        "p50": 4.44,
+        "p95": 5.66,
+        "p99": 6.5,
+        "max": 6.79,
+        "mean": 4.59
+      },
+      "printf": {
+        "label": "persistent session, printf x",
+        "n": 100,
+        "min": 4.07,
+        "p50": 4.84,
+        "p95": 6.17,
+        "p99": 6.4,
+        "max": 6.55,
+        "mean": 4.95
+      }
+    }
+  },
+  "scenario": {
+    "before": {
+      "plainMs": 13712.766699999982,
+      "longMs": 45879.994699999974,
+      "withBuildsMs": 73712.76669999998
+    },
+    "after": {
+      "plainMs": 13365.732500000071,
+      "longMs": 45103.02450000005,
+      "withBuildsMs": 73365.73250000007
+    }
+  },
+  "limits": [
+    "No concurrent builds/tests during benchmarks; every paired and scenario call validated.",
+    "Original compare report retains stale MSYS/receipt-file labels: Niubash is a native Rust runtime, and the driver uses private named pipes.",
+    "The version probe invokes bash --version and does not identify the niu.exe engine.",
+    "Model totals do not establish full host, cold-start or Linux qualification; session and scenario budgets remain unmet."
+  ]
+}

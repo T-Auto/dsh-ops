@@ -303,3 +303,60 @@ runtime closure. Its root Cargo default was 1.99.0, while staging used 1.97.1.
 A separate explicit Rust 1.97.1 workspace run passed the same 753 tests, plus
 formatting and focused clippy. Final benchmarks use 1.97.1 in both arms;
 mixed-compiler trials were excluded. Receipts and hashes accompany the raw data.
+
+## UTF-8 command records — 2026-11-15
+
+The six-line command protocol previously escaped every UTF-8 byte as a five-byte
+octal sequence. This expanded ordinary ASCII payloads fivefold. In the pinned
+Niubash runtime, an explicit working directory containing Chinese text or emoji
+then reached `cd` as raw-byte carrier characters and reset the session.
+
+The record encoder now preserves literal UTF-8, escaping ASCII control characters
+and backslashes. Records still contain no literal line delimiter, and the existing
+quoted `printf '%b'` decoding reconstructs controls and literal escape sequences
+without evaluating them. Command execution remains the separate `eval` step.
+The protocol field count, per-command endpoints, receipt isolation, actual EOF,
+Job checks, caps and spill retirement are unchanged.
+
+The real resident-worker regression fails against #949 for an explicit Unicode
+working directory and passes with this encoder. It also checks directory retention
+on the next command, Unicode command arguments, quoted newlines/tabs/carriage
+returns, literal backslashes, shell metacharacters and NUL output. Existing forged
+receipt, surviving-background-job and unregistered-output checks remain active.
+
+`bench/probes/872/record-driver.mjs` compares both production drivers through the
+same private control transport, alternating arm order. Empty-command and printf
+cases retain the 300/100 sample counts; separate 4 KiB and 16 KiB ASCII arguments
+measure record-processing cost. These supplemental payload cases cannot replace
+the supplied 106-operation scenario or establish full-host performance acceptance.
+
+On the same Windows Ryzen 7 host and Rust 1.97.1 release builds, with no concurrent
+builds or tests, all paired calls validated their exit status, exact output,
+authenticated readiness and EOF. Nearest-rank p50/p95:
+
+| Paired driver case | Before p50 / p95 | After p50 / p95 |
+| --- | --- | --- |
+| Empty, 300 pairs | 4.64 / 5.57 ms | 4.54 / 5.80 ms |
+| Printf, 100 pairs | 5.06 / 6.45 ms | 4.79 / 6.00 ms |
+| 4 KiB ASCII argument, 30 pairs | 103.05 / 114.16 ms | 23.74 / 28.34 ms |
+| 16 KiB ASCII argument, 20 pairs | 381.34 / 395.51 ms | 79.25 / 86.03 ms |
+
+The larger-record improvement does not establish a material empty-command gain;
+the session p50/p95 targets remain unmet. Raw paired samples and exact binary
+identities are in [record-text-evidence](../bench/probes/872/record-text-evidence/).
+
+The unchanged comparison harness separately measured empty p50/p95
+4.76/6.13 → 4.44/5.66 ms and printf 5.01/6.04 → 4.84/6.17 ms, retaining its
+256 MiB bulk arm. The unchanged scenario adaptation measured plain-ls totals
+13.713 → 13.366 s and ls-la totals 45.880 → 45.103 s; plain-ls plus two modeled
+30 s builds is 73.713 → 73.366 s. Candidate file-operation p50/p95 (ms): grep
+833.10/881.72, plain ls 90.99/96.49, copy100 299.97/306.51 and 64 KiB
+read-and-count 43.25/54.71. All remain above their budgets; the three-sample
+scenario is not evidence of a material overall speedup.
+
+The full pinned-toolchain Windows gate passed all 13 steps: 753 Rust tests,
+9 ignored child fixtures, 265 JavaScript suites, 4 permitted skips, 92 manifest
+checks and packed-runtime closure. The final combining/private-use Unicode
+assertions additionally passed in the six-check resident integrity rerun.
+Formatting and worker/example clippy passed. Runtime pins and publication status
+remain unchanged.

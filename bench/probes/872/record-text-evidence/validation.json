@@ -1,0 +1,41 @@
+{
+  "rustToolchain": "1.97.1",
+  "gate": {
+    "command": "node scripts/verify-gate.mjs --skip-install",
+    "stepsPassed": 13,
+    "rustPassed": 753,
+    "rustFailed": 0,
+    "rustIgnored": 9,
+    "suitesPassed": 265,
+    "allowedSkips": [
+      "linux-attributes",
+      "linux-shell",
+      "tui-host",
+      "tui-native"
+    ],
+    "manifestChecks": 92,
+    "packedRuntimeClosure": true,
+    "logSha256": "558ef247c0c708abc614454a7acb082d9158a7725e8475fa3df84a9cf108f200"
+  },
+  "focused": {
+    "suite": "resident-shell-integrity",
+    "checksPassed": 6,
+    "failures": 0,
+    "note": "Final combining/private-use Unicode assertions were rerun separately after the full gate.",
+    "logSha256": "8dec58490d27f7701bfd57101ba57912a761bd43037baf80e8d94fc83c8d0bd4"
+  },
+  "behavioralRed": {
+    "baseline": "755c83cb61bd7eeb27886cfabc5f5ead75182d22",
+    "failures": 1,
+    "failingCheck": "an explicit Unicode working directory survives subsequent session commands",
+    "logSha256": "4fac3bba6991f942b4d49cd24fa7b7c8231d90adce4a9ad86826a89b2ddee626",
+    "sourceLogSha256": "23866eae120eb4d27f0996a3e017a6b3b0b60faa0fe08c213b15e14f455500ef",
+    "note": "Stored log removes trailing whitespace from assertion separator lines; original log hash retained."
+  },
+  "lint": {
+    "fmt": true,
+    "clippy": true,
+    "command": "cargo clippy --locked --manifest-path native/Cargo.toml -p dsh-ops-core --all-targets -- -D warnings",
+    "logSha256": "109d191e69ab4bb73c1b24d596bd45f94beb2ba8d2afeda7dbed191d6900e5ce"
+  }
+}

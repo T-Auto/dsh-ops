@@ -342,7 +342,18 @@ impl Call {
     }
 }
 fn encoded(value: &str) -> String {
-    value.bytes().map(|byte| format!("\\0{byte:03o}")).collect()
+    use std::fmt::Write;
+    let mut record = String::with_capacity(value.len());
+    for character in value.chars() {
+        if character.is_ascii_control() || character == '\\' {
+            // Keep record delimiters and printf's escape syntax out of the wire.
+            write!(&mut record, "\\0{:03o}", character as u8).unwrap();
+        } else {
+            // Preserve UTF-8 text: octal bytes become raw-byte carriers in Niubash.
+            record.push(character);
+        }
+    }
+    record
 }
 fn receipt_code(id: &str, bytes: &[u8]) -> io::Result<Option<i32>> {
     let text = std::str::from_utf8(bytes).map_err(failure)?;
@@ -389,6 +400,6 @@ mod tests {
         assert_eq!(receipt_code("id", b"END:id:0\n").unwrap(), None);
         assert!(receipt_code("id", b"END:id:0\n123\nDONE:id\n").is_err());
         assert!(receipt_code("id", b"END:other:0\nDONE:id\n").is_err());
-        assert_eq!(encoded("a\n"), "\\0141\\0012");
+        assert_eq!(encoded("a\n"), "a\\0012");
     }
 }
