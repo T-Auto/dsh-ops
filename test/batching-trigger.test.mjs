@@ -11,6 +11,9 @@
 import { assert, test, report } from './lib/harness.mjs'
 import { analyzeProgram, parsePlan, violationsOf, createProgramLatch, noticeText, CATEGORY_PRIORITY, PLAN_DIRECTIVE, THIN_CODE_CHARS } from '../lib/ptc/batching-guidance.js'
 
+/** A scope that publishes the loader and keeps the pool loadable. */
+const LOADER = { loader: true, resident: [], loadable: ['ops_glob', 'ops_grep', 'ops_read_files', 'ops_inspect_local_file', 'ops_edit_file'] }
+
 await test('the plan comment is read from the first physical line only', () => {
   assert.deepEqual(parsePlan('// plan: read the config; read the test'), ['read the config', 'read the test'])
   // The full-width semicolon separates entries as well; both are typed on a CJK layout.
@@ -89,7 +92,7 @@ await test('stdin filters do not accuse command output of bypassing file APIs', 
   assert.equal(analyzeProgram('await tools.ops_bash({ description: "grep file", command: "git diff" })').bypassesFileTools, false)
   assert.equal(analyzeProgram('const example = "tools.ops_bash({ command: \'cat file\' })"; return example').dispatchSites, 0)
   assert.equal(analyzeProgram('// tools.ops_bash({ command: "cat file" })').bypassesFileTools, false)
-  assert.doesNotMatch(noticeText('bypass', shape('cat file')), /Only .* resident|load the others/)
+  assert.doesNotMatch(noticeText('bypass', shape('cat file'), LOADER), /Only .* resident|load the others/)
 })
 
 await test('a program with no dispatch site earns no category', () => {
@@ -99,7 +102,7 @@ await test('a program with no dispatch site earns no category', () => {
     assert.deepEqual(violationsOf(analyzeProgram(code)), { plan: false, bypass: false, shape: false })
   }
   // The latch stays silent, so the model is never accused of a shape it did not take.
-  const latch = createProgramLatch(), agent = {}
+  const latch = createProgramLatch(() => LOADER), agent = {}
   assert.equal(latch.observe(agent, 'return 1'), undefined)
   assert.equal(latch.observe(agent, '// plan: read nothing\n// a note\nreturn 1'), undefined)
   assert.equal(latch.stats(agent).total, 0, 'no category was spent')
@@ -136,7 +139,7 @@ const THIN = 'const r = await tools.ops_read_files({ files: [{ path: "a" }] })\n
 const GOOD = '// plan: list the sources; read the manifest\nconst [a, b] = await Promise.all([tools.ops_glob({ pattern: ["src/**"] }), tools.ops_read_files({ files: [{ path: "package.json" }] })])\nreturn { a, b }'
 
 await test('one category delivers once per turn and stays silent until it is re-armed', () => {
-  const latch = createProgramLatch(), agent = {}
+  const latch = createProgramLatch(() => LOADER), agent = {}
   assert.equal(latch.observe(agent, THIN).category, 'plan', 'the first program earns the plan notice')
   assert.equal(latch.isArmed(agent, 'plan'), false)
   // THIN breaks two categories, so the second one speaks before the turn falls silent.
@@ -145,7 +148,7 @@ await test('one category delivers once per turn and stays silent until it is re-
 })
 
 await test('a compliant program re-arms its category, so a regression speaks again', () => {
-  const latch = createProgramLatch(), agent = {}
+  const latch = createProgramLatch(() => LOADER), agent = {}
   assert.equal(latch.observe(agent, THIN).category, 'plan')
   assert.equal(latch.observe(agent, THIN).category, 'shape', 'the other broken category still speaks')
   assert.equal(latch.observe(agent, THIN), undefined, 'both categories are spent')
@@ -157,7 +160,7 @@ await test('a compliant program re-arms its category, so a regression speaks aga
 })
 
 await test('priority orders the categories and the others stay armed', () => {
-  const latch = createProgramLatch(), agent = {}
+  const latch = createProgramLatch(() => LOADER), agent = {}
   assert.deepEqual([...CATEGORY_PRIORITY], ['bypass', 'plan', 'shape'])
   assert.equal(latch.observe(agent, BYPASS).category, 'bypass', 'a bypass outranks the other two')
   assert.equal(latch.isArmed(agent, 'plan'), true, 'the plan notice was not spent')
@@ -166,7 +169,7 @@ await test('priority orders the categories and the others stay armed', () => {
 })
 
 await test('a new turn re-arms every category and a repeated turn does not', () => {
-  const latch = createProgramLatch(), agent = {}
+  const latch = createProgramLatch(() => LOADER), agent = {}
   latch.noteTurn(agent, 1)
   assert.equal(latch.observe(agent, THIN).category, 'plan')
   latch.noteTurn(agent, 1)
@@ -176,7 +179,7 @@ await test('a new turn re-arms every category and a repeated turn does not', () 
 })
 
 await test('state never leaks between agents and forget drops it', () => {
-  const latch = createProgramLatch(), first = {}, second = {}
+  const latch = createProgramLatch(() => LOADER), first = {}, second = {}
   assert.equal(latch.observe(first, THIN).category, 'plan')
   assert.equal(latch.observe(second, THIN).category, 'plan', 'the second agent is independent')
   latch.forget(first)
@@ -184,7 +187,7 @@ await test('state never leaks between agents and forget drops it', () => {
 })
 
 await test('the latch counts deliveries per turn for the optional telemetry line', () => {
-  const latch = createProgramLatch(), agent = {}
+  const latch = createProgramLatch(() => LOADER), agent = {}
   latch.noteTurn(agent, 4)
   assert.deepEqual(latch.stats(agent), { turn: 4, plan: 0, bypass: 0, shape: 0, total: 0 })
   latch.observe(agent, THIN)
@@ -197,11 +200,77 @@ await test('the latch counts deliveries per turn for the optional telemetry line
 
 await test('the notices name the fix and never claim a runtime dispatch count', () => {
   const shape = analyzeProgram(BYPASS)
-  assert.match(noticeText('plan', shape), /first line/, 'the plan notice names the first line')
-  assert.doesNotMatch(noticeText('plan', shape), /Promise\.all/, 'the plan notice stays about the comment')
-  assert.match(noticeText('bypass', shape), /ops_glob/)
-  assert.match(noticeText('bypass', shape), /ops_load_sdk/)
-  assert.match(noticeText('shape', shape), /program text alone/, 'the shape notice states its own limit')
+  assert.match(noticeText('plan', shape, LOADER), /first line/, 'the plan notice names the first line')
+  assert.doesNotMatch(noticeText('plan', shape, LOADER), /Promise\.all/, 'the plan notice stays about the comment')
+  assert.match(noticeText('bypass', shape, LOADER), /ops_glob/)
+  assert.match(noticeText('bypass', shape, LOADER), /ops_load_sdk/)
+  assert.match(noticeText('shape', shape, LOADER), /program text alone/, 'the shape notice states its own limit')
+})
+
+await test('the bypass notice names only the APIs its scope publishes', () => {
+  const shape = analyzeProgram(BYPASS)
+  // With a loader the notice keeps teaching the load step.
+  assert.match(noticeText('bypass', shape, LOADER), /ops_load_sdk/)
+  // Without one it must not name a call that cannot succeed, and every other line
+  // must stay inside the published surface too.
+  const direct = noticeText('bypass', shape, { loader: false, resident: ['ops_glob'], loadable: [] })
+  assert.equal(direct.includes('ops_load_sdk'), false, 'the unreachable loader is gone')
+  assert.match(direct, /ops_glob/, 'the published API is named')
+  for (const absent of ['ops_read_files', 'ops_grep', 'ops_edit_file']) {
+    assert.equal(direct.includes(absent), false, 'an unpublished API is not named: ' + absent)
+  }
+  // A scope that publishes nothing points at the official tools only.
+  const none = noticeText('bypass', shape, { loader: false, resident: [], loadable: [] })
+  assert.match(none, /official tools/)
+  assert.equal(/ops_[a-z_]+/.test(none), false, 'no OPS name survives an empty surface')
+})
+
+await test('a narrow pool is not told to load an API it cannot reach', () => {
+  const shape = analyzeProgram(BYPASS)
+  // The pool holds stat only: naming edit_file would cost the same failed round trip.
+  const narrow = noticeText('bypass', shape, { loader: true, resident: [], loadable: ['ops_stat'] })
+  for (const absent of ['ops_edit_file', 'ops_read_files', 'ops_glob']) {
+    assert.equal(narrow.includes(absent), false, 'an unloadable API is not named: ' + absent)
+  }
+  assert.match(narrow, /official tools/, 'an empty file-api intersection points at the official tools')
+  // The shipped wording survives while the whole list is loadable.
+  assert.match(noticeText('bypass', shape, LOADER), /List with `ops_glob`/)
+  // A narrow pool must not invite a load with the old catch-all sentence.
+  assert.doesNotMatch(narrow, /load only missing names/, 'the load sentence follows the pool too')
+})
+
+await test('a resident file API is named even when the pool cannot load it', () => {
+  const shape = analyzeProgram(BYPASS)
+  // read_files is resident and callable without loading; the hint must not claim that
+  // no file API exists just because the pool holds stat alone.
+  const mixed = noticeText('bypass', shape, { loader: true, resident: ['ops_read_files'], loadable: ['ops_stat'] })
+  assert.match(mixed, /ops_read_files/, 'the resident file API is named')
+  assert.doesNotMatch(mixed, /No OPS file API is available/, 'the fallback does not fire while one is reachable')
+})
+
+await test('the file-work line never names the shell it just accused', () => {
+  const shape = analyzeProgram(BYPASS)
+  const mixed = noticeText('bypass', shape, { loader: false, resident: ['ops_bash', 'ops_glob'], loadable: [] })
+  assert.match(mixed, /ops_glob/, 'the file API is named')
+  assert.equal(mixed.includes('ops_bash'), false, 'the bypass vector is never offered as the fix')
+})
+
+await test('the latch resolves the surface per agent', () => {
+  const first = {}, second = {}
+  const latch = createProgramLatch(agent => agent === first
+    ? LOADER
+    : { loader: false, resident: ['ops_glob'], loadable: [] })
+  assert.match(latch.observe(first, BYPASS).text, /ops_load_sdk/, 'the loader scope keeps its lesson')
+  assert.equal(latch.observe(second, BYPASS).text.includes('ops_load_sdk'), false, 'the other agent gets its own surface')
+})
+
+await test('a scope with no file API does not refer to them', () => {
+  const shape = analyzeProgram(BYPASS)
+  // A resident non-file API leaves the hint pointing at the official tools; the next
+  // line must not then invite a call to "those APIs".
+  const statOnly = noticeText('bypass', shape, { loader: false, resident: ['ops_stat'], loadable: [] })
+  assert.match(statOnly, /official tools/, 'the official tools are named')
+  assert.doesNotMatch(statOnly, /call those APIs/, 'the pronoun has no referent here')
 })
 
 report('batching-trigger')
