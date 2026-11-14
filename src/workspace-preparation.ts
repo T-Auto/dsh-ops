@@ -13,7 +13,9 @@ import { spawn } from 'node:child_process'
 const script = fileURLToPath(new URL('../bin/prepare-workspace.ps1', import.meta.url))
 const pending = new Map<string, Promise<void>>()
 const prepared = new Set<string>()
-/** Whether the given path, or any ancestor of it, is a reparse point (junction or symlink).
+/** Whether the given path, or any ancestor of it, resolves through a junction or symlink.
+ * A cloud storage placeholder such as OneDrive is also a reparse point, but it tags the directory
+ * in place and keeps its path, so it is not refused here (#937).
  * Judged on the path as given, never on its resolved form: resolving first hides a link above the
  * root, and an 8.3 short name resolves to its long form without any link being involved.
  */

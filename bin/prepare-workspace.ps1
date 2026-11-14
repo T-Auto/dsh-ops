@@ -8,10 +8,56 @@ $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 $item = Get-Item -LiteralPath $Workspace -Force
 if (!$item.PSIsContainer) { throw 'Workspace is not a directory' }
+. (Join-Path $PSScriptRoot 'workspace-reparse.ps1')
+# Cloud storage placeholders (OneDrive) tag an in-place directory with a cloud
+# reparse point; those stay usable. Every other reparse point could redirect the
+# ACL write away from the directory the caller named, so it still refuses.
+$ancestry = @()
 $cursor = $item
 while ($null -ne $cursor) {
-    if ($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Workspace ancestry contains a reparse point; refusing ACL preparation' }
+    $tag = $null
+    if ($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint) { $tag = [uint32]0 }
+    $ancestry += [pscustomobject]@{ Path = $cursor.FullName; Tag = $tag }
     $cursor = $cursor.Parent
+}
+$reparse = @($ancestry | Where-Object { $null -ne $_.Tag })
+if ($reparse.Count -gt 0) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+public static class DshOpsReparseTag {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool DeviceIoControl(SafeFileHandle device, uint code, IntPtr input, uint inputSize, IntPtr output, uint outputSize, out uint returned, IntPtr overlapped);
+    public static uint Read(string path) {
+        // FILE_READ_EA; share read/write/delete; OPEN_EXISTING; FILE_FLAG_OPEN_REPARSE_POINT
+        // queries the reparse point on this directory instead of following it.
+        using (SafeFileHandle handle = CreateFileW(path, 0x00000008u, 7u, IntPtr.Zero, 3u, 0x02000000u | 0x00200000u, IntPtr.Zero)) {
+            if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+            IntPtr buffer = Marshal.AllocHGlobal(16384);
+            try {
+                uint returned;
+                if (!DeviceIoControl(handle, 0x000900A8u, IntPtr.Zero, 0u, buffer, 16384u, out returned, IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error());
+                // The REPARSE_DATA_BUFFER begins with the 32-bit tag.
+                return unchecked((uint)Marshal.ReadInt32(buffer));
+            } finally {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+    }
+}
+'@
+    foreach ($entry in $reparse) {
+        try { $entry.Tag = [DshOpsReparseTag]::Read($entry.Path) }
+        catch { throw "Cannot read the reparse point tag of $($entry.Path): $($_.Exception.Message)" }
+    }
+}
+$unaccounted = Find-DshOpsUnaccountedReparsePoint -Entries $ancestry
+if ($null -ne $unaccounted) {
+    throw ('Workspace ancestry contains a reparse point that is not a cloud storage placeholder: {0} (tag 0x{1:X8}). Junctions, symlinks and other reparse points could redirect the ACL write outside the workspace; open a workspace reached through a real directory, or use danger-full-access.' -f $unaccounted.Path, $unaccounted.Tag)
 }
 $acl = Get-Acl -LiteralPath $item.FullName
 . (Join-Path $PSScriptRoot 'workspace-acl.ps1')
