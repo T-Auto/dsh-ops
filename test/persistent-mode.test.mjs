@@ -1,4 +1,8 @@
 /** Public execution selector over the existing Bash definition; no native queue is simulated here. */
+import fs from 'node:fs'
+import { createHash } from 'node:crypto'
+import { isQualifiedSessionRuntime } from '../lib/niubash/session-runtime.js'
+import { NIUBASH_MANIFEST_SHA256, NIUBASH_PIN } from '../lib/cli/niubash-payload.js'
 import { assertSupportedJsonSchema, validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
 import { bashToolDefinition } from '../lib/shells/tool.js'
 import { hostBashDefinition } from '../lib/shells/host-tool.js'
@@ -384,6 +388,20 @@ await test('actual Agent publication shares the admission owner and awaits targe
     assert.equal(f.frames.length, beforeStale)
     assert.equal(publication.calls.length, 0)
   }, { providerOwned: true })
+})
+
+await test('the qualified candidate inventory does not activate or replace the published stock runtime', () => {
+  const candidate = JSON.parse(fs.readFileSync(new URL('./fixtures/niubash-session-candidate-manifest.json', import.meta.url), 'utf8'))
+  const inventoryDigest = manifest => createHash('sha256').update(JSON.stringify({
+    directories: manifest.directories, files: manifest.files, sizes: manifest.sizes,
+  })).digest('hex')
+  assert.equal(isQualifiedSessionRuntime(inventoryDigest(candidate)), true)
+  assert.equal(isQualifiedSessionRuntime(NIUBASH_MANIFEST_SHA256), false)
+  assert.equal(NIUBASH_PIN.archiveSha256, 'da28cdc4e2e87f777ee0eae71386276f9c6a0ed135c1e2baad943acd8d349b87')
+  assert.equal(NIUBASH_PIN.url, 'https://github.com/unixwin/niubash/releases/download/v1.5.0/niubash-v1.5.0-win-x64.tar.gz')
+  assert.equal(Object.hasOwn(candidate, 'url'), false, 'unpublished inventory does not provide an active download URL')
+  candidate.files['niu.exe'] = '0'.repeat(64)
+  assert.equal(isQualifiedSessionRuntime(inventoryDigest(candidate)), false)
 })
 
 await test('the production runtime package gate keeps session publication disabled without a user bypass', async () => {

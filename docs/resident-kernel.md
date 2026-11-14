@@ -9,8 +9,8 @@ feature checklist.
 As of 2026-11-14, Native/PTC local files, Windows [fresh Bash and DSH Jobs](resident-fresh-bridge.md),
 and eligible [result/batch calls](resident-confined-workers.md) share the resident kernel.
 [Explicit session Bash](session-shell.md) and its output/cleanup integration are implemented,
-but this branch's accepted-runtime inventory is empty: the stock pin remains fresh-only until a
-qualified complete runtime is accepted and distributed. Session cancellation preserves `ABORTED`
+with the qualified candidate inventory recorded for review. The stock pin remains fresh-only; a
+qualified complete runtime must be published and adopted separately. Session cancellation preserves `ABORTED`
 and, after confirmed cleanup, carries the reset notice in `additionalContexts`; the tool card
 itself remains cancelled. See the session guide for the exact contract.
 

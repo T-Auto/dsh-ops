@@ -4,7 +4,7 @@
 任务路径。合格运行时分发与最终生命周期、性能验收仍是发布前提。
 
 `ops_bash` 默认仍为 `execution: "fresh"`，保留既有工作目录解析、审批、脚本文件、输出 spill 和
-宿主 Jobs 行为。当前生产运行时 pin 仍仅支持 fresh：尚无完整软件包通过持久协议所有权验收，也没有
+宿主 Jobs 行为。当前生产运行时 pin 仍仅支持 fresh：已记录合格候选清单供审查，但尚未选用或发布，也没有
 配置覆盖开关。完整软件包获准、所属内核同时声明 `shell-v1` 与 `shell-spill-v1` 且权限服务就绪后，同一工具才能接受 `execution: "session"`。
 Native 调用与 PTC 的 `tools.ops_bash()` 共用根激活作用域拥有的准入服务；没有另一套 PTC shell，
 也不会隐式回退到 fresh。
@@ -99,7 +99,7 @@ payload 校验；须明确提供 `--worker`、`--bash`、`--shell-env`、`--cont
 清理已确认且观测内核已退出。本地报告 `c5-qualification-public.json` 的 SHA-256 为
 `4fc90c521b1850aa88c800b5e006ea10cf1bae8b828372f6e8f924a6f245b063`；
 `c5-qualification-receipt.json` 记录精确源码补丁与完整 payload。候选归档仍未发布，已提交的
-运行时 pin 与获准清单集合保持不变。
+运行时 pin 保持不变；合格候选摘要单独记录，不会启用 stock 清单。
 
 随后四个实际 DSH CLI 实例以同一合格构建共享临时 home/workspace，各自保留独立 cwd、环境、
 函数和选项。定向公开取消仅停止对应会话子进程，兄弟命令继续存活，下一次调用报告状态丢失。

@@ -9,12 +9,7 @@ import { residentShellAdmission } from './execution/resident/shell-owner.js'
 import type { ShellLaunchOptions } from './execution/resident/shell-launch.js'
 import { NIUBASH_MANIFEST_SHA256 } from './cli/niubash-payload.js'
 import { isNiubashExecutable } from './niubash/runtime.js'
-
-// The current package can complete before escaped original output is accounted
-// for; diagnostic counters cannot prove live-stream quiescence (see session-shell.md).
-// Only a complete package with accepted async ownership may enable publication;
-// configuration and executable renaming cannot opt an unreviewed runtime in.
-const ACCEPTED_SESSION_RUNTIME_MANIFESTS: ReadonlySet<string> = new Set()
+import { isQualifiedSessionRuntime } from './niubash/session-runtime.js'
 
 /** Mount once beside residentKernel(), before integrations in their common owning scope. */
 export function residentSessionShells() {
@@ -22,7 +17,7 @@ export function residentSessionShells() {
     name: 'dsh-ops-session-shells',
     inject: ['opsKernel'],
     async apply(ctx: Context): Promise<void> {
-      if (!ACCEPTED_SESSION_RUNTIME_MANIFESTS.has(NIUBASH_MANIFEST_SHA256)) return
+      if (!isQualifiedSessionRuntime(NIUBASH_MANIFEST_SHA256)) return
       const transport = ctx.opsKernel.shell
       if (!transport.available || !transport.capabilities.includes('shell-v1')
         || !transport.capabilities.includes('shell-spill-v1')) return

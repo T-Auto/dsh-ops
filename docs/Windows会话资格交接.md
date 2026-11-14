@@ -4,7 +4,7 @@ English: [Windows session qualification handoff](windows-session-qualification.m
 
 本 2026-11-14 交接记录 [#872](https://github.com/T-Auto/dsh-ops/issues/872) 的 Windows 优先审查范围。
 它描述未发布采用提交 `511f9920044c1aa38d7ca8443e1a6e26f7bc61c5` 的本地资格验证，
-不表示运行时已经发布或整个 issue 已验收。公开分支的合格运行时清单仍为空，stock pin 仍仅支持 fresh；
+不表示运行时已经发布或整个 issue 已验收。合格候选清单已记录供审查，stock pin 仍仅支持 fresh；
 [会话契约](会话Shell.md) 仍以合格的完整运行时为前提。
 
 ## 已完成的 Windows 证据

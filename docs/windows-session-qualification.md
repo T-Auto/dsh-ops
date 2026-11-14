@@ -5,7 +5,7 @@
 This 2026-11-14 handoff records the Windows-first review scope of [#872](https://github.com/T-Auto/dsh-ops/issues/872).
 It describes local qualification of unpublished adoption commit
 `511f9920044c1aa38d7ca8443e1a6e26f7bc61c5`, not a published runtime or complete issue acceptance.
-The public branch still has an empty accepted-runtime inventory and a fresh-only stock pin;
+The qualified candidate inventory is recorded for review, while the stock pin remains fresh-only;
 the [session contract](session-shell.md) remains conditional on a qualified complete runtime.
 
 ## Completed Windows evidence
