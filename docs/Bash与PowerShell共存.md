@@ -17,7 +17,7 @@ OPS 在 Bash 槽位顺序注册自己的 `dsh-ops:tool-bash:<consumer>` 段，�
 
 Bash 使用 Bash 引号、`$VAR`、`$(command)`、重定向和管道。默认 fresh，每次启动独立的非 login shell。`command` 与 `script_path` 二选一，后者指向既有 Bash 脚本。Fresh 的相对 `workdir` 以当前 session 工作目录为基准；Windows 可写 `D:/repo` 或 `/d/repo`，无驱动器的 `/tmp`、`/` 不是 Windows `workdir`。命令内部使用所选 Bash 运行时支持的路径并正确引用空格。
 
-[显式 `execution: "session"`](会话Shell.md) 仅在完整运行时合格且所需常驻能力齐备时可用；默认仍为 `execution: "fresh"`。本公开分支的合格运行时清单为空，因此 stock pin 仍仅支持 fresh，配置不能绕过资格审查。会话模式可用时仅接受 `command`，按精确 Agent/Session 串行执行并保留 cwd、导出变量、函数和 shell 选项。初始化后省略或留空 `workdir` 会保留 shell 的 cwd；显式路径遵循文档中的宿主路径规则。会话命令到达硬期限且已启动时会重置其 shell，不会隐式转交 Jobs；排队超时不会停止无关活动命令。显式 fresh job 不继承会话 shell 状态。
+[显式 `execution: "session"`](会话Shell.md) 仅在完整运行时合格且所需常驻能力齐备时可用；默认仍为 `execution: "fresh"`。已记录合格候选清单，仍待发布并采用新 pin；stock pin 仍仅支持 fresh，配置不能绕过资格审查。会话模式可用时仅接受 `command`，按精确 Agent/Session 串行执行并保留 cwd、导出变量、函数和 shell 选项。初始化后省略或留空 `workdir` 会保留 shell 的 cwd；显式路径遵循文档中的宿主路径规则。会话命令到达硬期限且已启动时会重置其 shell，不会隐式转交 Jobs；排队超时不会停止无关活动命令。显式 fresh job 不继承会话 shell 状态。
 
 权限仍由宿主 session sandbox 与审批决定，不能换 shell 绕过拒绝。`description` 必填。先检查 `kind`：`foreground` 有 `status`、可能为空的 `exitCode`、stdout/stderr 与失败时的 `failure.code/effectState/retry`；`background` / `promoted` 有 `jobId`，不是执行完成。Fresh 仅有宿主 jobs 时声明后台参数，使用 `job_output` 收集、`job_kill` 停止；没有 jobs 时 fresh 前台超时会停止命令。输出有界，截断与 spill 路径不表示内容完整。没有退出码不能当成功；effects unknown 先查后置状态，不盲目重复。不伪造 PowerShell 的退出 marker。
 
