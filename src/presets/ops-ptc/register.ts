@@ -82,6 +82,20 @@ export interface SettingsService {
   update(namespace: string, patch: Record<string, unknown>): Promise<unknown>
 }
 
+/** The slice of the host HMR coordinator needed to avoid nested transactions. */
+export interface HmrService {
+  operations?: Promise<unknown>
+  readonly executing?: {
+    getStore?(): unknown
+    exit?<T>(callback: () => T): T
+  }
+}
+
+/** The slice of the host profile context needed to observe its file lock. */
+export interface ProfileContext {
+  readonly dir?: string
+}
+
 /** One parsed loader patch list, as the host's `loadOverlayPatches` returns it. */
 export type FragmentLoader = (binName: string, file: string) => readonly unknown[]
 
@@ -97,6 +111,8 @@ export interface RegistrationOptions {
   hostEntry?: string
   /** The row's force-default switch; absent keeps the shipped default (on). */
   forceDefault?: boolean
+  /** Replace the host idle wait deadline in milliseconds (tests only). */
+  idleTimeoutMs?: number
 }
 
 /** The subset of the host boot package this registration needs. */
@@ -119,6 +135,21 @@ export interface ResolvedAppBoot {
  */
 const registered = new WeakSet<object>()
 
+/**
+ * Operator defaults captured before `ops-ptc` forced its own selection, per registry.
+ *
+ * A remount or a second boot that starts while `selectedDefault` is already `ops-ptc`
+ * would otherwise read `ops-ptc` as the saved selection and lose the operator's earlier
+ * choice when the row is later disabled or removed.
+ */
+const capturedDefaults = new WeakMap<object, string | undefined>()
+
+/** Maximum time a deferred default write waits for an outer profile lock to clear. */
+const HOST_IDLE_WAIT_MS = 10_000
+
+/** Polling interval while waiting for `<profile.dir>/package.json.lock` to clear. */
+const HOST_LOCK_POLL_MS = 10
+
 /** The live registration of one injected context. */
 interface Slot {
   release?: () => Promise<void>
@@ -127,6 +158,12 @@ interface Slot {
   previous?: string
   /** The settings service, kept so teardown can still write while disposing. */
   settings?: SettingsService
+  /** The HMR coordinator, kept so teardown can queue outside a transaction. */
+  hmr?: HmrService
+  /** The profile directory, kept so teardown can wait out the profile lock. */
+  profileDir?: string
+  /** The in-flight force write, if one started during activation. */
+  forcing?: Promise<void>
 }
 
 /** One human-readable error message. */
@@ -146,6 +183,67 @@ function warn(options: RegistrationOptions, root: Context, message: string): voi
 /** The host settings service, or undefined when this deployment has none. */
 function settingsOf(ctx: Context): SettingsService | undefined {
   return service<SettingsService>(ctx, 'settings')
+}
+
+/** The host HMR coordinator, when the profile runs with hot reload. */
+function hmrOf(ctx: Context): HmrService | undefined {
+  return service<HmrService>(ctx, 'hmr')
+}
+
+/** The directory of the active profile, when the host publishes one. */
+function profileDirOf(ctx: Context): string | undefined {
+  const dir = service<ProfileContext>(ctx, 'profile')?.dir
+  return typeof dir === 'string' && dir !== '' ? dir : undefined
+}
+
+/**
+ * Run a callback outside the active HMR transaction's AsyncLocalStorage scope.
+ *
+ * `settings.update` delegates to `configEditor.edit`, which calls `hmr.runExclusive`.
+ * When `dsh-ops` is mounted, reconfigured, disabled, or removed inside an outer
+ * `hmr.runExclusive`, the `executing` store stays `true` across synchronous calls and
+ * `await` continuations, causing `hmr.runExclusive` to reject with
+ * `HMR transactions cannot be nested`. Exiting the store lets the settings write
+ * queue after `hmr.operations` instead of failing (#881).
+ */
+function runOutsideHmr<T>(hmr: HmrService | undefined, callback: () => T): T {
+  const executing = hmr?.executing
+  if (executing?.getStore?.() === true && typeof executing.exit === 'function') {
+    return executing.exit(callback)
+  }
+  return callback()
+}
+
+/**
+ * Wait until the outer HMR transaction and any outer profile `package.json.lock` finish.
+ *
+ * `PluginManager.change` (used by `removeBundle` and `setBundleEnabled`) holds
+ * `<profile.dir>/package.json.lock` across `hmr.runExclusive` calls, while
+ * `ConfigEditor.edit` acquires `hmr.runExclusive` first and `package.json.lock`
+ * second. Waiting for both to settle prevents the settings write from entering
+ * `hmr.runExclusive` while `PluginManager.change` still holds the file lock.
+ */
+async function waitForHostIdle(
+  hmr: HmrService | undefined,
+  profileDir: string | undefined,
+  inTransaction: boolean,
+  timeoutMs = HOST_IDLE_WAIT_MS,
+): Promise<boolean> {
+  const lockFile = profileDir !== undefined ? path.join(profileDir, 'package.json.lock') : undefined
+  const lockHeld = () => lockFile !== undefined && existsSync(lockFile)
+  if (!inTransaction && !lockHeld()) return true
+  const deadline = Date.now() + timeoutMs
+  await new Promise<void>(resolve => setImmediate(resolve))
+  while (Date.now() < deadline) {
+    const operations = hmr?.operations
+    if (operations !== undefined) {
+      try { await operations } catch { /* the host owns its own transaction errors */ }
+      if (hmr?.operations !== undefined && hmr.operations !== operations) continue
+    }
+    if (!lockHeld()) return true
+    await new Promise<void>(resolve => setTimeout(resolve, HOST_LOCK_POLL_MS))
+  }
+  return !lockHeld()
 }
 
 /** The preset new sessions currently default to. */
@@ -215,7 +313,20 @@ async function writeSelectedDefault(ctx: Context, slot: Slot, options: Registrat
  */
 async function forceDefault(ctx: Context, registry: PresetRegistry, slot: Slot, options: RegistrationOptions): Promise<void> {
   if (currentDefault(registry) === PRESET_ID) return
-  await writeSelectedDefault(ctx, slot, options, PRESET_ID)
+  const hmr = slot.hmr ?? hmrOf(ctx)
+  const profileDir = slot.profileDir ?? profileDirOf(ctx)
+  const inTransaction = hmr?.executing?.getStore?.() === true
+  const task = runOutsideHmr(hmr, async () => {
+    const idle = await waitForHostIdle(hmr, profileDir, inTransaction, options.idleTimeoutMs)
+    if (slot.disposed || currentDefault(registry) === PRESET_ID) return
+    if (!idle) {
+      warn(options, ctx, `dsh-ops: cannot persist the default agent preset as ${PRESET_ID}: timed out waiting for the profile lock to clear; the current default stays.`)
+      return
+    }
+    await writeSelectedDefault(ctx, slot, options, PRESET_ID)
+  })
+  slot.forcing = task
+  await task
 }
 
 /**
@@ -224,10 +335,23 @@ async function forceDefault(ctx: Context, registry: PresetRegistry, slot: Slot, 
  * may have forced is touched; an operator-chosen default is never rewritten.
  */
 async function restoreDefault(ctx: Context, registry: PresetRegistry, slot: Slot, options: RegistrationOptions): Promise<void> {
-  if (currentDefault(registry) !== PRESET_ID) return
-  const target = restoreTarget(registry, slot.previous)
-  if (target === undefined || target === PRESET_ID) return
-  await writeSelectedDefault(ctx, slot, options, target)
+  const hmr = slot.hmr ?? hmrOf(ctx)
+  const profileDir = slot.profileDir ?? profileDirOf(ctx)
+  const inTransaction = hmr?.executing?.getStore?.() === true
+  await runOutsideHmr(hmr, async () => {
+    if (slot.forcing !== undefined) {
+      try { await slot.forcing } catch { /* forceDefault already warned */ }
+    }
+    const idle = await waitForHostIdle(hmr, profileDir, inTransaction, options.idleTimeoutMs)
+    if (currentDefault(registry) !== PRESET_ID) return
+    const target = restoreTarget(registry, slot.previous)
+    if (target === undefined || target === PRESET_ID) return
+    if (!idle) {
+      warn(options, ctx, `dsh-ops: cannot persist the default agent preset as ${target}: timed out waiting for the profile lock to clear; the current default stays.`)
+      return
+    }
+    await writeSelectedDefault(ctx, slot, options, target)
+  })
 }
 
 /**
@@ -453,7 +577,12 @@ export function registerOpsPtcPreset(root: Context, options: RegistrationOptions
     const activation: object = ctx.fiber ?? ctx
     if (registered.has(activation)) return
     registered.add(activation)
-    const slot: Slot = { disposed: false }
+    const slot: Slot = {
+      disposed: false,
+      settings: settingsOf(ctx),
+      hmr: hmrOf(ctx),
+      profileDir: profileDirOf(ctx),
+    }
     ctx.effect(() => () => {
       slot.disposed = true
       releaseRegistration(ctx, registry, slot, options)
@@ -477,8 +606,16 @@ async function activate(ctx: Context, registry: PresetRegistry, slot: Slot, opti
   // before reading, or the new activation would capture a value about to change.
   await settlePendingRestore(registry)
   // Capture the operator's default before anything can force a new one; teardown
-  // gives this exact selection back.
-  slot.previous = savedDefault(registry)
+  // gives this exact selection back. When the profile booted with `ops-ptc`
+  // already saved on disk, keep any earlier operator selection seen on this
+  // registry or fall back to the registry's official default on teardown.
+  const saved = savedDefault(registry)
+  if (saved !== PRESET_ID) {
+    capturedDefaults.set(registry, saved)
+    slot.previous = saved
+  } else {
+    slot.previous = capturedDefaults.get(registry)
+  }
   const definition = await readOpsPtcDefinition(options, ctx)
   if (definition === undefined || slot.disposed) return
   let release: (() => Promise<void>) | undefined

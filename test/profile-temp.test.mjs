@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { profileCommand } from '../lib/profile-install.js'
+import { findDanglingDefault, repairDanglingDefault } from '../lib/profile-default-repair.js'
 import { ensureSessionTemp, sessionTempDir } from '../lib/session-temp.js'
 
 const capture = body => {
@@ -255,6 +256,126 @@ await test('the launcher receives an install spec verbatim, and the cmd line ref
           'the launcher must receive ' + JSON.stringify(spec) + ' as one argument')
       }
     }
+  })
+})
+await test('uninstall repairs a dangling selectedDefault: ops-ptc in cordis.patch.yml (#881)', async () => {
+  await profileFixture(({ root, receipt }) => {
+    const profileDir = path.join(root, 'profiles', 'dsh-tui')
+    const patchFile = path.join(profileDir, 'cordis.patch.yml')
+
+    // 1. Never deletes a row and never deletes a following comment.
+    const withComments = [
+      '- id: other',
+      '  config:',
+      '    a: 1',
+      '- id: agent-preset-registry',
+      '  config:',
+      '    selectedDefault: ops-ptc',
+      '# keep: third row is legacy',
+      '- id: third',
+      '  config:',
+      '    b: 2',
+      '',
+    ].join('\n')
+    assert.deepEqual(findDanglingDefault(withComments), [4, 5])
+    fs.writeFileSync(patchFile, withComments)
+    assert.equal(capture(() => profileCommand('uninstall', { profile: 'tui', dryRun: true })).status, 0)
+    assert.match(fs.readFileSync(patchFile, 'utf8'), /selectedDefault: ops-ptc/, 'dry-run must not mutate cordis.patch.yml')
+
+    process.env.PROFILE_TEST_EXIT = '9'
+    assert.equal(capture(() => profileCommand('uninstall', { profile: 'tui' })).status, 9)
+    assert.match(fs.readFileSync(patchFile, 'utf8'), /selectedDefault: ops-ptc/, 'a failed CLI removal must not touch cordis.patch.yml')
+    delete process.env.PROFILE_TEST_EXIT
+    fs.unlinkSync(receipt)
+
+    assert.equal(capture(() => profileCommand('uninstall', { profile: 'tui' })).status, 0)
+    assert.equal(fs.readFileSync(patchFile, 'utf8'), [
+      '- id: other',
+      '  config:',
+      '    a: 1',
+      '- id: agent-preset-registry',
+      '# keep: third row is legacy',
+      '- id: third',
+      '  config:',
+      '    b: 2',
+      '',
+    ].join('\n'))
+
+    // 2. Sibling config keys and multiple registry rows are all repaired, and UTF-8 BOM is handled.
+    const twoRowsWithBom = '\uFEFF' + [
+      '- id: agent-preset-registry',
+      '  config:',
+      '    selectedDefault: ops-ptc # inline comment',
+      '- id: agent-preset-registry',
+      '  config:',
+      '    default: standard',
+      '    selectedDefault: "ops-ptc"',
+      '',
+    ].join('\n')
+    fs.writeFileSync(patchFile, twoRowsWithBom)
+    assert.deepEqual(findDanglingDefault(twoRowsWithBom), [1, 2, 6])
+    assert.deepEqual(repairDanglingDefault(profileDir), { file: patchFile, status: 'repaired', dangling: true, changed: true })
+    assert.equal(fs.readFileSync(patchFile, 'utf8'), [
+      '- id: agent-preset-registry',
+      '- id: agent-preset-registry',
+      '  config:',
+      '    default: standard',
+      '',
+    ].join('\n'))
+
+    // 3. One extra level under `config:` is not deleted, and is reported as `'unrecognized'`.
+    const nestedKey = [
+      '- id: agent-preset-registry',
+      '  config:',
+      '    nested:',
+      '      selectedDefault: ops-ptc',
+      '',
+    ].join('\n')
+    assert.deepEqual(findDanglingDefault(nestedKey), [])
+    fs.writeFileSync(patchFile, nestedKey)
+    const warnings = []
+    assert.deepEqual(repairDanglingDefault(profileDir, message => warnings.push(message)),
+      { file: patchFile, status: 'unrecognized', dangling: true, changed: false })
+    assert.equal(warnings.length, 1)
+    assert.match(warnings[0], /unrecognized patch shape/)
+    assert.equal(fs.readFileSync(patchFile, 'utf8'), nestedKey)
+
+    // 4. A different scalar (`ops-ptc#x`) or an operator choice (`ptc`) is clean and untouched.
+    for (const cleanPatch of [
+      '- id: agent-preset-registry\n  config:\n    selectedDefault: ops-ptc#x\n',
+      '- id: agent-preset-registry\n  config:\n    selectedDefault: ptc\n',
+    ]) {
+      assert.deepEqual(findDanglingDefault(cleanPatch), [])
+      fs.writeFileSync(patchFile, cleanPatch)
+      assert.deepEqual(repairDanglingDefault(profileDir), { file: patchFile, status: 'clean', dangling: false, changed: false })
+      assert.equal(fs.readFileSync(patchFile, 'utf8'), cleanPatch)
+    }
+
+    // 5. Skips and warns when `<profile.dir>/package.json.lock` exists, and a filesystem error never fails `uninstall`.
+    const danglingPatch = '- id: agent-preset-registry\n  config:\n    selectedDefault: ops-ptc\n'
+    fs.writeFileSync(patchFile, danglingPatch)
+    const lockFile = path.join(profileDir, 'package.json.lock')
+    fs.writeFileSync(lockFile, '123\n')
+    const lockWarnings = []
+    assert.deepEqual(repairDanglingDefault(profileDir, message => lockWarnings.push(message)),
+      { file: patchFile, status: 'unrecognized', dangling: true, changed: false })
+    assert.equal(lockWarnings.length, 1)
+    assert.match(lockWarnings[0], /package\.json\.lock is present/)
+    fs.rmSync(lockFile, { force: true })
+
+    fs.rmSync(patchFile, { force: true })
+    fs.mkdirSync(patchFile)
+    const previousWarn = console.warn
+    const cliWarnings = []
+    console.warn = message => cliWarnings.push(String(message))
+    try {
+      assert.equal(capture(() => profileCommand('uninstall', { profile: 'tui' })).status, 0)
+    } finally {
+      console.warn = previousWarn
+      fs.rmSync(patchFile, { recursive: true, force: true })
+    }
+    assert.equal(cliWarnings.length, 1)
+    assert.match(cliWarnings[0], /could not repair cordis\.patch\.yml/)
   })
 })
 report('profile-temp')
