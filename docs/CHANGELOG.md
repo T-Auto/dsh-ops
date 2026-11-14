@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Reuse each directory-relative no-follow metadata snapshot for search link/reparse classification, removing the duplicate absolute stat while retaining checked content and directory opens (#872).
+- 搜索复用目录相对的禁止跟随元数据快照判断链接及 reparse 点，去除重复的绝对路径 stat，并保留读取内容与打开目录时的检查（#872）。
+
 - Wake pending Windows shell channel connects when sealing and wait on reader thread handles when draining, preserving authenticated EOF and spill settlement. Add resident-worker regressions for forged stdout receipts, surviving background jobs and unregistered stock asynchronous output (#872).
 - Windows shell 通道封存时唤醒待连接操作，排空时等待读取线程句柄，保留认证 EOF 与溢写结算；新增常驻 worker 回归测试，覆盖 stdout 伪造收据、存活后台任务及 stock 异步输出未注册检测（#872）。
 

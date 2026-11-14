@@ -22,12 +22,37 @@ await test('opt-in search stage timing preserves canonical results and contains 
       assert.equal(profile.version,1); assert.equal(profile.stages.walkTotal.calls,1)
       assert.equal(profile.stages.globCompile?.calls,1, 'patterns compile once per scan, not once per file')
       assert.ok(profile.stages.globFilter.calls>0)
+      assert.equal(profile.stages.relativeMetadata.calls, profile.stages.globFilter.calls,
+        'one relative metadata query per visited regular file in this flat fixture')
+      assert.equal(profile.stages.absoluteMetadata, undefined,
+        'the relative no-follow snapshot must not trigger a second absolute metadata query')
       assert.equal(profiled.stderr.includes(root),false); assert.equal(profiled.stderr.includes('privateFixtureText'),false)
       for(const stage of Object.values(profile.stages)) {
         assert.ok(Number.isSafeInteger(stage.calls)&&stage.calls>0)
         assert.ok(Number.isSafeInteger(stage.nanos)&&stage.nanos>=0)
       }
     }
+  })
+})
+await test('relative metadata still excludes directory links and Windows junctions', async () => {
+  await withTempDir('search-relative-links', async root => {
+    const workspace = path.join(root, 'workspace'), outside = path.join(root, 'outside')
+    fs.mkdirSync(workspace); fs.mkdirSync(outside)
+    fs.writeFileSync(path.join(workspace, 'visible.txt'), 'hit visible\n')
+    fs.writeFileSync(path.join(outside, 'secret.txt'), 'hit outside-must-not-be-read\n')
+    fs.symlinkSync(outside, path.join(workspace, 'linked'), process.platform === 'win32' ? 'junction' : 'dir')
+    const output = spawnSync(WORKER, [], {
+      input: JSON.stringify(request('grep', { path: workspace, pattern: 'hit', limit: 20 }, { root: workspace, readOnly: true })),
+      encoding: 'utf8', timeout: 10000, env: { ...process.env, DSH_OPS_PROFILE_SEARCH: '1' },
+    })
+    assert.ifError(output.error); assert.equal(output.status, 0, output.stderr)
+    const value = JSON.parse(output.stdout)
+    assert.equal(value.scanComplete, true, JSON.stringify(value))
+    assert.equal(value.matchedTotal, 1)
+    assert.equal(value.skipReasons.symlink, 1)
+    assert.equal(value.items.length, 1)
+    assert.equal(path.basename(value.items[0].path), 'visible.txt')
+    assert.equal(output.stdout.includes('outside-must-not-be-read'), false)
   })
 })
 report('search-profiling')

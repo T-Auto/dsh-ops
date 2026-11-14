@@ -502,21 +502,10 @@ impl Scan {
                 self.skip("credential", file, false);
                 continue;
             }
-            let started = self.profile.start();
-            let host = fs::symlink_metadata(&child);
-            self.profile.record("absoluteMetadata", started);
-            let host = match host {
-                Ok(metadata) => metadata,
-                Err(error) => {
-                    self.skip_io("unreadable-entry", &child, file, &error);
-                    continue;
-                }
-            };
-            #[cfg(windows)]
-            let reparse = host.file_attributes() & 0x400 != 0;
-            #[cfg(not(windows))]
-            let reparse = false;
-            if file_path::link(&metadata) || host.file_type().is_symlink() || reparse {
+            // The no-follow relative snapshot includes Windows reparse flags.
+            // Re-statting the display path adds no link protection; every later
+            // directory/content open still performs its own no-follow checks.
+            if file_path::link(&metadata) {
                 self.skip("symlink", file, false);
                 continue;
             }
