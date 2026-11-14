@@ -8,7 +8,7 @@ import { requireResident } from '../execution/resident/provider.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
 import { publicToolName, modeSectionName, MODE_SECTION_ORDERS, renderToolingPolicy } from '../policy.js'
 import { visibleNames } from './surface.js'
-import { activationIsPtc, isNativePresentation, isPresentationProbe } from './presentation.js'
+import { activationIsPtc, isNativePresentation, isPresentationProbe, observePresentation, presentationRevision } from './presentation.js'
 import type { ResolvedConfig } from '../config.js'
 import { ownScopes } from './ownership.js'
 import { failure } from '../execution/files.js'
@@ -51,6 +51,7 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
     const tools = ctx.get('tools')
     const prompt = ctx.get('systemPrompt')
     if (!tools || !prompt) return
+    observePresentation(ctx, prompt)
     mountResultLifecycle(ctx)
     const entries = new Map<Agent, Entry>()
     let stopped = false, mutating = false
@@ -80,8 +81,10 @@ export function mountNative(root: Context, config: ResolvedConfig, publication: 
       const definitions = names.filter(name => !isSharedFileApi(name)).map(name => {
         const definition = entry.runtime.definition(name)
         return { ...definition, execute: async (args: unknown, exec: Parameters<typeof definition.execute>[1]) => {
+          const revision = presentationRevision(prompt)
           if (stopped || entries.get(agent) !== entry || !cover(agent) || exec.agent !== agent
             || !await isNativePresentation(prompt, agent, exec.signal).catch(() => false) || stopped || !cover(agent)
+            || revision !== presentationRevision(prompt)
             || tools.executable(definition.name, agent, exec.toolSet) !== registration(definition.name)) {
             return failure('POLICY_DENIED', 'Native capability belongs to a different or inactive scope.')
           }

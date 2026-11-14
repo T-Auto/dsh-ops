@@ -1,6 +1,6 @@
 /** Public execution events prove a live run_code parent, not merely a truthy token. */
 import type { Context, ToolRunContext, ToolExecution } from '../adapter/dsh/types.js'
-import { inspectPresentation } from './presentation.js'
+import { isPtcPresentation, presentationRevision } from './presentation.js'
 interface AdmissionOwner { refs: number; active: Map<symbol, ToolExecution>; revision(): number; bump(): void }
 const owners = new WeakMap<object, AdmissionOwner>()
 export function acquireResultAdmission(ctx: Context): { authorize(exec: ToolRunContext): Promise<(() => boolean) | undefined>; dispose(): void } {
@@ -33,18 +33,17 @@ export function acquireResultAdmission(ctx: Context): { authorize(exec: ToolRunC
       const prompt = ctx.get('systemPrompt')
       if (!prompt || !exec.agent) return undefined
       const revision = owned.revision()
+      const observedRevision = presentationRevision(prompt)
       // Carry the same grant through later asynchronous preflight. A successful
       // probe is not a permanent authorization to touch result storage.
       const current = () => !disposed && revision === owned.revision() && owned.active.get(parent.token) === parent
+        && observedRevision === presentationRevision(prompt)
         && parent.token === exec.parent && parent.agent === exec.agent && parent.toolSet === exec.toolSet
         && parent.rootCallId === exec.rootCallId && !parent.signal.aborted && !exec.signal.aborted
-      let assembly: Awaited<ReturnType<typeof inspectPresentation>>
-      try { assembly = await inspectPresentation(prompt, exec.agent, exec.signal) }
+      let ptc: boolean
+      try { ptc = await isPtcPresentation(prompt, exec.agent, exec.signal) }
       catch { return undefined }
-      return current()
-        && assembly.tools.length === 1 && assembly.tools[0]?.name === 'run_code'
-        && assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
-        ? current : undefined
+      return current() && ptc ? current : undefined
     },
     dispose() {
       if (disposed) return

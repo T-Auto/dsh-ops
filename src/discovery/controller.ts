@@ -3,7 +3,7 @@ import type { Agent, Context, Fiber, ToolDefinition } from '../adapter/dsh/types
 import { resolveDiscoveryConfig } from '../config.js'
 import { NativeFileTools } from '../projections/native/runtime.js'
 import { ownScopes } from '../publication/ownership.js'
-import { activationIsPtc, isNativePresentation, isPresentationProbe } from '../publication/presentation.js'
+import { activationIsPtc, isNativePresentation, isPresentationProbe, observePresentation, presentationRevision } from '../publication/presentation.js'
 import { visibleNames } from '../publication/surface.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
 import { failure } from '../execution/files.js'
@@ -63,6 +63,7 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
   }
   root.inject(externalEnabled || !worker ? ['tools', 'systemPrompt'] : ['tools', 'systemPrompt', 'sandboxPolicy', 'subprocess', 'opsKernel'], async ctx => {
     const tools = ctx.get('tools')!, prompt = ctx.get('systemPrompt')!
+    observePresentation(ctx, prompt)
     mountResultLifecycle(ctx)
     await prepareProviders(ctx)
     const entries = new Map<Agent, Entry>(), retired = new WeakSet<Agent>()
@@ -115,7 +116,9 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
     const publish = (agent: Agent, entry: Entry, source: ToolDefinition, provider?: Provider): void => {
       if (!entry.ctx || entry.registrations.has(source.name)) return
       const definition: ToolDefinition = { ...source, execute: async (args, exec) => {
+        const revision = presentationRevision(prompt)
         const current = () => !exec.signal.aborted && entries.get(agent) === entry && exec.agent === agent
+          && revision === presentationRevision(prompt)
           && selected(agent, entry, source.name, provider) && tools.executable(source.name, agent, exec.toolSet) === definition
         if (!current() || !await isNativePresentation(prompt, agent, exec.signal).catch(() => false) || !current()) {
           return failure('POLICY_DENIED', 'This Native capability must be admitted for the calling scope; no action executed.')
