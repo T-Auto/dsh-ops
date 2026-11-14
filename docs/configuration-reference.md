@@ -10,8 +10,7 @@ Plugin authors can also mount the [public integration API](integration-api.md) i
 
 | Section | Defaults and behavior |
 | --- | --- |
-| `global` | `bash`, `hidePwsh`, `hideOfficialTools`, `dynamicTools` all true; each gates the corresponding row-managed consumer choice. The same section also carries `forceDefaultOpsPtc`, see the next row |
-| `global.forceDefaultOpsPtc` | false by default; while the `ops-ptc` preset is registered, forces the default preset to `ops-ptc` at runtime by writing `selectedDefault` through the host settings service (the settings-page mechanism, overriding a manual choice). Turning it off, disabling or unloading the row restores the captured pre-force default, or the host `config.default` (the official default) when nothing was captured or the captured value is `ops-ptc`; forcing only happens after successful registration; a failed registration never forces, best-effort restores a leftover `ops-ptc` default and only warns |
+| `global` | `bash`, `hidePwsh`, `hideOfficialTools`, `dynamicTools` all true; each gates the corresponding row-managed consumer choice |
 | `minimal` | Enabled; no resident file surface; optional Bash and dynamic selection |
 | `standard`, `cordis` | Enabled; resident Native inspect/glob/grep profile, optional Bash, replacement and discovery |
 | `ptc` | Enabled; typed resident APIs and progressive SDK loading under actual host PTC presentation |
@@ -40,11 +39,13 @@ that installed this package, so it also answers in the host process, where no `D
 set.
 These are publication choices, not filesystem permissions. No switch bypasses host authorization.
 
-**Force the default agent preset to OPS (PTC)** (`global.forceDefaultOpsPtc`) only decides which preset new
-sessions use; it changes no tool publication surface or permission. It writes the same `selectedDefault` field
-as the Agent presets settings page: while on, it forces `ops-ptc` after a successful preset registration (so a
-manual choice is overridden); while off, it restores the value captured before forcing, or the official
-`config.default` when none was captured. The write persists through the host settings layer into the profile's `cordis.patch.yml` (an `agent-preset-registry` override that also writes the `default` field) and survives a restart; a remount caused by saving another switch re-registers the preset and re-confirms the default. A missing host settings service or a failed write only logs a warning.
+**The default agent preset is an action, not a switch.** The detail page's **Make OPS (PTC) the default** button
+writes the same `selectedDefault` field as the Agent presets settings page, once per click, and reports
+`applied` / `no-update` / `unavailable` / `failed`. Nothing writes it on apply, on a remount or on unload, so a
+default chosen here or on the settings page is never overridden behind your back. The write persists through the
+host settings layer into the profile's `cordis.patch.yml` (an `agent-preset-registry` override) and survives a
+restart. The removed `global.forceDefaultOpsPtc` key is still accepted on load, so a saved profile keeps working,
+and it now has no effect. It changes no tool publication surface or permission.
 
 Saves use exact nested paths and the revision read by the page. Unchanged fields are not written;
 conflicts retain the draft. Reset reloads current saved values. The runtime status section shows
@@ -62,7 +63,7 @@ time through the host `agentPresets.register`, using the shipped `presets/ops-pt
 the host's `loadOverlayPatches`; there is no matching preset row in the plugin manager, and disabling the
 `dsh-ops` row removes the preset with it. In the host picker it is named `OPS (PTC)` and described as
 "代码驱动的 PTC 工具面，由 dsh-ops 的 ops_* 工具扩展。"; whether it is the default is controlled by
-`global.forceDefaultOpsPtc` (off by default; turn it on to force `ops-ptc`). Generation and the forced/manual default paths are covered in
+the row's status card, which sets it once when pressed. Generation and the manual default paths are covered in
 [Presets and the default mode](presets.md).
 
 | Key | Default | Meaning |

@@ -44,7 +44,7 @@ export async function apply(ctx: Context): Promise<void> {
     ? `dsh-ops: the opsSettings remote is unavailable${mountError === undefined ? '' : `: ${mountError}`}`
     : ''
   const miss = async (): Promise<never> => { throw new Error(reason) }
-  const api: RuntimeRemote = mounted ?? { snapshot: miss, plan: miss, select: miss, execute: miss }
+  const api: RuntimeRemote = mounted ?? { snapshot: miss, plan: miss, select: miss, execute: miss, applyDefaultPreset: miss }
   // The host's own installer; a slot render may not read it, so resolve it here.
   const plugins = (ctx.get('remote.pluginManager') ?? undefined) as PluginInstaller | undefined
   let pwsh7Installed: boolean | undefined

@@ -42,8 +42,8 @@ Supported: Windows x64, Linux x64, and macOS 13+ on Apple Silicon or Intel
   system prompt and without blocking or rewriting the program. Native discovery and typed SDK loading are
   independently configured.
   Advanced selections activate in the owning agent's next provider request, never by executing a
-  discovery action. The default preset is forced by the `global.forceDefaultOpsPtc` switch (off by
-  default; turning it on forces OPS (PTC), and turning it off or disabling the row restores the previous or official default). See
+  discovery action. The default preset is never forced: the row's detail page carries one button that makes OPS (PTC)
+  the default for new sessions, once, and apply, remount and unload leave your own default alone. See
   [presets](docs/presets.md).
 - The PTC SDK catalogue has 18 APIs: 15 file/document tools, batch, result references and its loader.
   Only the configured resident or selected APIs are exposed. Native and PTC use separate outputs.

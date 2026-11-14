@@ -12,8 +12,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - The Bash tool description now states the parse contract of `stdout`/`stderr` where the model reads it: `text` may be a partial fragment, `truncated` marks one that must not be parsed as complete structured output, and `spillPath` is optional and not a completeness guarantee. The typed output schema is unchanged: repeating the contract there would cost every PTC request without saying anything the tool text does not. Command semantics, exit codes, result values, limits, spill files, permissions and rendering are unchanged.
 - Bash 工具说明现在在模型读取它的地方写明 `stdout`/`stderr` 的解析契约：文本可能只是片段，`truncated` 标记的片段不得当作完整结构化输出解析，`spillPath` 是可选项且不保证完整。输出类型 schema 保持不变：在那里重复这段契约只会让每个 PTC 请求更贵，并不会多说明什么。命令语义、退出码、结果值、上限、落盘、权限与渲染均不变。
 
-- The `global.forceDefaultOpsPtc` bundle switch now ships off: a fresh profile no longer has its default agent preset forced to `ops-ptc`. Turning it on keeps the earlier behaviour (force after a successful registration; restore the captured or official default when turned off or the row is unloaded), and an `ops-ptc` default left behind by a forced run is restored while the switch stays off.
-- `global.forceDefaultOpsPtc` 总开关改为默认关闭：新 profile 不再被强制把默认 Agent 预设设为 `ops-ptc`。开启后行为不变（注册成功后强制；关闭开关或卸载行时恢复捕获值或官方默认）；开关保持关闭时，早先强制留下的 `ops-ptc` 默认会在 apply 时被回退。
+- Replace the `global.forceDefaultOpsPtc` switch with one explicit action: the row's detail page carries a **Make OPS (PTC) the default** button that writes `selectedDefault: ops-ptc` once and answers `applied`/`no-update`/`unavailable`/`failed`. Apply, remount and unload no longer write the default, so a preset chosen on the settings page is not overridden on the next apply, and a saved `global.forceDefaultOpsPtc` key still loads with no effect.
+- 用一次显式操作取代 `global.forceDefaultOpsPtc` 开关：行详情页有一个「设为 OPS (PTC) 默认」按钮，点一次写 `selectedDefault: ops-ptc`，并回报 `applied`/`no-update`/`unavailable`/`failed`。apply、重挂载与卸载都不再改写默认，设置页选定的预设不会在下一次 apply 被覆盖；已保存的 `global.forceDefaultOpsPtc` 键仍可加载但不再生效。
 
 ## [0.5.5] — 2026-11-13 — Patch release
 

@@ -7,6 +7,7 @@ import { dshHome, PACKAGE_ROOT } from '../paths.js'
 import { RuntimeActions } from './runtime-actions.js'
 import type { RuntimeProcessRunner } from './runtime-actions.js'
 import { RUNTIME_DESCRIPTORS } from './runtime-contract.js'
+import type { DefaultPresetResult } from './runtime-contract.js'
 
 declare module '@deepseek-ai/cordis' { interface Context { opsSettings: RuntimeActions } }
 export function runtimeProcessRunner(subprocess: Pick<SubprocessRuntime, 'spawn'>, env: NodeJS.ProcessEnv = process.env): RuntimeProcessRunner {
@@ -24,7 +25,8 @@ export function runtimeProcessRunner(subprocess: Pick<SubprocessRuntime, 'spawn'
       error: error instanceof Error ? error.message : String(error) } }
   }
 }
-export function mountRuntimeSettings(root: Context, options: { config?: () => unknown } = {}): void {
+export function mountRuntimeSettings(root: Context, options: { config?: () => unknown;
+  applyDefaultPreset?: () => Promise<DefaultPresetResult> } = {}): void {
   root.inject(['typert', 'subprocess'], ctx => {
     const service = new RuntimeActions({ run: runtimeProcessRunner(ctx.subprocess), ...options })
     ctx.provide('opsSettings', service)
