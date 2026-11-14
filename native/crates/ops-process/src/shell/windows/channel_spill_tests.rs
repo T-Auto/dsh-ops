@@ -48,7 +48,7 @@ fn connected(capture: Spilling, cancel: Cancellation) -> (Channel, File) {
         Channel {
             name: OsString::new(),
             stop,
-            seal_connects: Arc::new(AtomicBool::new(false)),
+            seal_connects: Arc::new(ConnectSeal::new().unwrap()),
             state,
             handles: vec![Arc::downgrade(&server)],
             readers: vec![reader],

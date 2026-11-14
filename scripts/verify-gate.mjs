@@ -72,7 +72,7 @@ const WORKER_TARGET = option('worker-target', undefined)
  */
 const ALLOWED_SKIPS = TARGET === 'win32-x64'
   ? ['file-metadata', 'linux-attributes', 'linux-shell']
-  : ['mount', 'result-storage-cache-prep', 'windows-security', 'niubash-consumer', 'niubash-security-host']
+  : ['mount', 'result-storage-cache-prep', 'windows-security', 'niubash-consumer', 'niubash-security-host', 'resident-shell-integrity']
 
 /**
  * Suites that need an *optional external* checkout (`DSH_OPS_TUI_ROOT`, and for the native one also
