@@ -6,6 +6,7 @@ mod docx;
 mod parse;
 mod pdf;
 pub mod pdf_container;
+mod pdf_limits;
 mod pdf_pages;
 mod pdf_syntax;
 mod pdf_text;

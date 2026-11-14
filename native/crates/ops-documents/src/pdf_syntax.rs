@@ -1,9 +1,14 @@
 //! Bounded PDF values, shared by classic-object and content-stream parsing. No recovery heuristics.
 use ops_protocol::{Failure, Result};
 use std::collections::BTreeMap;
+/// Values one file may hold across every Lexer; the container charges each parsed object to it.
 pub const MAX_NODES: usize = 100_000;
+/// Bytes one string value may hold, escaped or hexadecimal.
 pub const MAX_STRING: usize = 1024 * 1024;
+/// A PDF dictionary: decoded name bytes to values, ordered by key so iteration is deterministic.
 pub type Dict = BTreeMap<Vec<u8>, Value>;
+/// One parsed PDF value, including the indirect reference N G R; a reference is not followed
+/// here, but through Document::resolve, which owns the chain length and cycle bounds.
 #[derive(Clone, Debug)]
 pub enum Value {
     Null,
@@ -17,18 +22,21 @@ pub enum Value {
     Ref(u32, u16),
 }
 impl Value {
+    /// This value as a bounded nonnegative integer; another value is DOCUMENT_PARSE_ERROR.
     pub fn integer(&self) -> Result<usize> {
         match self {
             Self::Integer(n) if *n >= 0 && *n <= u32::MAX as i64 => Ok(*n as usize),
             _ => Err(bad("Expected a bounded nonnegative PDF integer")),
         }
     }
+    /// This value as a dictionary; another value is DOCUMENT_PARSE_ERROR.
     pub fn dict(&self) -> Result<&Dict> {
         match self {
             Self::Dict(d) => Ok(d),
             _ => Err(bad("Expected a PDF dictionary")),
         }
     }
+    /// This value's decoded name bytes; another value is DOCUMENT_PARSE_ERROR.
     pub fn name(&self) -> Result<&[u8]> {
         match self {
             Self::Name(n) => Ok(n),
@@ -36,15 +44,19 @@ impl Value {
         }
     }
 }
+/// A DOCUMENT_PARSE_ERROR: the bytes are not the structure the format requires.
 pub fn bad(message: impl ToString) -> Failure {
     Failure::new("DOCUMENT_PARSE_ERROR", message)
 }
+/// An UNSUPPORTED_DOCUMENT: valid PDF that this reader deliberately does not implement.
 pub fn unsupported(message: impl ToString) -> Failure {
     Failure::new("UNSUPPORTED_DOCUMENT", message)
 }
+/// An OUTPUT_LIMIT: a bound this reader enforces, which caller arguments cannot move.
 pub fn limit(message: &str) -> Failure {
     Failure::new("OUTPUT_LIMIT", message)
 }
+/// True for the six PDF whitespace bytes: NUL, tab, line feed, form feed, carriage return, space.
 pub fn white(b: u8) -> bool {
     matches!(b, 0 | 9 | 10 | 12 | 13 | 32)
 }
@@ -59,12 +71,18 @@ fn hex(b: u8) -> Result<u8> {
         _ => Err(bad("Invalid PDF hexadecimal digit")),
     }
 }
+/// A cursor over one bounded byte slice that counts the values it produced; nodes is charged
+/// against MAX_NODES, so callers add each lexer's count to one file-wide budget.
 pub struct Lexer<'a> {
+    /// The bytes this cursor reads; it never reads outside them.
     pub data: &'a [u8],
+    /// The offset of the next unread byte.
     pub at: usize,
+    /// Values produced so far, charged against MAX_NODES.
     pub nodes: usize,
 }
 impl<'a> Lexer<'a> {
+    /// A cursor at the start of data with its value budget unspent.
     pub fn new(data: &'a [u8]) -> Self {
         Self {
             data,
@@ -72,6 +90,7 @@ impl<'a> Lexer<'a> {
             nodes: 0,
         }
     }
+    /// Advance past whitespace and % comments.
     pub fn skip(&mut self) {
         loop {
             while self.at < self.data.len() && white(self.data[self.at]) {
@@ -85,6 +104,8 @@ impl<'a> Lexer<'a> {
             }
         }
     }
+    /// The next token up to a delimiter, at most 256 bytes; a longer token is OUTPUT_LIMIT and no
+    /// token at all is DOCUMENT_PARSE_ERROR.
     pub fn word(&mut self) -> Result<&'a [u8]> {
         self.skip();
         let start = self.at;
@@ -99,6 +120,8 @@ impl<'a> Lexer<'a> {
         }
         Ok(&self.data[start..self.at])
     }
+    /// Consume the next token and require it to equal expected; another token is
+    /// DOCUMENT_PARSE_ERROR naming expected.
     pub fn keyword(&mut self, expected: &[u8]) -> Result<()> {
         if self.word()? != expected {
             return Err(bad(format!(
@@ -108,6 +131,7 @@ impl<'a> Lexer<'a> {
         }
         Ok(())
     }
+    /// The next token as a bounded integer; any other token is DOCUMENT_PARSE_ERROR.
     pub fn unsigned(&mut self) -> Result<usize> {
         let token = self.word()?;
         if !token.iter().all(u8::is_ascii_digit) || token.len() > 10 {
@@ -187,13 +211,9 @@ impl<'a> Lexer<'a> {
         }
         Err(bad("Unclosed PDF literal string"))
     }
-    /// A name is a token, not a policy decision.
-    ///
-    /// `/Prev` and `/XRefStm` only describe an incremental update while they are
-    /// trailer keys, and an outline item legitimately carries `/Prev` as its
-    /// previous sibling. Those two are therefore refused where a trailer is read
-    /// (`pdf_container::parse`), not here; `/Encrypt`, `/ObjStm` and `/XRef`
-    /// stay refused at the token because no supported structure can hold them.
+    /// A name is a token, not a policy decision: /Prev and /XRefStm describe an update only as
+    /// trailer keys, while /Encrypt, /ObjStm and /XRef are refused because no supported structure
+    /// can hold them.
     fn name(&mut self) -> Result<Vec<u8>> {
         self.at += 1;
         let mut name = Vec::new();
@@ -220,13 +240,19 @@ impl<'a> Lexer<'a> {
                 return Err(limit("PDF name exceeds 256 bytes"));
             }
         }
-        if matches!(name.as_slice(), b"Encrypt" | b"ObjStm" | b"XRef") {
-            return Err(unsupported(
-                "Encrypted, incremental, object-stream and xref-stream PDFs are unsupported",
-            ));
+        match name.as_slice() {
+            b"Encrypt" => return Err(unsupported("Encrypted PDFs are unsupported")),
+            b"ObjStm" | b"XRef" => {
+                return Err(unsupported(
+                    "Object-stream and xref-stream PDFs are unsupported",
+                ));
+            }
+            _ => {}
         }
         Ok(name)
     }
+    /// Parse one value at depth from the cursor; nesting over 64 or a value over MAX_NODES is
+    /// OUTPUT_LIMIT, and malformed tokens or unterminated containers are DOCUMENT_PARSE_ERROR.
     pub fn value(&mut self, depth: usize) -> Result<Value> {
         if depth > 64 {
             return Err(limit("PDF object nesting exceeds 64"));

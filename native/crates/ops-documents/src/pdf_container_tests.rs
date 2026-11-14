@@ -22,6 +22,25 @@ fn fixture(values: &[&[u8]]) -> Vec<u8> {
     );
     pdf
 }
+/// Write two empty objects with `gap` between them and `trailing` before the xref table.
+fn fixture_with_gaps(gap: &[u8], trailing: &[u8]) -> Vec<u8> {
+    let mut pdf = b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n".to_vec();
+    let first = pdf.len();
+    pdf.extend_from_slice(b"1 0 obj\n<<>>\nendobj\n");
+    pdf.extend_from_slice(gap);
+    let second = pdf.len();
+    pdf.extend_from_slice(b"2 0 obj\n<<>>\nendobj\n");
+    pdf.extend_from_slice(trailing);
+    let xref = pdf.len();
+    pdf.extend_from_slice(
+        format!("xref\n0 3\n0000000000 65535 f \n{first:010} 00000 n \n{second:010} 00000 n \n")
+            .as_bytes(),
+    );
+    pdf.extend_from_slice(
+        format!("trailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+    );
+    pdf
+}
 fn replace(pdf: &[u8], old: &[u8], new: &[u8]) -> Vec<u8> {
     let at = pdf.windows(old.len()).position(|v| v == old).unwrap();
     [&pdf[..at], new, &pdf[at + old.len()..]].concat()
@@ -146,6 +165,53 @@ fn offset_alias_overlap_and_unindexed_data_are_never_recovered() {
     );
 }
 #[test]
+fn unindexed_data_between_objects_and_before_xref_is_never_recovered() {
+    for (gap, trailing) in [
+        (b"JUNK\n".as_slice(), b"".as_slice()),
+        (b"99 0 obj\n<<>>\nendobj\n".as_slice(), b"".as_slice()),
+        (b"".as_slice(), b"JUNK\n".as_slice()),
+        (b"".as_slice(), b"99 0 obj\n<<>>\nendobj\n".as_slice()),
+    ] {
+        rejected(&fixture_with_gaps(gap, trailing), "DOCUMENT_PARSE_ERROR");
+    }
+    // Whitespace and comments are the only bytes a gap may contain.
+    let pdf = fixture_with_gaps(b" \n% between objects\n\t", b"\n% before xref\n");
+    assert_eq!(parse(&pdf).unwrap().objects.len(), 2);
+}
+#[test]
+fn a_percent_inside_a_literal_string_is_data_not_a_comment() {
+    let mut pdf = b"%PDF-1.4\n".to_vec();
+    let first = pdf.len();
+    pdf.extend_from_slice(b"1 0 obj\n<< /Note (100%) >> endobj 2 0 obj\n<<>>\nendobj\n");
+    let second = pdf.windows(7).position(|w| w == b"2 0 obj").unwrap();
+    let xref = pdf.len();
+    pdf.extend_from_slice(
+        format!("xref\n0 3\n0000000000 65535 f \n{first:010} 00000 n \n{second:010} 00000 n \n")
+            .as_bytes(),
+    );
+    pdf.extend_from_slice(
+        format!("trailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+    );
+    let document = parse(&pdf).expect("the header follows a literal string, not a comment");
+    assert_eq!(document.objects.len(), 2);
+}
+#[test]
+fn a_comment_after_an_object_cannot_introduce_a_header() {
+    let mut pdf = b"%PDF-1.4\n".to_vec();
+    let first = pdf.len();
+    pdf.extend_from_slice(b"1 0 obj\n<<>>\nendobj % 2 0 obj\n<<>>\nendobj\n");
+    let second = pdf.windows(7).position(|w| w == b"2 0 obj").unwrap();
+    let xref = pdf.len();
+    pdf.extend_from_slice(
+        format!("xref\n0 3\n0000000000 65535 f \n{first:010} 00000 n \n{second:010} 00000 n \n")
+            .as_bytes(),
+    );
+    pdf.extend_from_slice(
+        format!("trailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+    );
+    rejected(&pdf, "DOCUMENT_PARSE_ERROR");
+}
+#[test]
 fn xref_counts_generations_size_and_footer_are_bounded_and_exact() {
     let pdf = fixture(&[b"<<>>"]);
     for (old, new) in [
@@ -168,7 +234,7 @@ fn xref_counts_generations_size_and_footer_are_bounded_and_exact() {
     }
 }
 #[test]
-fn streams_require_bounded_direct_integer_lengths_and_matching_end() {
+fn streams_require_bounded_integer_lengths_and_matching_end() {
     for value in [
         b"<< /Length 1.0 >>\nstream\nx\nendstream".as_slice(),
         b"<< /Length 1 0 R >>\nstream\nx\nendstream",
@@ -188,6 +254,16 @@ fn streams_require_bounded_direct_integer_lengths_and_matching_end() {
         parse(&pdf).unwrap().object((2, 0)).unwrap().stream,
         Some(b"".as_slice())
     );
+    // An indirect /Length resolves through its own object in either direction.
+    let pdf = fixture(&[
+        b"<<>>",
+        b"<< /Length 3 0 R >>\nstream\n(Hi) Tj\n\nendstream",
+        b"9",
+    ]);
+    assert_eq!(
+        parse(&pdf).unwrap().object((2, 0)).unwrap().stream,
+        Some(b"(Hi) Tj\n\n".as_slice())
+    );
 }
 #[test]
 fn nesting_strings_names_and_node_totals_are_bounded() {
@@ -202,6 +278,12 @@ fn nesting_strings_names_and_node_totals_are_bounded() {
     let hex = format!("<< /X <{}> >>", "a".repeat(2 * 1024 * 1024 + 1));
     rejected(&fixture(&[hex.as_bytes()]), "OUTPUT_LIMIT");
     rejected(&vec![b' '; MAX_FILE + 1], "OUTPUT_LIMIT");
+    // Trailing whitespace after %%EOF is legal; the file limit itself accepts the exact bound.
+    let mut at_limit = fixture(&[b"<<>>"]);
+    at_limit.resize(MAX_FILE, b' ');
+    assert!(parse(&at_limit).is_ok());
+    at_limit.push(b' ');
+    rejected(&at_limit, "OUTPUT_LIMIT");
 }
 #[test]
 fn reference_resolution_is_bounded_and_cycles_missing_objects_fail() {
@@ -336,4 +418,53 @@ fn stream_roots_reserved_generations_and_direct_oversize_decode_are_refused() {
         stream: Some(&bytes),
     };
     assert_eq!(decode(&raw).unwrap_err().code, "OUTPUT_LIMIT");
+}
+#[test]
+fn xref_entries_accept_the_limit_and_refuse_one_over() {
+    let values = vec![b"<<>>".to_vec(); MAX_OBJECTS - 1];
+    let slices: Vec<&[u8]> = values.iter().map(Vec::as_slice).collect();
+    let pdf = fixture(&slices);
+    assert_eq!(parse(&pdf).unwrap().objects.len(), MAX_OBJECTS - 1);
+    rejected(
+        &replace(&pdf, b"/Size 10000", b"/Size 10001"),
+        "OUTPUT_LIMIT",
+    );
+    rejected(
+        &replace(&pdf, b"xref\n0 10000", b"xref\n0 10001"),
+        "OUTPUT_LIMIT",
+    );
+}
+#[test]
+fn metadata_budget_counts_the_trailer_and_objects_at_the_limit() {
+    let build = |object_values: usize, trailer_values: usize| {
+        let object = format!("<< /X [{}] >>", "0 ".repeat(object_values));
+        let trailer = format!(
+            "<< /Size 2 /Root 1 0 R /Junk [{}] >>",
+            "0 ".repeat(trailer_values)
+        );
+        let mut pdf = b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n".to_vec();
+        let first = pdf.len();
+        pdf.extend_from_slice(format!("1 0 obj\n{object}\nendobj\n").as_bytes());
+        let xref = pdf.len();
+        pdf.extend_from_slice(
+            format!("xref\n0 2\n0000000000 65535 f \n{first:010} 00000 n \n").as_bytes(),
+        );
+        pdf.extend_from_slice(format!("trailer\n{trailer}\nstartxref\n{xref}\n%%EOF\n").as_bytes());
+        pdf
+    };
+    // Two dictionaries, two arrays, /Size, /Root and the two integer payloads: six more values.
+    let payload = MAX_NODES - 6;
+    assert!(parse(&build(payload / 2, payload - payload / 2)).is_ok());
+    rejected(
+        &build(payload / 2, payload - payload / 2 + 1),
+        "OUTPUT_LIMIT",
+    );
+}
+#[test]
+fn the_container_deadline_reports_its_code() {
+    let expired = std::time::Instant::now() - std::time::Duration::from_secs(21);
+    assert_eq!(
+        check_deadline(expired).unwrap_err().code,
+        "DEADLINE_EXCEEDED"
+    );
 }
