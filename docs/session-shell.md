@@ -6,8 +6,8 @@ runtime distribution and final lifecycle/performance acceptance remain release p
 
 `ops_bash` continues to use `execution: "fresh"` by default. Fresh calls retain their existing
 working-directory resolution, approval, script-file support, output spill and host Jobs behavior.
-The current production runtime pin remains fresh-only: no complete package has yet been accepted
-for persistent protocol ownership, and there is no configuration override. After an accepted
+The current production runtime pin remains fresh-only. The qualified candidate inventory is recorded
+for review but is not selected or published, and there is no configuration override. After an accepted
 package, a kernel advertising both `shell-v1` and `shell-spill-v1`, and ready authority services are all present, the same tool
 can also accept `execution: "session"`. Native callers and PTC's `tools.ops_bash()` reach the same
 root-owned admission service; there is no separate PTC shell or implicit fallback to fresh.
@@ -119,7 +119,8 @@ differed from source `d0aa842c`; no admission service was injected. Worker SHA-2
 Cleanup was confirmed and the observed kernel exited. The local report `c5-qualification-public.json`
 has SHA-256 `4fc90c521b1850aa88c800b5e006ea10cf1bae8b828372f6e8f924a6f245b063`;
 `c5-qualification-receipt.json` records the exact source patch and complete payload. The candidate
-archive remains unpublished, and the shipped runtime pin and accepted inventory set are unchanged.
+archive remains unpublished. The shipped runtime pin is unchanged; the qualified candidate digest
+is recorded separately and does not enable the stock inventory.
 
 Four actual DSH CLI instances then used that same qualified build with a shared temporary home
 and workspace. Each retained distinct cwd/environment/functions/options. Targeted public

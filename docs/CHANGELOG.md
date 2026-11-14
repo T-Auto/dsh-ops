@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Record the qualified Windows session runtime inventory for review while retaining the published stock runtime pin, fresh-only public behavior and existing CI runtime. Candidate assets remain unpublished; enabling the qualified inventory requires a separate pin adoption (#872).
+- 记录已验证的 Windows 会话运行时清单供审查，同时保留已发布的 stock 运行时 pin、仅 fresh 的公开行为及现有 CI 运行时。候选资产尚未发布；启用合格清单仍需单独采用新 pin（#872）。
+
 - Align bilingual Bash references with fresh defaults, qualified session arguments/state and confirmed-reset cancellation context. Mark resident audit/probe records as historical slices, link current integrations and retain the empty public runtime inventory plus unresolved Linux/Windows ownership gaps; no lifecycle or performance acceptance is claimed (#872).
 - 对齐中英文 Bash 参考文档中的 fresh 默认值、合格会话参数/状态及取消后的确认重置上下文。将常驻审计/探针记录明确标为历史切片，链接当前集成，保留公开运行时清单为空及 Linux/Windows 所有权缺口，不宣称生命周期或性能验收完成（#872）。
 
