@@ -13,7 +13,7 @@ import { companionVersion } from './companion.js'
 import { effectiveMode, resolveMergedConfig } from './merged.js'
 import type { UpgradeProcessResult } from '../shells/pwsh-upgrade.js'
 import { parseAction, parseSelection } from './runtime-contract.js'
-import type { RuntimeAction, RuntimePlan, RuntimeResult, RuntimeSnapshot, RuntimeSelection, RuntimeSelectionRequest,
+import type { DefaultPresetResult, RuntimeAction, RuntimePlan, RuntimeResult, RuntimeSnapshot, RuntimeSelection, RuntimeSelectionRequest,
   BashResolutionView, BashSourceKind, ModeBashView } from './runtime-contract.js'
 
 export type RuntimeProcessRunner = (argv: readonly string[], signal: AbortSignal) => Promise<UpgradeProcessResult>
@@ -25,6 +25,8 @@ export interface RuntimeActionOptions {
   now?: () => number
   /** The composed row configuration the mounted fiber owns, for the shell resolutions. */
   config?: () => unknown
+  /** The one-shot default-preset action; absent when the preset is not registered. */
+  applyDefaultPreset?: () => Promise<DefaultPresetResult>
 }
 type Preview = Omit<RuntimePlan, 'id'>
 const failure = (status: RuntimeResult['status'], message: string, effectState: RuntimeResult['effectState'] = 'none'): RuntimeResult => ({ status, message, effectState })
@@ -32,7 +34,8 @@ const digest = (value: unknown): string => createHash('sha256').update(JSON.stri
 
 export class RuntimeActions {
   readonly typertRemote: TypertGatewayBinding<this> = Object.freeze({ service: this, serviceKey: 'opsSettings', namespace: 'opsSettings' })
-  private readonly options: Required<Omit<RuntimeActionOptions, 'run' | 'config'>> & Pick<RuntimeActionOptions, 'run' | 'config'>
+  private readonly options: Required<Omit<RuntimeActionOptions, 'run' | 'config' | 'applyDefaultPreset'>>
+    & Pick<RuntimeActionOptions, 'run' | 'config' | 'applyDefaultPreset'>
   private readonly plans = new Map<string, { action: RuntimeAction; fingerprint: string; expires: number }>()
   private readonly lifetime = new AbortController()
   private busy = false
@@ -85,6 +88,19 @@ export class RuntimeActions {
   select(request: RuntimeSelectionRequest): RuntimeSelection {
     const parsed = parseSelection(request)
     return selectBashRuntime(parsed.source, { ...this.options, ...(parsed.path === undefined ? {} : { path: parsed.path }) })
+  }
+  /**
+   * Make OPS (PTC) the default preset for new sessions, exactly once.
+   *
+   * This is the only path that writes the profile default: no apply, remount or
+   * unload touches it, so an operator choice can never be overridden behind their back.
+   * @returns what the preset registration reported; never throws.
+   */
+  async applyDefaultPreset(): Promise<DefaultPresetResult> {
+    const action = this.options.applyDefaultPreset
+    if (action === undefined) return { status: 'unavailable',
+      message: 'the OPS (PTC) preset is not registered right now, so the default preset was not changed.' }
+    return action()
   }
   private preview(action: RuntimeAction): { public: Preview; fingerprint: string } {
     let preview: Preview, facts: unknown

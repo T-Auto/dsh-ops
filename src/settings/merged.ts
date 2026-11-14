@@ -40,8 +40,6 @@ export interface GlobalSwitches {
   readonly hidePwsh: boolean
   readonly hideOfficialTools: boolean
   readonly dynamicTools: boolean
-  /** Force this plugin's ops-ptc preset as the profile's default agent preset. */
-  readonly forceDefaultOpsPtc: boolean
 }
 
 /** One section as the row runs it. */
@@ -123,7 +121,10 @@ export function resolveMergedConfig(raw?: unknown): MergedConfig {
   }
   const globalRaw = object('global', input.global)
   for (const key of Object.keys(globalRaw)) {
-    if (!['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools', 'forceDefaultOpsPtc'].includes(key)) throw new ConfigError(`unknown global key ${JSON.stringify(key)}`)
+    // `forceDefaultOpsPtc` is a removed switch, not a typo: a profile saved while it
+    // existed keeps loading instead of failing on an unknown key.
+    if (key === 'forceDefaultOpsPtc') continue
+    if (!['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools'].includes(key)) throw new ConfigError(`unknown global key ${JSON.stringify(key)}`)
   }
   const normalized = Object.hasOwn(input, 'presets') && Object.values(object('presets', input.presets)).every(value =>
     value && typeof value === 'object' && Object.keys(value).length === 1 && Object.hasOwn(value, 'options'))
@@ -139,7 +140,6 @@ export function resolveMergedConfig(raw?: unknown): MergedConfig {
       hidePwsh: flag(globalRaw, 'hidePwsh', true),
       hideOfficialTools: flag(globalRaw, 'hideOfficialTools', true),
       dynamicTools: flag(globalRaw, 'dynamicTools', true),
-      forceDefaultOpsPtc: flag(globalRaw, 'forceDefaultOpsPtc', true),
     },
     minimal: modeState('minimal', input.minimal),
     standard: modeState('standard', input.standard),
@@ -283,7 +283,6 @@ export const Config = settingsConfig(hostConfig, {
     hidePwsh: boolean('Bundle switch: allow presets to hide the official Windows shell.'),
     hideOfficialTools: boolean('Bundle switch: allow presets to hide the official file tools.'),
     dynamicTools: boolean('Bundle switch: allow presets to publish the discovery entry.'),
-    forceDefaultOpsPtc: boolean('Bundle switch: make new sessions default to the OPS (PTC) preset; off restores the previous or official default.'),
   } },
   minimal: modeSection('minimal'), standard: modeSection('standard'), ptc: modeSection('ptc'),
   'ops-ptc': modeSection('ops-ptc'), cordis: modeSection('cordis'),

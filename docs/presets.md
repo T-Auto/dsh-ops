@@ -55,39 +55,36 @@ Source resolution tries `--source`, `DSH_WEB_APP_PRESETS`, package resolution of
 with an installed `@deepseek-ai/dsh`. An unresolvable source is a failure, never a quiet pass. Re-run the script
 after upgrading the host and review the diff; `--check` fits a local verification step.
 
-## Forcing the default preset (`global.forceDefaultOpsPtc`)
+## Making `ops-ptc` the default (one-shot action)
 
-`dsh-ops` forces new sessions to default to `ops-ptc`. The bundle switch `global.forceDefaultOpsPtc` (label
-"Force the default agent preset to OPS (PTC)", default true; toggle it on the plugin page's global card or set
-it in YAML) controls this at runtime rather than baking it into the profile:
+`dsh-ops` never changes the default preset on its own. The plugin's detail page carries one button — **Make
+OPS (PTC) the default** — that writes `selectedDefault: ops-ptc` exactly once, through the same host settings
+mechanism the Agent presets settings page uses. There is no switch, and no default preset is baked into the
+bundle:
 
-- **On (default)**: after the `ops-ptc` preset registers successfully, the plugin writes
-  `selectedDefault: ops-ptc` on `agent-preset-registry` through the host settings service — the same
-  mechanism and the same volatile field as choosing a default on the Agent presets settings page. A manual
-  choice is therefore overridden on the next apply while the switch stays on.
-- **Off**: restores the `selectedDefault` captured before forcing. When no value was saved, or the captured
-  value is itself `ops-ptc` (a leftover from an earlier forced run), it falls back to the host
-  `config.default`, i.e. that deployment's official default preset.
-- **Disabling or unloading the `dsh-ops` row**: cleanup restores the default before releasing the preset
-  registration, and only writes when the current default really is `ops-ptc`. A missing host settings service
-  or a failed write only logs a warning prefixed with `dsh-ops: ` and never blocks unloading.
-- Forcing happens only after a successful registration; a missing fragment, unresolvable app-boot or rejected
-  registration never forces, but best-effort restores a leftover `ops-ptc` default (failures only warn).
-- The forced value persists through the host settings layer into the profile's `cordis.patch.yml` (an
-  `agent-preset-registry` override that also writes the `default` field) and survives a restart. Saving another
-  switch on the row remounts it: the preset re-registers and the default is re-confirmed, and the remount's
-  teardown restore settles before the replacement writes, so the two writes cannot race.
-- The switch only changes the default preset choice; it changes no tool surface, permission or preset content.
+- **Pressing the button**: while the `ops-ptc` preset is registered, the plugin writes
+  `selectedDefault: ops-ptc` on `agent-preset-registry` — the same volatile field the Agent presets settings
+  page writes. That click is the only thing that overrides a manual choice.
+- **Doing nothing**: nothing is written. Apply, a remount caused by saving another switch, and disabling the row
+  all leave the current default alone, so a preset picked on the settings page survives restarts.
+- **Disabling or unloading the `dsh-ops` row**: releases the registration and leaves the default alone, even when
+  it names `ops-ptc`. Switch the default to another preset before removing the row, otherwise new sessions may
+  try to resolve a preset that no longer exists.
+- The button answers with a status: `applied`, `no-update` (it is already the default), or `unavailable`/`failed`
+  with the reason — the preset is not registered, the host settings service is missing, or the write was rejected.
+- The written value persists through the host settings layer into the profile's `cordis.patch.yml` (an
+  `agent-preset-registry` override) and survives a restart. Saving another switch on the row remounts the fiber
+  without touching it.
+- The action only changes the default preset choice; it changes no tool surface, permission or preset content.
 
 In the host picker the preset is named `OPS (PTC)` and described as
 "代码驱动的 PTC 工具面，由 dsh-ops 的 ops_* 工具扩展。".
 
 ## Setting another default preset manually
 
-`ops-ptc` is only made the default by the switch above: while the switch is off, a default still pointing at
-`ops-ptc` is restored on apply to the captured pre-force value or the official default (so disabling the row
-never leaves a dangling default), so do not set `ops-ptc` as the default by hand. Other default presets are
-still decided by the host/operator:
+`ops-ptc` becomes the default only through the button above (or the settings page). Nothing restores it
+automatically, so pick another default before you disable or unload the row. Other default presets are still
+decided by the host/operator:
 
 - **Host Agent presets settings page**: picking an already registered preset such as `standard` or `ptc`
   persists `selectedDefault`.
@@ -110,16 +107,13 @@ default comes from that profile's own composition.
 
 ### Risks and rollback
 
-- **With the switch on (the default)**: disabling or unloading restores the default before releasing the
-  registration, so the normal path does not leave a dangling default; after re-enabling, or with the switch
-  off, pick the default you want on the settings page. A failed restore only warns and does not block
-  unloading; treat that case as the next bullet.
-- **With the switch off**: apply also restores an `ops-ptc` default (the captured value or the official
-  default), so a manual switch is usually unnecessary; if a missing host settings service makes that restore
-  fail, switch the default to another preset before disabling or unloading, otherwise new sessions may fail to
-  resolve the vanished preset against the current definition.
+- **After pressing the button**: the choice is an ordinary settings-page selection, so it survives restarts. It
+  is not restored when the row is disabled or unloaded; pick another default before removing the row.
+- **Before disabling or unloading**: set the default to another preset on the settings page. The plugin no longer
+  rewrites it, and new sessions otherwise try to resolve a preset that vanished with the row.
 - A missing fragment or a host upgrade that breaks parsing leaves the preset unavailable while the tools keep
-  working and no default is forced; regenerate the fragment and restart the host to recover.
+  working; the default preset stays untouched and the button reports `unavailable`. Regenerate the fragment and
+  restart the host to recover.
 - Not finding an `ops-ptc` preset row in the plugin manager is by design; do not add a declaration by hand.
 - Existing sessions keep the composition they already bound; changing the default only affects sessions created
   afterwards.
@@ -134,7 +128,7 @@ default comes from that profile's own composition.
 | Compaction | official `compaction-basic` | official `compaction-basic` as well; no `dsh-compress-codex` |
 | Batch-call guidance | none | `batchingGuidance`: defaults true in code and the packaged `ops-ptc` section, including legacy whole-row overrides that omit the section; explicit false disables it; one lesson at session start, then shape notices for root `run_code` programs (`bypass`/`plan`/`shape`, each latched per turn and re-armed by compliance) appended as `additionalContexts`; text in the editable `prompts/batching-guidance.md` |
 | Single-row section | `ptc` | `ops-ptc` (same keys plus `batchingGuidance`) |
-| Default preset | decided by the host/operator | forced to `ops-ptc` at runtime by `global.forceDefaultOpsPtc` (on by default); restored when turned off or the row is disabled |
+| Default preset | decided by the host/operator | set once by the detail page's button (`applied`/`no-update`); never forced or restored automatically |
 | Ordering | order 2 | order 6, sorted after the official rows |
 
 Having both modes over one tool surface is the point of the contrast arm: `ptc` keeps the official preset

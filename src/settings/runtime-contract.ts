@@ -70,6 +70,21 @@ export interface RuntimeRemote {
   plan(action: RuntimeAction): Promise<RemoteResult<RuntimePlan>>
   select(selection: RuntimeSelectionRequest): Promise<RemoteResult<RuntimeSelection>>
   execute(id: string, signal?: AbortSignal): Promise<RemoteResult<RuntimeResult>>
+  /** One operator click: make the OPS (PTC) preset the default for new sessions. */
+  applyDefaultPreset(): Promise<RemoteResult<DefaultPresetResult>>
+}
+
+/**
+ * The answer to one explicit default-preset action.
+ *
+ * Nothing writes the profile default on its own any more; this result exists so the
+ * button can say what happened instead of guessing.
+ */
+export interface DefaultPresetResult {
+  status: 'applied' | 'no-update' | 'unavailable' | 'failed'
+  message: string
+  /** The default preset the host reports after the call, when it can be read. */
+  defaultPreset?: string
 }
 declare module '@deepseek-ai/dsh-typert-protocol' {
   interface TypertRemoteNamespaceMap { opsSettings: RuntimeRemote }
@@ -117,5 +132,6 @@ export const RUNTIME_DESCRIPTORS: readonly InvocationDescriptor[] = Object.freez
   method('snapshot'), method('plan', { wire: 'action', codec: codec('RuntimeAction', parseAction) }),
   method('select', { wire: 'selection', codec: codec('BashSelection', parseSelection) }),
   method('execute', { wire: 'id', codec: codec('RuntimePlanId', planId) }, true),
+  method('applyDefaultPreset'),
 ])
 export const RUNTIME_REMOTE = Object.freeze({ package: 'dsh-ops', descriptors: RUNTIME_DESCRIPTORS })

@@ -7,7 +7,7 @@
  * renders nothing at all, matching the proposal in issue #462.
  */
 import type { PluginDetailProps } from '../adapter/dsh/types.js'
-import type { RuntimeRemote, RuntimeSnapshot } from '../settings/runtime-contract.js'
+import type { DefaultPresetResult, RuntimeRemote, RuntimeSnapshot } from '../settings/runtime-contract.js'
 import { useEffect, useState } from 'react'
 import { useRuntime } from './runtime.js'
 import { PLAN_KEYS } from './locales.js'
@@ -135,7 +135,49 @@ export function DiagnosticsSection(props: PluginDetailProps & { t: Translator; a
   if (!hasStatus(subject)) return null
   const enabled = subject.kind === 'bundle' ? subject.pkg.enabled : subject.kind === 'row' ? subject.row.enabled : false
   if (!enabled) return null
-  return <RuntimeStatus api={api} t={t} plugins={plugins} />
+  return <><RuntimeStatus api={api} t={t} plugins={plugins} />
+    <DefaultPresetCard api={api} t={t} /></>
+}
+
+/** One stable sentence per action status; a failure keeps the host's own words. */
+function defaultPresetText(value: DefaultPresetResult, t: Translator): string {
+  if (value.status === 'applied') return t('defaultPresetApplied')
+  if (value.status === 'no-update') return t('defaultPresetNoUpdate')
+  if (value.status === 'unavailable') return t('defaultPresetUnavailable')
+  return `${t('defaultPresetFailed')} ${value.message}`
+}
+
+/**
+ * The default preset is one explicit action, not a switch.
+ *
+ * An automatic force could not be told apart from the operator's own choice: it
+ * reappeared after every restart and undid a switch made on the settings page. A
+ * button writes once and reports, so nothing happens while nobody presses it.
+ */
+function DefaultPresetCard({ api, t }: { api: RuntimeRemote; t: Translator }) {
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<{ ok: boolean; text: string }>()
+  const run = async (): Promise<void> => {
+    setBusy(true); setNote(undefined)
+    try {
+      const answer = await api.applyDefaultPreset()
+      if (!answer.ok) { setNote({ ok: false, text: answer.error.message }); return }
+      const value = answer.value
+      setNote({ ok: value.status === 'applied' || value.status === 'no-update', text: defaultPresetText(value, t) })
+    } catch (error) { setNote({ ok: false, text: error instanceof Error ? error.message : String(error) }) }
+    finally { setBusy(false) }
+  }
+  return <section className="ops-detail" aria-label={t('defaultPresetTitle')}>
+    <div className="ops-status-card">
+      <div className="ops-detail-head"><h3 className="ops-detail-title">{t('defaultPresetTitle')}</h3></div>
+      <p className="ops-field-hint">{t('defaultPresetHint')}</p>
+      <div className="ops-actions">
+        <button type="button" className="ops-small" disabled={busy} onClick={() => { void run() }}>
+          {busy ? t('defaultPresetBusy') : t('defaultPresetAction')}</button>
+      </div>
+      {note !== undefined && <p className={note.ok ? 'ops-note' : 'ops-field-error'} role="status">{note.text}</p>}
+    </div>
+  </section>
 }
 
 function RuntimeStatus({ api, t, plugins }: { api: RuntimeRemote; t: Translator; plugins?: PluginInstaller }) {

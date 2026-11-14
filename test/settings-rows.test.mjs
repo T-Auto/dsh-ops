@@ -11,14 +11,14 @@ import { Config, effectiveMode, resolveMergedConfig } from '../lib/settings/merg
 import { readRowValues as draftFor } from '../lib/client/row-schema.js'
 const t = key => en[key]
 const SWITCHES = ['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools']
-/** The bundle card: the four gates plus the default-preset force switch. */
-const GLOBAL_SWITCHES = [...SWITCHES, 'forceDefaultOpsPtc']
+/** The bundle card: the four gates; the default preset is an action, not a switch. */
+const GLOBAL_SWITCHES = [...SWITCHES]
 
 await test('the page matches the host descriptor, and the opt-in switches share one card', () => {
   assert.deepEqual(Object.keys(Config.dict), ['presets', 'global', 'minimal', 'standard', 'ptc', 'ops-ptc', 'cordis', 'panel', 'tui', 'other'])
   const global = GROUPS.find(group => group.id === 'global')
-  // The bundle section mirrors the presets' four switches, then adds the
-  // default-preset force switch that has no per-preset counterpart.
+  // The bundle section mirrors the presets' four switches. The default preset is
+  // a one-shot action on the detail page, so it contributes no field here.
   assert.deepEqual(global.fields.map(spec => spec.path[1]), GLOBAL_SWITCHES)
   assert.deepEqual(Object.keys(Config.dict.global.dict), GLOBAL_SWITCHES)
   for (const section of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis']) {
@@ -38,7 +38,7 @@ await test('the page matches the host descriptor, and the opt-in switches share 
 
 await test('built-in presets hide PowerShell by default and preserve explicit opt-out', () => {
   const merged = resolveMergedConfig({})
-  assert.deepEqual(merged.global, { bash: true, hidePwsh: true, hideOfficialTools: true, dynamicTools: true, forceDefaultOpsPtc: true })
+  assert.deepEqual(merged.global, { bash: true, hidePwsh: true, hideOfficialTools: true, dynamicTools: true })
   for (const section of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis']) {
     assert.equal(merged[section].config.bash, true, `${section}.bash`)
     assert.equal(merged[section].config.hidePwsh, true, `${section}.hidePwsh`)
@@ -48,8 +48,10 @@ await test('built-in presets hide PowerShell by default and preserve explicit op
     assert.equal(merged[section].config.dynamicTools, true, `${section}.dynamicTools`)
   }
   const draft = readRowValues({})
-  assert.equal(draft['global.forceDefaultOpsPtc'], true, 'the default-preset force switch ships on')
-  assert.equal(readRowValues({ global: { forceDefaultOpsPtc: false } })['global.forceDefaultOpsPtc'], false)
+  assert.equal('global.forceDefaultOpsPtc' in draft, false, 'the default preset is an action, not a switch')
+  // The removed switch still loads a profile that saved it instead of failing on an unknown key.
+  assert.deepEqual(resolveMergedConfig({ global: { forceDefaultOpsPtc: true } }).global,
+    { bash: true, hidePwsh: true, hideOfficialTools: true, dynamicTools: true })
   assert.equal(draft['standard.bash'], true)
   assert.equal(draft['standard.hidePwsh'], true)
   assert.equal(draft['panel.enabled'], false)

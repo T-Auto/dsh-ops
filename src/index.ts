@@ -49,12 +49,13 @@ export async function apply(root: Context, rawConfig: unknown): Promise<void> {
   // The ops-ptc preset is a runtime contribution, not a bundle row: registering it
   // through the host registry means disabling this row can never leave a profile's
   // selected preset dangling. It never blocks the rest of apply.
-  registerOpsPtcPreset(root, { forceDefault: config.global.forceDefaultOpsPtc })
+  const preset = registerOpsPtcPreset(root)
   beginMergedRow()
   try {
     // The browser half mounts its `opsSettings` remote; the legacy shell row used
     // to provide that seam, so the merged row owns it now.
-    await host.plugin({ name: 'dsh-ops/runtime-settings', apply: (ctx: Context) => mountRuntimeSettings(ctx, { config: () => rawConfig }) })
+    await host.plugin({ name: 'dsh-ops/runtime-settings',
+      apply: (ctx: Context) => mountRuntimeSettings(ctx, { config: () => rawConfig, applyDefaultPreset: () => preset.applyDefault() }) })
     for (const mode of MODE_IDS) {
       const state = config[mode]
       const effective = resolveModeConfig(effectiveMode(state, config.global, typeof config.other.raw?.pwsh7Link === 'boolean' ? config.other.raw.pwsh7Link : companionVersion({ sweep: false }) !== undefined), mode)
