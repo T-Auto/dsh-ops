@@ -6,7 +6,7 @@ import type { SandboxExecutionPolicy, SandboxProvider } from '../adapter/dsh/typ
 import type { SandboxPolicyService } from '../adapter/dsh/types.js'
 import type { SubprocessRuntime, SubprocessOutputReader } from '../adapter/dsh/types.js'
 
-export type ShellCall = Partial<Pick<ToolRunContext, 'agent' | 'callId' | 'signal' | 'token' | 'parent'>>
+export type ShellCall = Partial<Pick<ToolRunContext, 'agent' | 'callId' | 'rootCallId' | 'signal' | 'token' | 'parent'>>
 export type ShellPolicy = SandboxExecutionPolicy
 export interface ShellStream { text: string; truncated: boolean; spillPath?: string; bytes?: number; bytesTotal?: number; lines?: number }
 export interface ShellResult {
@@ -82,6 +82,7 @@ export type HostShellDefinition = Omit<ToolDefinition, 'execute'> & {
 export interface ShellJobView { status: string; detail?: string }
 export interface ShellJobs {
   start(spec: { kind: string; label: string; owner?: string;
+    toolCall?: { callId: string; rootCallId: string };
     output: { channel: string; read: SubprocessOutputReader['readFrom'] }[];
     run(): { done: Promise<{ status: 'completed' | 'failed' | 'killed'; detail: string }>; cancel(reason: string): void } }): string
   wait(id: string, timeoutMs: number, owner?: string, signal?: AbortSignal): Promise<ShellJobView>

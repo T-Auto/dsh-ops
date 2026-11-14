@@ -11,6 +11,10 @@ const CONVERSATION_LIMIT = 20_000
 const TOOL_NAME_LIMIT = 64
 /** Characters of a tool name line kept in a trace preview. */
 const PREVIEW_CHARS = 120
+/** Result rows remembered for withdrawal; past this, an older result simply stays drawn. */
+const RESULT_ROW_LIMIT = 20_000
+/** Call ids whose tool name stays resolvable for a later `job/*` record. */
+const CALL_NAME_LIMIT = 2_048
 /** The four core usage buckets in `bench/run.schema.json` order, and the optional ones. */
 const USAGE_BUCKETS: readonly CoreBucket[] = Object.freeze(['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens'])
 const OPTIONAL_BUCKETS: readonly UsageBucket[] = Object.freeze(['reasoningTokens', 'totalTokens'])
@@ -54,6 +58,18 @@ function traceRow(record: CaptureEvent, lane: string, kind: string, extra: Row =
 }
 
 /**
+ * The one earlier seq this record replaces, when the host said so. A range
+ * replacement (a compaction summary rewriting a span) is not a tool-result
+ * replacement and must keep its current handling.
+ */
+function replacedSeq(record: CaptureEvent): number | undefined {
+  const op = record.surfaceOp
+  if (op == null || op.op !== 'replace') return undefined
+  if (op.startSeq === undefined || op.endSeq === undefined || op.startSeq !== op.endSeq) return undefined
+  return op.startSeq
+}
+
+/**
  * Fold one session's records into the document `panel.html` reads.
  * @param {object[]} records - parsed append-log records, in order.
  * @param {{config?: object, meta?: object, droppedEvents?: number, malformed?: number}} [context] - fold inputs.
@@ -62,9 +78,14 @@ function traceRow(record: CaptureEvent, lane: string, kind: string, extra: Row =
 export function foldRecords(records: readonly unknown[], context: FoldContext = {}) {
   const config = context.config ?? PANEL_DEFAULTS
   const supplied = { ...(context.meta ?? {}) }
-  const conversation: Row[] = []
-  const trace: Row[] = []
+  // Ordered sets keep each view bounded while allowing a replaced row to free its slot.
+  const conversation = new Set<Row>()
+  const trace = new Set<Row>()
   const pending = new Map<string, { name: string; startedAt: number }>()
+  const callNames = new Map<string, string>()
+  // Keep each result row so a replacement can withdraw it from either view.
+  const resultRows = new Map<number, { trace: Row; conversation: Row; failed: boolean; dropped: number }>()
+  let pruneReplacements = 0
   const usage = emptyUsage()
   const bucketNames = new Set<string>()
   const eventTypes: Record<string, number> = {}
@@ -79,6 +100,7 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
   let endedAt: number | undefined
   let turnEndReason: string | undefined
   let capped = false
+  let captureFailed = context.captureFailed === true
   let conversationTruncated = false
   let traceTruncated = false
   let droppedChars = 0
@@ -90,15 +112,23 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
     if (endedAt === undefined || ms > endedAt) endedAt = ms
   }
   const pushConversation = (row: Row) => {
-    if (conversation.length >= CONVERSATION_LIMIT) conversationTruncated = true
-    else conversation.push(row)
+    if (conversation.size >= CONVERSATION_LIMIT) conversationTruncated = true
+    else conversation.add(row)
   }
   const pushTrace = (row: Row) => {
-    if (trace.length >= TRACE_LIMIT) traceTruncated = true
-    else trace.push(row)
+    if (trace.size >= TRACE_LIMIT) traceTruncated = true
+    else trace.add(row)
   }
   const preview = (value: unknown) => String(value ?? '').replace(/\s+/gu, ' ').slice(0, PREVIEW_CHARS)
   const dropped = (field: TextField | null | undefined) => { if (field?.truncated === true) droppedChars += field.droppedChars ?? 0 }
+  // The call id → tool name index is bounded: a long session must not grow it without limit,
+  // and a job row resolves its tool through it. Top-level `tool/call` records and PTC
+  // dispatch records both feed it, so a job dispatched from a `run_code` program resolves too.
+  const rememberCall = (callId: string, name: string) => {
+    callNames.set(callId, name)
+    const oldest = callNames.keys().next()
+    if (callNames.size > CALL_NAME_LIMIT && oldest.done !== true) callNames.delete(oldest.value)
+  }
 
   for (const record of records) {
     if (!object(record) || Array.isArray(record)) continue
@@ -108,6 +138,7 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
       continue
     }
     if (record.record === 'capped') { capped = true; continue }
+    if (record.record === 'capture-failed') { captureFailed = true; continue }
     if (record.record !== 'event') continue
     if (!foldEvent(record)) { malformedRecords += 1; counters.usageReported = false; continue }
     const time = Number.isFinite(record.time) && record.time >= 0 ? record.time : 0
@@ -144,7 +175,10 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
         const name = record.name ?? '(unnamed)'
         const key = Object.hasOwn(toolCallsByName, name) || Object.keys(toolCallsByName).length < TOOL_NAME_LIMIT ? name : '(other)'
         toolCallsByName[key] = (toolCallsByName[key] ?? 0) + 1
-        if (record.callId !== undefined) pending.set(record.callId, { name, startedAt: time })
+        if (record.callId !== undefined) {
+          pending.set(record.callId, { name, startedAt: time })
+          rememberCall(record.callId, name)
+        }
         pushTrace(traceRow(record, 'tool_call', 'tool_call', {
           name, callId: record.callId, step: record.step, text: preview(record.arguments?.text),
         }))
@@ -154,15 +188,78 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
         const call = record.callId === undefined ? undefined : pending.get(record.callId)
         if (record.callId !== undefined) pending.delete(record.callId)
         const failed = record.isError === true
+        // The host may replace one earlier result (a pruned middle span). Draw the
+        // replacement once and withdraw the row it superseded: otherwise the same call
+        // shows up twice and `toolErrors` / `droppedChars` count it twice.
+        // Only the host's own record withdraws a row. A log written before that metadata was
+        // captured keeps both rows: a second result for one call id is not proof of a
+        // replacement, and guessing would delete real output instead of showing it twice.
+        const replaced = replacedSeq(record)
+        const original = replaced === undefined ? undefined : resultRows.get(replaced)
+        if (original !== undefined && replaced !== undefined) {
+          // Withdraw each visible row before admission, so a full view keeps its replacement.
+          conversation.delete(original.conversation)
+          trace.delete(original.trace)
+          pruneReplacements += 1
+          if (original.failed) counters.toolErrors -= 1
+          droppedChars -= original.dropped
+        }
         if (failed) counters.toolErrors += 1
-        pushConversation({ ...messageRow(record, 'tool'), isError: failed })
-        pushTrace(traceRow(record, 'tool_result', failed ? 'tool_error' : 'tool_result', {
-          name: call?.name, callId: record.callId, isError: failed, errorCode: record.errorCode, step: record.step,
-          durationMs: call === undefined ? undefined : Math.max(0, time - call.startedAt),
-          text: failed ? `${call?.name ?? 'tool'} failed${record.errorCode ? ` (${record.errorCode})` : ''}` : preview(payload.text),
+        const name = typeof original?.trace.name === 'string' ? original.trace.name : call?.name
+        const replacementRow = original !== undefined && replaced !== undefined
+        const conversationRow = { ...messageRow(record, 'tool'), isError: failed }
+        pushConversation(conversationRow)
+        const row = traceRow(record, 'tool_result', failed ? 'tool_error' : 'tool_result', {
+          name, callId: record.callId, isError: failed, errorCode: record.errorCode, step: record.step,
+          durationMs: original?.trace.durationMs ?? (call === undefined ? undefined : Math.max(0, time - call.startedAt)),
+          ...(replacementRow ? { supersedes: replaced, pruned: true } : {}),
+          text: failed
+            ? `${name ?? 'tool'} failed${record.errorCode ? ` (${record.errorCode})` : ''}`
+            : preview(payload.text) + (replacementRow ? ` · 已裁剪（替换 #${String(replaced)}）` : ''),
+        })
+        pushTrace(row)
+        resultRows.set(record.seq, { trace: row, conversation: conversationRow, failed, dropped: Number(payload.droppedChars ?? 0) })
+        // Bounded like the visible trace: an older result past the limit keeps its row
+        // rather than growing this index without limit on a very long session.
+        if (resultRows.size > RESULT_ROW_LIMIT) {
+          const oldest = resultRows.keys().next().value
+          if (oldest !== undefined) resultRows.delete(oldest)
+        }
+        break
+      }
+      case 'tool/ptc-dispatch-start': case 'tool/ptc-dispatch': {
+        const settled = record.type === 'tool/ptc-dispatch'
+        const failed = settled && record.isError === true
+        // The inner tool name exists only on the dispatch records, and a job dispatched from
+        // the program carries this sub call id. Index it like `tool/call`; when the host sends
+        // no name the job keeps its honest `kind` fallback instead of a fabricated one.
+        if (record.callId !== undefined && record.name !== undefined && record.name !== '(unnamed)') rememberCall(record.callId, record.name)
+        pushTrace(traceRow(record, failed ? 'error' : 'tool_result', failed ? 'ptc_dispatch_error' : settled ? 'ptc_dispatch' : 'ptc_dispatch_start', {
+          name: record.name, callId: record.callId, isError: failed, errorCode: record.errorCode,
+          text: failed
+            ? `${record.name ?? 'tool'} failed${record.errorCode === undefined ? '' : ` (${record.errorCode})`}`
+            : preview(record.payload?.text ?? record.arguments?.text),
         }))
         break
       }
+      case 'job/registered': case 'job/settled': {
+        // The job only carries the call id; resolve the tool name from the tool/call record.
+        const toolName = record.callId === undefined ? undefined : callNames.get(record.callId)
+        pushTrace(traceRow(record, record.status === 'failed' || record.status === 'killed' ? 'error' : 'milestone',
+          record.type === 'job/settled' ? 'job_settled' : 'job_registered', {
+            jobId: record.jobId, name: toolName ?? record.kind, jobKind: record.kind, callId: record.callId,
+            status: record.status, text: preview(record.payload?.text),
+          }))
+        break
+      }
+      case 'agent/inbox/spliced':
+        pushTrace(traceRow(record, 'milestone', 'inbox_spliced', {
+          target: record.target, inserted: record.insertedCount ?? 0, removed: record.removedCount ?? 0, text: preview(record.payload?.text),
+        }))
+        break
+      case 'todo/write':
+        pushTrace(traceRow(record, 'milestone', 'todo_write', { text: preview(record.payload?.text) }))
+        break
       case 'step/start': case 'step/end':
         if (record.type === 'step/start') counters.steps += 1
         pushTrace(traceRow(record, 'milestone', record.type === 'step/start' ? 'step_start' : 'step_end', {
@@ -186,6 +283,10 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
         break
     }
   }
+  if (captureFailed) counters.usageReported = false
+  // Sets preserve event order; the counters still include every event the host emitted.
+  const shownConversation = [...conversation]
+  const shownTrace = [...trace]
   usage.grandTotal = USAGE_BUCKETS.reduce((total, key) => total + usage[key], 0)
   const at = (ms: number | undefined) => (ms === undefined ? undefined : new Date(ms).toISOString())
   const events: FoldedEvents = { layout: 'merged', merged: true, mergedAt: undefined,
@@ -206,12 +307,15 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
       ...counters, toolCallsByName, usage, usageBucketsSeen: [...bucketNames].sort(),
       turnEndReason, malformed: (context.malformed ?? 0) + malformedRecords,
     },
-    conversation,
-    trace,
+    conversation: shownConversation,
+    trace: shownTrace,
     verify: {
       checks: 0, passed: 0, failed: 0,
-      degraded: capped || conversationTruncated || traceTruncated || events.malformed > 0,
+
+      degraded: captureFailed || capped || conversationTruncated || traceTruncated || events.malformed > 0,
       notes: [
+        ...(captureFailed ? ['采集追加失败，事件或用量统计不完整。'] : []),
+        ...(pruneReplacements > 0 ? ['宿主裁剪替换过的工具结果只显示替换后的一条，被替换的原行已撤回；事件计数仍是宿主实际发出的原始事件数。'] : []),
         '实时采集没有 verifier:「判卷」标签页只反映采集自身的完整性,不代表任何任务的通过情况。',
         '只有挂载之后产生的事件会被采集;挂载之前的历史与已恢复的会话前缀不回放。',
       ],
@@ -219,6 +323,8 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
     events,
     archive,
     limits: {
+      ...(captureFailed ? { captureFailed: true } : {}),
+      ...(pruneReplacements > 0 ? { pruneReplacements } : {}),
       textLimit: config.textLimit ?? PANEL_DEFAULTS.textLimit, maxSessionBytes: config.maxSessionBytes ?? PANEL_DEFAULTS.maxSessionBytes,
       truncated: capped, droppedEvents: context.droppedEvents ?? 0, droppedChars,
       traceTruncated, conversationTruncated, trimmed: false, trimmedRows: 0,
