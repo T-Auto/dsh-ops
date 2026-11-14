@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Preserve the host-provided root and child call IDs when `ops_bash` registers a job, so captured job events resolve back to their tool call. Replacing a visible panel result now frees its view slot before admitting the replacement, including at the 20,000-row limit (#909).
+- `ops_bash` 注册作业时保留宿主提供的根调用与子调用 ID，使采集的作业事件能关联回工具调用。面板替换可见结果时先释放原行位置，再接纳替换行，包括达到 20,000 行上限的情况（#909）。
+
 - Draw a host-pruned tool result once: capture keeps the host's single-target `surfaceOp` replacement, the fold withdraws the row it superseded, and `toolErrors`/`droppedChars` stop counting the same result twice. Event counts still report every event the host emitted, and `limits.pruneReplacements` names how many withdrawals happened. A capture written before this metadata existed keeps both rows: a repeated call id alone is not proof of a replacement (#700).
 - 宿主裁剪过的工具结果只显示一条：采集保留宿主针对单个事件给出的 `surfaceOp` 替换，折叠时撤回被替换的原行，`toolErrors`／`droppedChars` 不再把同一结果算两次。事件计数仍是宿主实际发出的数量，`limits.pruneReplacements` 标明发生了多少次撤回。该元数据存在之前写下的采集保留两行：只凭重复的 callId 不能证明发生过替换，旧日志由使用者自行清理（#700）。
 

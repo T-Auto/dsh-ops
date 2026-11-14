@@ -118,4 +118,115 @@ await test('real host replacement shape from a captured session folds to one row
   assert.equal(doc.events.types['compaction/prune'], 1, 'the prune marker is still recorded by type')
 })
 
+// Fill one view independently before replacing an already visible result.
+function capacityEvents(view, count) {
+  const events = [call(), result(2, LONG)]
+  events[1].data.message.isError = true
+  const padding = view === 'trace' ? count - 2 : count - 1
+  for (let index = 0; index < padding; index += 1) {
+    const seq = events.length + 1
+    events.push(view === 'trace'
+      ? { type: 'step/end', seq, time: TIME + seq, data: { step: index } }
+      : { type: 'user/message', seq, time: TIME + seq, data: {
+          source: { kind: 'user' }, content: [{ type: 'text', text: 'keep' }] } })
+  }
+  const seq = events.length + 1
+  events.push(result(seq, PRUNED, {
+    surfaceOp: { op: 'replace', startSeq: 2, endSeq: 2 }, sourceEventSeqs: [2],
+  }))
+  return events
+}
+
+for (const [view, count, failed] of [
+  ['trace', 19_999, false], ['trace', 20_000, true],
+  ['conversation', 19_999, true], ['conversation', 20_000, false],
+]) {
+  await test(`replacement remains visible with ${view} at ${count} rows`, () => {
+    const events = capacityEvents(view, count)
+    const last = events[events.length - 1]
+    last.data.message.isError = failed
+    const doc = fold(events)
+    const trace = doc.trace.filter(row => row.seq === last.seq)
+    const conversation = doc.conversation.filter(row => row.seq === last.seq)
+    assert.equal(trace.length, 1, 'the replacement is visible in trace exactly once')
+    assert.equal(conversation.length, 1, 'the replacement is visible in conversation exactly once')
+    assert.equal(doc.trace.some(row => row.seq === 2), false)
+    assert.equal(doc.conversation.some(row => row.seq === 2), false)
+    const padding = events.slice(2, -1)
+    assert.deepEqual(doc.trace.map(row => row.seq), [1, ...padding.slice(0, 19_998).map(event => event.seq), last.seq],
+      'the other retained trace rows stay ordered and the replacement is last')
+    assert.deepEqual(doc.conversation.map(row => row.seq), [
+      ...(view === 'conversation' ? padding.map(event => event.seq) : []), last.seq,
+    ], 'the other retained conversation rows stay ordered and the replacement is last')
+    assert.equal(trace[0].kind, failed ? 'tool_error' : 'tool_result')
+    assert.equal(trace[0].name, 'ops_bash')
+    assert.equal(trace[0].durationMs, 2)
+    assert.equal(trace[0].pruned, true)
+    assert.equal(trace[0].supersedes, 2)
+    assert.equal(conversation[0].text, PRUNED.slice(0, 2_000))
+    assert.equal(conversation[0].chars, PRUNED.length)
+    assert.equal(conversation[0].truncated, true)
+    assert.equal(conversation[0].droppedChars, PRUNED.length - 2_000)
+    assert.equal(doc.metrics.toolCalls, 1)
+    assert.equal(doc.metrics.toolErrors, failed ? 1 : 0)
+    assert.equal(doc.metrics.eventCount, events.length)
+    assert.equal(doc.events.types['tool/result'], 2)
+    assert.equal(doc.limits.pruneReplacements, 1)
+    assert.equal(doc.limits.droppedChars, PRUNED.length - 2_000)
+    assert.equal(doc.limits.traceTruncated, view === 'conversation' && count === 20_000)
+    assert.equal(doc.limits.conversationTruncated, false)
+  })
+}
+
+await test('replacement does not clear existing view truncation flags', () => {
+  const events = capacityEvents('conversation', 20_000)
+  const last = events.pop()
+  const seq = events.length + 1
+  events.push({ type: 'user/message', seq, time: TIME + seq, data: {
+    source: { kind: 'user' }, content: [{ type: 'text', text: 'omitted' }] } })
+  last.seq = events.length + 1
+  last.time = TIME + last.seq
+  events.push(last)
+  const doc = fold(events)
+  assert.equal(doc.trace.filter(row => row.seq === last.seq).length, 1)
+  assert.equal(doc.conversation.filter(row => row.seq === last.seq).length, 1)
+  assert.equal(doc.trace.some(row => row.seq === 2), false)
+  assert.equal(doc.conversation.some(row => row.seq === 2), false)
+  assert.equal(doc.trace.some(row => row.seq === seq), false)
+  assert.equal(doc.conversation.some(row => row.seq === seq), false)
+  assert.equal(doc.trace.length, 20_000)
+  assert.equal(doc.conversation.length, 20_000)
+  assert.equal(doc.limits.traceTruncated, true)
+  assert.equal(doc.limits.conversationTruncated, true)
+  assert.equal(doc.metrics.eventCount, events.length)
+  assert.equal(doc.events.types['tool/result'], 2)
+  assert.equal(doc.limits.pruneReplacements, 1)
+  assert.equal(doc.metrics.toolErrors, 0)
+  assert.equal(doc.limits.droppedChars, PRUNED.length - 2_000)
+})
+
+await test('a legal replacement chain stays visible at trace capacity', () => {
+  const events = capacityEvents('trace', 20_000)
+  const first = events[events.length - 1]
+  const seq = first.seq + 1
+  const last = result(seq, PRUNED, {
+    surfaceOp: { op: 'replace', startSeq: first.seq, endSeq: first.seq }, sourceEventSeqs: [first.seq],
+  })
+  last.data.message.isError = true
+  events.push(last)
+  const doc = fold(events)
+  assert.equal(doc.trace.filter(row => row.seq === seq).length, 1)
+  assert.equal(doc.conversation.filter(row => row.seq === seq).length, 1)
+  assert.equal(doc.trace.some(row => row.seq === 2 || row.seq === first.seq), false)
+  assert.equal(doc.conversation.some(row => row.seq === 2 || row.seq === first.seq), false)
+  assert.equal(doc.trace.length, 20_000)
+  assert.equal(doc.conversation.length, 1)
+  assert.equal(doc.metrics.toolErrors, 1)
+  assert.equal(doc.metrics.eventCount, events.length)
+  assert.equal(doc.events.types['tool/result'], 3)
+  assert.equal(doc.limits.pruneReplacements, 2)
+  assert.equal(doc.limits.droppedChars, PRUNED.length - 2_000)
+  assert.equal(doc.limits.traceTruncated, false)
+})
+
 report('panel-prune-fold')

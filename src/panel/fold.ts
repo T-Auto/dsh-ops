@@ -78,13 +78,13 @@ function replacedSeq(record: CaptureEvent): number | undefined {
 export function foldRecords(records: readonly unknown[], context: FoldContext = {}) {
   const config = context.config ?? PANEL_DEFAULTS
   const supplied = { ...(context.meta ?? {}) }
-  const conversation: Row[] = []
-  const trace: Row[] = []
+  // Ordered sets keep each view bounded while allowing a replaced row to free its slot.
+  const conversation = new Set<Row>()
+  const trace = new Set<Row>()
   const pending = new Map<string, { name: string; startedAt: number }>()
   const callNames = new Map<string, string>()
-  // Results the host has since replaced, and the rows it replaced them with.
-  const superseded = new Set<number>()
-  const resultRows = new Map<number, { trace: Row; failed: boolean; dropped: number }>()
+  // Keep each result row so a replacement can withdraw it from either view.
+  const resultRows = new Map<number, { trace: Row; conversation: Row; failed: boolean; dropped: number }>()
   let pruneReplacements = 0
   const usage = emptyUsage()
   const bucketNames = new Set<string>()
@@ -112,12 +112,12 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
     if (endedAt === undefined || ms > endedAt) endedAt = ms
   }
   const pushConversation = (row: Row) => {
-    if (conversation.length >= CONVERSATION_LIMIT) conversationTruncated = true
-    else conversation.push(row)
+    if (conversation.size >= CONVERSATION_LIMIT) conversationTruncated = true
+    else conversation.add(row)
   }
   const pushTrace = (row: Row) => {
-    if (trace.length >= TRACE_LIMIT) traceTruncated = true
-    else trace.push(row)
+    if (trace.size >= TRACE_LIMIT) traceTruncated = true
+    else trace.add(row)
   }
   const preview = (value: unknown) => String(value ?? '').replace(/\s+/gu, ' ').slice(0, PREVIEW_CHARS)
   const dropped = (field: TextField | null | undefined) => { if (field?.truncated === true) droppedChars += field.droppedChars ?? 0 }
@@ -197,7 +197,9 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
         const replaced = replacedSeq(record)
         const original = replaced === undefined ? undefined : resultRows.get(replaced)
         if (original !== undefined && replaced !== undefined) {
-          superseded.add(replaced)
+          // Withdraw each visible row before admission, so a full view keeps its replacement.
+          conversation.delete(original.conversation)
+          trace.delete(original.trace)
           pruneReplacements += 1
           if (original.failed) counters.toolErrors -= 1
           droppedChars -= original.dropped
@@ -205,7 +207,8 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
         if (failed) counters.toolErrors += 1
         const name = typeof original?.trace.name === 'string' ? original.trace.name : call?.name
         const replacementRow = original !== undefined && replaced !== undefined
-        pushConversation({ ...messageRow(record, 'tool'), isError: failed })
+        const conversationRow = { ...messageRow(record, 'tool'), isError: failed }
+        pushConversation(conversationRow)
         const row = traceRow(record, 'tool_result', failed ? 'tool_error' : 'tool_result', {
           name, callId: record.callId, isError: failed, errorCode: record.errorCode, step: record.step,
           durationMs: original?.trace.durationMs ?? (call === undefined ? undefined : Math.max(0, time - call.startedAt)),
@@ -215,7 +218,7 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
             : preview(payload.text) + (replacementRow ? ` · 已裁剪（替换 #${String(replaced)}）` : ''),
         })
         pushTrace(row)
-        resultRows.set(record.seq, { trace: row, failed, dropped: Number(payload.droppedChars ?? 0) })
+        resultRows.set(record.seq, { trace: row, conversation: conversationRow, failed, dropped: Number(payload.droppedChars ?? 0) })
         // Bounded like the visible trace: an older result past the limit keeps its row
         // rather than growing this index without limit on a very long session.
         if (resultRows.size > RESULT_ROW_LIMIT) {
@@ -281,11 +284,9 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
     }
   }
   if (captureFailed) counters.usageReported = false
-  // Withdrawal is a view concern: the replaced rows leave both lists, while the event
-  // counters above stay the honest count of what the host actually emitted.
-  const visible = (row: Row) => !superseded.has(Number(row.seq))
-  const shownConversation = conversation.filter(visible)
-  const shownTrace = trace.filter(visible)
+  // Sets preserve event order; the counters still include every event the host emitted.
+  const shownConversation = [...conversation]
+  const shownTrace = [...trace]
   usage.grandTotal = USAGE_BUCKETS.reduce((total, key) => total + usage[key], 0)
   const at = (ms: number | undefined) => (ms === undefined ? undefined : new Date(ms).toISOString())
   const events: FoldedEvents = { layout: 'merged', merged: true, mergedAt: undefined,

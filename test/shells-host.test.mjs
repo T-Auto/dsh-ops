@@ -470,4 +470,24 @@ await test('host confinement diagnostics still distinguish runner failure, denia
   } finally { Object.defineProperty(process, 'platform', platform) }
 })
 
-report('shells-host')
+await test('background jobs carry the exact and root call identities supplied by the host', async () => {
+  for (const [callId, rootCallId] of [['shell-call', 'shell-call'], ['shell-child', 'shell-root']]) {
+    const jobs = jobRegistry(), f = fixture({ jobs })
+    const value = await f.definition.execute({ command: 'true', description: 'Preserve call identity', run_in_background: true }, { ...f.exec, callId, rootCallId })
+    assert.equal(value.kind, 'background'); await jobs.wait(value.jobId, 1000, 'shell-host')
+    assert.deepEqual(jobs.declaration.toolCall, { callId, rootCallId })
+    jobs.remove(value.jobId, 'shell-host')
+  }
+})
+
+await test('background jobs omit toolCall when either call identity is missing', async () => {
+  for (const [callId, rootCallId] of [['shell-call', undefined], [undefined, 'shell-root'], [undefined, undefined]]) {
+    const jobs = jobRegistry(), f = fixture({ jobs })
+    const value = await f.definition.execute({ command: 'true', description: 'Do not invent call identity', run_in_background: true }, { ...f.exec, callId, rootCallId })
+    assert.equal(value.kind, 'background'); await jobs.wait(value.jobId, 1000, 'shell-host')
+    assert.equal(Object.hasOwn(jobs.declaration, 'toolCall'), false)
+    jobs.remove(value.jobId, 'shell-host')
+  }
+})
+
+report('shells-host');
