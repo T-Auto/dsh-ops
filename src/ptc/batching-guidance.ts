@@ -81,7 +81,9 @@ const PLAN_ENTRY_SEPARATOR = /[;；]/u
 const DISPATCH = /\btools\s*(?:\.\s*([A-Za-z_$][\w$]*)|\[\s*['"]([^'"]+)['"]\s*\])\s*\(/gu
 const BATCHED = /Promise\.all|Promise\.allSettled|\.map\s*\(|for\s*\(|while\s*\(|forEach\s*\(|\[\s*\.\.\./u
 const BRANCHING = /\bif\s*\(|\btry\s*\{|\bswitch\s*\(|\?\s*[^:]{1,80}:/u
-const WAITING = /\bwait\s*:\s*true|job_output\s*\(/u
+const WAITING = /\bwait\s*:\s*true\b/u
+/** Tools whose call is itself a wait on other work, recognised only at a real dispatch site. */
+const WAITING_TOOL = /^(?:wait_agent|job_output)$/u
 const BYPASS = /node:fs|node:child_process|\bfs\./u
 const SHELL_TOOL = /^(?:pwsh|bash|shell|ops_bash|pwsh_persistent|bash_persistent)$/u
 
@@ -272,7 +274,10 @@ export function analyzeProgram(code: unknown): ProgramShape {
     dispatchSites: sites.length,
     hasBatchingStructure: BATCHED.test(code),
     hasBranching: BRANCHING.test(code),
-    isWaiting: WAITING.test(code),
+    // Waiting on an agent or job is a dependency barrier; tool waits count only at a
+    // real dispatch site and `wait: true` only in executable code, so comments and
+    // strings never exempt a program.
+    isWaiting: WAITING.test(readable.bare) || sites.some(match => WAITING_TOOL.test(match[1] ?? match[2] ?? '')),
     // Comments and message text are not file work; module specifiers stay readable
     // so a real import of node:fs still bypasses.
     bypassesFileTools: BYPASS.test(readable.bare) || shellForFiles,
@@ -306,8 +311,11 @@ export function violationsOf(shape: ProgramShape): ProgramViolations {
     plan: !shape.hasFirstLinePlan,
     bypass: shape.bypassesFileTools,
     // Waiting on a job and branching are legitimate non-batched shapes, and a long
-    // program is not judged from its text alone.
-    shape: !shape.hasBatchingStructure && !shape.hasBranching && !shape.isWaiting && shape.chars < THIN_CODE_CHARS,
+    // program is not judged from its text alone. The notice claims a single operation,
+    // so it needs exactly one dispatch site: two sequential sites may be dependent, and
+    // the text alone cannot prove they could have run in parallel.
+    shape: shape.dispatchSites === 1 && !shape.hasBatchingStructure && !shape.hasBranching && !shape.isWaiting
+      && shape.chars < THIN_CODE_CHARS,
   }
 }
 
