@@ -212,7 +212,8 @@ impl<'a> Lexer<'a> {
         Err(bad("Unclosed PDF literal string"))
     }
     /// A name is a token, not a policy decision: /Prev and /XRefStm describe an update only as
-    /// trailer keys, and /Encrypt is refused since encryption makes every string unreadable.
+    /// trailer keys, while /Encrypt, /ObjStm and /XRef are refused because no supported structure
+    /// can hold them.
     fn name(&mut self) -> Result<Vec<u8>> {
         self.at += 1;
         let mut name = Vec::new();
@@ -239,8 +240,14 @@ impl<'a> Lexer<'a> {
                 return Err(limit("PDF name exceeds 256 bytes"));
             }
         }
-        if name.as_slice() == b"Encrypt" {
-            return Err(unsupported("Encrypted PDFs are unsupported"));
+        match name.as_slice() {
+            b"Encrypt" => return Err(unsupported("Encrypted PDFs are unsupported")),
+            b"ObjStm" | b"XRef" => {
+                return Err(unsupported(
+                    "Object-stream and xref-stream PDFs are unsupported",
+                ));
+            }
+            _ => {}
         }
         Ok(name)
     }

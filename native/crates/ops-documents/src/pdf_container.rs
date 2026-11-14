@@ -126,18 +126,6 @@ pub(crate) fn read_object<'a>(
     if offset == 0 {
         return Err(bad("PDF object header must follow whitespace"));
     }
-    // A % starts a comment to the line end, so anything after one is comment text; an object
-    // header cannot be introduced from inside a comment, even when the % is not the line's first
-    // token.
-    let line_start = data[..offset]
-        .iter()
-        .rposition(|byte| matches!(byte, b'\n' | b'\r'))
-        .map_or(0, |at| at + 1);
-    if data[line_start..offset].contains(&b'%') {
-        return Err(bad(
-            "PDF object header must follow whitespace; a comment cannot introduce an object",
-        ));
-    }
     if !white(data[offset - 1]) {
         return Err(bad("PDF object header must follow whitespace"));
     }
@@ -197,6 +185,8 @@ pub(crate) fn read_object<'a>(
 struct Section {
     entries: BTreeMap<usize, XrefEntry>,
     trailer: Dict,
+    /// Values the section and trailer consumed; the file-wide budget starts here.
+    nodes: usize,
 }
 /// Refuse a trailer that names `/Prev` or `/XRefStm`; both mark an incremental update.
 fn reject_incremental_trailer(trailer: &Dict) -> Result<()> {
@@ -209,7 +199,12 @@ fn reject_incremental_trailer(trailer: &Dict) -> Result<()> {
     }
     Ok(())
 }
-fn read_section(data: &[u8], offset: usize, footer_start: usize) -> Result<Section> {
+fn read_section(
+    data: &[u8],
+    offset: usize,
+    footer_start: usize,
+    started: Instant,
+) -> Result<Section> {
     if offset < 9 || offset >= footer_start {
         return Err(bad("PDF xref offset points outside the object section"));
     }
@@ -221,9 +216,14 @@ fn read_section(data: &[u8], offset: usize, footer_start: usize) -> Result<Secti
             "PDF requires a classic xref table; xref streams are unsupported",
         ));
     }
-    classic_section(data, offset, footer_start)
+    classic_section(data, offset, footer_start, started)
 }
-fn classic_section(data: &[u8], offset: usize, footer_start: usize) -> Result<Section> {
+fn classic_section(
+    data: &[u8],
+    offset: usize,
+    footer_start: usize,
+    started: Instant,
+) -> Result<Section> {
     let mut lexer = Lexer {
         data,
         at: offset,
@@ -232,6 +232,7 @@ fn classic_section(data: &[u8], offset: usize, footer_start: usize) -> Result<Se
     lexer.keyword(b"xref")?;
     let mut entries: BTreeMap<usize, XrefEntry> = BTreeMap::new();
     loop {
+        check_deadline(started)?;
         lexer.skip();
         if data[lexer.at..].starts_with(b"trailer") {
             lexer.keyword(b"trailer")?;
@@ -280,7 +281,11 @@ fn classic_section(data: &[u8], offset: usize, footer_start: usize) -> Result<Se
     };
     reject_incremental_trailer(&trailer)?;
     finish_section(&mut lexer, footer_start)?;
-    Ok(Section { entries, trailer })
+    Ok(Section {
+        entries,
+        trailer,
+        nodes: lexer.nodes,
+    })
 }
 /// Verify that the section ends at the final footer: nothing follows the only revision.
 fn finish_section(lexer: &mut Lexer<'_>, footer_start: usize) -> Result<()> {
@@ -390,16 +395,9 @@ impl<'a> Loader<'a> {
         Ok(())
     }
 }
-/// Reject overlapping ranges; the header region must not contain unindexed data.
+/// Reject overlapping ranges and unindexed bytes: every gap may hold only whitespace or comments.
 fn verify_ranges(data: &[u8], mut ranges: Vec<(usize, usize)>, footer_start: usize) -> Result<()> {
     ranges.sort_unstable();
-    if let Some((first, _)) = ranges.first() {
-        let mut gap = Lexer::new(data);
-        gap.skip();
-        if gap.at != *first {
-            return Err(bad("Unindexed data before the first PDF object"));
-        }
-    }
     let mut merged: Vec<(usize, usize)> = Vec::new();
     for (start, end) in ranges {
         if start < 9 || end > footer_start || end <= start {
@@ -410,6 +408,24 @@ fn verify_ranges(data: &[u8], mut ranges: Vec<(usize, usize)>, footer_start: usi
             Some(last) if last.1 > start => return Err(bad("PDF object ranges overlap")),
             _ => merged.push((start, end)),
         }
+    }
+    // An xref offset may point into a comment, and an unindexed construct may sit in any gap, so
+    // every gap is lexed from the previous construct to the next: only whitespace and % comments
+    // may be skipped. The ranges include the xref section, so the trailing gap is covered too.
+    let mut previous = 0;
+    for (start, end) in merged {
+        let mut gap = Lexer {
+            data,
+            at: previous,
+            nodes: 0,
+        };
+        gap.skip();
+        if gap.at != start {
+            return Err(bad(
+                "Unindexed data or overlapping comments in PDF object section",
+            ));
+        }
+        previous = end;
     }
     Ok(())
 }
@@ -429,7 +445,11 @@ pub fn parse(data: &[u8]) -> Result<Document<'_>> {
     let (startxref, footer_start) = footer(data)?;
     let started = Instant::now();
     check_deadline(started)?;
-    let Section { entries, trailer } = read_section(data, startxref, footer_start)?;
+    let Section {
+        entries,
+        trailer,
+        nodes,
+    } = read_section(data, startxref, footer_start, started)?;
     let mut ranges = vec![(startxref, footer_start)];
     let mut loader = Loader {
         data,
@@ -437,9 +457,10 @@ pub fn parse(data: &[u8]) -> Result<Document<'_>> {
         objects: BTreeMap::new(),
         ranges: Vec::new(),
         resolving: BTreeSet::new(),
-        nodes: 0,
+        nodes,
         started,
     };
+    loader.charge(0)?;
     let size = {
         let size = get(&trailer, b"Size")?.clone();
         loader.length_of(&size)?
