@@ -139,7 +139,7 @@ export function resolveMergedConfig(raw?: unknown): MergedConfig {
       hidePwsh: flag(globalRaw, 'hidePwsh', true),
       hideOfficialTools: flag(globalRaw, 'hideOfficialTools', true),
       dynamicTools: flag(globalRaw, 'dynamicTools', true),
-      forceDefaultOpsPtc: flag(globalRaw, 'forceDefaultOpsPtc', true),
+      forceDefaultOpsPtc: flag(globalRaw, 'forceDefaultOpsPtc', false),
     },
     minimal: modeState('minimal', input.minimal),
     standard: modeState('standard', input.standard),

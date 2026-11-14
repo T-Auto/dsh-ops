@@ -394,7 +394,7 @@ await test('a rejected registration promise only warns', async () => {
 
 await test('a live Loader remount keeps the forced default and a disable restores it', async () => {
   const current = fs.readFileSync(path.join(PACKAGE_ROOT, 'cordis.patch.yml'), 'utf8')
-  const fixture = componentProfile('preset-registration-loader', current)
+  const fixture = componentProfile('preset-registration-loader', current, [{ id: 'dsh-ops', config: { global: { forceDefaultOpsPtc: true } } }])
   const host = await fixture.boot('linux')
   const registry = stubRegistry()
   try {
@@ -409,7 +409,7 @@ await test('a live Loader remount keeps the forced default and a disable restore
     // Saving an ordinary row switch remounts the fiber from the same entry. The
     // old teardown must not restore (that write would race the new activation and
     // wait on the profile lock the save holds).
-    fs.writeFileSync(fixture.profile.patchPath, JSON.stringify([{ id: 'dsh-ops', config: { panel: { enabled: true } } }]))
+    fs.writeFileSync(fixture.profile.patchPath, JSON.stringify([{ id: 'dsh-ops', config: { global: { forceDefaultOpsPtc: true }, panel: { enabled: true } } }]))
     await host.refresh()
     await waitFor(() => registry.state.definitions.length === 2, { what: 'the replacement activation' })
     await new Promise(resolve => setImmediate(resolve))
@@ -418,9 +418,24 @@ await test('a live Loader remount keeps the forced default and a disable restore
     assert.equal(registry.state.selected, 'ops-ptc', 'the replacement activation keeps the forced default')
 
     // Disabling the row loses the owner, so teardown gives the default back.
-    fs.writeFileSync(fixture.profile.patchPath, JSON.stringify([{ id: 'dsh-ops', config: { panel: { enabled: true } }, disabled: true }]))
+    fs.writeFileSync(fixture.profile.patchPath, JSON.stringify([{ id: 'dsh-ops', config: { global: { forceDefaultOpsPtc: true }, panel: { enabled: true } }, disabled: true }]))
     await host.refresh()
     await waitFor(() => registry.state.selected === 'standard', { what: 'the default restored when the row is disabled' })
+  } finally { await shutdown(host.ctx) }
+})
+
+await test('the shipped switch off leaves the default preset alone', async () => {
+  const current = fs.readFileSync(path.join(PACKAGE_ROOT, 'cordis.patch.yml'), 'utf8')
+  const fixture = componentProfile('preset-registration-no-force', current)
+  const host = await fixture.boot('linux')
+  const registry = stubRegistry()
+  try {
+    host.ctx.provide('agentPresets', registry)
+    host.ctx.provide('settings', stubSettings(registry))
+    await waitFor(() => registry.state.definitions.length === 1, { what: 'the runtime registration under the shipped default' })
+    await new Promise(resolve => setTimeout(resolve, 100))
+    assert.equal(registry.state.updates.length, 0, 'the shipped default never writes the default preset')
+    assert.equal(registry.state.selected, undefined, 'the shipped switch ships off')
   } finally { await shutdown(host.ctx) }
 })
 

@@ -24,7 +24,7 @@
 
 - Bash 与宿主 Shell 隐藏独立配置；Windows 可用 ops_bash 替代 pwsh，也可保留官方 Shell。
 - Native/PTC 消费者预设发布共享的有界工具面；Bash 由单行开关控制，关闭替换时原版工具保持可用。
-- 第五个内置模式 `ops-ptc` 继承 PTC 工具面，由插件运行时注册（定义来自随包片段 `presets/ops-ptc.patch.yml`，不是插件管理器行），并可开启批量调用上下文提示（`batchingGuidance`）：会话首轮注入一次英文教学（`prompts/batching-guidance.md`，进入历史、不改系统提示词），之后按根 `run_code` 程序形状（`bypass`/`plan`/`shape`，每类每轮一次、合规解锁）以 `additionalContexts` 纠偏、不阻断不改写程序；默认模式由 `global.forceDefaultOpsPtc` 开关控制（默认开启，关闭或禁用行时恢复强制前/官方默认），详见[预设与默认模式](docs/预设与默认模式.md)。
+- 第五个内置模式 `ops-ptc` 继承 PTC 工具面，由插件运行时注册（定义来自随包片段 `presets/ops-ptc.patch.yml`，不是插件管理器行），并可开启批量调用上下文提示（`batchingGuidance`）：会话首轮注入一次英文教学（`prompts/batching-guidance.md`，进入历史、不改系统提示词），之后按根 `run_code` 程序形状（`bypass`/`plan`/`shape`，每类每轮一次、合规解锁）以 `additionalContexts` 纠偏、不阻断不改写程序；默认模式由 `global.forceDefaultOpsPtc` 开关控制（默认关闭，开启后运行时强制，关闭或禁用行时恢复强制前/官方默认），详见[预设与默认模式](docs/预设与默认模式.md)。
 - 启用 DSH 预留的 `tools_addition` 动态工具加载，并提供渐进式纰漏的工具，作为高级功能（如pdf、word读取、超多文件批量修改）的加载平台，大大减少常见特定场景的token消耗量，且不会导致系统提示词膨胀
 - 为 Native 模式提供返回紧凑、带行号和更好错误回馈的工具以遏制报错循环，减少调用轮次
 - 为 PTC 模式提供一些返回结构化 JSON 值的工具以降低 ai 在 ptc 模式下编写 TypeScript 代码的token总量和心智负担

@@ -95,7 +95,7 @@ export interface RegistrationOptions {
   file?: string
   /** Replace the host entry anchor (tests only); defaults to `process.argv[1]`. */
   hostEntry?: string
-  /** The row's force-default switch; absent keeps the shipped default (on). */
+  /** The row's force-default switch; absent keeps the shipped default (off). */
   forceDefault?: boolean
 }
 

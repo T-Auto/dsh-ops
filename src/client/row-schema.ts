@@ -87,7 +87,7 @@ export const GROUPS: readonly GroupSpec[] = Object.freeze([
 /** What a switch runs with when it is absent. */
 const DEFAULTS: Readonly<Record<string, boolean>> = Object.freeze({
   'global.bash': true, 'global.hidePwsh': true, 'global.hideOfficialTools': true, 'global.dynamicTools': true,
-  'global.forceDefaultOpsPtc': true,
+  'global.forceDefaultOpsPtc': false,
   'minimal.enabled': true, 'minimal.bash': true, 'minimal.hidePwsh': true, 'minimal.hideOfficialTools': true, 'minimal.dynamicTools': true,
   'standard.enabled': true, 'standard.residentTools': true, 'standard.bash': true, 'standard.hidePwsh': true, 'standard.hideOfficialTools': true, 'standard.dynamicTools': true,
   'ptc.enabled': true, 'ptc.residentTools': true, 'ptc.bash': true, 'ptc.hidePwsh': true, 'ptc.hideOfficialTools': true, 'ptc.dynamicTools': true,

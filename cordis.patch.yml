@@ -17,7 +17,7 @@
           hidePwsh: true
           hideOfficialTools: true
           dynamicTools: true
-          forceDefaultOpsPtc: true
+          forceDefaultOpsPtc: false
         minimal:
           enabled: true
           spillRetentionDays: 30

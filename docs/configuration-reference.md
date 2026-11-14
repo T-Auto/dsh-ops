@@ -11,7 +11,7 @@ Plugin authors can also mount the [public integration API](integration-api.md) i
 | Section | Defaults and behavior |
 | --- | --- |
 | `global` | `bash`, `hidePwsh`, `hideOfficialTools`, `dynamicTools` all true; each gates the corresponding row-managed consumer choice. The same section also carries `forceDefaultOpsPtc`, see the next row |
-| `global.forceDefaultOpsPtc` | true by default; while the `ops-ptc` preset is registered, forces the default preset to `ops-ptc` at runtime by writing `selectedDefault` through the host settings service (the settings-page mechanism, overriding a manual choice). Turning it off, disabling or unloading the row restores the captured pre-force default, or the host `config.default` (the official default) when nothing was captured or the captured value is `ops-ptc`; forcing only happens after successful registration; a failed registration never forces, best-effort restores a leftover `ops-ptc` default and only warns |
+| `global.forceDefaultOpsPtc` | false by default; while the `ops-ptc` preset is registered, forces the default preset to `ops-ptc` at runtime by writing `selectedDefault` through the host settings service (the settings-page mechanism, overriding a manual choice). Turning it off, disabling or unloading the row restores the captured pre-force default, or the host `config.default` (the official default) when nothing was captured or the captured value is `ops-ptc`; forcing only happens after successful registration; a failed registration never forces, best-effort restores a leftover `ops-ptc` default and only warns |
 | `minimal` | Enabled; no resident file surface; optional Bash and dynamic selection |
 | `standard`, `cordis` | Enabled; resident Native inspect/glob/grep profile, optional Bash, replacement and discovery |
 | `ptc` | Enabled; typed resident APIs and progressive SDK loading under actual host PTC presentation |
@@ -62,7 +62,7 @@ time through the host `agentPresets.register`, using the shipped `presets/ops-pt
 the host's `loadOverlayPatches`; there is no matching preset row in the plugin manager, and disabling the
 `dsh-ops` row removes the preset with it. In the host picker it is named `OPS (PTC)` and described as
 "代码驱动的 PTC 工具面，由 dsh-ops 的 ops_* 工具扩展。"; whether it is the default is controlled by
-`global.forceDefaultOpsPtc` (on by default). Generation and the forced/manual default paths are covered in
+`global.forceDefaultOpsPtc` (off by default; turn it on to force `ops-ptc`). Generation and the forced/manual default paths are covered in
 [Presets and the default mode](presets.md).
 
 | Key | Default | Meaning |

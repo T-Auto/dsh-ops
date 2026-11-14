@@ -93,7 +93,7 @@ See the OPS PTC mode section of the [configuration reference](configuration-refe
   `dynamicTools` are independent publication choices, and a PTC presentation never brings the Native directory
   back.
 - The `ops-ptc` preset itself is registered at plugin runtime: disabling the `dsh-ops` row removes the preset
-  together with the SDK loader. The default preset is forced at runtime by `global.forceDefaultOpsPtc` (on by
+  together with the SDK loader. The default preset is forced at runtime only while `global.forceDefaultOpsPtc` is on (off by
   default) and restored when the switch is off or the row is disabled; a manually set default is still safer
   to switch first (see [Presets and the default mode](presets.md)).
 

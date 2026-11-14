@@ -57,15 +57,15 @@ after upgrading the host and review the diff; `--check` fits a local verificatio
 
 ## Forcing the default preset (`global.forceDefaultOpsPtc`)
 
-`dsh-ops` forces new sessions to default to `ops-ptc`. The bundle switch `global.forceDefaultOpsPtc` (label
-"Force the default agent preset to OPS (PTC)", default true; toggle it on the plugin page's global card or set
+`dsh-ops` can force new sessions to default to `ops-ptc`. The bundle switch `global.forceDefaultOpsPtc` (label
+"Force the default agent preset to OPS (PTC)", default false; toggle it on the plugin page's global card or set
 it in YAML) controls this at runtime rather than baking it into the profile:
 
-- **On (default)**: after the `ops-ptc` preset registers successfully, the plugin writes
+- **On**: after the `ops-ptc` preset registers successfully, the plugin writes
   `selectedDefault: ops-ptc` on `agent-preset-registry` through the host settings service — the same
   mechanism and the same volatile field as choosing a default on the Agent presets settings page. A manual
   choice is therefore overridden on the next apply while the switch stays on.
-- **Off**: restores the `selectedDefault` captured before forcing. When no value was saved, or the captured
+- **Off (default)**: restores the `selectedDefault` captured before forcing. When no value was saved, or the captured
   value is itself `ops-ptc` (a leftover from an earlier forced run), it falls back to the host
   `config.default`, i.e. that deployment's official default preset.
 - **Disabling or unloading the `dsh-ops` row**: cleanup restores the default before releasing the preset
@@ -84,7 +84,7 @@ In the host picker the preset is named `OPS (PTC)` and described as
 
 ## Setting another default preset manually
 
-`ops-ptc` is only made the default by the switch above: while the switch is off, a default still pointing at
+`ops-ptc` is only made the default by the switch above: while the switch is off (the default), a default still pointing at
 `ops-ptc` is restored on apply to the captured pre-force value or the official default (so disabling the row
 never leaves a dangling default), so do not set `ops-ptc` as the default by hand. Other default presets are
 still decided by the host/operator:
@@ -110,11 +110,11 @@ default comes from that profile's own composition.
 
 ### Risks and rollback
 
-- **With the switch on (the default)**: disabling or unloading restores the default before releasing the
+- **With the switch on**: disabling or unloading restores the default before releasing the
   registration, so the normal path does not leave a dangling default; after re-enabling, or with the switch
   off, pick the default you want on the settings page. A failed restore only warns and does not block
   unloading; treat that case as the next bullet.
-- **With the switch off**: apply also restores an `ops-ptc` default (the captured value or the official
+- **With the switch off (the default)**: apply also restores an `ops-ptc` default (the captured value or the official
   default), so a manual switch is usually unnecessary; if a missing host settings service makes that restore
   fail, switch the default to another preset before disabling or unloading, otherwise new sessions may fail to
   resolve the vanished preset against the current definition.
@@ -134,7 +134,7 @@ default comes from that profile's own composition.
 | Compaction | official `compaction-basic` | official `compaction-basic` as well; no `dsh-compress-codex` |
 | Batch-call guidance | none | `batchingGuidance`: defaults true in code and the packaged `ops-ptc` section, including legacy whole-row overrides that omit the section; explicit false disables it; one lesson at session start, then shape notices for root `run_code` programs (`bypass`/`plan`/`shape`, each latched per turn and re-armed by compliance) appended as `additionalContexts`; text in the editable `prompts/batching-guidance.md` |
 | Single-row section | `ptc` | `ops-ptc` (same keys plus `batchingGuidance`) |
-| Default preset | decided by the host/operator | forced to `ops-ptc` at runtime by `global.forceDefaultOpsPtc` (on by default); restored when turned off or the row is disabled |
+| Default preset | decided by the host/operator | forced to `ops-ptc` only after `global.forceDefaultOpsPtc` is turned on (off by default); restored when turned off or the row is disabled |
 | Ordering | order 2 | order 6, sorted after the official rows |
 
 Having both modes over one tool surface is the point of the contrast arm: `ptc` keeps the official preset

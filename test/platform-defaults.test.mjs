@@ -21,7 +21,7 @@ await test('one merged row and manifest agree on every platform', () => {
     assert.equal(resolved[mode].config.bash, true, `${mode} independently enables Bash`)
   }
   for (const feature of ['panel', 'tui', 'other']) assert.equal(resolved[feature].enabled, false, feature)
-  assert.deepEqual(resolved.global, { bash: true, hidePwsh: true, hideOfficialTools: true, dynamicTools: true, forceDefaultOpsPtc: true })
+  assert.deepEqual(resolved.global, { bash: true, hidePwsh: true, hideOfficialTools: true, dynamicTools: true, forceDefaultOpsPtc: false })
   for (const platform of ['win32', 'linux', 'darwin']) assert.equal(platformSurface(platform).shellDefaultEnabled, true)
 })
 for (const platform of ['win32', 'linux', 'darwin']) await test('real Loader applies fresh single-row ' + platform + ' defaults', async () => {

@@ -38,7 +38,7 @@ await test('the page matches the host descriptor, and the opt-in switches share 
 
 await test('built-in presets hide PowerShell by default and preserve explicit opt-out', () => {
   const merged = resolveMergedConfig({})
-  assert.deepEqual(merged.global, { bash: true, hidePwsh: true, hideOfficialTools: true, dynamicTools: true, forceDefaultOpsPtc: true })
+  assert.deepEqual(merged.global, { bash: true, hidePwsh: true, hideOfficialTools: true, dynamicTools: true, forceDefaultOpsPtc: false })
   for (const section of ['minimal', 'standard', 'ptc', 'ops-ptc', 'cordis']) {
     assert.equal(merged[section].config.bash, true, `${section}.bash`)
     assert.equal(merged[section].config.hidePwsh, true, `${section}.hidePwsh`)
@@ -48,7 +48,7 @@ await test('built-in presets hide PowerShell by default and preserve explicit op
     assert.equal(merged[section].config.dynamicTools, true, `${section}.dynamicTools`)
   }
   const draft = readRowValues({})
-  assert.equal(draft['global.forceDefaultOpsPtc'], true, 'the default-preset force switch ships on')
+  assert.equal(draft['global.forceDefaultOpsPtc'], false, 'the default-preset force switch ships off')
   assert.equal(readRowValues({ global: { forceDefaultOpsPtc: false } })['global.forceDefaultOpsPtc'], false)
   assert.equal(draft['standard.bash'], true)
   assert.equal(draft['standard.hidePwsh'], true)
