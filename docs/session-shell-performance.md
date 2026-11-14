@@ -52,3 +52,41 @@ The attached audit's `scenario.out` totals (17.1923 / 120.6023 / 0.7497 s) disag
 with its prose (7.38 / 73.14 / 0.69 s). Its `suite.out` read test measures a missing
 file; a corrective script is supplied without corrected results. Those numbers
 must be reconciled before an end-to-end comparison can support acceptance.
+
+## Directory metadata reuse — 2026-11-14
+
+C1 removes the second, absolute metadata query for every visited entry. The held
+directory's no-follow metadata already supplies symlink type and Windows reparse
+attributes. Content opens and child-directory opens keep their existing checks.
+
+The unchanged `bench/search-profile.mjs` alternated before/after order on one
+2,000-file corpus: `file0.ts` through `file1999.ts`, each containing
+`export const valueN = 'hit';` plus a newline. Total 62,890 bytes; corpus SHA-256
+`de2bfa98c7e58d8203154462ef513fb88cf27fbab13d2b517d178ee10a31a3c3`.
+There are three retained first-touch/warmup pairs and 20 measured pairs per query.
+This supplemental native-worker benchmark includes one-shot startup and opt-in
+profiling; it is not the attached shell scenario or its acceptance workload.
+
+| Query | Before p50 / p95 | After p50 / p95 |
+| --- | --- | --- |
+| Exact grep | 2913.57 / 3076.74 ms | 2795.38 / 2961.94 ms |
+| Bounded grep (5 files) | 32.11 / 39.47 ms | 32.28 / 38.86 ms |
+| Missing pattern | 2858.60 / 3001.79 ms | 2750.02 / 2978.18 ms |
+| Glob | 367.09 / 404.41 ms | 234.57 / 252.51 ms |
+
+Every paired canonical result matched; the corpus remained unchanged. Complete
+scans still perform 2,000 relative metadata queries, but no longer perform the
+2,000 duplicate absolute queries. Bounded scans retain their original semantics;
+they are not substituted for full-scan acceptance. Glob improves about 36%, while
+exact grep improves only about 4%; per-file checked opens remain the next target.
+
+[Raw report](../bench/probes/872/scan-metadata-evidence.json). Before worker SHA-256:
+`1bb7a20ba597c45b6d761df8bc7dbc12fc255dc866ff2f84556d012a65f0d15c` (PR #944).
+After: `35519ab12c0557325b4658756472edb79e35f0f1ed2032513295495c8188701a`.
+Both are Rust 1.97.1 release builds on the Windows host above. Reproduce with
+`DSH_OPS_PROFILE_SAMPLES=20 node bench/search-profile.mjs BEFORE AFTER CORPUS`.
+
+The metadata-count regression fails on the before worker and passes on the after
+worker. Directory-link/junction exclusion, coverage, early-exit, pagination,
+multiline and definitions suites pass (30 checks). No full scenario, shell or
+file-operation acceptance is claimed from these figures.
