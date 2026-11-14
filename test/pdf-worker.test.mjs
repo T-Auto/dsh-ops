@@ -150,6 +150,15 @@ await test('out-of-range offsets count actual skips and sparse blank pages remai
     failure(await run(root,{path:fileAt(root,textPdf(['BT /F1 12 Tf (x) Tj 0 0 m ET']))}),'DOCUMENT_PARSE_ERROR')
   })
 })
+await test('empty content arrays are empty pages and non-reference members are parse errors', async () => {
+  await withTempDir('pdf-contents', async root => {
+    const tree='<< /Type /Pages /Kids [4 0 R 5 0 R] /Count 2 >>'
+    const blank=await run(root,{path:fileAt(root,pdf([catalog,tree,font,page('[]'),'<< /Type /Page /Parent 2 0 R >>']))})
+    assert.equal(blank.complete,true);assert.deepEqual(blank.items.map(item=>item.runs),[[],[]])
+    const invalid='<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 3 0 R >> >> /Contents [(x)] >>'
+    failure(await run(root,{path:fileAt(root,pdf([catalog,'<< /Type /Pages /Kids [4 0 R] /Count 1 >>',font,invalid]))}),'DOCUMENT_PARSE_ERROR')
+  })
+})
 await test('stream-valued font and resource dictionaries cannot be interpreted as plain values', async () => {
   await withTempDir('pdf-stream-dicts',async root=>{
     const tree='<< /Type /Pages /Kids [4 0 R] /Count 1 >>'

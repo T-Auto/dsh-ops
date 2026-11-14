@@ -273,4 +273,54 @@ mod tests {
         rejected("4 0 R", &["(one)"], "must be a bounded nonnegative integer");
         rejected("4 0 R", &["-1"], "must be a bounded nonnegative integer");
     }
+    fn content_of(page: &str, extra: &[&str]) -> Result<Vec<u8>> {
+        let mut objects = vec![
+            "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+            page.to_string(),
+        ];
+        objects.extend(extra.iter().map(|value| value.to_string()));
+        let bytes = emit(objects);
+        let document = parse(&bytes).unwrap();
+        let pages = pages(&document, Instant::now()).unwrap();
+        Streams::new().content(&document, &pages[0], Instant::now())
+    }
+    #[test]
+    fn page_contents_handle_missing_null_empty_and_invalid_members() {
+        assert!(
+            content_of("<< /Type /Page /Parent 2 0 R >>", &[])
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            content_of("<< /Type /Page /Parent 2 0 R /Contents null >>", &[])
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            content_of("<< /Type /Page /Parent 2 0 R /Contents [] >>", &[])
+                .unwrap()
+                .is_empty()
+        );
+        let error = content_of("<< /Type /Page /Parent 2 0 R /Contents [(x)] >>", &[]).unwrap_err();
+        assert_eq!(error.code, "DOCUMENT_PARSE_ERROR");
+    }
+    #[test]
+    fn page_contents_concatenate_single_and_multiple_streams_in_order() {
+        let single = content_of(
+            "<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>",
+            &["<< /Length 2 >>\nstream\nab\nendstream"],
+        )
+        .unwrap();
+        assert_eq!(single, b"ab".to_vec());
+        let multiple = content_of(
+            "<< /Type /Page /Parent 2 0 R /Contents [4 0 R 5 0 R] >>",
+            &[
+                "<< /Length 2 >>\nstream\nab\nendstream",
+                "<< /Length 2 >>\nstream\ncd\nendstream",
+            ],
+        )
+        .unwrap();
+        assert_eq!(multiple, b"abcd".to_vec());
+    }
 }
