@@ -143,6 +143,10 @@ impl Lease {
     }
 }
 impl ChannelPool {
+    /// Stable for this pool's lifetime; generations still own separate captures and EOF.
+    pub fn name(&self) -> &std::ffi::OsStr {
+        &self.0.name
+    }
     pub(super) fn new(job: Arc<Job>) -> io::Result<Self> {
         let name = security::private_name()?;
         let descriptor = security::Security::new()?;

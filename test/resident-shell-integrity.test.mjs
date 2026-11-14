@@ -6,6 +6,7 @@ import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import Policy from '@deepseek-ai/dsh-sandbox-policy'
 import { residentKernel } from '../lib/execution/resident/provider.js'
 import { residentShellAdmission } from '../lib/execution/resident/shell-owner.js'
+import { residentShellBootstrap } from '../lib/execution/resident/shell-bootstrap.js'
 import { prepareNiubash } from '../lib/niubash/runtime.js'
 import { assert, test, report, skipSuite, withTempDir, PACKAGE_ROOT } from './lib/harness.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
@@ -27,7 +28,7 @@ function completed(value, text) {
 
 await withTempDir('resident-shell-integrity', async workspace => {
   const host = await createResidentTaskJobs({ cwd: workspace, initialAgents: 2 })
-  let admission, kernel
+  let admission, kernel, legacyBootstrap = false
   try {
     const { ctx, agents } = host
     await ctx.plugin(Policy, { mode: 'danger-full-access', workspaceRoot: workspace })
@@ -38,6 +39,8 @@ await withTempDir('resident-shell-integrity', async workspace => {
     kernel = ctx.get('opsKernel')
     await ctx.plugin(residentShellAdmission({ transport: kernel.shell,
       bash: { file: shell, source: 'stock-integrity-regression' },
+      bootstrap: endpoints => residentShellBootstrap(legacyBootstrap
+        ? { commandPipe: endpoints.commandPipe, receiptPipe: endpoints.receiptPipe } : endpoints),
       runtime: (_bash, env, policy, signal) => prepareNiubash(shell, env.PATH ?? env.Path, signal,
         { workspaceRoot: policy.workspaceRoot }),
     }))
@@ -66,6 +69,8 @@ await withTempDir('resident-shell-integrity', async workspace => {
       for (const agent of agents) {
         let previous
         for (let generation = 0; generation < 3; generation++) {
+          if (generation === 1) completed(await call(agent,
+            "_ops_out=changed _ops_err=changed _ops_receipt=changed; printf changed"), 'changed')
           const value = await call(agent, command)
           assert.equal(value.status, 'completed', JSON.stringify(value))
           assert.equal(value.shellState, 'preserved')
@@ -116,6 +121,19 @@ await withTempDir('resident-shell-integrity', async workspace => {
       assert.match(value.error.message, /unregistered shell stdout\/stderr observed/)
       assert.equal(value.shellState, 'reset')
       assert.equal(value.cleanupConfirmed, true)
+      completed(await call(agents[1], 'printf %s "$SIBLING_INTEGRITY"'), 'retained')
+    })
+    await test('a legacy bootstrap refuses the new command framing before user evaluation', async () => {
+      const marker = path.join(workspace, 'legacy-must-not-evaluate')
+      legacyBootstrap = true
+      try {
+        const value = await call(agents[0], `printf unexpected > ${quote(marker.replaceAll('\\', '/'))}`, { timeoutMs: 1000 })
+        assert.notEqual(value.status, 'completed', JSON.stringify(value))
+        assert.equal(value.shellState, 'reset')
+        assert.equal(value.cleanupConfirmed, true)
+        assert.equal(fs.existsSync(marker), false)
+      } finally { legacyBootstrap = false }
+      completed(await call(agents[0], 'printf recovered'), 'recovered')
       completed(await call(agents[1], 'printf %s "$SIBLING_INTEGRITY"'), 'retained')
     })
   } finally {

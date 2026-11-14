@@ -3,6 +3,7 @@ import { Duplex, PassThrough, Writable } from 'node:stream'
 import { Context } from '@deepseek-ai/cordis'
 import { startResident } from '../lib/execution/resident/client.js'
 import { workerEnvelope } from '../lib/execution/protocol.js'
+import { residentShellBootstrap } from '../lib/execution/resident/shell-bootstrap.js'
 import { assert, report, test } from './lib/harness.mjs'
 
 const turn = () => new Promise(resolve => setImmediate(resolve))
@@ -14,6 +15,14 @@ const completed = (requestId, overrides = {}) => ({ type: 'shell.completed', req
   effectState: 'unknown', shellState: 'preserved', cleanupConfirmed: true, stdoutTotal: 0, stderrTotal: 0, ...overrides })
 const output = (requestId, stream, offset, bytes, overrides = {}) => ({ type: 'shell.output', requestId, stream,
   offset, nextOffset: offset + bytes.length, bytesBase64: bytes.toString('base64'), lossy: false, eof: false, ...overrides })
+
+await test('bound endpoint literals cannot inject shell syntax into startup', async () => {
+  const endpoints = { commandPipe: '\\\\.\\pipe\\command', receiptPipe: '\\\\.\\pipe\\startup',
+    outputPipes: ['\\\\.\\pipe\\out', '\\\\.\\pipe\\err', '\\\\.\\pipe\\receipt'] }
+  for (const bad of ["\\\\.\\pipe\\x'; printf injected; #", '\\\\.\\pipe\\x\ncommand', '/tmp/output']) {
+    assert.throws(() => residentShellBootstrap({ ...endpoints, outputPipes: [bad, ...endpoints.outputPipes.slice(1)] }), /PROTOCOL_ERROR/)
+  }
+})
 async function bounded(work, label) {
   let timer
   try {
@@ -154,6 +163,23 @@ await test('file and shell responses interleave without crossing their correlati
     assert.equal(host.spawns, 1)
     assert.equal(host.terminated, 0)
   } finally { await host.dispose() }
+})
+
+await test('invalid bound endpoints fail admission through owned cleanup before launch', async () => {
+  for (const outputPipes of [null, 'pipe', [], ['out', 'err'], ['out', 'err', 7], ['out', 'err', ''],
+    ['out', 'err', 'bad\0pipe'], ['out', 'err', 'x'.repeat(513)], ['out', 'out', 'receipt'], ['fixture-command', 'err', 'receipt']]) {
+    const host = await fixture(), client = await host.starting
+    try {
+      client.shell.send(execute('bad-bound')); await turn()
+      host.send({ type: 'shell.admit', requestId: 'bad-bound', hasShell: false,
+        bootstrap: { commandPipe: 'fixture-command', receiptPipe: 'fixture-receipt', outputPipes } })
+      const terminal = await host.event('shell.unavailable')
+      assert.equal(terminal.cleanupConfirmed, true)
+      assert.ok(host.terminated > 0)
+      assert.equal(host.events.some(value => value.type === 'shell.admit'), false)
+      assert.equal(host.frames.some(value => value.type === 'shell.admission'), false)
+    } finally { await host.dispose() }
+  }
 })
 
 await test('shell ownership and the retained correlation window stay bounded until release', async () => {

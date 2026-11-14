@@ -12,6 +12,7 @@ import { resolveSessionDirectory } from '../../adapter/dsh/working-directory.js'
 import { sessionWorkdir } from '../../session-shells.js'
 import { prepareShellLaunch, shellEnvironment, environmentIdentity, type ShellLaunchOptions } from './shell-launch.js'
 import type { ShellAdmission, ShellCompleted, ShellFailure, ShellKernelMessage, ShellTransport } from './shell-protocol.js'
+import { validShellBootstrap } from './shell-protocol.js'
 import { collectShellOutput, type ShellOutputPair } from './shell-output.js'
 import { recordSettledSpills } from '../../shells/spill-settlement.js'
 import { confinementResult } from '../../shells/confinement-result.js'
@@ -224,7 +225,7 @@ export function createShellAdmissionHost(ctx: Context, options: ShellAdmissionOp
           }
           else {
             const endpoints = event.bootstrap
-            if (!endpoints || Object.values(endpoints).some(value => typeof value !== 'string' || !value || value.includes('\0') || value.length > 512)) throw new Error('PROTOCOL_ERROR: missing trusted bootstrap endpoints.')
+            if (!validShellBootstrap(endpoints)) throw new Error('PROTOCOL_ERROR: missing trusted bootstrap endpoints.')
             const prepared = await prepareShellLaunch(ctx, { ...options, bash: item.bash }, endpoints, cwd!, env, effective, item.signal, () => assertCurrent(item, standing))
             assertCurrent(item, standing)
             item.stateLost ??= item.owner.stateLost

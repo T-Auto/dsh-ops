@@ -1,0 +1,54 @@
+{
+  "rustToolchain": "1.97.1",
+  "gate": {
+    "command": "node scripts/verify-gate.mjs --skip-install",
+    "stepsPassed": 13,
+    "rustPassed": 753,
+    "rustFailed": 0,
+    "rustIgnored": 9,
+    "suitesPassed": 265,
+    "suitesFailed": 0,
+    "allowedSkips": [
+      "linux-attributes",
+      "linux-shell",
+      "tui-host",
+      "tui-native"
+    ],
+    "manifestChecks": 92,
+    "packedRuntimeClosure": true,
+    "logSha256": "da850a028a2c19a005564828822a285f5e54f4161ed725e9140842adac3629dc",
+    "note": "Final production source and all new regression assertions were present before the gate started. Evidence and documentation only were added while it ran."
+  },
+  "focused": {
+    "suites": {
+      "resident-shell-channel": 17,
+      "resident-shell-admission": 34,
+      "resident-shell-integrity": 7
+    },
+    "checksPassed": 58,
+    "failures": 0,
+    "sha256": "f274430b515422697511122798914a4c705a2d31ece94195fb7025c998622e35",
+    "sourceLogSha256": "b627527351c31b593c7a9a21b1f5afe5047cb77a9d44557ad09b31a77383a6f0",
+    "source": "bound-focused-final.log"
+  },
+  "behavioralRed": {
+    "baseline": "e0947b28db6fb5e65e45a8552379a3fc7fd5f1d3",
+    "suitesFailed": 2,
+    "checksFailed": 3,
+    "failingChecks": [
+      "bound endpoint literals cannot inject shell syntax into startup",
+      "invalid bound endpoints fail admission through owned cleanup before launch",
+      "a legacy bootstrap refuses the new command framing before user evaluation"
+    ],
+    "sha256": "ba75399c584760f8c8924b44f397f03f5fe2a3cad43e2c4f78f1cb1fe55bf189",
+    "sourceLogSha256": "48cb3aba903e8941711c06e1c61d71ff08c61a57356d7e072cfcc336bc54fe83",
+    "source": "bound-final-red.log"
+  },
+  "lint": {
+    "fmt": true,
+    "clippy": true,
+    "sourceSizeFilesChecked": 960,
+    "command": "cargo clippy --locked --manifest-path native/Cargo.toml -p dsh-ops-core --all-targets -- -D warnings",
+    "logSha256": "c5a9360b8a86da8bf7c8c178a684922e1f625d6f0ccfd3a37217bcd1c0782b97"
+  }
+}

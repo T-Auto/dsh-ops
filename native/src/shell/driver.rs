@@ -92,7 +92,8 @@ impl Driver {
         })
     }
     pub fn bootstrap(&self) -> Value {
-        json!({"commandPipe":self.command.name().to_string_lossy(),"receiptPipe":self.startup.name().to_string_lossy()})
+        json!({"commandPipe":self.command.name().to_string_lossy(),"receiptPipe":self.startup.name().to_string_lossy(),
+            "outputPipes":self.pools.each_ref().map(|pool| pool.name().to_string_lossy())})
     }
     pub fn launch(
         &mut self,
@@ -186,11 +187,8 @@ impl Driver {
             return Err(failure("shell records cannot contain NUL"));
         }
         let mut fields = vec![call.id.clone()];
-        fields.extend(
-            call.channels
-                .iter()
-                .map(|channel| channel.name().to_string_lossy().into_owned()),
-        );
+        // The fixed bootstrap binds pool names once; each command carries only
+        // its generation, optional working directory and source text.
         fields.push(encoded(cwd.unwrap_or("")));
         fields.push(encoded(command));
         self.command.write(

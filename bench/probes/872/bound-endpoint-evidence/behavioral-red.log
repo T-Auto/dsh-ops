@@ -1,0 +1,60 @@
+dsh-ops test: 2 suites, 16 worker(s); exclusive suites run afterwards
+
+=== resident-shell-bound-record-red-channel.test.mjs (5.49s)
+  FAIL bound endpoint literals cannot inject shell syntax into startup
+       AssertionError [ERR_ASSERTION]: Missing expected exception.
+           at file:///E:/01-Projects/deepseek/dsh-ops-shell-record-text/test/resident-shell-bound-record-red-channel.test.mjs:23:12
+           at test (file:///E:/01-Projects/deepseek/dsh-ops-shell-record-text/test/lib/harness.mjs:79:11)
+           at file:///E:/01-Projects/deepseek/dsh-ops-shell-record-text/test/resident-shell-bound-record-red-channel.test.mjs:19:7
+           at ModuleJob.run (node:internal/modules/esm/module_job:569:25)
+           at async node:internal/modules/esm/loader:650:26
+           at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:105:5)
+  ok   optional shell negotiation preserves file-only kernels and uses the existing control pipe
+  ok   malformed optional capabilities fail the handshake through owned cleanup
+--- resident-shell-bound-record-red-channel.test.mjs exited 1
+  ok   file and shell responses interleave without crossing their correlations
+  FAIL invalid bound endpoints fail admission through owned cleanup before launch
+       Error: shell event shell.unavailable  did not settle
+           at Timeout.<anonymous> (file:///E:/01-Projects/deepseek/dsh-ops-shell-record-text/test/resident-shell-bound-record-red-channel.test.mjs:30:39)
+           at listOnTimeout (node:internal/timers:685:17)
+           at process.processTimers (node:internal/timers:618:7)
+  ok   shell ownership and the retained correlation window stay bounded until release
+  ok   unsent cancellation is local, has no effects, and retains only empty output until release
+  ok   sent failures remain unknown and unsent failures remain none until the outer range joins
+  ok   malformed or duplicate shell terminals fail the outer client and await joined cleanup
+  ok   bounded stream reads preserve binary bytes, stream separation and live empty output
+  ok   completed output supports explicit cursor reads and cannot release an active read
+  ok   invalid output receipts reject pending reads only after outer cleanup
+  ok   unconfirmed outer cleanup remains visible in shell failure receipts
+  ok   32 idle sessions keep their budget until a confirmed close frees one slot
+  ok   accepted file and shell traffic retains its reserved control capacity under backpressure
+  ok   a typed per-stream capture error preserves the channel and raw reads cannot bypass correlation
+  ok   session spill receipts bind to negotiated support and the ready kernel PID
+
+dsh-ops resident-shell-channel: 2 of 17 check(s) failed
+--- resident-shell-bound-record-red-integrity.test.mjs exited 1
+
+=== resident-shell-bound-record-red-integrity.test.mjs (9.98s)
+dsh-ops: native worker selected without provenance verification — explicit selection (config.binaryPath / DSH_OPS_WORKER_BIN) — trusting the named path is the whole point of selecting it: E:\01-Projects\deepseek\dsh-ops-shell-record-text\native\target\release\dsh-ops-worker.exe
+  ok   command records preserve Unicode and shell-quoted control and escape data
+  ok   an explicit Unicode working directory survives subsequent session commands
+  ok   channel endpoints persist across commands but remain private to one session
+  ok   ordinary output matching the current receipt cannot complete a failed command
+  ok   living background jobs reset only their session, including disowned redirected jobs
+  ok   stock asynchronous output outside registered channels is rejected explicitly
+  FAIL a legacy bootstrap refuses the new command framing before user evaluation
+       AssertionError [ERR_ASSERTION]: {"cleanupConfirmed":true,"effectState":"unknown","exitCode":0,"requestId":"64a001a2-cacf-45f3-9539-b65100f151ca","shellState":"preserved","status":"completed","stderrTotal":0,"stdoutTotal":0,"type":"shell.completed","stdout":{"text":"","bytesTotal":0,"lossy":false},"stderr":{"text":"","bytesTotal":0,"lossy":false},"sandbox":{"mode":"danger-full-access","denied":false},"denialObservation":"not-observed","stateLost":"shell-reset"}
+           at file:///E:/01-Projects/deepseek/dsh-ops-shell-record-text/test/resident-shell-bound-record-red-integrity.test.mjs:131:16
+           at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+           at async test (file:///E:/01-Projects/deepseek/dsh-ops-shell-record-text/test/lib/harness.mjs:79:5)
+           at async file:///E:/01-Projects/deepseek/dsh-ops-shell-record-text/test/resident-shell-bound-record-red-integrity.test.mjs:126:5
+           at async withTempDir (file:///E:/01-Projects/deepseek/dsh-ops-shell-record-text/test/lib/harness.mjs:115:12)
+           at async file:///E:/01-Projects/deepseek/dsh-ops-shell-record-text/test/resident-shell-bound-record-red-integrity.test.mjs:29:1
+
+dsh-ops resident-shell-integrity: 1 of 7 check(s) failed
+
+10 slowest suites:
+  9.98s resident-shell-bound-record-red-integrity.test.mjs
+  5.49s resident-shell-bound-record-red-channel.test.mjs
+
+dsh-ops test: 2 of 2 suite(s) failed in 10s

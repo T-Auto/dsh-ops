@@ -1,17 +1,21 @@
 /** Fixed Windows Bash driver. Only kernel-created endpoint identifiers enter launch argv. */
+import type { ShellBootstrap } from './shell-protocol.js'
 function endpoint(value: string): string {
   if (!/^\\\\\.\\pipe\\[A-Za-z0-9_.-]{1,200}$/.test(value)) throw new Error('PROTOCOL_ERROR: invalid private shell endpoint.')
   return `'${value}'`
 }
-export function residentShellBootstrap({ commandPipe, receiptPipe }: { commandPipe: string; receiptPipe: string }): string[] {
+export function residentShellBootstrap({ commandPipe, receiptPipe, outputPipes }: ShellBootstrap): string[] {
+  if (outputPipes !== undefined && (!Array.isArray(outputPipes) || outputPipes.length !== 3
+    || new Set([commandPipe, receiptPipe, ...outputPipes]).size !== 5)) throw new Error('PROTOCOL_ERROR: invalid bound shell endpoints.')
+  const bound = outputPipes?.map(endpoint)
   const driver = `exec 3<>${endpoint(receiptPipe)} 4<>${endpoint(commandPipe)}
 exec 0</dev/null 1>/dev/null 2>/dev/null
 builtin printf 'COMMAND_READY\\n' >&4
 builtin printf 'SHELL_READY:%s\\n' "$$" >&3
 while IFS= read -r -u 4 _ops_id; do
- IFS= read -r -u 4 _ops_out || exit 125
+${bound ? ` _ops_out=${bound[0]} _ops_err=${bound[1]} _ops_receipt=${bound[2]}` : ` IFS= read -r -u 4 _ops_out || exit 125
  IFS= read -r -u 4 _ops_err || exit 125
- IFS= read -r -u 4 _ops_receipt || exit 125
+ IFS= read -r -u 4 _ops_receipt || exit 125`}
  IFS= read -r -u 4 _ops_cwd_encoded || exit 125
  IFS= read -r -u 4 _ops_encoded || exit 125
  builtin printf -v _ops_cwd '%b' "$_ops_cwd_encoded"
