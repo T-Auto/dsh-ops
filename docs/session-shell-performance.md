@@ -174,3 +174,61 @@ MSYS endpoints each command and retains the driver's completion poll. The full
 106-operation scenario, cold startup and end-to-end host cost remain unmeasured.
 The next work must reduce those remaining fixed costs without replacing EOF with
 an unauthenticated output marker or dropping ownership guarantees.
+
+## Channel progress notifications — 2026-11-15
+
+Command and bootstrap loops capture a generation-local revision before checking
+their channels, then wait for a revision change. Readers notify after receiving
+bytes, reaching raw EOF, finishing spill settlement or reporting a terminal
+error. A notification between inspection and waiting is retained by the revision
+ticket. Each command owns a separate notification, so an old generation cannot
+wake or complete a new one. Notifications are only hints: receipt parsing,
+authenticated EOF, Job identity, unregistered-output checks and joined channel
+retirement still decide success. Atomic cancellation, diagnostic output and Job
+exit retain a maximum 2 ms fallback wait because they do not publish here.
+
+The same comparison harness and stock payload ran before then after, with 300
+empty commands after 30 warmups, 100 printf samples and 256 MiB bulk work:
+
+| Measurement | Before p50 / p95 | After p50 / p95 |
+| --- | --- | --- |
+| Empty session command | 6.63 / 7.32 ms | 4.45 / 6.32 ms |
+| printf x | 6.63 / 7.31 ms | 4.66 / 5.28 ms |
+
+[Raw reports](../bench/probes/872/channel-progress-evidence/) record the measured
+driver hashes; the baseline is #947. A real pipe regression fails with progress
+notifications disabled and passes when restored. It checks that receiving bytes
+wakes the observer without declaring EOF; separate tests cover early notification
+and generation isolation. All 51 process-crate tests passed (6 ignored owned-child
+fixtures); all 12 required authority/admission/output/integrity/slot/spill suites
+passed without skips against the release worker.
+
+The complete local release gate also passed all 13 steps: 749 Rust tests, 9 ignored
+child fixtures, 265 JavaScript suites, 4 permitted skips, 92 manifest checks and
+the packed runtime closure. The 1 ms / 3 ms target remains unmet. The microbenchmark
+excludes host orchestration, cold startup and the scenario below.
+
+### Production-driver scenario adaptation
+
+`bench/probes/872/scenario-driver.mjs` uses the attached scenario's commands and
+106-operation weights with the actual production driver, validating exit status,
+output, EOF and errors on every call. The ZIP does not contain its original fixture,
+so this version creates one shared 2,000-file fixture with exactly 100 copy matches
+and a 65,536-byte input. This is an explicit adaptation, not reproduction of the
+missing fixture or a comparison with the audit author's hardware. Three samples
+per operation retain the attachment's sampling count; their p95 is just the maximum
+of three. Scenario totals are weighted sums of medians, not an end-to-end trace.
+
+| Scenario model | Before | After |
+| --- | --- | --- |
+| Attached `ls -la`, 106 operations | 47.461 s | 47.491 s |
+| Prose `ls`, same 106-operation weights | 14.642 s | 14.473 s |
+| Prose `ls` plus two modeled 30 s builds | 74.642 s | 74.473 s |
+
+The original build formula also adds two measured 2-second sleeps on top of
+60 seconds; the raw report retains that separate result rather than mixing formulas.
+Candidate p50/p95 (ms): grep 943.39/987.12; plain ls 96.34/114.71; copy100
+293.72/321.15; 64 KiB read-and-count 42.38/54.05. None passes its corresponding
+file-operation budget. This round improves empty commands but does not materially
+improve the dominant file costs or meet the scenario target. Cold startup, complete
+host orchestration and same-machine WSL comparisons remain unverified.

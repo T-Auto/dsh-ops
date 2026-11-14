@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Wake Windows session command and bootstrap waits on channel progress, with revision tickets to prevent missed notifications. Receipt, EOF, spill and ownership checks remain authoritative; cancellation and non-channel changes retain a bounded fallback wait (#872).
+- Windows 会话命令及启动等待改由通道进展唤醒，通过版本票据防止丢失通知；收据、EOF、溢写及所有权检查仍决定完成，取消和非通道变化保留有界回退等待（#872）。
+
 - Pool Windows session output/receipt pipe instances and reader threads across commands. Keep fresh generation captures, prefixes, cancellation and spill ownership; reuse follows physical retirement and poisoned owners cannot be reused (#872).
 - Windows 会话跨命令复用输出/收据管道实例与读取线程；每代保留独立捕获、前缀、取消及溢写归属，仅在操作实际退役后复用，污染的所有者禁止再次使用（#872）。
 

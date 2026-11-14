@@ -1,0 +1,27 @@
+{
+  "gate": {
+    "command": "node scripts/verify-gate.mjs --skip-install",
+    "platform": "win32-x64",
+    "exitCode": 0,
+    "stepsPassed": 13,
+    "rustPassed": 749,
+    "rustFailed": 0,
+    "rustIgnoredChildFixtures": 9,
+    "javascriptSuitesPassed": 265,
+    "javascriptSuitesFailed": 0,
+    "allowedSkips": ["linux-attributes", "linux-shell", "tui-host", "tui-native"],
+    "manifestChecksPassed": 92,
+    "packedRuntimeClosure": true,
+    "workerSha256": "a22c88ef53fbb537d8e10c82e9e524e2fb736ede5815872dba9c2cf002ab8636",
+    "logSha256": "249b1748a92b676c39f5273b2560876cfa09c572ff22b3acc469e11ae78d062d",
+    "note": "Used the frozen stock archive, explicit legacy Bash fixture, and installed GNU tar for Unicode filenames. Scenario evidence and documentation were finalized after the gate; product sources did not change."
+  },
+  "redGreen": {
+    "test": "output_progress_wakes_observers_without_claiming_eof",
+    "mutation": "Disable only ChannelProgress::changed notifications, retaining the API and real pipe reader",
+    "red": {"passed": 0, "failed": 1, "assertion": "awakened"},
+    "restoredProcessCrate": {"passed": 51, "failed": 0, "ignoredChildFixtures": 6}
+  },
+  "requiredIntegrationFilters": {"passedSuites": 12, "failed": 0, "skipped": 0},
+  "clippyOpsProcessAllTargets": "passed"
+}
