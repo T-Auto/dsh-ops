@@ -131,3 +131,46 @@ an old asynchronous probe finishing after a new verdict.
 These figures exclude worker execution, `run_code` compilation, model work and
 the shell. They do not prove the full orchestration SLO or shell acceptance.
 The 106-operation scenario total for this iteration remains **unmeasured**.
+
+## Per-session channel pool — 2026-11-15
+
+The driver now owns three bounded channel pools. Their twelve private pipe
+instances and twelve reader threads are created once per session, rather than
+per command. Each checkout still gets fresh capture state, authenticated prefix,
+seal event, cancellation controls and optional spill ownership. The constructor
+waits for every connect to be armed before publishing the endpoint.
+
+Reader tasks still drain authenticated output to natural EOF and finish spill
+storage. After every pending operation has joined, each instance disconnects and
+the task destroys its captures before signalling its generation's completion.
+The retiring channel clears its handles and cancellation controls before
+returning the lease. Retained old views stay immutable, and closing an old
+channel cannot cancel a later generation. Failed cleanup or a panicked reader
+poisons reuse. Receipt parsing, Job membership, surviving-descendant checks and
+the independent session reset/cancellation boundaries remain in place.
+
+The same attached comparison harness (only its existing executable-path overrides)
+ran before then after on the Windows host above: 300 empty commands after 30
+warmups, 100 printf commands and the original 256 MiB bulk arm.
+
+| Measurement | Before p50 / p95 | After p50 / p95 |
+| --- | --- | --- |
+| Empty session command | 8.66 / 9.70 ms | 6.90 / 8.84 ms |
+| printf x | 8.61 / 9.68 ms | 6.52 / 7.29 ms |
+
+[Raw reports](../bench/probes/872/channel-pool-evidence/) include artifact hashes.
+Before driver SHA-256: `13e554dc3ac5cef0ea7f16ac94a1acd1b850abd211a2458a01997e5b158db4c2`
+(PR #944; #945 and #946 do not change the driver). After driver SHA-256:
+`4ae5f06e53ea36c18f3a52889ecf978b224f9956eadc2b7c03cd6630cb9aa120`.
+Both use the same stock Niubash payload and Rust 1.97.1 release builds.
+
+New owned-child regressions verify fixed pipe/thread identities across nine
+generations, per-generation caps and views, stale-prefix refusal, separate sealed
+spill files, task-resource retirement and permanent poison after panic.
+
+Pooling reduces median empty-command time by about 20%, but **does not meet** the
+1 ms / 3 ms target. It retains twelve readers per active session, reconnects the
+MSYS endpoints each command and retains the driver's completion poll. The full
+106-operation scenario, cold startup and end-to-end host cost remain unmeasured.
+The next work must reduce those remaining fixed costs without replacing EOF with
+an unauthenticated output marker or dropping ownership guarantees.

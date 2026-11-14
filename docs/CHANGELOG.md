@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Pool Windows session output/receipt pipe instances and reader threads across commands. Keep fresh generation captures, prefixes, cancellation and spill ownership; reuse follows physical retirement and poisoned owners cannot be reused (#872).
+- Windows 会话跨命令复用输出/收据管道实例与读取线程；每代保留独立捕获、前缀、取消及溢写归属，仅在操作实际退役后复用，污染的所有者禁止再次使用（#872）。
+
 - Reuse final public presentation verdicts for tool callbacks until prompt or tool changes invalidate them. Keep scope identity, live admission, stale-probe refusal and an uncached fallback for deployments without observers (#872).
 - 工具回调复用最终公开展示判定，提示词或工具变化时失效；保留作用域身份、实时准入、过期探针拒绝，以及未安装观察器时重新探测的回退路径（#872）。
 

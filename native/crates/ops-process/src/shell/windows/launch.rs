@@ -71,6 +71,9 @@ impl Range {
             settled: false,
         })
     }
+    pub fn channel_pool(&self) -> io::Result<super::channel_pool::ChannelPool> {
+        super::channel_pool::ChannelPool::new(self.job.clone())
+    }
     pub fn channel(&self, cap: usize) -> io::Result<Channel> {
         Channel::new(self.job.clone(), cap)
     }

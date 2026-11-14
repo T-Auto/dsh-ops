@@ -20,7 +20,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
-    thread::{self, JoinHandle},
+    thread,
     time::{Duration, Instant},
 };
 use windows_sys::Win32::{
@@ -116,7 +116,8 @@ pub struct Channel {
     seal_connects: Arc<ConnectSeal>,
     state: Arc<Mutex<State>>,
     handles: Vec<Weak<OwnedHandle>>,
-    readers: Vec<JoinHandle<()>>,
+    readers: Vec<super::channel_pool::Reader>,
+    pool: Option<super::channel_pool::Lease>,
     spilling: Option<Spilling>,
     cancellations: Vec<Cancellation>,
     poisoned: bool,
@@ -128,162 +129,6 @@ pub struct ChannelView(
     Option<Arc<AtomicBool>>,
 );
 impl Channel {
-    pub(super) fn new(job: Arc<Job>, cap: usize) -> io::Result<Self> {
-        Self::framed(job, cap, None)
-    }
-    pub(super) fn framed(job: Arc<Job>, cap: usize, prefix: Option<Prefix>) -> io::Result<Self> {
-        Self::create(
-            job,
-            cap,
-            prefix,
-            None,
-            #[cfg(test)]
-            None,
-        )
-    }
-    pub(super) fn spilling(
-        job: Arc<Job>,
-        cap: usize,
-        prefix: &[u8],
-        store: SpillStore,
-        stream: &'static str,
-    ) -> io::Result<Self> {
-        if !matches!(stream, "stdout" | "stderr") {
-            return Err(io::Error::other("invalid output stream"));
-        }
-        Self::create(
-            job,
-            cap,
-            Some(Prefix {
-                bytes: prefix.to_vec(),
-                duplex: false,
-            }),
-            Some(Spilling {
-                view: CaptureView::new(cap, Retention::Prefix)?,
-                store,
-                stream,
-                busy: Arc::new(AtomicBool::new(false)),
-            }),
-            #[cfg(test)]
-            None,
-        )
-    }
-    fn create(
-        job: Arc<Job>,
-        cap: usize,
-        prefix: Option<Prefix>,
-        spilling: Option<Spilling>,
-        #[cfg(test)] gate: Option<ConnectGate>,
-    ) -> io::Result<Self> {
-        budget(cap)?;
-        if prefix
-            .as_ref()
-            .is_some_and(|p| p.bytes.is_empty() || p.bytes.len() > 256)
-        {
-            return Err(io::Error::other("channel prefix must be 1..256 bytes"));
-        }
-        let name = security::private_name()?;
-        let descriptor = security::Security::new()?;
-        let attributes = descriptor.attributes();
-        let mut channel = Self {
-            name: OsString::from_wide(&name[..name.len() - 1]),
-            stop: Arc::new(AtomicBool::new(false)),
-            seal_connects: Arc::new(ConnectSeal::new()?),
-            state: Arc::new(Mutex::new(State::default())),
-            handles: Vec::new(),
-            readers: Vec::new(),
-            spilling,
-            cancellations: Vec::new(),
-            poisoned: false,
-        };
-        // Bound open probes and real writers together; never admit unbounded connections.
-        let mut handles = Vec::with_capacity(4);
-        for index in 0..4 {
-            let flags = PIPE_ACCESS_DUPLEX
-                | FILE_FLAG_OVERLAPPED
-                | if index == 0 {
-                    FILE_FLAG_FIRST_PIPE_INSTANCE
-                } else {
-                    0
-                };
-            // SAFETY: descriptor, name and output allocation remain alive for this call.
-            handles.push(Arc::new(owned(unsafe {
-                CreateNamedPipeW(
-                    name.as_ptr(),
-                    flags,
-                    PIPE_REJECT_REMOTE_CLIENTS,
-                    4,
-                    65536,
-                    65536,
-                    0,
-                    &attributes,
-                )
-            })?));
-        }
-        for handle in &handles {
-            let (armed, ready) = mpsc::sync_channel(1);
-            #[cfg(test)]
-            let gate = gate.clone();
-            let prefix = prefix.clone();
-            let cancel = Cancellation::default();
-            let output = channel.spilling.as_ref().map(|spilling| ReaderOutput {
-                capture: Output::new(
-                    spilling.view.clone(),
-                    cap,
-                    Some(spilling.store.clone()),
-                    spilling.stream,
-                    cancel.clone(),
-                ),
-                busy: spilling.busy.clone(),
-            });
-            channel.cancellations.push(cancel);
-            channel.handles.push(Arc::downgrade(handle));
-            let (handle, stop, seal, state, job) = (
-                handle.clone(),
-                channel.stop.clone(),
-                channel.seal_connects.clone(),
-                channel.state.clone(),
-                job.clone(),
-            );
-            channel.readers.push(
-                thread::Builder::new()
-                    .name("ops-shell-channel".into())
-                    .spawn(move || {
-                        #[cfg(test)]
-                        if let Some(gate) = gate {
-                            let mut released = gate.0.lock().unwrap();
-                            while !*released {
-                                released = gate.1.wait(released).unwrap();
-                            }
-                        }
-                        if let Err(error) = receive(
-                            &handle,
-                            &job,
-                            &state,
-                            cap,
-                            prefix.as_ref(),
-                            Connection {
-                                stop: &stop,
-                                seal: &seal,
-                                armed,
-                                output,
-                            },
-                        ) && !stop.load(Ordering::Acquire)
-                        {
-                            state.lock().unwrap().errors.push(error.to_string());
-                        }
-                    })?,
-            );
-            // Do not publish a name before ConnectNamedPipe is pending. A fast
-            // metadata open+close before that call produces ERROR_NO_DATA.
-            ready
-                .recv()
-                .map_err(|_| io::Error::other("channel connect worker stopped"))??;
-        }
-        // Readers alone retain their instances; EOF/rejection must retire each server.
-        drop(handles);
-        Ok(channel)
-    }
     pub fn name(&self) -> &std::ffi::OsStr {
         &self.name
     }
@@ -364,6 +209,9 @@ impl Channel {
             }
             if self.cleanup_unconfirmed() || Instant::now() >= deadline {
                 self.poisoned = true;
+                if let Some(pool) = &self.pool {
+                    pool.poison();
+                }
                 if let Some(spilling) = &self.spilling {
                     spilling
                         .view
@@ -389,6 +237,13 @@ impl Channel {
             }
         }
         self.handles.clear();
+        self.cancellations.clear();
+        if let Some(pool) = self.pool.take() {
+            if self.poisoned || !self.state.lock().unwrap().errors.is_empty() {
+                pool.poison();
+            }
+            drop(pool);
+        }
         if self.poisoned {
             Err(io::Error::other("channel owner is poisoned"))
         } else {
@@ -915,7 +770,8 @@ mod tests {
             seal_connects: Arc::new(ConnectSeal::new().unwrap()),
             state,
             handles: vec![Arc::downgrade(&server)],
-            readers: vec![reader],
+            readers: vec![super::super::channel_pool::Reader::Dedicated(reader)],
+            pool: None,
             spilling: None,
             cancellations: Vec::new(),
             poisoned: false,
@@ -941,8 +797,46 @@ mod tests {
         assert!(snapshot.errors.is_empty());
         finish.join().unwrap();
     }
+
+    #[test]
+    fn timed_out_pool_retirement_remains_poisoned_after_late_task_completion() {
+        let pool =
+            super::super::channel_pool::ChannelPool::new(Arc::new(Job::new().unwrap())).unwrap();
+        let lease = pool.lease().unwrap();
+        let handles = lease.handles();
+        let (release, gate) = mpsc::channel();
+        let reader = lease
+            .start(0, Box::new(move || gate.recv().unwrap()))
+            .unwrap();
+        let mut channel = Channel {
+            name: lease.name(),
+            stop: Arc::new(AtomicBool::new(false)),
+            seal_connects: Arc::new(ConnectSeal::new().unwrap()),
+            state: Arc::new(Mutex::new(State::default())),
+            handles: handles.iter().map(Arc::downgrade).collect(),
+            readers: vec![reader],
+            pool: Some(lease),
+            spilling: None,
+            cancellations: Vec::new(),
+            poisoned: false,
+        };
+        // Release the deliberately stuck task before asserting, so even a
+        // regression cannot strand the test's teardown behind its own barrier.
+        let refused = channel.close_until(Instant::now()).is_err();
+        let blocked = pool.framed(64, b"OUT:too-early\n").is_err();
+        release.send(()).unwrap();
+        let still_poisoned = channel
+            .close_until(Instant::now() + Duration::from_secs(2))
+            .is_err();
+        drop(channel);
+        assert!(refused && blocked && still_poisoned);
+        assert!(pool.framed(64, b"OUT:too-late\n").is_err());
+    }
 }
 
 #[cfg(test)]
 #[path = "channel_spill_tests.rs"]
 mod spill_tests;
+
+#[path = "channel_build.rs"]
+mod build;
