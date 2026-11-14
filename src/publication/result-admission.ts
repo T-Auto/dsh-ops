@@ -1,23 +1,28 @@
 /** Public execution events prove a live run_code parent, not merely a truthy token. */
 import type { Context, ToolRunContext, ToolExecution } from '../adapter/dsh/types.js'
 import { inspectPresentation } from './presentation.js'
-const owners = new WeakMap<object, { refs: number; active: Map<symbol, ToolExecution>; revision(): number; dispose(): void }>()
+interface AdmissionOwner { refs: number; active: Map<symbol, ToolExecution>; revision(): number; bump(): void }
+const owners = new WeakMap<object, AdmissionOwner>()
 export function acquireResultAdmission(ctx: Context): { authorize(exec: ToolRunContext): Promise<(() => boolean) | undefined>; dispose(): void } {
   const root = ctx.root ?? ctx
   let owner = owners.get(root)
   if (!owner) {
-    const active = new Map<symbol, ToolExecution>()
     let revision = 0
-    const unwatchPrompt = root.on('system-prompt/change', () => { ++revision })
-    const unwatch = root.on('tools/execute', async (exec, next) => {
-      if (exec.name !== 'run_code' || exec.parent || !exec.agent || !exec.toolSet) return next()
-      active.set(exec.token, exec)
-      try { return await next() } finally { active.delete(exec.token) }
-    })
-    owner = { refs: 0, active, revision: () => revision, dispose() { unwatch(); unwatchPrompt() } }
+    owner = { refs: 0, active: new Map(), revision: () => revision, bump() { ++revision } }
     owners.set(root, owner)
   }
   const owned = owner
+  // Subscribe on the caller's own context, never on the root: dsh-tui's
+  // root-capability guard refuses `root.events.on` from a plugin activation, and
+  // the row that attaches the native tools runs as one, which failed the whole
+  // agent mount. `global` keeps the root-level dispatch these listeners were
+  // written against.
+  const unwatchPrompt = ctx.on('system-prompt/change', () => { owned.bump() }, { global: true })
+  const unwatch = ctx.on('tools/execute', async (exec, next) => {
+    if (exec.name !== 'run_code' || exec.parent || !exec.agent || !exec.toolSet) return next()
+    owned.active.set(exec.token, exec)
+    try { return await next() } finally { owned.active.delete(exec.token) }
+  }, { global: true })
   ++owned.refs
   let disposed = false
   return {
@@ -44,7 +49,12 @@ export function acquireResultAdmission(ctx: Context): { authorize(exec: ToolRunC
     dispose() {
       if (disposed) return
       disposed = true
-      if (--owned.refs === 0) { owned.dispose(); owned.active.clear(); owners.delete(root) }
+      if (typeof unwatch === 'function') unwatch()
+      if (typeof unwatchPrompt === 'function') unwatchPrompt()
+      if (--owned.refs === 0) {
+        owned.active.clear()
+        if (owners.get(root) === owned) owners.delete(root)
+      }
     },
   }
 }

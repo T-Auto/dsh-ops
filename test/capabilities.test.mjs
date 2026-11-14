@@ -67,9 +67,10 @@ await test('business file and batch definitions retain their reviewed serialized
 })
 
 await test('file parameter schemas preserve their reviewed structural constraints', () => {
-  // #865 adds only optional glob kind: file/directory/all; every other structural constraint stays pinned.
+  // #865 adds only optional glob kind: file/directory/all; #734 adds the opt-in
+  // includeHidden boolean to glob and grep. Every other structural constraint stays pinned.
   const hash = createHash('sha256').update(JSON.stringify(withoutDescriptions(fileParameters))).digest('hex')
-  assert.equal(hash, '6edcefb072fbd07b3a79bc989b1957dbe5ad1d290cdd56125c7e625830d118cd')
+  assert.equal(hash, '0e700929dff3eb37c6f9d2ddf23bc1fcf8337b57c4b772dcc79626865803db8d')
 })
 
 await test('create-only help names the required literal instead of suggesting an omitted revision', () => {

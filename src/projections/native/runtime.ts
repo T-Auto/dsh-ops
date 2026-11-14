@@ -39,9 +39,12 @@ export class NativeFileTools {
     this.file = undefined
     this.disposers = []
     this.stopped = false
-    // Provider and execution events originate at root, not the agent source scope.
-    // The runtime still owns (and disposes) its independent evidence observer.
-    this.readDedup = createNativeReadDedup(ctx.root ?? ctx)
+    // Provider and execution events originate at root, not the agent source scope;
+    // the observer therefore asks for `global` dispatch. It subscribes on this
+    // caller's context rather than the root, because dsh-tui's root-capability
+    // guard refuses `root.events.on` from a plugin activation. The runtime still
+    // owns (and disposes) its independent evidence observer.
+    this.readDedup = createNativeReadDedup(ctx)
     this.resultAdmission = acquireResultAdmission(ctx)
   }
 

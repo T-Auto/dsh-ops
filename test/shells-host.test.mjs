@@ -6,6 +6,7 @@ import { startBashJob, waitOnBashJob } from '../lib/shells/jobs.js'
 import { sessionWorkdir } from '../lib/session-shells.js'
 import { hostForeground } from '../lib/shells/host-contract.js'
 import { assert, report, test, TEST_HOME } from './lib/harness.mjs'
+import { BASH_PARSE_CONTRACT } from '../lib/shells/prompt.js'
 
 function fixture({ mode = 'danger-full-access', jobs, approval, settle = true, exitCode = 0, file = process.execPath } = {}) {
   const calls = [], pending = Promise.withResolvers()
@@ -143,6 +144,14 @@ await test('completed foreground jobs leave the registry with their result', asy
   const value = await f.definition.execute({ command: 'true', description: 'Run a foreground host job' }, f.exec)
   assert.equal(value.kind, 'foreground'); assert.equal(jobs.removed, true)
   assert.equal(jobs.outcome.detail, 'exit code: 0')
+})
+
+await test('the host projection carries the shared Bash parse contract with and without jobs', () => {
+  for (const options of [{}, { jobs: jobRegistry() }]) {
+    const { definition } = fixture(options)
+    assert.equal(definition.description.includes(BASH_PARSE_CONTRACT), true,
+      options.jobs === undefined ? 'foreground-only' : 'with jobs')
+  }
 })
 
 await test('timeout promotion returns the same job and consumes output exactly once', async () => {
