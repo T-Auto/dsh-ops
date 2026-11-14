@@ -17,7 +17,7 @@ rayon = "=1.12.0"
 # L2: RecommendedWatcher + PollWatcher fallback and the watch-limit policy.
 # CC0-1.0, MSRV 1.85, published 2026-10-25 (>= 7 days at review time).
 # notify-types 2.2.0 is exactly our MSRV 1.88 floor, so CI keeps --locked.
-notify = "=8.2.1"
+notify = "=8.2.2"
 # Constraint pin, not a feature dependency: notify needs log ^0.4.17 and the
 # newest compatible release (0.4.35, 2026-10-30) is inside the seven-day window,
 # so the crate also uses the log facade and pins the last release outside it
