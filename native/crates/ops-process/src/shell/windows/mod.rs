@@ -1,6 +1,7 @@
 mod argv;
 mod channel;
 mod channel_pool;
+mod channel_progress;
 mod channel_wake;
 mod identity;
 mod job;
@@ -14,6 +15,7 @@ mod spill_io;
 mod stdin;
 pub use channel::{Channel, ChannelSnapshot, ChannelView};
 pub use channel_pool::ChannelPool;
+pub use channel_progress::ChannelProgress;
 pub use identity::Baseline;
 pub use launch::{Range, RangeCancellation};
 pub use signal::signal_console_and_exit;

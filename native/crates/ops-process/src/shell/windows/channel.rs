@@ -100,6 +100,7 @@ struct Connection<'a> {
 type ConnectGate = Arc<(Mutex<bool>, std::sync::Condvar)>;
 #[derive(Default)]
 struct State {
+    progress: Option<super::channel_progress::ChannelProgress>,
     capture: Capture,
     accepted: Vec<u32>,
     eof: u32,
@@ -109,6 +110,13 @@ struct State {
     writer_eof: bool,
     writer_closed: bool,
     writer: Option<Weak<OwnedHandle>>,
+}
+impl State {
+    fn changed(&self) {
+        if let Some(progress) = &self.progress {
+            progress.changed();
+        }
+    }
 }
 pub struct Channel {
     name: OsString,
@@ -129,6 +137,10 @@ pub struct ChannelView(
     Option<Arc<AtomicBool>>,
 );
 impl Channel {
+    /// Install before sending a command; this hint never replaces snapshot checks.
+    pub fn observe_progress(&self, progress: super::channel_progress::ChannelProgress) {
+        self.state.lock().unwrap().progress = Some(progress);
+    }
     pub fn name(&self) -> &std::ffi::OsStr {
         &self.name
     }
@@ -469,6 +481,7 @@ fn read_peer(
                     } else {
                         state.lock().unwrap().capture.append(data, cap);
                     }
+                    state.lock().unwrap().changed();
                 }
                 Err(error) if error.raw_os_error() == Some(ERROR_BROKEN_PIPE as i32) => break,
                 Err(error) => return Err(error),
@@ -480,7 +493,9 @@ fn read_peer(
         Ok(())
     })();
     if ready && result.is_ok() {
-        state.lock().unwrap().writer_closed = true;
+        let mut current = state.lock().unwrap();
+        current.writer_closed = true;
+        current.changed();
     }
     if ready && let Some(output) = output {
         output.finish(&result);
@@ -491,6 +506,7 @@ fn read_peer(
     if ready {
         current.writer_eof = true;
     }
+    current.changed();
     Ok(())
 }
 
@@ -700,6 +716,45 @@ mod tests {
         .unwrap();
         operation(&server, &AtomicBool::new(false), true, &mut [], None, None).unwrap();
         (server, File::from(client))
+    }
+
+    #[test]
+    fn output_progress_wakes_observers_without_claiming_eof() {
+        let progress = super::super::channel_progress::ChannelProgress::default();
+        let state = Arc::new(Mutex::new(State {
+            progress: Some(progress.clone()),
+            ..State::default()
+        }));
+        let (server, mut client) = connected_pipe();
+        let reader_state = state.clone();
+        let reader = thread::spawn(move || {
+            read_peer(
+                &Arc::new(server),
+                &AtomicBool::new(false),
+                &reader_state,
+                64,
+                Some(&Prefix {
+                    bytes: b"OUT:id\n".to_vec(),
+                    duplex: false,
+                }),
+                None,
+            )
+        });
+        let observed = progress.version();
+        client.write_all(b"OUT:id\nabc").unwrap();
+        let awakened = progress.wait(observed, Instant::now() + Duration::from_secs(2));
+        let (bytes, premature_eof) = {
+            let value = state.lock().unwrap();
+            (value.capture.bytes.clone(), value.writer_eof)
+        };
+        let before_eof = progress.version();
+        drop(client);
+        reader.join().unwrap().unwrap();
+        assert!(awakened);
+        assert_eq!(bytes, b"abc");
+        assert!(!premature_eof, "notification is not completion authority");
+        assert!(progress.wait(before_eof, Instant::now()));
+        assert!(state.lock().unwrap().writer_eof);
     }
 
     #[test]

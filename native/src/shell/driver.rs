@@ -1,10 +1,11 @@
 //! One owned persistent shell. Scheduling and policy admission belong to its caller.
-use ops_process::shell::{Baseline, Channel, ChannelPool, ChannelView, Launch, Range, SpillStore};
+use ops_process::shell::{
+    Baseline, Channel, ChannelPool, ChannelProgress, ChannelView, Launch, Range, SpillStore,
+};
 use serde_json::{Value, json};
 use std::{
     io,
     sync::atomic::{AtomicBool, Ordering},
-    thread,
     time::{Duration, Instant},
 };
 
@@ -12,6 +13,7 @@ pub struct Driver {
     range: Range,
     command: Channel,
     startup: Channel,
+    startup_progress: ChannelProgress,
     pools: [ChannelPool; 3],
     baseline: Option<Baseline>,
     diagnostics: [u64; 2],
@@ -22,6 +24,7 @@ pub struct Driver {
 pub struct Call {
     id: String,
     channels: [Channel; 3],
+    progress: ChannelProgress,
 }
 fn failure(message: impl std::fmt::Display) -> io::Error {
     io::Error::other(message.to_string())
@@ -67,12 +70,16 @@ impl Driver {
         let range = Range::new()?;
         let command = range.framed_channel(1024, b"COMMAND_READY\n", true)?;
         let startup = range.framed_channel(1024, b"SHELL_READY:", false)?;
+        let startup_progress = ChannelProgress::default();
+        command.observe_progress(startup_progress.clone());
+        startup.observe_progress(startup_progress.clone());
         let pools = [
             range.channel_pool()?,
             range.channel_pool()?,
             range.channel_pool()?,
         ];
         Ok(Self {
+            startup_progress,
             pools,
             range,
             command,
@@ -96,6 +103,7 @@ impl Driver {
         check_startup_environment(&launch)?;
         self.range.spawn(launch)?;
         loop {
+            let observed = self.startup_progress.version();
             check_deadline(deadline, cancel)?;
             let command = self.command.snapshot();
             let startup = self.startup.snapshot();
@@ -128,7 +136,10 @@ impl Driver {
                 self.startup_bytes = startup.observed;
                 return Ok(());
             }
-            thread::sleep(Duration::from_millis(2));
+            self.startup_progress.wait(
+                observed,
+                deadline.min(Instant::now() + Duration::from_millis(2)),
+            );
         }
     }
     pub fn call(&self, id: &str, stdout: usize, stderr: usize) -> io::Result<Call> {
@@ -138,7 +149,12 @@ impl Driver {
             self.output_channel(stderr, format!("ERR:{id}\n").as_bytes(), "stderr")?,
             self.pools[2].framed(4096, format!("BEGIN:{id}\n").as_bytes())?,
         ];
+        let progress = ChannelProgress::default();
+        for channel in &channels {
+            channel.observe_progress(progress.clone());
+        }
         Ok(Call {
+            progress,
             id: id.into(),
             channels,
         })
@@ -184,6 +200,7 @@ impl Driver {
         )?;
         let mut settlement = None;
         loop {
+            let observed = call.progress.version();
             check_deadline(deadline, cancel)?;
             self.check_control()?;
             if call.cleanup_unconfirmed() {
@@ -227,7 +244,13 @@ impl Driver {
                     "shell exited or closed its receipt before completion",
                 ));
             }
-            thread::sleep(Duration::from_millis(2));
+            // Channel progress wakes the fast path immediately. Retain a bounded
+            // fallback for atomic cancellation, control diagnostics and Job exits,
+            // which do not yet publish through this notification.
+            call.progress.wait(
+                observed,
+                deadline.min(Instant::now() + Duration::from_millis(2)),
+            );
         }
     }
     pub fn stop(&mut self) -> io::Result<()> {

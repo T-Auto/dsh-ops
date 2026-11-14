@@ -1,0 +1,16 @@
+{
+  "base": "07cd3111d2ba0e457629a928b76d3d3a42749fab",
+  "harness": "bench/probes/872/channel-wakeup-evidence/compare.mjs",
+  "harnessSha256": "8461ebd90707f0171ed95e912cecd3d099f464820d7262f705bc1344a8913c03",
+  "sourceSha256": {
+    "native/src/shell/driver.rs": "d5059eb8e72d87210ca4543700321945e44b08ec5f6183b3bf5aad34b96bfaf6",
+    "native/crates/ops-process/src/shell/mod.rs": "7b77d3a407e69971fa14a6d1ba3c5e45e5dda8421515ee02cf05865de0b4ce79",
+    "native/crates/ops-process/src/shell/windows/mod.rs": "b820ffaec4238a4c72089ab16044764dccf1e9c735726145dc006f6cd51bbd82",
+    "native/crates/ops-process/src/shell/windows/channel.rs": "4bc2f52130bba5ed4603da7f6078967475746993fd32745ed751ef67b1f821bc",
+    "native/crates/ops-process/src/shell/windows/channel_build.rs": "452b1802c01e4703b701fa391d2bc13f9d32a1b4cd7527cb8849b310edc11a84",
+    "native/crates/ops-process/src/shell/windows/channel_progress.rs": "52ad3e5636e6b75152593ee96abb175473ba4ce2f0eeab13abb44d130781c107"
+  },
+  "measuredDriverSha256": "a6432619e995ecc2b2abce7e071e8784752ad64416f6ae6096b84978d03e35a7",
+  "rebuiltDriverSha256": "c8f2fd4f40aa623b0f8c8b946be37fdb569059201a7bb98749242e4984e540b2",
+  "note": "The measured executable was rebuilt from identical source after the red/green notification mutation was restored; Windows executable hashes differ between builds. Raw reports identify the actual measured binaries."
+}

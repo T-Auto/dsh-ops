@@ -204,6 +204,7 @@ impl Channel {
                 if reusable && let Err(error) = super::super::channel_pool::disconnect(&handle) {
                     state.lock().unwrap().errors.push(error.to_string());
                 }
+                state.lock().unwrap().changed();
             };
             let reader = if let Some(pool) = &channel.pool {
                 pool.start(index, Box::new(run))?
