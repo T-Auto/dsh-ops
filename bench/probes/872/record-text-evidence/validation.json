@@ -22,15 +22,18 @@
     "checksPassed": 6,
     "failures": 0,
     "note": "Final combining/private-use Unicode assertions were rerun separately after the full gate.",
-    "logSha256": "8dec58490d27f7701bfd57101ba57912a761bd43037baf80e8d94fc83c8d0bd4"
+    "logSha256": "32f977f99cdc69454c1a8eff7e6162fd443a5c29c0a12934242b0ae89c88d504",
+    "sourceLogSha256": "8dec58490d27f7701bfd57101ba57912a761bd43037baf80e8d94fc83c8d0bd4",
+    "storedLogNormalization": "Git LF line endings; red assertion separator trailing whitespace removed. Original local source log hash retained separately."
   },
   "behavioralRed": {
     "baseline": "755c83cb61bd7eeb27886cfabc5f5ead75182d22",
     "failures": 1,
     "failingCheck": "an explicit Unicode working directory survives subsequent session commands",
-    "logSha256": "4fac3bba6991f942b4d49cd24fa7b7c8231d90adce4a9ad86826a89b2ddee626",
+    "logSha256": "cba70e0c5777d7bfc336cab821d2c1afd0d0b00526bc34118e6d9bda37b89edc",
     "sourceLogSha256": "23866eae120eb4d27f0996a3e017a6b3b0b60faa0fe08c213b15e14f455500ef",
-    "note": "Stored log removes trailing whitespace from assertion separator lines; original log hash retained."
+    "note": "Stored log removes trailing whitespace from assertion separator lines; original log hash retained.",
+    "storedLogNormalization": "Git LF line endings; red assertion separator trailing whitespace removed. Original local source log hash retained separately."
   },
   "lint": {
     "fmt": true,
