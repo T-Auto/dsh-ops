@@ -3,7 +3,8 @@ use std::sync::Condvar;
 
 fn concurrent_arming(pooled: bool) {
     let job = Arc::new(Job::new().unwrap());
-    let pool = pooled.then(|| super::super::super::channel_pool::ChannelPool::new(job.clone()).unwrap());
+    let pool =
+        pooled.then(|| super::super::super::channel_pool::ChannelPool::new(job.clone()).unwrap());
     let lease = pool.as_ref().map(|pool| pool.lease().unwrap());
     let gates = Arc::new((Mutex::new([false; 4]), Condvar::new()));
     let (started, observed) = mpsc::channel();
@@ -45,11 +46,16 @@ fn concurrent_arming(pooled: bool) {
     let mut channel = premature
         .unwrap_or_else(|| result.recv_timeout(Duration::from_secs(2)).unwrap())
         .unwrap();
-    channel.drain(Instant::now() + Duration::from_secs(2)).unwrap();
+    channel
+        .drain(Instant::now() + Duration::from_secs(2))
+        .unwrap();
     builder.join().unwrap();
     reached.sort_unstable();
     assert_eq!(reached, [0, 1, 2, 3], "readers were armed serially");
-    assert!(!published_early, "endpoint escaped before every connect armed");
+    assert!(
+        !published_early,
+        "endpoint escaped before every connect armed"
+    );
     assert!(channel.snapshot().errors.is_empty());
     assert!(channel.readers.is_empty());
     if let Some(pool) = pool {
