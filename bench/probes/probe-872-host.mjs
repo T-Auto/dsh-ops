@@ -9,11 +9,11 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import os from 'node:os'
 import { performance } from 'node:perf_hooks'
-import { boot } from './872/host.mjs'
-import { within } from './872/channel.mjs'
+import { boot } from '../../test/lib/resident-probe-host.mjs'
+import { within } from '../../test/lib/resident-channel.mjs'
 
 const workspace = fileURLToPath(new URL('../../', import.meta.url))
-const fixture = fileURLToPath(new URL('./872/process.mjs', import.meta.url))
+const fixture = fileURLToPath(new URL('../../test/lib/resident-probe-process.mjs', import.meta.url))
 const findings = [], ownership = [], owned = new Set()
 const alive = pid => {
   try { process.kill(pid, 0); return true }

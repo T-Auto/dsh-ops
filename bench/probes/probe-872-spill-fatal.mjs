@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
-import { channel, within } from './872/channel.mjs'
+import { channel, within } from '../../test/lib/resident-channel.mjs'
 
 assert.equal(process.platform, 'win32', 'this probe requires Windows owned ranges')
 const artifacts = execFileSync('cargo', ['test', '--locked', '--manifest-path', 'native/Cargo.toml',
