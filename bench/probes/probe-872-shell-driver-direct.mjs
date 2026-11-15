@@ -14,7 +14,7 @@ import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
 import { prepareNiubash } from '../../lib/niubash/runtime.js'
 import { residentShellBootstrap } from '../../lib/execution/resident/shell-bootstrap.js'
-import { channel, within } from './872/channel.mjs'
+import { channel, within } from '../../test/lib/resident-channel.mjs'
 
 assert.equal(process.platform, 'win32', 'C2 does not establish POSIX containment')
 const [binary, shell, stock] = process.argv.slice(2, 5).map(value => path.resolve(value))
