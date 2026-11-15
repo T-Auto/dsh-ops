@@ -16,13 +16,13 @@ import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
 import { prepareNiubash } from '../../lib/niubash/runtime.js'
-import { channel, within } from './872/channel.mjs'
+import { channel, within } from '../../test/lib/resident-channel.mjs'
 
 assert.equal(process.platform, 'win32', 'C1 does not establish POSIX containment')
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const binary = path.resolve(process.argv[2] ?? path.join(root, 'native/target/debug/examples/shell_range.exe'))
 const selected = path.resolve(process.argv[3] ?? path.join(root, 'runtime/win32-x64/niubash/niu.exe'))
-const child = path.join(root, 'bench/probes/872/shell-child.mjs')
+const child = path.join(root, 'test/lib/shell-range-child.mjs')
 const workspace = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ops-c1-work-')))
 const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ops-c1-home-')))
 const ctx = new Context(); ctx.logger.level = 0
