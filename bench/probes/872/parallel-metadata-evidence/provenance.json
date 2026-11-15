@@ -81,7 +81,8 @@
     "native/crates/ops-search/src/scan_open_tests.rs": "74ecbe927648f7c66908ef258143916f0ebe62d3e97e93492979542ad3ed1ef6",
     "bench/search-profile.mjs": "d89a211c5ad47c493effc71fab1679fd55d8f0f36b048d213c4d83fe2cfc47f6",
     "bench/probes/872/record-driver.mjs": "0e5edef04dffb58d3cad921c30d0d764abb07d8fc34796d3452c8b5f3bbd79e8",
-    "bench/probes/872/scenario-driver.mjs": "9e9a60c842474483cb3871a94ea7458213686f334dea2e2069033fece5a4b2e9"
+    "bench/probes/872/scenario-driver.mjs": "9e9a60c842474483cb3871a94ea7458213686f334dea2e2069033fece5a4b2e9",
+    "test/search-profiling.test.mjs": "5c66d47632ff06805280f2f0a74acd024951107485cbf81e9f9ec2fd194c99e9"
   },
   "limitations": [
     "Native direct-worker latency includes startup and opt-in stage clocks, and does not replace the required shell scenario.",

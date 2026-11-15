@@ -22,8 +22,21 @@ await test('opt-in search stage timing preserves canonical results and contains 
       assert.equal(profile.version,1); assert.equal(profile.stages.walkTotal.calls,1)
       assert.equal(profile.stages.globCompile?.calls,1, 'patterns compile once per scan, not once per file')
       assert.ok(profile.stages.globFilter.calls>0)
-      assert.equal(profile.stages.relativeMetadata.calls, profile.stages.globFilter.calls,
-        'one relative metadata query per visited regular file in this flat fixture')
+      if (tool === 'grep' && args.exactTotal !== false) {
+        assert.equal(profile.stages.checkedObservationBatch.calls, 1,
+          'complete grep measures metadata and checked opens in one bounded batch')
+        assert.equal(profile.stages.globFilter.calls, 8,
+          'the batch must retain every file in this flat fixture')
+        assert.equal(profile.stages.relativeMetadata, undefined,
+          'batched metadata must not be queried again on the serial path')
+        assert.equal(profile.stages.checkedOpenBatch, undefined,
+          'the combined observation stage replaces the old open-only timing')
+      } else {
+        assert.equal(profile.stages.relativeMetadata.calls, profile.stages.globFilter.calls,
+          'serial queries retain one relative metadata query per visited regular file')
+        assert.equal(profile.stages.checkedObservationBatch, undefined,
+          'glob and early-result grep retain the serial path')
+      }
       assert.equal(profile.stages.absoluteMetadata, undefined,
         'the relative no-follow snapshot must not trigger a second absolute metadata query')
       assert.equal(profiled.stderr.includes(root),false); assert.equal(profiled.stderr.includes('privateFixtureText'),false)
