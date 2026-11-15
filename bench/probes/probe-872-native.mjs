@@ -9,7 +9,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
-import { channel, within } from './872/channel.mjs'
+import { channel, within } from '../../test/lib/resident-channel.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const binary = path.resolve(process.argv[2] ?? path.join(root, 'native/target/debug/examples',
