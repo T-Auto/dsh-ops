@@ -445,3 +445,38 @@ fixes 2,000 grep files, 100 copy files and a 65,536-byte read. Both listing
 variants and both build formulas are reported separately in `scenario.json`.
 The final scenario ran before the full gate, without concurrent builds/tests
 or the archive inventory that overlapped an excluded earlier trial.
+
+## Bounded concurrent checked opens — 2026-11-15
+
+Exact native grep spent most of its time opening one checked file after another.
+It now opens at most 32 eligible files ahead with at most eight workers, using the
+same lexical, ancestor, no-follow and file-type checks. Content reads, byte/file
+budgets, hashing and result order remain serial. Early-result queries retain the
+serial path; pending handles close before recursive descent and on completion or
+failure. This avoids speculative content reads consuming an unreported scan budget.
+
+The unchanged native-search harness used one 2,000-file, 62,890-byte corpus and
+20 alternating pairs after three retained first-touch/warmup pairs. Every canonical
+result matched and the corpus remained unchanged. Rust 1.97.1 release workers on
+the same Ryzen 7 6800HS Windows host measured the following milliseconds:
+
+| Query | Before p50 / p95 | After p50 / p95 |
+| --- | --- | --- |
+| Exact grep | 1950.11 / 2188.93 | 763.88 / 949.50 |
+| Missing-pattern grep | 1953.29 / 2343.30 | 738.66 / 842.77 |
+| Bounded grep | 30.03 / 32.52 | 30.20 / 35.10 |
+| Glob | 234.80 / 264.18 | 234.85 / 259.42 |
+
+The roughly 61% exact-scan gain remains far from the 60 ms target. Bounded grep
+requests partial coverage and cannot replace that acceptance number. The barrier
+regression fails with serial opens; five new regressions and the existing suite
+pass (84 tests, one existing UNC helper ignored). They cover ordered content and
+snapshot hashes, unchanged budgets, exclusions/denials, failed opens and cleanup.
+
+[Raw evidence and provenance](../bench/probes/872/parallel-open-evidence/) also
+retain shell controls using the **same frozen #955 driver in both arms**. Empty
+p50/p95 was 3.79/4.90 and 3.46/4.36 ms; plain-ls models were 15.895 and 17.053 s,
+and ls-la models 53.053 and 52.409 s. Adding two modeled 30-second builds gives
+75.895 and 77.053 s. These differences are control variation, not effects of the
+native-search implementation. The shell workload, full-host/cold-start budgets and
+Linux qualification remain open. No runtime pin, permission or tool contract changes.

@@ -60,6 +60,11 @@ impl SourceKind {
 }
 
 pub struct Scan {
+    /// Exact content scans may open a bounded window ahead; reads stay ordered.
+    pub preopen_reads: bool,
+    preopened: BTreeMap<PathBuf, crate::scan_open::Opened>,
+    #[cfg(test)]
+    open_hook: Option<crate::scan_open::OpenHook>,
     /// Directory queries use the walk; file indexes cannot prove empty entries.
     pub include_directories: bool,
     pub profile: crate::profile::Profile,
@@ -91,6 +96,10 @@ pub struct Scan {
 impl Scan {
     pub fn new() -> Self {
         Self {
+            preopen_reads: false,
+            preopened: BTreeMap::new(),
+            #[cfg(test)]
+            open_hook: None,
             include_directories: false,
             profile: crate::profile::Profile::new(),
             scanned: 0,
@@ -187,15 +196,12 @@ impl Scan {
     }
     pub fn read(&mut self, path: &Path) -> Option<Vec<u8>> {
         let read = (|| -> Result<Option<Vec<u8>>> {
-            let started = self.profile.start();
-            let opened = (|| {
-                let target = file_path::checked(
-                    path.to_str()
-                        .ok_or_else(|| Failure::new("INVALID_ARGUMENT", "Non-UTF8 path"))?,
-                )?;
-                file_path::read_file(&target)
-            })();
-            self.profile.record("pathValidationAndOpen", started);
+            let opened = self.preopened.remove(path).unwrap_or_else(|| {
+                let started = self.profile.start();
+                let opened = crate::scan_open::checked(path);
+                self.profile.record("pathValidationAndOpen", started);
+                opened
+            });
             let mut file = opened?;
             if file.metadata()?.len() > MAX_FILE_BYTES as u64 {
                 self.skip("oversized", true, true);
@@ -272,6 +278,7 @@ impl Scan {
             let directory = target.parent.open_dir_nofollow(&target.name)?;
             self.visit(root, root, directory, 0, &patterns, request, &mut each)
         })();
+        self.preopened.clear();
         self.profile.record("walkTotal", started);
         result
     }
@@ -467,90 +474,148 @@ impl Scan {
             unchanged_directory(&directory, display)?;
         }
         names.sort();
-        for name in names {
-            if !self.running() {
-                break;
-            }
-            let child = display.join(&name);
-            // Reserved audit entries remain intentional exclusions, not scan gaps.
-            if name.eq_ignore_ascii_case(ops_files::paths::STORE) {
-                let file = directory
-                    .symlink_metadata(&name)
-                    .is_ok_and(|metadata| metadata.is_file());
-                self.skip("excluded", file, false);
-                continue;
-            }
-            if file_path::validate_name(&name).is_err()
-                || (request.windows_paths
-                    && ops_protocol::windows_paths::validate_name(&name).is_err())
-            {
-                self.skip_at("invalid-path", &child, false);
-                continue;
-            }
-            let started = self.profile.start();
-            let metadata = directory.symlink_metadata(&name);
-            self.profile.record("relativeMetadata", started);
-            let metadata = match metadata {
-                Ok(metadata) => metadata,
-                Err(error) => {
-                    self.skip_io("unreadable-entry", &child, false, &error);
-                    continue;
-                }
-            };
-            let file = metadata.is_file();
-            if request.denies_path(&child) {
-                self.skip("credential", file, false);
-                continue;
-            }
-            // The no-follow relative snapshot includes Windows reparse flags.
-            // Re-statting the display path adds no link protection; every later
-            // directory/content open still performs its own no-follow checks.
-            if file_path::link(&metadata) {
-                self.skip("symlink", file, false);
-                continue;
-            }
-            // A caller may opt into ordinary dot directories, but never into
-            // the plugin's own sidecars: `internal` shields the update lock, so
-            // no flag makes an `.dsh-ops-*` file observable here.
-            if (dotdir(&child, root) && !self.include_hidden) || internal(&name) || reserved(&name)
-            {
-                self.skip("excluded", file, false);
-                continue;
-            }
-            if file {
-                if self.scanned >= self.max_files {
-                    self.skip_at("file-limit", &child, true);
-                    self.stopped = Some(TruncatedBy::ScanBudget);
-                    break;
-                }
-                self.scanned += 1;
-                let started = self.profile.start();
-                let matched = patterns.matches(root, &child);
-                self.profile.record("globFilter", started);
-                if !matched {
-                    self.skip("pattern", true, false);
-                    continue;
-                }
-                self.stamp(&child, &metadata);
-                each(&child, &metadata, self)?;
-            } else if metadata.is_dir() {
-                self.stamp(&child, &metadata);
-                if self.include_directories && patterns.matches(root, &child) {
-                    each(&child, &metadata, self)?;
-                }
-                if self.include_directories && patterns.shallow() {
-                    continue;
-                }
-                match directory.open_dir_nofollow(&name) {
-                    Ok(next) => {
-                        self.visit(root, &child, next, depth + 1, patterns, request, each)?
+        let width = if self.preopen_reads {
+            crate::scan_open::WINDOW
+        } else {
+            1
+        };
+        'entries: for batch in names.chunks(width) {
+            let mut observed = BTreeMap::new();
+            if self.preopen_reads && self.running() {
+                let mut paths = Vec::new();
+                for name in batch
+                    .iter()
+                    .take(self.max_files.saturating_sub(self.scanned))
+                {
+                    if !self.running() {
+                        break;
                     }
-                    Err(error) => self.skip_io("unreadable-directory", &child, false, &error),
+                    if file_path::validate_name(name).is_err()
+                        || (request.windows_paths
+                            && ops_protocol::windows_paths::validate_name(name).is_err())
+                    {
+                        continue;
+                    }
+                    let child = display.join(name);
+                    let started = self.profile.start();
+                    let metadata = directory.symlink_metadata(name);
+                    self.profile.record("relativeMetadata", started);
+                    if metadata
+                        .as_ref()
+                        .is_ok_and(|value| value.is_file() && !file_path::link(value))
+                        && !request.denies_path(&child)
+                        && (!dotdir(&child, root) || self.include_hidden)
+                        && !internal(name)
+                        && !reserved(name)
+                        && patterns.matches(root, &child)
+                    {
+                        paths.push(child);
+                    }
+                    observed.insert(name.clone(), metadata);
                 }
-            } else {
-                self.skip("unsupported-entry", false, false);
+                let started = self.profile.start();
+                self.preopened.extend(crate::scan_open::batch(
+                    &paths,
+                    self.started + self.timeout,
+                    #[cfg(test)]
+                    self.open_hook.as_ref(),
+                ));
+                self.profile.record("checkedOpenBatch", started);
             }
+            for name in batch {
+                if !self.running() {
+                    break 'entries;
+                }
+                let child = display.join(name);
+                // Reserved audit entries remain intentional exclusions, not scan gaps.
+                if name.eq_ignore_ascii_case(ops_files::paths::STORE) {
+                    let file = directory
+                        .symlink_metadata(name)
+                        .is_ok_and(|metadata| metadata.is_file());
+                    self.skip("excluded", file, false);
+                    continue;
+                }
+                if file_path::validate_name(name).is_err()
+                    || (request.windows_paths
+                        && ops_protocol::windows_paths::validate_name(name).is_err())
+                {
+                    self.skip_at("invalid-path", &child, false);
+                    continue;
+                }
+                let metadata = observed.remove(name).unwrap_or_else(|| {
+                    let started = self.profile.start();
+                    let metadata = directory.symlink_metadata(name);
+                    self.profile.record("relativeMetadata", started);
+                    metadata
+                });
+                let metadata = match metadata {
+                    Ok(metadata) => metadata,
+                    Err(error) => {
+                        self.skip_io("unreadable-entry", &child, false, &error);
+                        continue;
+                    }
+                };
+                let file = metadata.is_file();
+                if request.denies_path(&child) {
+                    self.skip("credential", file, false);
+                    continue;
+                }
+                // The no-follow relative snapshot includes Windows reparse flags.
+                // Re-statting the display path adds no link protection; every later
+                // directory/content open still performs its own no-follow checks.
+                if file_path::link(&metadata) {
+                    self.skip("symlink", file, false);
+                    continue;
+                }
+                // A caller may opt into ordinary dot directories, but never into
+                // the plugin's own sidecars: `internal` shields the update lock, so
+                // no flag makes an `.dsh-ops-*` file observable here.
+                if (dotdir(&child, root) && !self.include_hidden)
+                    || internal(name)
+                    || reserved(name)
+                {
+                    self.skip("excluded", file, false);
+                    continue;
+                }
+                if file {
+                    if self.scanned >= self.max_files {
+                        self.skip_at("file-limit", &child, true);
+                        self.stopped = Some(TruncatedBy::ScanBudget);
+                        break 'entries;
+                    }
+                    self.scanned += 1;
+                    let started = self.profile.start();
+                    let matched = patterns.matches(root, &child);
+                    self.profile.record("globFilter", started);
+                    if !matched {
+                        self.skip("pattern", true, false);
+                        continue;
+                    }
+                    self.stamp(&child, &metadata);
+                    each(&child, &metadata, self)?;
+                } else if metadata.is_dir() {
+                    self.stamp(&child, &metadata);
+                    if self.include_directories && patterns.matches(root, &child) {
+                        each(&child, &metadata, self)?;
+                    }
+                    if self.include_directories && patterns.shallow() {
+                        continue;
+                    }
+                    match directory.open_dir_nofollow(name) {
+                        Ok(next) => {
+                            // Never retain a parent window across recursive descent.
+                            self.preopened.clear();
+                            self.visit(root, &child, next, depth + 1, patterns, request, each)?
+                        }
+                        Err(error) => self.skip_io("unreadable-directory", &child, false, &error),
+                    }
+                } else {
+                    self.skip("unsupported-entry", false, false);
+                }
+            }
+            self.preopened.clear();
         }
+        self.preopened.clear();
         Ok(())
     }
 }
@@ -564,3 +629,7 @@ impl Default for Scan {
 #[cfg(test)]
 #[path = "scan_tests.rs"]
 mod scan_tests;
+
+#[cfg(test)]
+#[path = "scan_open_tests.rs"]
+mod scan_open_tests;

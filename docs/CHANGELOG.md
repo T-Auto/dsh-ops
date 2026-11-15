@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Open a bounded window of exact-search files concurrently through the existing checked path primitives. Preserve serial content reads, snapshot hashing, scan budgets and result ordering; keep early-result searches serial and close pending handles on recursion and errors (#872).
+- 精确搜索通过既有路径检查原语并发打开有界文件窗口；内容读取、快照哈希、扫描预算及结果顺序仍串行处理。提前返回的搜索保持串行，递归及出错时关闭尚未消费的句柄（#872）。
+
 - Dispatch Windows private-channel readers together before waiting for their connection acknowledgments. Keep the all-readers-armed publication barrier and existing capture, cancellation, EOF and spill ownership (#872).
 - Windows 私有通道先一起调度读取器，再等待各自的连接确认；保留全部读取器就绪后才发布端点的屏障，以及既有捕获、取消、EOF 和溢写归属（#872）。
 

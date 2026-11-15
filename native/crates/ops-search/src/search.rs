@@ -742,6 +742,7 @@ fn grep_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
     let content = matches!(args.output_mode.as_str(), "" | "content");
     // Cursors must revalidate a complete snapshot; summaries always need every match.
     let early = !args.exact_total && args.continuation.is_none() && args.output_mode != "summary";
+    scan.preopen_reads = !early;
     let wanted = cursor.offset.saturating_add(args.limit);
     let used = walk_request(
         &mut scan,

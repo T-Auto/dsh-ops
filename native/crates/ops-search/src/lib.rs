@@ -8,6 +8,7 @@ mod paging;
 mod patterns;
 mod profile;
 pub mod scan;
+mod scan_open;
 mod search;
 use cap_fs_ext::DirExt;
 #[cfg(windows)]
