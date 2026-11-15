@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Dispatch Windows private-channel readers together before waiting for their connection acknowledgments. Keep the all-readers-armed publication barrier and existing capture, cancellation, EOF and spill ownership (#872).
+- Windows 私有通道先一起调度读取器，再等待各自的连接确认；保留全部读取器就绪后才发布端点的屏障，以及既有捕获、取消、EOF 和溢写归属（#872）。
+
 - Bind Windows resident-shell output and receipt pipe names in the trusted startup script. Send only the request generation, working directory and command on each call; validate bound endpoints at both transport and admission boundaries, retaining per-command EOF, capture, cancellation and spill ownership (#872).
 - 在可信启动脚本中绑定 Windows 常驻 shell 的输出与收据管道名；每次调用仅发送请求代号、工作目录和命令。传输及准入边界均校验绑定端点，保留每命令的 EOF、捕获、取消及溢写归属（#872）。
 

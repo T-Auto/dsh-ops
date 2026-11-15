@@ -151,6 +151,7 @@ impl Channel {
             cancellations: Vec::new(),
             poisoned: false,
         };
+        let mut arming = Vec::with_capacity(handles.len());
         for (index, handle) in handles.iter().enumerate() {
             let (armed, ready) = mpsc::sync_channel(1);
             #[cfg(test)]
@@ -180,10 +181,7 @@ impl Channel {
             let run = move || {
                 #[cfg(test)]
                 if let Some(gate) = gate {
-                    let mut released = gate.0.lock().unwrap();
-                    while !*released {
-                        released = gate.1.wait(released).unwrap();
-                    }
+                    gate(index);
                 }
                 if let Err(error) = receive(
                     &handle,
@@ -216,8 +214,12 @@ impl Channel {
                 )
             };
             channel.readers.push(reader);
-            // Do not publish a name before ConnectNamedPipe is pending. A fast
-            // metadata open+close before that call produces ERROR_NO_DATA.
+            arming.push(ready);
+        }
+        // Dispatch independent readers together, then wait for every connect.
+        // Do not publish a name before ConnectNamedPipe is pending: a fast
+        // metadata open+close before that call produces ERROR_NO_DATA.
+        for ready in arming {
             ready
                 .recv()
                 .map_err(|_| io::Error::other("channel connect worker stopped"))??;
@@ -227,3 +229,7 @@ impl Channel {
         Ok(channel)
     }
 }
+
+#[cfg(test)]
+#[path = "channel_build_tests.rs"]
+mod tests;

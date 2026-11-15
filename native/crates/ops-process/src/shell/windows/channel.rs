@@ -97,7 +97,7 @@ struct Connection<'a> {
     output: Option<ReaderOutput>,
 }
 #[cfg(test)]
-type ConnectGate = Arc<(Mutex<bool>, std::sync::Condvar)>;
+type ConnectGate = Arc<dyn Fn(usize) + Send + Sync>;
 #[derive(Default)]
 struct State {
     progress: Option<super::channel_progress::ChannelProgress>,
@@ -527,7 +527,12 @@ mod tests {
                 64,
                 None,
                 None,
-                Some(worker_gate),
+                Some(Arc::new(move |_| {
+                    let mut released = worker_gate.0.lock().unwrap();
+                    while !*released {
+                        released = worker_gate.1.wait(released).unwrap();
+                    }
+                })),
             ))
             .unwrap();
         });

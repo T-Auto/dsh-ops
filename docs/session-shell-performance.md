@@ -407,3 +407,41 @@ The pinned Rust 1.97.1 Windows release gate passed all 13 steps: 753 Rust tests,
 checks and packed-runtime closure. All 58 focused channel/admission/integrity
 checks passed; the new assertions were also included in the full gate. Formatting,
 worker/example clippy and the 960-file source-size check passed.
+
+## Concurrent channel arming — 2026-11-15
+
+Each private channel previously started one reader and waited for its connection
+acknowledgment before scheduling the next reader. The constructor now dispatches
+all four readers before waiting for every acknowledgment. It still publishes no
+endpoint until all connects are armed. Dedicated and pooled channels use the same
+barrier; errors retain the existing owned cleanup path. Per-command receipt,
+physical EOF, Job membership, cancellation, caps and spill rules remain intact.
+
+Two controlled-barrier regressions fail against the serial implementation and
+pass with the change. They also hold the final reader to verify publication
+cannot escape early, and verify that a drained pool can serve its next generation.
+The focused process suite passed 53 tests with six ignored child fixtures.
+
+Alternating Rust 1.97.1 release comparisons against #952, using the unchanged
+stock runtime, measured empty-command p50/p95 **4.41/6.69 → 3.85/5.77 ms**
+(300 pairs), printf **5.10/5.73 → 4.71/5.25 ms** (100 pairs), 4 KiB records
+**25.01/32.07 → 24.06/29.69 ms** (30 pairs), and 16 KiB records
+**92.83/104.80 → 87.01/102.63 ms** (20 pairs). Warmup counts remain 30/10/3/3.
+The empty median improves about 13%; it still misses p50 ≤1 ms / p95 ≤3 ms.
+These are paired results from this round, not comparisons to another round's
+baseline. No local builds or tests ran during this paired measurement.
+
+Raw samples and source identities are in
+[channel-arming-evidence](../bench/probes/872/channel-arming-evidence/).
+Temporary profiling instrumentation was removed before building the measured
+candidate. Full-host, cold-start, file-operation and Linux acceptance remain open.
+
+The unchanged 106-operation scenario adaptation measured plain-ls totals
+14.539 → 14.664 s, ls-la 52.652 → 54.386 s, and plain ls plus two modeled
+30-second builds 74.539 → 74.664 s. Three samples per operation do not establish
+a material overall improvement; every acceptance budget remains explicit.
+The original fixture was absent from the supplied ZIP; this shared fixture
+fixes 2,000 grep files, 100 copy files and a 65,536-byte read. Both listing
+variants and both build formulas are reported separately in `scenario.json`.
+The final scenario ran before the full gate, without concurrent builds/tests
+or the archive inventory that overlapped an excluded earlier trial.

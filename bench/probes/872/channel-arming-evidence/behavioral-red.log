@@ -1,0 +1,29 @@
+   Compiling windows-sys v0.61.2
+   Compiling ops-process v0.5.4 (E:\01-Projects\deepseek\dsh-ops-channel-arm-batch\native\crates\ops-process)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 21.69s
+     Running unittests src\lib.rs (E:/01-Projects/deepseek/dsh-ops-bound-shell-endpoints/native/target\debug\deps\ops_process-ddae5a8c9c7d1a56.exe)
+
+running 2 tests
+
+thread 'shell::windows::channel::build::tests::pooled_readers_arm_together_before_endpoint_publication' (6664) panicked at crates\ops-process\src\shell\windows\channel_build_tests.rs:51:5:
+assertion `left == right` failed: readers were armed serially
+  left: [0]
+ right: [0, 1, 2, 3]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'shell::windows::channel::build::tests::dedicated_readers_arm_together_before_endpoint_publication' (18564) panicked at crates\ops-process\src\shell\windows\channel_build_tests.rs:51:5:
+assertion `left == right` failed: readers were armed serially
+  left: [0]
+ right: [0, 1, 2, 3]
+test shell::windows::channel::build::tests::dedicated_readers_arm_together_before_endpoint_publication ... FAILED
+test shell::windows::channel::build::tests::pooled_readers_arm_together_before_endpoint_publication ... FAILED
+
+failures:
+
+failures:
+    shell::windows::channel::build::tests::dedicated_readers_arm_together_before_endpoint_publication
+    shell::windows::channel::build::tests::pooled_readers_arm_together_before_endpoint_publication
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 57 filtered out; finished in 2.08s
+
+error: test failed, to rerun pass `-p ops-process --lib`
