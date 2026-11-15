@@ -12,7 +12,7 @@ import { prepareNiubash } from '../../lib/niubash/runtime.js'
 import { residentShellBootstrap } from '../../lib/execution/resident/shell-bootstrap.js'
 import { SpillLedger } from '../../lib/shells/spill-ledger.js'
 import { sweepSpills } from '../../lib/shells/spill-retention.js'
-import { channel, within } from './872/channel.mjs'
+import { channel, within } from '../../test/lib/resident-channel.mjs'
 
 assert.equal(process.platform, 'win32', 'native channel spill ownership requires Windows')
 const [binary, shell, support] = process.argv.slice(2, 5).map(value => path.resolve(value))
