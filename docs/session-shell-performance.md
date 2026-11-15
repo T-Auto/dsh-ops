@@ -1,5 +1,7 @@
 # Session shell performance work
 
+Generated benchmark data and logs are kept outside the repository. Report filenames below refer to local measurement records; results, validation and remaining targets are recorded in [#932](https://github.com/T-Auto/dsh-ops/issues/932).
+
 中文：[会话Shell性能](会话Shell性能.md). Tracking: #872; baseline: PR #933,
 `06c22a65b93e89d3a452724dc0a2e813f6b80af9`.
 
@@ -24,7 +26,7 @@ different host from the maintainer's i9-13900H. Empty calls use 300 samples afte
 the timing processes. Single paired runs do not establish tail stability; the
 second baseline's printf tail is reported without filtering.
 
-[Raw reports and runnable harness](../bench/probes/872/channel-wakeup-evidence/)
+[Results and runnable harness](https://github.com/T-Auto/dsh-ops/issues/932)
 retain the source evidence. `compare.mjs` differs from the supplied harness only
 by configurable executable paths and recording `OPS_DRIVER_SOURCE`. Set
 `OPS_ROOT`, `OPS_NIU`, `OPS_DRIVER`, `OPS_DRIVER_SOURCE`, `REPORT`, `ONLY_NIU=1`,
@@ -80,7 +82,7 @@ scans still perform 2,000 relative metadata queries, but no longer perform the
 they are not substituted for full-scan acceptance. Glob improves about 36%, while
 exact grep improves only about 4%; per-file checked opens remain the next target.
 
-[Raw report](../bench/probes/872/scan-metadata-evidence.json). Before worker SHA-256:
+[Measurement summary](https://github.com/T-Auto/dsh-ops/issues/932). Before worker SHA-256:
 `1bb7a20ba597c45b6d761df8bc7dbc12fc255dc866ff2f84556d012a65f0d15c` (PR #944).
 After: `35519ab12c0557325b4658756472edb79e35f0f1ed2032513295495c8188701a`.
 Both are Rust 1.97.1 release builds on the Windows host above. Reproduce with
@@ -115,7 +117,7 @@ both arms refused a retained callback after an executor change.
 | Preparation + ten callbacks | 153.17 / 181.22 ms | 20.31 / 25.79 ms |
 | Assemblies per step, including probes | 12 | 2 |
 
-[Raw samples and source hashes](../bench/probes/872/presentation-evidence/).
+[Measurement summary](https://github.com/T-Auto/dsh-ops/issues/932).
 The before arm is PR #944; PR #945 has identical host source. The after arm is
 the uncommitted presentation change over #945; `provenance.json` records exact
 source hashes. Copy the same harness into each checkout's
@@ -158,7 +160,7 @@ warmups, 100 printf commands and the original 256 MiB bulk arm.
 | Empty session command | 8.66 / 9.70 ms | 6.90 / 8.84 ms |
 | printf x | 8.61 / 9.68 ms | 6.52 / 7.29 ms |
 
-[Raw reports](../bench/probes/872/channel-pool-evidence/) include artifact hashes.
+[Measurement summary](https://github.com/T-Auto/dsh-ops/issues/932) include artifact hashes.
 Before driver SHA-256: `13e554dc3ac5cef0ea7f16ac94a1acd1b850abd211a2458a01997e5b158db4c2`
 (PR #944; #945 and #946 do not change the driver). After driver SHA-256:
 `4ae5f06e53ea36c18f3a52889ecf978b224f9956eadc2b7c03cd6630cb9aa120`.
@@ -195,7 +197,7 @@ empty commands after 30 warmups, 100 printf samples and 256 MiB bulk work:
 | Empty session command | 6.63 / 7.32 ms | 4.45 / 6.32 ms |
 | printf x | 6.63 / 7.31 ms | 4.66 / 5.28 ms |
 
-[Raw reports](../bench/probes/872/channel-progress-evidence/) record the measured
+[Measurement summary](https://github.com/T-Auto/dsh-ops/issues/932) record the measured
 driver hashes; the baseline is #947. A real pipe regression fails with progress
 notifications disabled and passes when restored. It checks that receiving bytes
 wakes the observer without declaring EOF; separate tests cover early notification
@@ -275,7 +277,7 @@ one-shot worker startup and opt-in stage instrumentation:
 | Missing-pattern grep | 2715.17 / 2794.85 ms | 1771.08 / 1888.31 ms |
 | Glob | 218.98 / 243.87 ms | 215.96 / 245.62 ms |
 
-[Raw samples and provenance](../bench/probes/872/checked-parent-evidence/) record
+[Raw samples and provenance](https://github.com/T-Auto/dsh-ops/issues/932) record
 source, worker and corpus hashes. Exact grep improves about 36%; glob does not materially
 improve. Bounded grep intentionally requests partial coverage and cannot be used
 as the full-scan acceptance number. The 60 ms full-grep target remains unmet.
@@ -343,7 +345,7 @@ authenticated readiness and EOF. Nearest-rank p50/p95:
 
 The larger-record improvement does not establish a material empty-command gain;
 the session p50/p95 targets remain unmet. Raw paired samples and exact binary
-identities are in [record-text-evidence](../bench/probes/872/record-text-evidence/).
+identities are in [record-text-evidence](https://github.com/T-Auto/dsh-ops/issues/932).
 
 The unchanged comparison harness separately measured empty p50/p95
 4.76/6.13 → 4.44/5.66 ms and printf 5.01/6.04 → 4.84/6.17 ms, retaining its
@@ -399,7 +401,7 @@ overall improvement. Candidate p50/p95 (ms) remain above budget: grep
 847.76/892.63, plain ls 79.84/86.61, copy100 287.22/303.22, and 64 KiB
 read-and-count 43.58/53.40. Raw samples, reproduction, source/binary identities
 and measurement limits are in
-[bound-endpoint-evidence](../bench/probes/872/bound-endpoint-evidence/).
+[bound-endpoint-evidence](https://github.com/T-Auto/dsh-ops/issues/932).
 Full-host, cold-start and same-machine Linux acceptance remain open.
 
 The pinned Rust 1.97.1 Windows release gate passed all 13 steps: 753 Rust tests,
@@ -432,7 +434,7 @@ These are paired results from this round, not comparisons to another round's
 baseline. No local builds or tests ran during this paired measurement.
 
 Raw samples and source identities are in
-[channel-arming-evidence](../bench/probes/872/channel-arming-evidence/).
+[channel-arming-evidence](https://github.com/T-Auto/dsh-ops/issues/932).
 Temporary profiling instrumentation was removed before building the measured
 candidate. Full-host, cold-start, file-operation and Linux acceptance remain open.
 
@@ -473,7 +475,7 @@ regression fails with serial opens; five new regressions and the existing suite
 pass (84 tests, one existing UNC helper ignored). They cover ordered content and
 snapshot hashes, unchanged budgets, exclusions/denials, failed opens and cleanup.
 
-[Raw evidence and provenance](../bench/probes/872/parallel-open-evidence/) also
+[Raw evidence and provenance](https://github.com/T-Auto/dsh-ops/issues/932) also
 retain shell controls using the **same frozen #955 driver in both arms**. Empty
 p50/p95 was 3.79/4.90 and 3.46/4.36 ms; plain-ls models were 15.895 and 17.053 s,
 and ls-la models 53.053 and 52.409 s. Adding two modeled 30-second builds gives
