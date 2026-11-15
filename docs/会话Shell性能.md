@@ -1,5 +1,7 @@
 # 会话 Shell 性能工作
 
+生成的基准数据与日志保留在仓库外。下文报告文件名指本地测量记录；结果摘要、验证与剩余目标见 [#932](https://github.com/T-Auto/dsh-ops/issues/932)。
+
 English: [Session shell performance work](session-shell-performance.md)。跟踪 #872；
 基线为 PR #933，`06c22a65b93e89d3a452724dc0a2e813f6b80af9`。
 
@@ -20,7 +22,7 @@ Node 26.12.1、Rust 1.97.1 release 构建；与维护者的 i9-13900H 不同。
 管道与朴素载荷对照，计时期间没有并发构建或测试。单轮配对不能证明尾延迟稳定；第二轮
 基线 printf 的长尾如实报告，未过滤。
 
-[原始报告与可执行 harness](../bench/probes/872/channel-wakeup-evidence/) 保留测量证据。
+[结果摘要与可执行 harness](https://github.com/T-Auto/dsh-ops/issues/932) 保留测量证据。
 `compare.mjs` 仅增加可配置的可执行文件路径及 `OPS_DRIVER_SOURCE` 记录。设置 `OPS_ROOT`、
 `OPS_NIU`、`OPS_DRIVER`、`OPS_DRIVER_SOURCE`、`REPORT`、`ONLY_NIU=1`、`SAMPLES=300`、
 `WARMUP=30`、`BULK_MB=256`，使用 Node 运行。两个 driver 必须使用独立 Cargo target 目录；
@@ -66,7 +68,7 @@ C1 去除每个目录项的第二次绝对路径元数据查询。已持有目�
 去掉的是 2,000 次重复绝对查询。有界扫描保持原有语义，没有被用来替代完整扫描验收。
 Glob 改善约 36%，精确 grep 仅约 4%；下一步关注逐文件的受检查打开。
 
-[原始报告](../bench/probes/872/scan-metadata-evidence.json)。优化前 worker SHA-256：
+[测量摘要](https://github.com/T-Auto/dsh-ops/issues/932)。优化前 worker SHA-256：
 `1bb7a20ba597c45b6d761df8bc7dbc12fc255dc866ff2f84556d012a65f0d15c`（PR #944）。
 优化后：`35519ab12c0557325b4658756472edb79e35f0f1ed2032513295495c8188701a`。
 两者均为上述 Windows 主机上的 Rust 1.97.1 release 构建。复现命令：
@@ -97,7 +99,7 @@ executor 改变后，两组均拒绝保留的旧回调。
 | 准备 + 十次回调 | 153.17 / 181.22 ms | 20.31 / 25.79 ms |
 | 每步装配次数（含探针） | 12 | 2 |
 
-[原始样本与源码哈希](../bench/probes/872/presentation-evidence/)。旧版为 PR #944，
+[测量摘要](https://github.com/T-Auto/dsh-ops/issues/932)。旧版为 PR #944，
 PR #945 的宿主源码相同；新版为 #945 上尚未提交时的展示判定改动，精确源码哈希记录于
 `provenance.json`。将相同 harness 复制到各 checkout 的
 `bench/probes/872/presentation.mjs`，构建该 checkout，然后运行
@@ -130,7 +132,7 @@ driver 现在持有三个有界通道池，十二个私有管道实例和十二�
 | 空会话命令 | 8.66 / 9.70 ms | 6.90 / 8.84 ms |
 | printf x | 8.61 / 9.68 ms | 6.52 / 7.29 ms |
 
-[原始报告](../bench/probes/872/channel-pool-evidence/) 包含产物哈希。
+[测量摘要](https://github.com/T-Auto/dsh-ops/issues/932) 包含产物哈希。
 旧 driver SHA-256：`13e554dc3ac5cef0ea7f16ac94a1acd1b850abd211a2458a01997e5b158db4c2`
 （PR #944；#945 和 #946 不修改 driver）。新 driver SHA-256：
 `4ae5f06e53ea36c18f3a52889ecf978b224f9956eadc2b7c03cd6630cb9aa120`。
@@ -160,7 +162,7 @@ driver 现在持有三个有界通道池，十二个私有管道实例和十二�
 | 空会话命令 | 6.63 / 7.32 ms | 4.45 / 6.32 ms |
 | printf x | 6.63 / 7.31 ms | 4.66 / 5.28 ms |
 
-[原始报告](../bench/probes/872/channel-progress-evidence/) 记录被测 driver 哈希；基线为
+[测量摘要](https://github.com/T-Auto/dsh-ops/issues/932) 记录被测 driver 哈希；基线为
 #947。真实管道回归在禁用进展通知时失败，恢复后通过，验证接收字节会唤醒观察者，
 但不会宣称 EOF；另有测试覆盖提前通知及代际隔离。进程 crate 的 51 个测试全部通过
 （6 个显式调用的子进程 fixture 忽略），release worker 的 12 个必需权限、准入、
@@ -227,7 +229,7 @@ ACL 拒绝仍返回 `ACCESS_DENIED`。
 | 无匹配 grep | 2715.17 / 2794.85 ms | 1771.08 / 1888.31 ms |
 | Glob | 218.98 / 243.87 ms | 215.96 / 245.62 ms |
 
-[原始样本与溯源](../bench/probes/872/checked-parent-evidence/) 记录源码、worker 及
+[原始样本与溯源](https://github.com/T-Auto/dsh-ops/issues/932) 记录源码、worker 及
 语料哈希。完整精确 grep 改善约 36%，glob 基本不变。有界 grep 明确请求部分覆盖，
 不能作为完整扫描的验收数字；完整 grep 的 60 ms 目标仍未达到。
 
