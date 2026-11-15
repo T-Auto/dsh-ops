@@ -49,3 +49,5 @@ bench/llm.patch.yml
 /bench/probes/**/*.log
 /bench/probes/**/*.out
 /bench/probes/**/*.csv
+# Keep task-specific benchmark experiments out of PRs.
+/bench/probes/872/
