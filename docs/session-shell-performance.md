@@ -1,5 +1,7 @@
 # Session shell performance work
 
+Generated benchmark data and logs are kept outside the repository. Report filenames below refer to local measurement records; results, validation and remaining targets are recorded in [#932](https://github.com/T-Auto/dsh-ops/issues/932).
+
 中文：[会话Shell性能](会话Shell性能.md). Tracking: #872; baseline: PR #933,
 `06c22a65b93e89d3a452724dc0a2e813f6b80af9`.
 
@@ -24,7 +26,7 @@ different host from the maintainer's i9-13900H. Empty calls use 300 samples afte
 the timing processes. Single paired runs do not establish tail stability; the
 second baseline's printf tail is reported without filtering.
 
-[Raw reports and runnable harness](../bench/probes/872/channel-wakeup-evidence/)
+[Results and runnable harness](https://github.com/T-Auto/dsh-ops/issues/932)
 retain the source evidence. `compare.mjs` differs from the supplied harness only
 by configurable executable paths and recording `OPS_DRIVER_SOURCE`. Set
 `OPS_ROOT`, `OPS_NIU`, `OPS_DRIVER`, `OPS_DRIVER_SOURCE`, `REPORT`, `ONLY_NIU=1`,
@@ -80,7 +82,7 @@ scans still perform 2,000 relative metadata queries, but no longer perform the
 they are not substituted for full-scan acceptance. Glob improves about 36%, while
 exact grep improves only about 4%; per-file checked opens remain the next target.
 
-[Raw report](../bench/probes/872/scan-metadata-evidence.json). Before worker SHA-256:
+[Measurement summary](https://github.com/T-Auto/dsh-ops/issues/932). Before worker SHA-256:
 `1bb7a20ba597c45b6d761df8bc7dbc12fc255dc866ff2f84556d012a65f0d15c` (PR #944).
 After: `35519ab12c0557325b4658756472edb79e35f0f1ed2032513295495c8188701a`.
 Both are Rust 1.97.1 release builds on the Windows host above. Reproduce with
@@ -115,7 +117,7 @@ both arms refused a retained callback after an executor change.
 | Preparation + ten callbacks | 153.17 / 181.22 ms | 20.31 / 25.79 ms |
 | Assemblies per step, including probes | 12 | 2 |
 
-[Raw samples and source hashes](../bench/probes/872/presentation-evidence/).
+[Measurement summary](https://github.com/T-Auto/dsh-ops/issues/932).
 The before arm is PR #944; PR #945 has identical host source. The after arm is
 the uncommitted presentation change over #945; `provenance.json` records exact
 source hashes. Copy the same harness into each checkout's
@@ -158,7 +160,7 @@ warmups, 100 printf commands and the original 256 MiB bulk arm.
 | Empty session command | 8.66 / 9.70 ms | 6.90 / 8.84 ms |
 | printf x | 8.61 / 9.68 ms | 6.52 / 7.29 ms |
 
-[Raw reports](../bench/probes/872/channel-pool-evidence/) include artifact hashes.
+[Measurement summary](https://github.com/T-Auto/dsh-ops/issues/932) include artifact hashes.
 Before driver SHA-256: `13e554dc3ac5cef0ea7f16ac94a1acd1b850abd211a2458a01997e5b158db4c2`
 (PR #944; #945 and #946 do not change the driver). After driver SHA-256:
 `4ae5f06e53ea36c18f3a52889ecf978b224f9956eadc2b7c03cd6630cb9aa120`.
