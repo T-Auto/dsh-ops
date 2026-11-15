@@ -12,7 +12,7 @@ import { Context } from '@deepseek-ai/cordis'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
 import { prepareNiubash } from '../../lib/niubash/runtime.js'
-import { channel, within } from './872/channel.mjs'
+import { channel, within } from '../../test/lib/resident-channel.mjs'
 
 assert.equal(process.platform, 'win32', 'shell ownership is Windows-only')
 const [worker, shell, bootstrapFile, supportFile] = process.argv.slice(2).map(file => path.resolve(file))
