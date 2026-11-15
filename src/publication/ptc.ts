@@ -1,5 +1,5 @@
 /** Stable, scoped PTC definitions; DSH resolves selection once per model step. */
-import type { Agent, Context, Fiber, ToolDefinition, ToolRunContext, UserMessage } from '../adapter/dsh/types.js'
+import type { Agent, Context, Fiber, ToolActivationContext, ToolDefinition, ToolRunContext, UserMessage } from '../adapter/dsh/types.js'
 import { loadUserMessage } from '../adapter/dsh/host.js'
 import { resolvePtcConfig } from '../config.js'
 import { acquirePtcFile, acquireSharedFile, isSharedFileApi } from './scope-owner.js'
@@ -28,6 +28,20 @@ import { publicationRegistration, publicationReady } from './reentry.js'
 import { retired as retiredLegacyRow } from '../settings/legacy.js'
 export { resolvePtcConfig } from '../config.js'
 export const name = 'dsh-ops-ptc'
+
+/**
+ * What the PTC projection can serve for one agent.
+ *
+ * `servable` returns `undefined` until the publisher is attached, and for any
+ * agent this consumer does not own: an unknown answer must keep the official
+ * tools available rather than hide them. The set contains raw API names the
+ * publisher itself would admit for that agent right now.
+ */
+export interface PtcServability {
+  servable(agent: Agent): ReadonlySet<ApiName> | undefined
+  /** The publisher's own per-activation presentation predicate. */
+  isPtc(activation: ToolActivationContext): Promise<boolean>
+}
 
 interface Entry {
   agent: Agent
@@ -58,12 +72,17 @@ export interface PtcGate {
 export function apply(root: Context, rawConfig: unknown, gate: PtcGate = { allows: () => true }): void {
   if (!retiredLegacyRow(root, 'ptc')) mountPtc(root, rawConfig, gate)
 }
-export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { allows: () => true }): void {
+export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { allows: () => true }): PtcServability {
   const config = resolvePtcConfig(rawConfig)
+  // The accessor is synchronous while attachment is asynchronous; every answer
+  // before the publisher owns the agent is "unknown", which keeps official tools.
+  let servable: ((agent: Agent) => ReadonlySet<ApiName> | undefined) | undefined
+  let presentation: ((activation: ToolActivationContext) => Promise<boolean>) | undefined
   let file: string
   try { file = resolveWorker(config) } catch (error) {
     if (config.required) throw error
-    root.logger.warn(`dsh-ops: ${String(error)}`); return
+    root.logger.warn(`dsh-ops: ${String(error)}`)
+    return { servable: () => undefined, isPtc: async () => false }
   }
   mountWorkspacePreparation(root)
   root.inject(['tools', 'systemPrompt', 'sandboxPolicy', 'subprocess'], async ctx => {
@@ -95,6 +114,20 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       return assembly.tools.length === 1 && assembly.tools[0]?.name === 'run_code'
         && assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
     }
+    // Answer from the publisher's own pool instead of a host-side lookup: the
+    // official file APIs this projection replaces are SDK bindings, so a host
+    // `tools.get` cannot prove reachability. `selected` is deliberately absent:
+    // hiding must not depend on whether the model already loaded the SDK.
+    servable = (agent: Agent): ReadonlySet<ApiName> | undefined => {
+      if (!owns(agent)) return undefined
+      const names = new Set<ApiName>()
+      const allowed = new Set(allowedApis(agent))
+      for (const api of pool) {
+        if (permitted(agent, api) && (resident.has(api) || allowed.has(api))) names.add(api)
+      }
+      return names
+    }
+    presentation = (activation: ToolActivationContext) => isPtc(activation.agent, activation.signal)
     // Repeated writes to one path signal a batching mistake. The guidance rides
     // the triggering tool result, so no system-prompt bytes are spent up front.
     // One latch for the program-shape trigger. It observes the root run_code program,
@@ -343,4 +376,8 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     ownership.refresh()
     await Promise.all((ctx.get('agents')?.list() ?? []).map(attach))
   })
+  return {
+    servable: (agent: Agent) => servable?.(agent),
+    isPtc: (activation: ToolActivationContext) => presentation ? presentation(activation) : Promise.resolve(false),
+  }
 }

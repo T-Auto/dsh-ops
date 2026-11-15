@@ -92,13 +92,16 @@ await test('replacement targets map each mode to the tools it hides, platform by
   const linux = replacementTargets('standard', 'linux')
   assert.equal(linux.has('pwsh'), false, 'POSIX keeps the host bash')
   assert.equal(replacementTargets('cordis', 'win32').get('read'), publicToolName('inspect_local_file'))
-  // Minimal, PTC and its ops-ptc sibling replace only the Windows shell; their
-  // file tools stay official.
-  for (const mode of ['minimal', 'ptc', 'ops-ptc']) {
-    const targets = replacementTargets(mode, 'win32', true)
-    assert.deepEqual([...targets.keys()].sort(), ['pwsh', 'pwsh_persistent'].sort(), mode)
-    assert.equal([...targets.values()].every(value => value === BASH_TOOL), true, mode)
-    assert.equal(replacementTargets(mode, 'linux', true).size, 0, `${mode} replaces nothing on POSIX`)
+  // Minimal publishes no file surface, so only the Windows shell is replaced.
+  assert.deepEqual([...replacementTargets('minimal', 'win32', true).keys()].sort(), ['pwsh', 'pwsh_persistent'].sort())
+  assert.equal(replacementTargets('minimal', 'linux', true).size, 0, 'minimal replaces nothing on POSIX')
+  // PTC plans contribute their file targets now; whether a name is actually
+  // hidden is decided per activation by the publisher accessor.
+  for (const mode of ['ptc', 'ops-ptc']) {
+    const win = replacementTargets(mode, 'win32', true)
+    assert.deepEqual([...win.keys()].sort(), ['glob', 'grep', 'pwsh', 'pwsh_persistent', 'read'].sort(), mode)
+    assert.equal(win.get('pwsh'), BASH_TOOL, mode)
+    assert.deepEqual([...replacementTargets(mode, 'linux', true).keys()].sort(), ['glob', 'grep', 'read'].sort(), mode)
   }
   assert.deepEqual(residentTools('standard'), RESIDENT)
   assert.deepEqual(residentTools('cordis'), RESIDENT)
@@ -283,7 +286,7 @@ await test('dynamic loading serves Minimal always and enabled modes, and never P
   } finally { await shutdown(ctx) }
 }))
 
-await test('PTC mode publishes the scoped SDK surface and replaces only the Windows shell', () => withTempDir('mode-ptc', async cwd => {
+await test('PTC mode publishes the scoped SDK surface, hides the replaced official file tools and replaces the Windows shell', () => withTempDir('mode-ptc', async cwd => {
   const { ctx, names, mint, assemble } = await boot()
   try {
     const NodePtc = (await import('@deepseek-ai/dsh-ptc-runtime-node')).default
@@ -295,8 +298,13 @@ await test('PTC mode publishes the scoped SDK surface and replaces only the Wind
     const row = await ctx.plugin(Ptc, { required: true })
     const agent = await mint({ preset: 'ptc', presentation: 'ptc', cwd })
     await waitFor(() => names(agent).includes('ops_load_sdk'), { what: 'PTC SDK publication' })
-    for (const name of OFFICIAL) assert.ok(names(agent).includes(name), `PTC replaces no official file tool; ${name} stays visible`)
-    assert.equal(names(agent).includes('ops_bash'), process.platform === 'win32', 'only the Windows shell is replaced')
+    const held = await prepareStep(ctx, agent)
+    try {
+      const admitted = ctx.get('tools').definitions(agent, held.toolSet).map(tool => tool.name)
+      for (const name of ['read', 'glob', 'grep']) assert.equal(admitted.includes(name), false, `PTC hides the replaced official ${name}`)
+      for (const name of ['write']) assert.ok(admitted.includes(name), `PTC keeps the unreplaced official ${name}`)
+    } finally { held.dispose() }
+    assert.equal(names(agent).includes('ops_bash'), process.platform === 'win32', 'the Windows shell replacement publishes ops_bash')
     // A Standard-preset agent is not served by the PTC row.
     const standard = await mint({ preset: 'standard', cwd })
     await wait(300)

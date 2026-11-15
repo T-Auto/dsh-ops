@@ -1,10 +1,13 @@
 /** Scoped replacement controller. Missing counterparts always leave official tools available. */
-import type { Agent, Context, ToolDefinition } from '../adapter/dsh/types.js'
+import type { Agent, Context, ToolActivationContext, ToolDefinition } from '../adapter/dsh/types.js'
 import type {} from '../adapter/dsh/types.js'
 import { onToolChange, withToolChange } from './changes.js'
 import { publicationPending, publicationRegistration } from './reentry.js'
 import { publicationAdmission } from './registrar.js'
 import { loadScopes } from '../adapter/dsh/host.js'
+import { RAW_OFFICIAL_REPLACEMENTS } from '../capabilities/replacements.js'
+import type { ApiName } from '../ptc/config.js'
+import type { PtcServability } from './ptc.js'
 import type { PublicationGate } from './types.js'
 
 interface Shadow { source: ToolDefinition; definition: ToolDefinition; dispose(): void }
@@ -16,11 +19,13 @@ export interface ReplacementPublication {
   targets: ReadonlyMap<string, string>
   gate: PublicationGate
   keepOfficial(): boolean
+  /** PTC projection reachability; absent for native consumers, which keep the old path. */
+  ptc?: PtcServability
 }
 
 /** Select the official fallback and its counterpart in the same host resolve. */
 export function mountReplacements(root: Context, publication: ReplacementPublication): void {
-  const { id: mode, targets, gate, keepOfficial } = publication
+  const { id: mode, targets, gate, keepOfficial, ptc } = publication
   if (targets.size === 0) return
   root.inject(['tools'], async ctx => {
     const tools = ctx.get('tools')
@@ -28,6 +33,27 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
     const { scopeChainOf, bindScopeParent } = await loadScopes()
     const sources = new WeakSet<ToolDefinition>()
     const entries = new Map<Agent, Entry>()
+    // One line per agent, name and state: mixed states on one agent are normal
+    // (a resident read is hidden while glob/grep stay official), and a
+    // per-activation warning would flood the log.
+    const ptcState = new WeakMap<Agent, Map<string, string>>()
+    const probeFailures = new WeakSet<Agent>()
+    const notePtc = (agent: Agent, name: string, state: string): boolean => {
+      let states = ptcState.get(agent)
+      if (!states) { states = new Map(); ptcState.set(agent, states) }
+      if (states.get(name) === state) return false
+      states.set(name, state)
+      ctx.logger.info(`dsh-ops: ${mode} PTC official-tool hiding for ${name}: ${state}`)
+      return true
+    }
+    // One presentation probe per activation: the predicate runs once per target
+    // name inside the same resolve, and every call assembles the prompt.
+    const ptcPresentation = new WeakMap<ToolActivationContext, Promise<boolean>>()
+    const ptcNow = (activation: ToolActivationContext): Promise<boolean> => {
+      let pending = ptcPresentation.get(activation)
+      if (!pending) { pending = ptc!.isPtc(activation); ptcPresentation.set(activation, pending) }
+      return pending
+    }
     // Disposed agents and agents with unlinked host scopes must not receive shadows.
     const inactive = new WeakSet<Agent>()
     let stopped = false, mutating = false
@@ -75,6 +101,40 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
               // probe makes our shadow inherited, so even agent-local restrictions still apply.
               if (tools.get(official, entry.probe) !== definition || sourceFor(activation.agent, official) !== source) return false
               if (keepOfficial() || !gate.allows(activation.agent)) return true
+              if (ptc && Object.hasOwn(RAW_OFFICIAL_REPLACEMENTS, official)) {
+                // The PTC publisher decides; the host counterpart lookup below cannot
+                // see SDK bindings and would keep every such name visible.
+                const raw = (RAW_OFFICIAL_REPLACEMENTS as Record<string, ApiName>)[official]
+                let ptcNowValue: boolean
+                try { ptcNowValue = await ptcNow(activation) }
+                catch (error) {
+                  // A probe failure carries no replacement proof. Verified host behaviour:
+                  // a rejected `when` fails the whole step resolve, so the documented
+                  // fail-open contract must be enforced here. Keep the official tool.
+                  notePtc(activation.agent, official, 'probe-failed')
+                  if (!probeFailures.has(activation.agent)) {
+                    probeFailures.add(activation.agent)
+                    ctx.logger.warn(`dsh-ops: ${mode} PTC presentation probe failed for ${official}: ${String(error)}`)
+                  }
+                  return true
+                }
+                if (ptcNowValue) {
+                  // Explicit implementation faults below must surface, not masquerade as a probe failure.
+                  const served = ptc.servable(activation.agent)
+                  // A counterpart the publisher registered (even before the model selects it)
+                  // proves a replacement exists; the value of its admission is not consulted,
+                  // so loading the SDK cannot change this decision.
+                  const published = tools.get(counterpart, activation.agent)
+                  const candidate = served !== undefined && served.has(raw)
+                  const hidden = candidate && published !== undefined && publicationAdmission(published) !== undefined
+                  const state = served === undefined ? 'unattached'
+                    : !candidate ? 'not-servable'
+                    : hidden ? 'hidden'
+                    : 'counterpart-missing'
+                  notePtc(activation.agent, official, state)
+                  return !hidden
+                }
+              }
               const replacement = tools.get(counterpart, activation.agent)
               if (!replacement) return true
               const admission = publicationAdmission(replacement)

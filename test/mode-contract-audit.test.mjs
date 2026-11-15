@@ -53,10 +53,20 @@ for (const [mode, component] of [['ptc-control', undefined], ['ptc', Ptc], ['ops
             for (const name of ['ops_inspect_local_file', 'ops_glob', 'ops_grep', 'edit', 'read_image']) assert.ok(direct.includes(name), name)
           } else {
             assert.deepEqual(direct, ['run_code'])
-            // Built-in PTC modes intentionally select no official file replacements.
-            for (const name of official) { assert.ok(admitted.includes(name), name); assert.ok(sdk.includes(`${name}:`), name) }
-            if (!component) assert.doesNotMatch(text, /ops_/u)
-            else assert.ok(sdk.includes('ops_inspect_local_file:'))
+            if (!component) {
+              // The plain PTC control has no OPS row, so every official tool stays.
+              for (const name of official) { assert.ok(admitted.includes(name), name); assert.ok(sdk.includes(`${name}:`), name) }
+              assert.doesNotMatch(text, /ops_/u)
+            } else {
+              // hideOfficialTools defaults on: the replaced file tools leave the
+              // admission set and the SDK; mutation and image tools stay.
+              for (const name of ['read', 'glob', 'grep']) {
+                assert.equal(admitted.includes(name), false, `${name} must be hidden`)
+                assert.doesNotMatch(sdk, new RegExp('(?:^|\\n)\\s*' + name + ':', 'u'), `${name} must leave the SDK`)
+              }
+              for (const name of ['edit', 'read_image']) assert.ok(admitted.includes(name), `${name} stays`)
+              assert.ok(sdk.includes('ops_inspect_local_file:'))
+            }
           }
           return { direct, admitted, sdk }
         } finally { step.dispose() }
@@ -74,8 +84,9 @@ for (const [mode, component] of [['ptc-control', undefined], ['ptc', Ptc], ['ops
         assert.ok(next.admitted.includes('ops_glob')); assert.ok(next.sdk.includes('ops_glob:'))
         assert.match(next.sdk, /paths \(default\): string\[\]/u)
         assert.match(next.sdk, /files_with_matches: \{path\}\[\]/u)
-        const value = await run("return {official:await tools.glob({}),ops:await tools.ops_glob({pattern:['*.txt'],outputMode:'paths'})};")
-        assert.equal(value.official, 'glob'); assert.equal(value.ops.status, 'completed')
+        const value = await run("const kind = typeof tools.glob; return {kind, ops: await tools.ops_glob({pattern:['*.txt'],outputMode:'paths'})};")
+        assert.equal(value.kind, 'undefined', 'the replaced official glob binding is gone from the SDK')
+        assert.equal(value.ops.status, 'completed')
         assert.ok(value.ops.data.items.some(file => file.endsWith('note.txt')))
       }
       if (row) {
