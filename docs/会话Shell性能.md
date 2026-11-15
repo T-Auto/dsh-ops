@@ -1,5 +1,7 @@
 # 会话 Shell 性能工作
 
+生成的基准数据与日志保留在仓库外。下文报告文件名指本地测量记录；结果摘要、验证与剩余目标见 [#932](https://github.com/T-Auto/dsh-ops/issues/932)。
+
 English: [Session shell performance work](session-shell-performance.md)。跟踪 #872；
 基线为 PR #933，`06c22a65b93e89d3a452724dc0a2e813f6b80af9`。
 
@@ -20,7 +22,7 @@ Node 26.12.1、Rust 1.97.1 release 构建；与维护者的 i9-13900H 不同。
 管道与朴素载荷对照，计时期间没有并发构建或测试。单轮配对不能证明尾延迟稳定；第二轮
 基线 printf 的长尾如实报告，未过滤。
 
-[原始报告与可执行 harness](../bench/probes/872/channel-wakeup-evidence/) 保留测量证据。
+[结果摘要与可执行 harness](https://github.com/T-Auto/dsh-ops/issues/932) 保留测量证据。
 `compare.mjs` 仅增加可配置的可执行文件路径及 `OPS_DRIVER_SOURCE` 记录。设置 `OPS_ROOT`、
 `OPS_NIU`、`OPS_DRIVER`、`OPS_DRIVER_SOURCE`、`REPORT`、`ONLY_NIU=1`、`SAMPLES=300`、
 `WARMUP=30`、`BULK_MB=256`，使用 Node 运行。两个 driver 必须使用独立 Cargo target 目录；
@@ -66,7 +68,7 @@ C1 去除每个目录项的第二次绝对路径元数据查询。已持有目�
 去掉的是 2,000 次重复绝对查询。有界扫描保持原有语义，没有被用来替代完整扫描验收。
 Glob 改善约 36%，精确 grep 仅约 4%；下一步关注逐文件的受检查打开。
 
-[原始报告](../bench/probes/872/scan-metadata-evidence.json)。优化前 worker SHA-256：
+[测量摘要](https://github.com/T-Auto/dsh-ops/issues/932)。优化前 worker SHA-256：
 `1bb7a20ba597c45b6d761df8bc7dbc12fc255dc866ff2f84556d012a65f0d15c`（PR #944）。
 优化后：`35519ab12c0557325b4658756472edb79e35f0f1ed2032513295495c8188701a`。
 两者均为上述 Windows 主机上的 Rust 1.97.1 release 构建。复现命令：
