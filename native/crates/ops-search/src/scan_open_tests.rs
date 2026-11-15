@@ -130,6 +130,7 @@ fn expired_scan_never_starts_a_read_ahead_open() {
     scan.preopen_reads = true;
     scan.timeout = Duration::ZERO;
     scan.open_hook = Some(Arc::new(|_| panic!("expired scan opened a file")));
+    scan.metadata_hook = Some(Arc::new(|_| panic!("expired scan observed an entry")));
     assert!(collect(&mut scan, &fixture.0, &fixture.request()).is_empty());
     assert_eq!(scan.stopped, Some(TruncatedBy::Time));
     assert!(scan.preopened.is_empty());
@@ -190,5 +191,80 @@ fn a_failed_checked_open_is_reported_as_a_scan_gap() {
     assert!(!scan.complete());
     assert_eq!(scan.reasons["read-error"], 1);
     assert_eq!(scan.failed, 1);
+    assert!(scan.preopened.is_empty());
+}
+
+#[test]
+fn read_ahead_metadata_queries_overlap_without_changing_the_snapshot() {
+    let fixture = Fixture::new();
+    let gate = Arc::new((Mutex::new((0usize, false)), Condvar::new()));
+    let witness = gate.clone();
+    let mut scan = Scan::new();
+    scan.preopen_reads = true;
+    scan.metadata_hook = Some(Arc::new(move |_| {
+        let (mutex, changed) = &*witness;
+        let mut state = mutex.lock().unwrap();
+        state.0 += 1;
+        changed.notify_all();
+        while !state.1 {
+            state = changed.wait(state).unwrap();
+        }
+    }));
+    let (held, rows, scan) = std::thread::scope(|scope| {
+        let root = &fixture.0;
+        let work = scope.spawn(move || {
+            let request = serde_json::from_value(
+                json!({"root":root,"scope":"metadata-test","tool":"grep","args":{}}),
+            )
+            .unwrap();
+            let rows = collect(&mut scan, root, &request);
+            (rows, scan)
+        });
+        let (mutex, changed) = &*gate;
+        let state = mutex.lock().unwrap();
+        let (mut state, _) = changed
+            .wait_timeout_while(state, Duration::from_secs(5), |state| {
+                state.0 < crate::scan_open::WORKERS
+            })
+            .unwrap();
+        let held = state.0;
+        state.1 = true;
+        changed.notify_all();
+        drop(state);
+        let (rows, scan) = work.join().unwrap();
+        (held, rows, scan)
+    });
+    assert_eq!(
+        held,
+        crate::scan_open::WORKERS,
+        "the existing no-follow metadata queries must overlap"
+    );
+    let mut serial = Scan::new();
+    assert_eq!(rows, collect(&mut serial, &fixture.0, &fixture.request()));
+    assert_eq!(scan.hash.clone().finalize(), serial.hash.finalize());
+    assert_eq!(scan.scanned, serial.scanned);
+    assert_eq!(scan.bytes, serial.bytes);
+    assert!(scan.complete());
+}
+
+#[test]
+fn a_failed_parallel_metadata_query_remains_an_explicit_scan_gap() {
+    let fixture = Fixture::new();
+    let removed = fixture.0.join("f000.txt");
+    let mut scan = Scan::new();
+    scan.preopen_reads = true;
+    scan.metadata_hook = Some(Arc::new(move |name| {
+        if name == Path::new("f000.txt") {
+            fs::remove_file(&removed).unwrap();
+        }
+    }));
+    scan.open_hook = Some(Arc::new(|path| {
+        assert_ne!(path.file_name().unwrap(), "f000.txt");
+    }));
+    let rows = collect(&mut scan, &fixture.0, &fixture.request());
+    assert_eq!(rows.len(), 39);
+    assert_eq!(scan.scanned, 39);
+    assert!(!scan.complete());
+    assert_eq!(scan.reasons["unreadable-entry"], 1);
     assert!(scan.preopened.is_empty());
 }

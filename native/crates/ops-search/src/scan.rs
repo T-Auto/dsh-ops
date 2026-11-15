@@ -65,6 +65,8 @@ pub struct Scan {
     preopened: BTreeMap<PathBuf, crate::scan_open::Opened>,
     #[cfg(test)]
     open_hook: Option<crate::scan_open::OpenHook>,
+    #[cfg(test)]
+    metadata_hook: Option<crate::scan_open::OpenHook>,
     /// Directory queries use the walk; file indexes cannot prove empty entries.
     pub include_directories: bool,
     pub profile: crate::profile::Profile,
@@ -100,6 +102,8 @@ impl Scan {
             preopened: BTreeMap::new(),
             #[cfg(test)]
             open_hook: None,
+            #[cfg(test)]
+            metadata_hook: None,
             include_directories: false,
             profile: crate::profile::Profile::new(),
             scanned: 0,
@@ -482,7 +486,7 @@ impl Scan {
         'entries: for batch in names.chunks(width) {
             let mut observed = BTreeMap::new();
             if self.preopen_reads && self.running() {
-                let mut paths = Vec::new();
+                let mut candidates = Vec::new();
                 for name in batch
                     .iter()
                     .take(self.max_files.saturating_sub(self.scanned))
@@ -497,30 +501,33 @@ impl Scan {
                         continue;
                     }
                     let child = display.join(name);
-                    let started = self.profile.start();
-                    let metadata = directory.symlink_metadata(name);
-                    self.profile.record("relativeMetadata", started);
-                    if metadata
-                        .as_ref()
-                        .is_ok_and(|value| value.is_file() && !file_path::link(value))
-                        && !request.denies_path(&child)
+                    let may_read = !request.denies_path(&child)
                         && (!dotdir(&child, root) || self.include_hidden)
                         && !internal(name)
                         && !reserved(name)
-                        && patterns.matches(root, &child)
-                    {
-                        paths.push(child);
-                    }
-                    observed.insert(name.clone(), metadata);
+                        && patterns.matches(root, &child);
+                    candidates.push(crate::scan_open::Candidate {
+                        name: name.clone(),
+                        path: child,
+                        may_read,
+                    });
                 }
                 let started = self.profile.start();
-                self.preopened.extend(crate::scan_open::batch(
-                    &paths,
+                for observation in crate::scan_open::observe(
+                    &directory,
+                    &candidates,
                     self.started + self.timeout,
                     #[cfg(test)]
+                    self.metadata_hook.as_ref(),
+                    #[cfg(test)]
                     self.open_hook.as_ref(),
-                ));
-                self.profile.record("checkedOpenBatch", started);
+                ) {
+                    observed.insert(observation.name, observation.metadata);
+                    if let Some(opened) = observation.opened {
+                        self.preopened.insert(observation.path, opened);
+                    }
+                }
+                self.profile.record("checkedObservationBatch", started);
             }
             for name in batch {
                 if !self.running() {

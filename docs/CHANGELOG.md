@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Run complete-search directory-relative metadata queries alongside checked opens within the existing bounded window. Preserve ordered results, no-follow checks, explicit metadata failures, deadlines and scan budgets (#872).
+- 完整搜索在既有有界窗口内并发执行目录相对元数据查询及检查式打开；保留结果顺序、禁止跟随检查、明确的元数据失败、截止时间及扫描预算（#872）。
+
 - Open a bounded window of exact-search files concurrently through the existing checked path primitives. Preserve serial content reads, snapshot hashing, scan budgets and result ordering; keep early-result searches serial and close pending handles on recursion and errors (#872).
 - 精确搜索通过既有路径检查原语并发打开有界文件窗口；内容读取、快照哈希、扫描预算及结果顺序仍串行处理。提前返回的搜索保持串行，递归及出错时关闭尚未消费的句柄（#872）。
 

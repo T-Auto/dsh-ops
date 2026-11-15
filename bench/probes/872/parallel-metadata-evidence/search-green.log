@@ -1,0 +1,100 @@
+   Compiling ops-search v0.5.0 (E:\01-Projects\deepseek\dsh-ops-parallel-search-opens\native\crates\ops-search)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.05s
+     Running unittests src\lib.rs (native\target\debug\deps\ops_search-9a7d486879142c0c.exe)
+
+running 87 tests
+test candidates::candidates_tests::a_root_that_is_not_absolute_is_never_revalidated ... ok
+test candidates::candidates_tests::a_source_that_cannot_serve_the_root_falls_back ... ok
+test candidates::candidates_tests::a_directory_whose_ancestor_became_a_link_invalidates_the_batch ... ok
+test candidates::candidates_tests::host_errors_map_to_the_walk_classes ... ok
+test candidates::candidates_tests::a_vanished_directory_is_silent_and_never_a_skip_reason ... ok
+test candidates::candidates_tests::a_directory_that_became_unreadable_falls_back_for_the_walk_gap ... ok
+test candidates::candidates_tests::skip_reasons_keep_the_walk_vocabulary ... ok
+test candidates::candidates_tests::an_expired_deadline_stops_revalidation_even_if_the_source_ignores_it ... ok
+test candidates::candidates_tests::a_directory_that_became_a_file_invalidates_the_batch ... ok
+test definitions::tests::a_fragment_of_a_longer_identifier_is_not_the_identifier ... ok
+test candidates::candidates_tests::a_file_that_became_a_directory_invalidates_the_batch ... ok
+test definitions::tests::declaration_verbs_are_recognised_across_languages ... ok
+test candidates::candidates_tests::a_live_directory_is_traversal_state_not_an_item ... ok
+test candidates::candidates_tests::an_ancestor_link_invalidates_the_batch ... ok
+test candidates::candidates_tests::a_directory_with_drifted_identity_invalidates_the_batch ... ok
+test candidates::candidates_tests::a_candidate_below_a_pruned_directory_falls_back_instead_of_guessing ... ok
+test candidates::candidates_tests::an_unreadable_candidate_is_a_gap_not_a_silent_drop ... ok
+test definitions::tests::object_properties_and_imports_are_references ... ok
+test candidates::candidates_tests::a_vanished_hidden_entry_creates_no_skip_like_the_walk ... ok
+test candidates::candidates_tests::a_vanished_candidate_is_silent_and_never_a_skip_reason ... ok
+test patterns::tests::compiled_patterns_match_original_inclusions_exclusions_and_path_segments ... ok
+test candidates::candidates_tests::an_excluded_name_that_became_a_file_counts_the_live_type ... ok
+test candidates::candidates_tests::identity_drift_invalidates_the_whole_query ... ok
+test paging::tests::cursors_bind_the_delegated_path_policy_without_weakening_native_validation ... ok
+test candidates::candidates_tests::a_truncated_enumeration_is_reported_as_incomplete ... ok
+test definitions::tests::definitions_mode_rejects_rows_it_cannot_classify ... ok
+test definitions::tests::a_reference_only_scan_reports_no_declaration_honestly ... ok
+test definitions::tests::content_mode_is_unchanged ... ok
+test candidates::candidates_tests::fresh_candidates_are_revalidated_in_component_order ... ok
+test definitions::tests::definitions_mode_pages_the_declaration_domain ... ok
+test scan::scan_tests::a_denied_root_is_never_enumerated ... ok
+test scan::scan_tests::exclusions_are_counted_without_turning_them_into_unreadable_gaps ... ok
+test scan::scan_tests::a_truncated_indexed_answer_is_never_complete ... ok
+test candidates::candidates_tests::leaf_exclusions_and_credentials_match_the_walk_counters ... ok
+test definitions::tests::definitions_mode_returns_only_declaration_lines ... ok
+test scan::scan_tests::finish_rejects_a_cursor_from_another_source_kind ... ok
+test scan::scan_tests::depth_limit_skips_only_the_subtree_and_preserves_later_siblings ... ok
+test scan::scan_tests::io_gap_examples_preserve_stable_codes_without_changing_reason_counts ... ok
+test scan::scan_tests::indexed_and_walked_answers_are_byte_identical ... ok
+test scan::scan_tests::walk_continuations_keep_the_existing_cursor_shape ... ok
+test scan::scan_tests::snapshot_domains_differ_even_when_the_answers_match ... ok
+test scan::scan_tests::file_entry_time_and_io_limits_never_claim_a_complete_scan ... ok
+test scan::scan_tests::windows_delegation_keeps_reserved_names_as_scan_gaps_and_denials_case_insensitive ... ok
+test scan::scan_tests::partial_directory_scan_reports_budget_and_bounded_gap_examples ... ok
+test scan::scan_tests::walk_indexed_consults_the_source_once_and_falls_back_to_the_walk ... ok
+test scan::scan_open_tests::a_failed_checked_open_is_reported_as_a_scan_gap ... ok
+test scan::scan_open_tests::expired_scan_never_starts_a_read_ahead_open ... ok
+test search::include_hidden_tests::an_explicit_exclude_still_applies_under_the_switch ... ok
+test scan::scan_open_tests::a_failed_parallel_metadata_query_remains_an_explicit_scan_gap ... ok
+test search::include_hidden_tests::a_dot_directory_is_absent_unless_the_caller_asks_for_it ... ok
+test scan::scan_tests::page_two_of_an_indexed_query_is_not_stale ... ok
+test search::include_hidden_tests::an_explicit_internal_root_is_refused ... ok
+test scan::scan_open_tests::filtered_paths_are_not_preopened_and_callback_failure_closes_the_window ... ok
+test search::include_hidden_tests::changing_the_switch_invalidates_an_older_continuation ... ok
+test search::include_hidden_tests::the_rewrite_walk_does_not_take_the_switch ... ok
+test search::index_source_tests::a_default_windows_build_never_serves_an_index ... ok
+test search::index_source_tests::a_missing_cache_directory_still_serves_the_walk ... ok
+test search::index_source_tests::directory_queries_walk_even_when_a_file_only_index_is_ready ... ok
+test search::index_source_tests::the_cursor_kind_comes_from_the_continuation_prefix ... ok
+test search::search_tests::glob_rejects_blank_pattern_entries_by_index ... ok
+test search::search_tests::grep_validation_names_the_pattern_or_limit_cause ... ok
+test search::include_hidden_tests::nested_dot_directories_are_lifted_together ... ok
+test tests::host_metadata_errors_are_not_all_links ... ok
+test search::index_source_tests::a_ready_source_produces_the_same_glob_output ... ok
+test search::index_source_tests::a_cache_directory_without_a_ready_source_falls_back_to_the_walk ... ok
+test search::include_hidden_tests::grep_honours_the_same_switch ... ok
+test search::index_source_tests::an_indexed_continuation_replayed_through_the_walk_is_stale ... ok
+test tests::replace_does_not_hide_io_errors_as_skips ... ok
+test tests::modified_is_epoch_milliseconds_and_ordering_ignores_size ... ok
+test tests::moved_directory_is_not_the_directory_held_open ... ok
+test tests::unc_directory_is_walked_for_glob_grep_and_replace ... ignored, requires DSH_OPS_UNC_TEST_ROOT to name a writable UNC directory
+test tests::replacement_byte_budget_handles_boundary_shrink_and_checked_arithmetic ... ok
+test tests::replace_does_not_skip_update_lock_denial ... ok
+test tests::unc_shares_use_absolute_enumeration ... ok
+test search::include_hidden_tests::the_switch_does_not_lift_reserved_trees ... ok
+test search::index_source_tests::grep_never_consults_an_index_source ... ok
+test search::index_source_tests::page_two_of_an_indexed_glob_is_not_stale ... ok
+test search::include_hidden_tests::the_atomic_write_temporary_stays_invisible_under_every_setting ... ok
+test tests::equal_timestamps_keep_the_candidate_order ... ok
+test search::include_hidden_tests::near_miss_sidecar_names_stay_readable ... ok
+test search::include_hidden_tests::the_internal_sidecar_stays_invisible_under_every_setting ... ok
+test tests::the_update_lock_is_taken_before_the_read_and_leaves_no_sidecar ... ok
+test tests::replace_skips_an_unreadable_file_and_finishes_the_other_files ... ok
+test scan::scan_open_tests::exact_content_walk_opens_a_bounded_window_concurrently_and_preserves_order ... ok
+test scan::scan_open_tests::read_ahead_metadata_queries_overlap_without_changing_the_snapshot ... ok
+test search::search_tests::glob_lists_empty_directories_and_mixed_entries_with_stable_pages ... ok
+test scan::scan_open_tests::preopens_keep_exclusions_file_and_byte_budgets_identical ... ok
+
+test result: ok. 86 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.67s
+
+   Doc-tests ops_search
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
