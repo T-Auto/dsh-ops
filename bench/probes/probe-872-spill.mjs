@@ -11,7 +11,7 @@ import { residentKernel } from '../../lib/execution/resident/provider.js'
 import { invoke as fileCall } from '../../lib/execution/files.js'
 import { SpillLedger } from '../../lib/shells/spill-ledger.js'
 import { sweepSpills } from '../../lib/shells/spill-retention.js'
-import { channel, within } from './872/channel.mjs'
+import { channel, within } from '../../test/lib/resident-channel.mjs'
 
 assert.equal(process.platform, 'win32', 'owned native spill integration requires Windows')
 const binary = path.resolve(process.argv[2]), worker = path.resolve(process.argv[3])
