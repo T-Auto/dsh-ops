@@ -1,5 +1,7 @@
 # Session shell performance work
 
+Generated benchmark data and logs are kept outside the repository. Report filenames below refer to local measurement records; results, validation and remaining targets are recorded in [#932](https://github.com/T-Auto/dsh-ops/issues/932).
+
 中文：[会话Shell性能](会话Shell性能.md). Tracking: #872; baseline: PR #933,
 `06c22a65b93e89d3a452724dc0a2e813f6b80af9`.
 
@@ -24,7 +26,7 @@ different host from the maintainer's i9-13900H. Empty calls use 300 samples afte
 the timing processes. Single paired runs do not establish tail stability; the
 second baseline's printf tail is reported without filtering.
 
-[Raw reports and runnable harness](../bench/probes/872/channel-wakeup-evidence/)
+[Results and runnable harness](https://github.com/T-Auto/dsh-ops/issues/932)
 retain the source evidence. `compare.mjs` differs from the supplied harness only
 by configurable executable paths and recording `OPS_DRIVER_SOURCE`. Set
 `OPS_ROOT`, `OPS_NIU`, `OPS_DRIVER`, `OPS_DRIVER_SOURCE`, `REPORT`, `ONLY_NIU=1`,

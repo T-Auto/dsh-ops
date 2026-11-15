@@ -1,5 +1,7 @@
 # 会话 Shell 性能工作
 
+生成的基准数据与日志保留在仓库外。下文报告文件名指本地测量记录；结果摘要、验证与剩余目标见 [#932](https://github.com/T-Auto/dsh-ops/issues/932)。
+
 English: [Session shell performance work](session-shell-performance.md)。跟踪 #872；
 基线为 PR #933，`06c22a65b93e89d3a452724dc0a2e813f6b80af9`。
 
@@ -20,7 +22,7 @@ Node 26.12.1、Rust 1.97.1 release 构建；与维护者的 i9-13900H 不同。
 管道与朴素载荷对照，计时期间没有并发构建或测试。单轮配对不能证明尾延迟稳定；第二轮
 基线 printf 的长尾如实报告，未过滤。
 
-[原始报告与可执行 harness](../bench/probes/872/channel-wakeup-evidence/) 保留测量证据。
+[结果摘要与可执行 harness](https://github.com/T-Auto/dsh-ops/issues/932) 保留测量证据。
 `compare.mjs` 仅增加可配置的可执行文件路径及 `OPS_DRIVER_SOURCE` 记录。设置 `OPS_ROOT`、
 `OPS_NIU`、`OPS_DRIVER`、`OPS_DRIVER_SOURCE`、`REPORT`、`ONLY_NIU=1`、`SAMPLES=300`、
 `WARMUP=30`、`BULK_MB=256`，使用 Node 运行。两个 driver 必须使用独立 Cargo target 目录；
