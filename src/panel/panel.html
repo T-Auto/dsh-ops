@@ -66,6 +66,8 @@
   var TABS = [['overview', '概览'], ['conversation', '对话'], ['trace', '轨迹'], ['scoring', '判卷'], ['raw', '原始 JSON']]
   var doc = null
   var active = 'overview'
+  var loadVersion = 0
+  var localFile = false
   function $(id) { return document.getElementById(id) }
   /* Every string that reaches the page goes through textContent here. */
   function el(tag, text) {
@@ -241,9 +243,12 @@
   }
   function readFile(file) {
     if (!file) return
+    var version = ++loadVersion
+    localFile = true
+    pending = null
     var reader = new FileReader()
-    reader.onload = function () { accept(String(reader.result), file.name) }
-    reader.onerror = function () { fail('读取失败:' + file.name) }
+    reader.onload = function () { if (version === loadVersion) accept(String(reader.result), file.name) }
+    reader.onerror = function () { if (version === loadVersion) fail('读取失败:' + file.name) }
     reader.readAsText(file)
   }
   $('file').addEventListener('change', function (event) { readFile(event.target.files && event.target.files[0]) })
@@ -277,11 +282,17 @@
   }
   function load(name) {
     if (!name) return
+    var version = ++loadVersion
+    localFile = false
     pending = name
     fetch(name, { cache: 'no-store' }).then(function (response) {
       if (!response.ok) throw new Error('HTTP ' + response.status)
       return response.text()
-    }).then(function (raw) { pending = null; remember(name); accept(raw, name) }).catch(function (error) {
+    }).then(function (raw) {
+      if (version !== loadVersion) return
+      pending = null; remember(name); accept(raw, name)
+    }).catch(function (error) {
+      if (version !== loadVersion) return
       pending = null
       fail('无法读取 ' + name + ':' + error.message + '(file:// 下浏览器会拦截,请改用拖拽或文件选择)')
     })
@@ -293,7 +304,7 @@
       return response.json()
     }).then(function (index) {
       var rows = index && Array.isArray(index.sessions) ? index.sessions : []
-      if (rows.length === 0) return
+      if (rows.length === 0 || localFile) return
       var select = $('sessions')
       clear(select)
       rows.forEach(function (row) {

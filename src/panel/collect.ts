@@ -69,6 +69,7 @@ export function createPanelCollector(options: CollectorOptions = {}) {
     if (text.trim() === '') return undefined
     let header: Row | undefined
     let capped = false
+    let captureFailed = false
     for (let start = 0; start < text.length;) {
       const newline = text.indexOf('\n', start)
       const end = newline < 0 ? text.length : newline
@@ -77,12 +78,13 @@ export function createPanelCollector(options: CollectorOptions = {}) {
         if (object(parsed) && !Array.isArray(parsed)) {
           if (start === 0 && parsed.record === 'open') header = parsed
           // Match the fold's top-level marker contract, never cap-like text inside an event.
-          if (parsed.record === 'capped') { capped = true; break }
+          if (parsed.record === 'capped') capped = true
+          if (parsed.record === 'capture-failed') captureFailed = true
         }
       } catch { /* malformed records are counted when the document is folded */ }
       start = end + 1
     }
-    return { header, size: bytes(text), capped }
+    return { header, size: bytes(text), capped, captureFailed, unterminated: !text.endsWith('\n') }
   }
 
   /** Open (or resume) one session's append log; refuse with one log line, never a throw. */
@@ -97,7 +99,7 @@ export function createPanelCollector(options: CollectorOptions = {}) {
     }
     const state: SessionState = {
       sessionId, paths, size: 0, droppedEvents: 0, capped: false, closed: false,
-      pendingBytes: 0, queueCapped: false, openFailed: false,
+      pendingBytes: 0, queueCapped: false, openFailed: false, captureFailed: false, failurePending: false,
       header: undefined, chain: Promise.resolve(),
     }
     sessions.set(sessionId, state)
@@ -107,6 +109,21 @@ export function createPanelCollector(options: CollectorOptions = {}) {
         state.size = prior.size
         state.capped = prior.capped
         state.header = prior.header
+        // A failed gap append may only have reached the atomically written document.
+        try {
+          const previous: unknown = JSON.parse(await io.readText(paths.data))
+          if (field(field(previous, 'limits'), 'captureFailed') === true) {
+            state.captureFailed = true
+            state.failurePending = !prior.captureFailed
+          }
+        } catch (error) {
+          if (!missingFile(error)) throw error
+        }
+        // Keep crash residue as its own malformed line instead of consuming the next event.
+        if (prior.unterminated) {
+          await io.appendFile(paths.wal, '\n')
+          state.size += 1
+        }
         return
       }
       const header = { record: 'open', sessionId, cwd: path.resolve(cwd), at: new Date(now()).toISOString(), pluginVersion: string(meta.pluginVersion) }
@@ -121,6 +138,23 @@ export function createPanelCollector(options: CollectorOptions = {}) {
       fail('open', error)
     })
     return state
+  }
+
+  /** Persist a gap before any later event; a leading delimiter also isolates partial writes. */
+  async function persistFailure(state: SessionState): Promise<void> {
+    if (!state.failurePending) return
+    const line = '\n{"record":"capture-failed"}\n'
+    state.size += bytes(line)
+    await io.appendFile(state.paths.wal, line)
+    state.failurePending = false
+  }
+
+  async function appendFailed(state: SessionState, key: string, error: unknown): Promise<void> {
+    if (activity.cancelled(error)) return
+    state.captureFailed = true
+    state.failurePending = true
+    fail(key, error)
+    try { await persistFailure(state) } catch (markerError) { fail('append-gap', markerError) }
   }
 
   /** The first rejected event seals the retained prefix with one bounded marker. */
@@ -143,7 +177,8 @@ export function createPanelCollector(options: CollectorOptions = {}) {
       state.droppedEvents += 1
       // Close admission without retaining another payload or overtaking the already queued prefix.
       state.queueCapped = true
-      state.chain = state.chain.then(() => cap(state)).catch((error) => { fail('append-cap', error) })
+      state.chain = state.chain.then(async () => { await persistFailure(state); await cap(state) })
+        .catch((error) => appendFailed(state, 'append-cap', error))
       return
     }
     state.pendingBytes += size
@@ -151,6 +186,7 @@ export function createPanelCollector(options: CollectorOptions = {}) {
       .then(async () => {
         state.pendingBytes -= size
         if (state.openFailed) return
+        await persistFailure(state)
         // Initial I/O may have discovered an existing log or added a new-session header.
         if (state.capped || state.size + size > config.maxSessionBytes) {
           state.droppedEvents += 1
@@ -160,7 +196,7 @@ export function createPanelCollector(options: CollectorOptions = {}) {
         state.size += size
         await io.appendFile(state.paths.wal, line)
       })
-      .catch((error) => { fail('append', error) })
+      .catch((error) => appendFailed(state, 'append', error))
   }
 
   /** Write `panel.html` when it is absent or stale, and describe it for the archive. */
@@ -193,12 +229,14 @@ export function createPanelCollector(options: CollectorOptions = {}) {
   async function materialise(state: SessionState, final: boolean): Promise<void> {
     if (state.openFailed) return
     const { paths } = state
+    try { await persistFailure(state) } catch (error) { fail('append-gap', error) }
     let text = ''
     try { text = await io.readText(paths.wal) } catch (error) {
       if (!missingFile(error)) throw error
     }
     const parsed = parseAppendLog(text)
-    const document = foldRecords(parsed.records, { config, meta, droppedEvents: state.droppedEvents, malformed: parsed.malformed })
+    const document = foldRecords(parsed.records, { config, meta, droppedEvents: state.droppedEvents,
+      malformed: parsed.malformed, captureFailed: state.captureFailed })
     document.events.mergedAt = new Date(now()).toISOString()
     let viewer
     try { viewer = await writeViewer(state) } catch (error) { fail('viewer', error) }
@@ -216,7 +254,7 @@ export function createPanelCollector(options: CollectorOptions = {}) {
     await io.mkdir(paths.dir, { recursive: true })
     await io.writeFile(`${paths.data}.tmp-${process.pid}`, fitDocument(document, config.maxSessionBytes).text)
     await io.rename(`${paths.data}.tmp-${process.pid}`, paths.data)
-    if (final) { try { await io.rm(paths.wal, { force: true }) } catch (error) { fail('seal', error) } }
+    if (final && !state.failurePending) { try { await io.rm(paths.wal, { force: true }) } catch (error) { fail('seal', error) } }
   }
 
   /** Queue a fold behind every append already scheduled for this session. */

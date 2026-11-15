@@ -7,6 +7,27 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Preserve the host-provided root and child call IDs when `ops_bash` registers a job, so captured job events resolve back to their tool call. Replacing a visible panel result now frees its view slot before admitting the replacement, including at the 20,000-row limit (#909).
+- `ops_bash` 注册作业时保留宿主提供的根调用与子调用 ID，使采集的作业事件能关联回工具调用。面板替换可见结果时先释放原行位置，再接纳替换行，包括达到 20,000 行上限的情况（#909）。
+
+- Draw a host-pruned tool result once: capture keeps the host's single-target `surfaceOp` replacement, the fold withdraws the row it superseded, and `toolErrors`/`droppedChars` stop counting the same result twice. Event counts still report every event the host emitted, and `limits.pruneReplacements` names how many withdrawals happened. A capture written before this metadata existed keeps both rows: a repeated call id alone is not proof of a replacement (#700).
+- 宿主裁剪过的工具结果只显示一条：采集保留宿主针对单个事件给出的 `surfaceOp` 替换，折叠时撤回被替换的原行，`toolErrors`／`droppedChars` 不再把同一结果算两次。事件计数仍是宿主实际发出的数量，`limits.pruneReplacements` 标明发生了多少次撤回。该元数据存在之前写下的采集保留两行：只凭重复的 callId 不能证明发生过替换，旧日志由使用者自行清理（#700）。
+
+- Keep panel capture gaps observable after failed or partial appends and across recovery; isolate unterminated WAL tails so resumed events are not lost. Failed marker writes retain the WAL and use the existing report as an integrity fallback.
+- 面板追加零写或部分写失败后保留采集缺口，并在恢复后继续报告不完整；隔离未换行 WAL 残尾，避免吞掉恢复后的新事件。缺口标记写入失败时保留 WAL，并用既有报告兜底保存完整性状态。
+- Show partial disk measurements, skipped reasons and sampled omissions in text diagnostics. Only the latest panel load may update the selected report, including local-file and network races.
+- 磁盘文本诊断显示部分测量、跳过原因及未展示样本数；面板只接纳最后一次加载结果，覆盖本地文件与网络请求交错。
+- Batching guidance ignores tool-call examples inside strings and file commands mentioned outside a shell call's command field, with consistent UTF-16 offsets. Shell diagnostics classify pre-spawn failures by their actual source and host runner rules, not keywords printed by successful commands.
+- 批量引导不再把字符串中的调用示例或 shell 命令字段之外的文字误判为操作，并统一 UTF-16 偏移。Shell 诊断按真实启动前失败来源及宿主 runner 规则分类，不再凭成功命令打印的关键词报执行器损坏。
+
+- Preserve explicit JSON `null` in captured PTC arguments and filter result blocks by their text type. Add a real NodePtc-to-collector persistence regression, capture-off coverage for the added categories, and production-viewer DOM safety checks (#700).
+- 捕获 PTC 参数时保留显式 JSON `null`，结果块只采集 text 类型。补充真实 NodePtc 到采集器落盘回归、新增类别关闭采集验证，以及产品查看器的 DOM 安全检查（#700）。
+
+- Record the fields four host events already carry instead of keeping their type alone: `tool/ptc-dispatch(-start)` keeps the dispatched tool name, arguments and outcome, `job/registered`/`job/settled` keep the job id, its kind, its status and, when supplied by the host, the call id the panel resolves back to the tool name, `agent/inbox/spliced` keeps its target, splice counts and merged text, and `todo/write` keeps the written todos. Like `turn` on `tool/call`, this only widens what a reader can see in the capture; no tool behaviour changes (#698).
+- 四种宿主事件不再只记类型，改为保留宿主已经给出的字段：`tool/ptc-dispatch(-start)` 保留内层工具名、参数与结果，`job/registered`/`job/settled` 保留 job id、类别、状态，以及宿主提供时供面板回溯工具名的 call id，`agent/inbox/spliced` 保留目标、增删计数与被并入的文本，`todo/write` 保留写入的待办。与 `tool/call` 上的 `turn` 一样，这只扩大采集里能看见的内容，工具行为不变（#698）。
+- What these categories add is plain text, and clamping is not redaction: an inner PTC call's arguments and result, an inbox splice and a todo write are stored verbatim up to `textLimit`, including input a later batch withdrew or cancelled before admission. Turn `capture` off where that text must not be retained, and treat the capture directory like the session log it mirrors.
+- 这些类别写入的是明文，限长不等于脱敏：内层 PTC 调用的参数与结果、inbox 并入的文本、写入的待办都会按 `textLimit` 原样保存，其中可能包含随后被撤回、取消或未最终接纳的输入。不能留存这类文本时应关闭 `capture`，并按会话日志的同等要求对待采集目录。
+
 - Native tool construction and the publication refusal queue no longer attach listeners or lifetime effects to the composition root. The evidence observer and result admission subscribe on the caller's context with global dispatch, and the refusal queue falls back to the caller lifetime when the root refuses an effect. dsh-tui 0.20 refuses `root.events.on` and `root.effect` from a plugin activation, and the native-tools row is one, so every `dsh-tui --resume` aborted with "cannot resume session" before the agent mounted.
 - 原生工具构造与发布拒绝队列不再向组合根挂监听或生命周期 effect：证据观察者与 result admission 改为在调用方上下文订阅并声明 global 分发，拒绝队列在 root 拒绝 effect 时回落到调用方生命周期。dsh-tui 0.20 会拒绝插件激活期内的 `root.events.on` 与 `root.effect`，而原生工具行正是插件激活，导致每次 `dsh-tui --resume` 都在 agent 挂载前报 "cannot resume session"。
 - The Bash tool description now states the parse contract of `stdout`/`stderr` where the model reads it: `text` may be a partial fragment, `truncated` marks one that must not be parsed as complete structured output, and `spillPath` is optional and not a completeness guarantee. The typed output schema is unchanged: repeating the contract there would cost every PTC request without saying anything the tool text does not. Command semantics, exit codes, result values, limits, spill files, permissions and rendering are unchanged.

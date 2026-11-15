@@ -50,7 +50,13 @@ export function shellFileWork(command: string): boolean {
 export function literalShellFileWork(code: string, callEnd: number): boolean {
   const args = code.slice(callEnd)
   const command = /^\s*\{(?:\s*(?:description|cwd|timeout_ms)\s*:\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\d+)\s*,)*\s*(?:command|script)\s*:\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`[^`]*`)/u.exec(args)?.[1]
-  if (!command || command.startsWith('`') && command.includes('${')) return false
+  return shellLiteralFileWork(command)
+}
+
+/** Classify a complete JavaScript string or static template literal. */
+export function shellLiteralFileWork(command: string | undefined): boolean {
+  if (!command || command.length < 2 || command[0] !== command[command.length - 1]) return false
+  if (command.startsWith('`') && command.includes('${')) return false
   let decoded: string
   try { decoded = command.startsWith('"') ? JSON.parse(command) as string : command.slice(1, -1).replace(/\\(['\\])/gu, '$1') }
   catch { return false }

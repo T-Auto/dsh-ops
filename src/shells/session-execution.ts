@@ -25,6 +25,7 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
   const native = process.platform === 'win32' && isNiubashExecutable(bash.file)
   const env = { ...dshEnv }
   let confinement: ConfinedArgv | undefined
+  let confinementPreparationFailed = false
   const definition = bashToolDefinition({ file: bash.file, source: bash.source,
     env, subprocess: ctx.get('subprocess'),
     prepareArgv: async (argv: string[], signal: AbortSignal) => {
@@ -42,10 +43,18 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
       await prepareWorkspace(policy)
       signal.throwIfAborted()
       if (policy.mode !== 'danger-full-access') {
-        const sandbox = ctx.get('sandbox')
-        if (!sandbox?.confine) throw new Error('SANDBOX_UNAVAILABLE: confinement is unavailable; no command executed.')
-        confinement = await sandbox.confine(argv, { ...policy, mode: policy.mode }, signal)
-        if (!['full', 'partial'].includes(confinement?.enforcement) || !confinement.argv?.length) throw new Error('SANDBOX_UNAVAILABLE: invalid confinement result; no command executed.')
+        try {
+          const sandbox = ctx.get('sandbox')
+          if (!sandbox?.confine) throw new Error('SANDBOX_UNAVAILABLE: confinement is unavailable; no command executed.')
+          confinement = await sandbox.confine(argv, { ...policy, mode: policy.mode }, signal)
+          if (!['full', 'partial'].includes(confinement?.enforcement) || !confinement.argv?.length) throw new Error('SANDBOX_UNAVAILABLE: invalid confinement result; no command executed.')
+        } catch (error) {
+          // This failure originated before spawn, not in command-controlled stderr.
+          // Cancellation retains its own cause rather than becoming a runner failure.
+          signal.throwIfAborted()
+          confinementPreparationFailed = true
+          throw error
+        }
       }
       signal.throwIfAborted()
       assertAuthority()
@@ -57,7 +66,9 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
         (!rule.allowedExitCodes || (value.exitCode != null && rule.allowedExitCodes.includes(value.exitCode))) &&
         stderr.split(/\r?\n/).filter(line => !rule.informationalLines?.some(info => info.toLowerCase() === line.toLowerCase()))
           .some(line => rule.fatalSignatures?.some(signature => line.toLowerCase().includes(signature.toLowerCase()))))
-      const unavailable = runnerFailed || /couldn't create signal pipe|fatal error.*win32 error|sandbox_unavailable/i.test(stderr)
+      // Command stderr is untrusted diagnostic text, not evidence that execution never began.
+      // Use provenance for pre-spawn confinement failures and host rules for settled runners.
+      const unavailable = confinementPreparationFailed || runnerFailed
       const denied = !unavailable && value.exitCode !== 0 && confinement?.denialSignatures?.some(signature => stderr.toLowerCase().includes(signature.toLowerCase()))
       return withBashStatus({ ...value,
         ...(unavailable ? { error: 'EXECUTOR_UNAVAILABLE: the sandbox runtime failed before the command ran; this is not a user authorization denial. Restore the runtime or confinement provider; changing the DSH selector is not a repair. Do not bypass confinement.' } : {}),
