@@ -243,7 +243,7 @@ or cross-drive mismatch is an acceptable way to reach them.
 
 On 2026-11-13, [the baseline probe](../bench/probes/probe-872-baseline.mjs) measured source
 `e7244444`, a freshly built worker, Node `v26.12.1` and the verified Niubash payload. The
-[compact evidence](../bench/probes/872/baseline-summary.json) records build hashes, invocation,
+[compact evidence](https://github.com/T-Auto/dsh-ops/issues/932) records build hashes, invocation,
 cold calls, resources and raw-report hashes. The full 824-call report remains a local artifact;
 its SHA-256 is `ff696c3154c0dc429cba6f56e748f213fcf7051bb722751d11f587de577048c1`.
 
