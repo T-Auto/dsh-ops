@@ -11,7 +11,7 @@ import { Context } from '@deepseek-ai/cordis'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import { scrubbedParentEnv } from '@deepseek-ai/dsh-subprocess'
-import { channel, within } from './872/channel.mjs'
+import { channel, within } from '../../test/lib/resident-channel.mjs'
 
 assert.equal(process.platform, 'win32', 'native tasks do not establish POSIX containment')
 const binary = path.resolve(process.argv[2])
