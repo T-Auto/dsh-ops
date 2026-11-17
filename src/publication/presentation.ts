@@ -1,7 +1,7 @@
 /** Inspect public presentation before publishing a replacement. Inspection is
  * marked by exact context identity and never becomes a provider request. */
 import { AsyncLocalStorage } from 'node:async_hooks'
-import type { AssembleContext, PromptAssembly, SystemPrompt, ToolActivationContext } from '../adapter/dsh/types.js'
+import type { Agent, AssembleContext, PromptAssembly, SystemPrompt, ToolActivationContext } from '../adapter/dsh/types.js'
 
 const probes = new WeakSet<AssembleContext>()
 /** Probe depth per asynchronous execution context, not per process: a probe that
@@ -10,8 +10,8 @@ const probes = new WeakSet<AssembleContext>()
  * probe. */
 const ambient = new AsyncLocalStorage<number>()
 export function isPresentationProbe(context: AssembleContext): boolean { return probes.has(context) }
-export async function inspectPresentation(prompt: Pick<SystemPrompt, 'assemble'>, scope: NonNullable<AssembleContext['scope']>, signal?: AbortSignal): Promise<PromptAssembly> {
-  const context: AssembleContext = { scope, signal }
+export async function inspectPresentation(prompt: Pick<SystemPrompt, 'assemble'>, agent: Agent, signal?: AbortSignal): Promise<PromptAssembly> {
+  const context: AssembleContext = { scope: agent, agent, signal }
   probes.add(context)
   try {
     return await ambient.run((ambient.getStore() ?? 0) + 1, () => prompt.assemble(context))
@@ -31,7 +31,7 @@ export async function activationIsPtc(prompt: Pick<SystemPrompt, 'assemble'>, co
     && assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
 }
 
-export async function isNativePresentation(prompt: Pick<SystemPrompt, 'assemble'>, scope: NonNullable<AssembleContext['scope']>, signal?: AbortSignal): Promise<boolean> {
-  const assembly = await inspectPresentation(prompt, scope, signal)
+export async function isNativePresentation(prompt: Pick<SystemPrompt, 'assemble'>, agent: Agent, signal?: AbortSignal): Promise<boolean> {
+  const assembly = await inspectPresentation(prompt, agent, signal)
   return !assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
 }
