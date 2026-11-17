@@ -2,7 +2,7 @@
 import type { Agent, Context, ToolDefinition } from '../adapter/dsh/types.js'
 import type {} from '../adapter/dsh/types.js'
 import { onToolChange, withToolChange } from './changes.js'
-import { publicationPending, publicationRegistration } from './reentry.js'
+import { publicationError, publicationPending, publicationRegistration } from './reentry.js'
 import { publicationAdmission } from './registrar.js'
 import { loadScopes } from '../adapter/dsh/host.js'
 import type { PublicationGate } from './types.js'
@@ -43,6 +43,28 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
         entry.shadows.clear()
       })
     }
+    const warn = (agent: Agent, error: unknown): void => {
+      ctx.logger.warn(`dsh-ops: ${mode} replacement publication failed for agent ${agent.id}: ${publicationError(error)}`)
+    }
+    const retire = (agent: Agent): void => {
+      inactive.add(agent)
+      const entry = entries.get(agent)
+      entries.delete(agent)
+      try { if (entry) lift(agent, entry) } catch (error) { warn(agent, error) }
+    }
+    const isCurrent = (agent: Agent, entry: Entry): boolean => !stopped && !inactive.has(agent)
+      && entries.get(agent) === entry && agent.ctx.fiber.uid !== null
+    const refresh = (agent: Agent, action: () => void): void => {
+      try {
+        agent.ctx.fiber.assertActive()
+        action()
+        // Registration can synchronously dispose its own scope without throwing.
+        if (agent.ctx.fiber.uid === null) retire(agent)
+      } catch (error) {
+        if (agent.ctx.fiber.uid === null) retire(agent)
+        else warn(agent, error)
+      }
+    }
     /** Skip this controller's ancestor shadows and inspect the actual inherited official source. */
     const sourceFor = (agent: Agent, name: string): ToolDefinition | undefined => {
       for (const scope of [...scopeChainOf(agent).slice(1), undefined]) {
@@ -57,7 +79,7 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
     const apply = (agent: Agent, entry: Entry): void => {
       withToolChange([agent], () => {
         for (const [official, counterpart] of targets) {
-          if (inactive.has(agent)) return
+          if (!isCurrent(agent, entry)) return
           const source = sourceFor(agent, official)
           const old = entry.shadows.get(official)
           const current = tools.get(official, agent)
@@ -70,6 +92,7 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
           const definition = { ...source }
           sources.add(definition)
           const dispose = publicationRegistration(agent.ctx, () => {
+            if (!isCurrent(agent, entry)) return () => {}
             const unregister = agent.ctx.get('tools')!.register(definition, { when: async activation => {
               // Own registrations bypass restrictions in the host view. The empty descendant
               // probe makes our shadow inherited, so even agent-local restrictions still apply.
@@ -90,43 +113,40 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
             }
             return unregister
           })
-          if (inactive.has(agent)) { dispose(); return }
+          if (!isCurrent(agent, entry)) { dispose(); return }
           entry.shadows.set(official, { source, definition, dispose })
         }
       })
     }
-    const reconcileAgent = (agent: Agent): void => {
-      if (stopped || mutating || inactive.has(agent) || !gate.allows(agent)) return
-      let entry = entries.get(agent)
-      if (!entry) {
-        const probe = {}
-        bindScopeParent(probe, agent)
-        entry = { shadows: new Map(), probe }
-        entries.set(agent, entry)
-      }
+    const reconcileAgent = (agent: Agent, scopes?: readonly object[]): void => {
+      if (stopped || mutating || inactive.has(agent)) return
       mutating = true
-      try { apply(agent, entry) }
-      catch (error) { ctx.logger.warn(`dsh-ops: ${mode} replacement publication failed: ${String(error)}`) }
-      finally { mutating = false }
+      try { refresh(agent, () => {
+        if (scopes?.length && !scopes.some(scope => scopeChainOf(agent).includes(scope))) return
+        if (!gate.allows(agent)) return
+        let entry = entries.get(agent)
+        if (!entry) {
+          const probe = {}
+          bindScopeParent(probe, agent)
+          entry = { shadows: new Map(), probe }
+          entries.set(agent, entry)
+        }
+        apply(agent, entry)
+      }) } finally { mutating = false }
     }
     const reconcile = (scopes?: readonly object[]): void => {
       if (stopped) return
       if (mutating) { defer(); return }
-      for (const agent of ctx.get('agents')?.list?.() ?? []) {
-        if (scopes?.length && !scopes.some(scope => scopeChainOf(agent).includes(scope))) continue
-        reconcileAgent(agent)
-      }
-      for (const [agent, entry] of entries) if (!gate.allows(agent)) {
+      for (const agent of ctx.get('agents')?.list?.() ?? []) reconcileAgent(agent, scopes)
+      for (const [agent, entry] of entries) {
         mutating = true
-        try { lift(agent, entry); entries.delete(agent) } finally { mutating = false }
+        try { refresh(agent, () => {
+          if (!gate.allows(agent)) { entries.delete(agent); lift(agent, entry) }
+        }) } finally { mutating = false }
       }
     }
     ctx.on('agent/created', ({ agent }) => { inactive.delete(agent); reconcileAgent(agent) })
-    ctx.on('agent/disposed', ({ agent }) => {
-      inactive.add(agent)
-      const entry = entries.get(agent)
-      if (entry) { entries.delete(agent); lift(agent, entry) }
-    })
+    ctx.on('agent/disposed', ({ agent }) => retire(agent))
     ctx.on('session/event', (_session, event) => { if ((event as { type: string }).type === 'agent-preset/selected') reconcile() })
     if (gate.watch) ctx.effect(() => gate.watch!(() => reconcile()), `dsh-ops: ${mode} replacement observer`)
     // A held step must lose a newly restricted fallback just as it loses an inherited official.
@@ -136,8 +156,8 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
       if (mutating) { defer(); return }
       mutating = true
       try {
-        for (const [agent, entry] of entries) {
-          if (scopes?.length && !scopes.some(scope => scopeChainOf(agent).includes(scope))) continue
+        for (const [agent, entry] of entries) refresh(agent, () => {
+          if (scopes?.length && !scopes.some(scope => scopeChainOf(agent).includes(scope))) return
           let changed = false
           withToolChange([agent], () => {
             for (const name of targets.keys()) {
@@ -153,7 +173,7 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
             }
             if (changed) apply(agent, entry)
           })
-        }
+        })
       } finally { mutating = false }
       // Other global layer bursts coalesce; scoped changes only visit their own chains.
       if (scopes?.length) reconcile(scopes)
