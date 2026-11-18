@@ -25,6 +25,17 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Win32 error 5"，打印时不带任何 "fatal error" 前缀）归类为 EXECUTOR_UNAVAILABLE 并带
   `sandbox.runnerFailed`：受限令牌撞上非受限 MSYS 持有者的用户级共享段时，不再只呈现
   一个裸的非零退出码（#409）。
+- A regression guard locks the full-access projection of ops_bash: the selected
+  payload spawns without sandbox.confine and a plain bashPath runs directly, while
+  confined modes still route through confinement (#581). The reported full-access
+  child carrying a Low token (S-1-16-4096) did not reproduce on 0.5.5 — a
+  full-access child reported the caller's own integrity label here — so the guard
+  and the token-comparison diagnosis document the boundary instead of claiming a
+  code fix.
+- 回归守卫锁定 ops_bash 的 full-access 投影：所选载荷不经 sandbox.confine 直接 spawn，
+  普通 bashPath 直接运行，受限模式仍走 confinement（#581）。报告的 full-access 子进程
+  Low 令牌（S-1-16-4096）在 0.5.5 上未能复现——本机 full-access 子进程回报调用方自身的
+  完整性标签——因此以守卫与令牌对照诊断记录该边界，而非声称代码修复。
 - Native tool construction and the publication refusal queue no longer attach listeners or lifetime effects to the composition root. The evidence observer and result admission subscribe on the caller's context with global dispatch, and the refusal queue falls back to the caller lifetime when the root refuses an effect. dsh-tui 0.20 refuses `root.events.on` and `root.effect` from a plugin activation, and the native-tools row is one, so every `dsh-tui --resume` aborted with "cannot resume session" before the agent mounted.
 - 原生工具构造与发布拒绝队列不再向组合根挂监听或生命周期 effect：证据观察者与 result admission 改为在调用方上下文订阅并声明 global 分发，拒绝队列在 root 拒绝 effect 时回落到调用方生命周期。dsh-tui 0.20 会拒绝插件激活期内的 `root.events.on` 与 `root.effect`，而原生工具行正是插件激活，导致每次 `dsh-tui --resume` 都在 agent 挂载前报 "cannot resume session"。
 - The Bash tool description now states the parse contract of `stdout`/`stderr` where the model reads it: `text` may be a partial fragment, `truncated` marks one that must not be parsed as complete structured output, and `spillPath` is optional and not a completeness guarantee. The typed output schema is unchanged: repeating the contract there would cost every PTC request without saying anything the tool text does not. Command semantics, exit codes, result values, limits, spill files, permissions and rendering are unchanged.

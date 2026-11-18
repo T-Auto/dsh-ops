@@ -109,6 +109,28 @@ What to do:
 - Or switch the session to `danger-full-access`, where `bashPath` runs directly.
 - Check with the profile's own copy: `node "<profile>\node_modules\dsh-ops\bin\dsh-ops.mjs" ladder --config <file>` reports `restricted: yes/no` for the resolved bash.
 
+### A full-access `ops_bash` child seems to keep the restricted Low token
+
+The session mode projects straight through in full access: the selected payload
+spawns without `sandbox.confine`, a plain `bashPath` runs directly, and the child
+carries the session's own token. Compare the tokens from the same caller before
+assigning a cause (#581):
+
+```console
+MSYS2_ARG_CONV_EXCL='*' /c/Windows/System32/whoami.exe /groups
+```
+
+The `Mandatory Label` line is the child's integrity level: `S-1-16-4096` is Low,
+`S-1-16-8192` Medium, and an elevated caller reports higher. A confined-mode child
+is expected to differ from the host shell; a full-access child must match the
+session's own level. A full-access child that still reports Low is a host
+token-construction difference, not a dsh-ops setting: collect both `whoami.exe
+/groups` outputs, the DSH core, OPS and Bash payload versions, and the exact
+executable paths, and report them with the [runtime evidence
+guide](windows-runtime-evidence.md). The plugin-side projection is guarded by
+`test/shells-full-access-confinement.test.mjs`, which fails if a full-access
+call ever routes through `confinedBash` or `sandbox.confine`.
+
 ### Restricted Bash is still preparing, or its last preparation was interrupted
 
 Symptom, in a read-only or workspace-write session: an `EXECUTOR_UNAVAILABLE` whose second segment names a stage, for example `EXECUTOR_UNAVAILABLE: bash-staging-failed: …`, `bash-generation-quarantine-failed: …` or `bash-lifecycle-lock-busy: …`.
