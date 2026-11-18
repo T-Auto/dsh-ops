@@ -1,6 +1,7 @@
 //! Windows-only FFI boundary. Callers supply owned/borrowed file handles; no
 //! model paths, shells, privilege enabling, or publication policy live here.
 #![cfg(windows)]
+mod ea;
 mod inheritance;
 pub use inheritance::inherit_new_file_dacl;
 use std::{
@@ -318,6 +319,7 @@ pub fn verify_cache(file: &File, write_sid: Option<&str>) -> io::Result<()> {
 pub struct Metadata {
     sd: Option<LocalBox<SecurityDescriptor>>,
     basic: FILE_BASIC_INFO,
+    eas: ea::CapturedEas,
     warnings: Vec<String>,
 }
 impl Metadata {
@@ -374,29 +376,15 @@ impl Metadata {
                 return Err(unsupported("Unknown Windows stream metadata"));
             }
         }
-        if capabilities.extended_attributes() {
-            let mut ea_size = 0u32;
-            let mut status = IoStatus {
-                status: 0,
-                information: 0,
-            };
-            // SAFETY: FileEaInformation (7) writes one ULONG into ea_size.
-            let result = unsafe {
-                NtQueryInformationFile(
-                    file.as_raw_handle(),
-                    &mut status,
-                    addr_of_mut!(ea_size).cast(),
-                    4,
-                    7,
-                )
-            };
-            if result < 0 {
-                return Err(nt_error(result));
-            }
-            if ea_size != 0 {
-                return Err(unsupported("Windows extended attributes are not supported"));
-            }
-        }
+        // #874: user EAs are captured for an exact restore instead of refusing
+        // the whole write; kernel-owned EAs degrade with named evidence.
+        let eas = if capabilities.extended_attributes() {
+            ea::capture(file)?
+        } else {
+            ea::CapturedEas::default()
+        };
+        let mut warnings = capabilities.warnings();
+        warnings.extend(eas.warnings());
         Ok(Self {
             sd: if capabilities.persistent_acls() {
                 Some(descriptor(file)?)
@@ -404,7 +392,8 @@ impl Metadata {
                 None
             },
             basic,
-            warnings: capabilities.warnings(),
+            eas,
+            warnings,
         })
     }
     pub fn warnings(&self) -> &[String] {
@@ -461,6 +450,8 @@ impl Metadata {
         {
             return Err(io::Error::last_os_error());
         }
+        // Restored before verification: the destination is our own staged file.
+        ea::restore(file, &self.eas)?;
         self.verify(file)
     }
     pub fn verify(&self, file: &File) -> io::Result<()> {
@@ -495,6 +486,7 @@ impl Metadata {
         {
             return Err(unsupported("Windows basic metadata verification failed"));
         }
+        ea::verify(file, &self.eas)?;
         Ok(())
     }
 }
@@ -650,5 +642,155 @@ mod tests {
         drop(parent);
         assert!(!root.join("private").exists());
         std::fs::remove_dir(root).unwrap();
+    }
+
+    // Test-local fixture FFI: it only creates the EA set; the capture and
+    // restore code under test never calls it, and the signature matches the
+    // crate's own NtSetEaFile declaration exactly.
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        fn NtSetEaFile(
+            handle: HANDLE,
+            status: *mut IoStatus,
+            buffer: *const c_void,
+            length: u32,
+        ) -> i32;
+    }
+    fn probe_error(result: i32) -> io::Error {
+        // SAFETY: total scalar conversion, no pointer arguments.
+        io::Error::from_raw_os_error(unsafe { RtlNtStatusToDosError(result) } as i32)
+    }
+    /// Build one FILE_FULL_EA_INFORMATION entry and set it on a file.
+    fn set_ea(path: &std::path::Path, name: &[u8], value: &[u8]) -> io::Result<()> {
+        let mut buffer = Vec::with_capacity(8 + name.len() + 1 + value.len());
+        buffer.extend_from_slice(&0u32.to_le_bytes());
+        buffer.push(0);
+        buffer.push(name.len() as u8);
+        buffer.extend_from_slice(&(value.len() as u16).to_le_bytes());
+        buffer.extend_from_slice(name);
+        buffer.push(0);
+        buffer.extend_from_slice(value);
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)?;
+        let mut status = IoStatus {
+            status: 0,
+            information: 0,
+        };
+        // SAFETY: borrowed handle; buffer and status outlive the call.
+        let result = unsafe {
+            NtSetEaFile(
+                file.as_raw_handle(),
+                &mut status,
+                buffer.as_ptr().cast(),
+                buffer.len() as u32,
+            )
+        };
+        if result < 0 {
+            return Err(probe_error(result));
+        }
+        Ok(())
+    }
+    #[test]
+    fn user_extended_attributes_round_trip_instead_of_refusing_the_write() {
+        // #874: files carrying user EAs were all refused; they must round-trip.
+        let root = std::env::temp_dir().join(format!(
+            "dsh-metadata-ea-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("tagged");
+        std::fs::write(&path, b"payload").unwrap();
+        set_ea(&path, b"dsh-ops.test", b"fixture")
+            .expect("this volume must accept user EAs for the fixture");
+        // NTFS folds user EA names to uppercase when storing and querying them.
+        let observed = ea::capture(&File::open(&path).unwrap()).unwrap();
+        assert_eq!(observed.entries.len(), 1);
+        assert_eq!(observed.entries[0].name, b"DSH-OPS.TEST".to_vec());
+        assert_eq!(observed.entries[0].value, b"fixture".to_vec());
+        assert!(observed.kernel.is_empty());
+        // #874: capture must describe the EA set instead of refusing the file.
+        let file = File::open(&path).unwrap();
+        assert!(VolumeCapabilities::query(&file).unwrap().extended_attributes());
+        let captured =
+            Metadata::capture(&file).expect("user EAs must be captured, not rejected");
+        let parent = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(0x02000000)
+            .open(&root)
+            .unwrap();
+        let mut staging = create_private(&parent, "staged").unwrap();
+        staging.write_all(b"payload").unwrap();
+        captured.restore(&staging).unwrap();
+        captured.verify(&staging).unwrap();
+        drop(staging);
+        drop(file);
+        let restored = ea::capture(&File::open(root.join("staged")).unwrap()).unwrap();
+        assert_eq!(restored.entries.len(), 1);
+        assert_eq!(restored.entries[0].name, b"DSH-OPS.TEST".to_vec());
+        assert_eq!(restored.entries[0].value, b"fixture".to_vec());
+        assert_eq!(std::fs::read(&root.join("staged")).unwrap(), b"payload");
+        drop(parent);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn kernel_named_eas_belong_to_the_kernel_not_user_mode() {
+        // The $KERNEL.* namespace is kernel-owned. A user-mode NtSetEaFile with
+        // such a name is either refused or silently dropped (observed here:
+        // the call succeeds and nothing is stored), so real kernel EAs on disk
+        // (EFS's PurgeEFSProxyCache, SmartLocker tags) can never be restored
+        // from user mode. Capture therefore classifies them by name and the
+        // publication reports each one; that classification and its warnings
+        // are asserted in the ea:: unit tests (#874).
+        let root = std::env::temp_dir().join(format!(
+            "dsh-metadata-kernel-ea-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("kernel-tagged");
+        std::fs::write(&path, b"payload").unwrap();
+        let parent = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(0x02000000)
+            .open(&root)
+            .unwrap();
+        if let Err(refusal) = set_ea(&path, b"$KERNEL.SimTag", b"v") {
+            // The kernel refused user-mode $KERNEL.* creation itself: that is
+            // the documented reason no restore path can preserve them either.
+            assert!(refusal.raw_os_error().is_some(), "{refusal}");
+            drop(parent);
+            std::fs::remove_dir_all(&root).unwrap();
+            return;
+        }
+        // On this build the user-mode set reports success while the kernel
+        // silently drops the reserved name: nothing exists to capture, and an
+        // empty EA set must not be refused either.
+        let observed = ea::capture(&File::open(&path).unwrap()).unwrap();
+        assert!(
+            observed.entries.is_empty() && observed.kernel.is_empty(),
+            "the kernel must own the $KERNEL namespace: {observed:?}"
+        );
+        let file = File::open(&path).unwrap();
+        let captured = Metadata::capture(&file).expect("an empty EA set must not be refused");
+        assert!(captured.warnings().is_empty());
+        let mut staging = create_private(&parent, "kernel-staged").unwrap();
+        staging.write_all(b"payload").unwrap();
+        captured.restore(&staging).unwrap();
+        captured.verify(&staging).unwrap();
+        drop(staging);
+        drop(file);
+        assert_eq!(std::fs::read(root.join("kernel-staged")).unwrap(), b"payload");
+        drop(parent);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }
