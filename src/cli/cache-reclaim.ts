@@ -22,7 +22,7 @@ import { spawnSync } from 'node:child_process'
 import { provisionedShellStore } from '../shells.js'
 import { errorMessage } from '../shells/types.js'
 import { reclaimNiubashSiblings, verifyNiubashTree, niubashFileHash, NIUBASH_EXECUTION_DIRECTORIES, NIUBASH_HOME_PATH, NIUBASH_PACKAGE_PATH, NIUBASH_PIN, NIUBASH_RECEIPT } from './niubash-payload.js'
-import { NIUBASH_MANIFEST_SHA256 } from './niubash-payload.js'
+import { NIUBASH_PREPARED_SHA256 } from './niubash-payload.js'
 import { preparedNiubashEntries, retirePreparedNiubash } from '../niubash/prepared-cache.js'
 import { NIUBASH_FACES, NIUBASH_WINUXCMD, niubashFacePath } from '../niubash/faces.js'
 import { pendingRoot, planPendingSweep, sweepPendingScratch } from './pending-scratch.js'
@@ -220,7 +220,7 @@ function verifyExecutionTreeForReclaim(target: string): void {
 
 /** The reserved prepared namespace owns partial trees as well as obsolete versions. */
 function preparedItems(home: string): CacheItem[] {
-  const current = path.resolve(home, 'dsh-ops/shells/niubash-prepared', NIUBASH_MANIFEST_SHA256)
+  const current = path.resolve(home, 'dsh-ops/shells/niubash-prepared', NIUBASH_PREPARED_SHA256)
   return preparedNiubashEntries(current).map(target => ({
     kind: 'exec-tree', path: target, ...treeUsage(target),
     evidence: 'prepared-cache-namespace', decision: 'reclaimable',

@@ -127,8 +127,8 @@ An interrupted staging leaves a `stage-*` directory in the cache. Confined calls
 Payload bytes are hashed against the frozen manifest once, where they enter the machine: the
 package build and `dsh-ops provision-shells --bash`. Selecting Niubash (mount, the settings page,
 `ops_status`) only checks that every pinned file is present with its pinned size; it reads no
-contents and writes nothing. The first Bash call in a process prepares one runtime per manifest
-hash at `<DSH_HOME>/dsh-ops/shells/niubash-prepared/<manifest hash>`, asynchronously: it copies the
+contents and writes nothing. The first Bash call in a process prepares one runtime per prepared
+hash (`NIUBASH_PREPARED_SHA256`, covering the manifest and face list) at `<DSH_HOME>/dsh-ops/shells/niubash-prepared/<prepared hash>`, asynchronously: it copies the
 payload without source hardlinks, materializes the command faces and six startup directories, and
 publishes the completed tree with an atomic sibling rename. Later calls check only that the
 prepared `niu.exe` still exists; they do not clone, hash, seal, write an execution receipt or
@@ -162,7 +162,7 @@ security boundary against the account or an administrator.
   cleaning up at once never split one tree across two names. On Windows an in-use version whose rename is refused stays for the next
   host start; cleanup does not retry or fail the selected runtime. Unrelated names and links are
   untouched. The same `cache status/reclaim --kind exec-tree` commands include these leftovers
-  while always excluding the current plain manifest hash.
+  while always excluding the current plain prepared hash.
 - Profiles sharing one `DSH_HOME` can run dsh-ops versions with different Niubash pins. Starting
   one can retire the other's prepared version between commands. The other profile's next call
   re-prepares its selected pin once from its selected payload and continues through normal host

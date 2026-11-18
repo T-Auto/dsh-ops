@@ -22,9 +22,15 @@ export const niubashFileHash = (file: string) => digest(fs.readFileSync(file))
 const files: Readonly<Record<string, string>> = manifest.files
 const sizes: Readonly<Record<string, number>> = manifest.sizes
 
-/** Digest of the compiled inventory, also the version key of the prepared runtime. */
+/** Digest of the compiled inventory. */
 export const NIUBASH_MANIFEST_SHA256 = createHash('sha256')
   .update(JSON.stringify({ directories: manifest.directories, files, sizes })).digest('hex')
+
+/** Version key of the prepared runtime: pairs the frozen manifest digest with the generated argv0 command faces
+ * so changes to `NIUBASH_FACES` (including removals) retire stale prepared trees on the next launch.
+ */
+export const NIUBASH_PREPARED_SHA256 = createHash('sha256')
+  .update(JSON.stringify({ manifest: NIUBASH_MANIFEST_SHA256, faces: NIUBASH_FACES })).digest('hex')
 
 type TarEntry = { name: string; type: string; bytes: Buffer; link: string }
 const text = (bytes: Buffer) => bytes.toString('utf8').replace(/\0.*$/su, '')

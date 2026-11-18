@@ -234,7 +234,7 @@ choice for that consumer, not an authorization grant.
 Windows Niubash bytes are hashed against the frozen manifest only by the package build and
 `provision-shells --bash`. Selection checks that the pinned files are present with their pinned
 sizes and reads no contents. The first Bash call in a process prepares one copied runtime at
-`<DSH_HOME>/dsh-ops/shells/niubash-prepared/<manifest hash>`, including command faces and six
+`<DSH_HOME>/dsh-ops/shells/niubash-prepared/<prepared hash>` (combining the manifest digest and command face list), including command faces and six
 startup directories. Source files are never hardlinked into it. Later calls reuse that runtime without
 per-call cloning, hashing, seals or execution receipts, while every call follows the current host policy (`confine` in restricted modes).
 `DSH_HOME` must place the prepared runtime outside the session workspace; each call enforces this.
