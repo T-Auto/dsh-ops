@@ -66,14 +66,21 @@ await test('reparse tag classification lets the cloud-files family through and f
 (Get-DshOpsReparseTagDecision -Tag ${tag}).State`)
   // Decimal literals on purpose: Windows PowerShell 5.1 folds hex literals in
   // the 0x90000000-0xFFFFFFFF band into a negative Int32, which cannot convert
-  // to the function's [uint32] parameter. 0x9000001A is IO_REPARSE_TAG_CLOUD;
-  // Microsoft reserves 0x90000000-0x9FFFFFFF for cloud-files providers, and
-  // CLOUD_ROOT/CLOUD_ON_DEMAND placeholders keep a real directory entry behind
-  // them, so an ACL write targets a real object.
+  // to the function's [uint32] parameter. 2415919130 is IO_REPARSE_TAG_CLOUD,
+  // 2415923226 CLOUD_ROOT, 2415927322 CLOUD_ON_DEMAND: the proven cloud-files
+  // family has the exact shape 0x9000?01A, and only that family is allowed —
+  // because a placeholder keeps a real directory entry behind the point, so an
+  // ACL write targets a real object. 2415980570 (0x9000F01A) shares that family
+  // shape under the mask.
   assert.equal(state(2415919130), 'cloud')
   assert.equal(state(2415923226), 'cloud')
   assert.equal(state(2415927322), 'cloud')
-  assert.equal(state(2684354559), 'cloud')
+  assert.equal(state(2415980570), 'cloud')
+  // A high nibble of 9 alone is NOT enough (#744 review): 2684354559 is
+  // 0x9FFFFFFF and 2415963085 is 0x9000ABCD, whose low 16 bits are not the
+  // ?01A family shape. Unproven tags must fail closed before a DACL write.
+  assert.equal(state(2684354559), 'unsupported')
+  assert.equal(state(2415963085), 'unsupported')
   // 0xA0000003 is a mount point and 0xA000000C a symlink; unknown tags like
   // 0x8000001B redirect or transform the view and must fail closed when
   // preparation is about to write the DACL.
