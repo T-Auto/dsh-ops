@@ -12,9 +12,9 @@ English: [Optional WSL file reads](wsl-readonly.md).
 
 在 Windows x64 上，可在启动 DSH 的环境中设置 `DSH_OPS_WSL_READS=1`，为工作目录位于 `\\wsl.localhost\<发行版>\...` 或 `\\wsl$\<发行版>\...` 的会话启用 Linux 侧 `ops_glob`、`ops_grep` 和 `ops_read_files`。此功能主要减少 WSL 网络文件系统上的重复元数据访问。WSL 启动和校验也有固定开销，小文件读取可能更慢；应先测量实际工作目录再广泛启用。
 
-安装包必须同时包含普通 Windows worker，以及版本一致、凭据文件校验通过的 `runtime/linux-x64/dsh-ops-worker`。发行版须已安装、支持 Linux x64，并提供 `/usr/bin/wslpath` 和 `/usr/bin/sha256sum`。OPS 不安装 WSL，也不下载运行时。显式 `workerPath` 或 `DSH_OPS_WORKER_BIN` 选择仍使用原有 Windows 路径。关闭环境开关后，新请求恢复原有路径。
+安装包必须同时包含普通 Windows worker，以及版本一致、凭据文件校验通过的 `runtime/linux-x64/dsh-ops-worker`。发行版须已安装、支持 Linux x64，并提供 `/bin/sh`、`/usr/bin/wslpath` 与 `/usr/bin/sha256sum`。OPS 不安装 WSL，也不下载运行时。显式 `workerPath` 或 `DSH_OPS_WORKER_BIN` 选择仍使用原有 Windows 路径。关闭环境开关后，新请求恢复原有路径。
 
-worker 通过 `wsl.exe --distribution <名称> --exec <已校验的 worker>` 接收 JSON 数据，不运行命令 shell 或模型提供的代码。输入路径须属于会话所在发行版。每次调用都会重新解析 Windows 盘符挂载，包括凭据拒绝根和 worker 路径，并核对 Linux 侧可见文件的 SHA-256。Linux 遍历仍采用 Windows 不区分大小写的凭据拒绝规则和保留文件名限制。符号链接、特殊对象仍执行 no-follow；无效文件名属于扫描缺口，不得宣称计数完整。
+worker 通过 `wsl.exe --distribution <名称> --exec <已校验的 worker>` 接收 JSON 数据；worker 本身不运行命令 shell 或模型提供的代码。准备工作是每次调用一次固定的 `/bin/sh -c` 脚本（#576）：脚本文本是常量，所有盘符根、凭据拒绝根与 worker 路径都以位置参数传递，任何 Windows 路径都无法改变命令形状——盘符挂载仍按每次调用重新解析，Linux 侧可见文件的 SHA-256 仍须与打包凭据一致。输入路径须属于会话所在发行版。Linux 遍历仍采用 Windows 不区分大小写的凭据拒绝规则和保留文件名限制。符号链接、特殊对象仍执行 no-follow；无效文件名属于扫描缺口，不得宣称计数完整。
 
 工具名称、参数 schema、提示词、相对路径基准及宿主读取记录不变。只转换已定义的结果路径字段为 UNC，不改写文件内容。写入、Bash、PTC 执行和结果缓存所有权仍保留在原有 Windows 路径。
 
