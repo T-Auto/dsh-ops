@@ -210,7 +210,11 @@ await test('the real Cordis fiber owns the registration, the action and the rele
   assert.deepEqual(registry.state.order, ['register', 'default'])
   await ctx.fiber.dispose()
   await waitFor(() => registry.state.disposed === 1, { what: 'the fiber disposal to release the preset' })
-  assert.equal(registry.state.selected, 'ops-ptc', 'a disposal leaves the operator default alone')
+  await waitFor(() => registry.state.selected === 'standard', { what: 'the stranded default restored on unload' })
+  assert.deepEqual(registry.state.updates, [
+    { namespace: 'agent-preset-registry', patch: { selectedDefault: 'ops-ptc' } },
+    { namespace: 'agent-preset-registry', patch: { selectedDefault: 'standard' } },
+  ], 'a disposal writes the host default back exactly once')
 })
 
 await test('one injected activation never registers the preset twice', async () => {
@@ -256,7 +260,9 @@ await test('the action makes OPS (PTC) the default preset once', async () => {
 })
 
 await test('the action reports unavailable when no preset is registered', async () => {
-  const preset = registerOpsPtcPreset({ inject() {} })
+  // The minimal root still carries the Context capability every row owns: the
+  // unload lease (#928) registers through it even when nothing is registered.
+  const preset = registerOpsPtcPreset({ inject() {}, effect() { return () => {} } })
   const answer = await preset.applyDefault()
   assert.equal(answer.status, 'unavailable')
   assert.match(answer.message, /not registered/)
@@ -311,11 +317,14 @@ await test('teardown releases the preset but keeps the operator default', async 
   assert.equal(registry.defaultId, 'ptc')
 })
 
-await test('a deployment without the preset registry is left alone', () => {
+await test('a deployment without the preset registry is left alone', async () => {
   const { root, events } = stubRoot({ composedPreset: () => undefined })
   registerOpsPtcPreset(root)
   assert.equal(events.inject.length, 1)
-  assert.deepEqual(events.effects, [])
+  // The row still owns its unload lease (#928), but without a registration it
+  // never served anything, and the lease cleanup writes nothing.
+  assert.deepEqual(events.effects.map(entry => entry.label), ['dsh-ops: ops-ptc preset default lease'])
+  await events.effects[0].cleanup()
 })
 
 await test('a missing fragment only warns; it never throws into apply', async () => {

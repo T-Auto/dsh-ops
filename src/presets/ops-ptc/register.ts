@@ -155,10 +155,14 @@ function currentDefault(registry: PresetRegistry): string | undefined {
  *
  * This is the same mechanism the settings page uses, so the write lands in the
  * profile layer and hot-applies to the live registry.
+ * @param ctx - the context whose settings service persists the value.
+ * @param value - the default preset id to write.
+ * @param captured - a settings service the caller resolved while it was live;
+ *   the unload lease passes one because its own context may already be gone.
  * @returns the failure message, or undefined when the host accepted the write.
  */
-async function writeSelectedDefault(ctx: Context, value: string): Promise<string | undefined> {
-  const settings = settingsOf(ctx)
+async function writeSelectedDefault(ctx: Context, value: string, captured?: SettingsService): Promise<string | undefined> {
+  const settings = captured ?? settingsOf(ctx)
   if (typeof settings?.update !== 'function') {
     return 'the host settings service is unavailable, so the default preset was not changed'
   }
@@ -189,10 +193,17 @@ export interface OpsPtcPreset {
   applyDefault(): Promise<PresetDefaultAction>
 }
 
-/** The live registration the action writes through; empty when none is mounted. */
+/**
+ * The live registration the action writes through; empty when none is mounted.
+ *
+ * `settings` is captured while the injected child is alive: the unload lease
+ * writes through it after the child is gone (#928), when the child context can
+ * no longer resolve the service.
+ */
 interface LiveRegistration {
   ctx?: Context
   registry?: PresetRegistry
+  settings?: SettingsService
 }
 
 /**
@@ -236,6 +247,50 @@ function releaseRegistration(ctx: Context, slot: Slot, options: RegistrationOpti
   } catch (error) {
     warn(options, ctx, `dsh-ops: cannot release the ops-ptc preset: ${errorText(error)}`)
   }
+}
+
+/**
+ * The host's own default preset, when it is a usable id distinct from this
+ * row's preset.
+ * @param registry - the registry whose config declares the host default.
+ * @returns the host default id, or undefined when there is none to fall back to.
+ */
+function hostDefaultOf(registry: PresetRegistry): string | undefined {
+  try {
+    const value = registry.config?.default
+    return typeof value === 'string' && value !== '' && value !== PRESET_ID ? value : undefined
+  } catch { return undefined }
+}
+
+/**
+ * Restore the profile default this row is about to strand.
+ *
+ * Unload and disable remove the ops-ptc preset, but the profile keeps the
+ * `selectedDefault` the operator's one click wrote: every new session then
+ * fails to compose against a preset that no longer exists (#928). The lease
+ * writes the host default back — only when the live value still names this
+ * row's preset; a default naming any other preset is an operator choice and is
+ * never touched. Best effort with a warning: a host without a usable settings
+ * service, or one that refuses the write, reports the leftover and its
+ * remediation instead of guessing.
+ * @param served - the last registration this row served.
+ * @param options - test seams; production passes none.
+ */
+async function restoreLeftoverDefault(served: LiveRegistration, options: RegistrationOptions): Promise<void> {
+  const { ctx, registry } = served
+  if (ctx === undefined || registry === undefined) return
+  if (currentDefault(registry) !== PRESET_ID) return
+  const fallback = hostDefaultOf(registry)
+  if (fallback === undefined) {
+    warn(options, ctx, 'dsh-ops: the profile still names the removed ops-ptc preset as its default; choose another default on the host settings page.')
+    return
+  }
+  const failure = await writeSelectedDefault(ctx, fallback, served.settings)
+  if (failure !== undefined) {
+    warn(options, ctx, `dsh-ops: ${failure}; the profile still names the removed ops-ptc preset, so new sessions may fail to compose until another default is chosen.`)
+    return
+  }
+  warn(options, ctx, `dsh-ops: restored the default agent preset to ${fallback}, because the ops-ptc preset was removed with this row.`)
 }
 
 /**
@@ -415,6 +470,12 @@ export async function readOpsPtcDefinition(options: RegistrationOptions, root: C
  */
 export function registerOpsPtcPreset(root: Context, options: RegistrationOptions = {}): OpsPtcPreset {
   const live: LiveRegistration = {}
+  /**
+   * The last registration this row served: the injected child clears `live`
+   * when it goes away, while this holder stays readable for the unload lease,
+   * and a remount overwrites it with the fresh child's registration.
+   */
+  const served: LiveRegistration = {}
   root.inject(['agentPresets'], ctx => {
     const registry = service<PresetRegistry>(ctx, 'agentPresets')
     if (registry === undefined || typeof registry.register !== 'function') return
@@ -429,10 +490,15 @@ export function registerOpsPtcPreset(root: Context, options: RegistrationOptions
       if (live.ctx === ctx) { live.ctx = undefined; live.registry = undefined }
       releaseRegistration(ctx, slot, options)
     }, 'dsh-ops: ops-ptc preset')
-    void activate(ctx, registry, slot, options, live).catch(error => {
+    void activate(ctx, registry, slot, options, live, served).catch(error => {
       warn(options, ctx, `dsh-ops: cannot register the ops-ptc agent preset: ${errorText(error)}; the preset stays unavailable.`)
     })
   })
+  // The lease below is the row's own lifetime: the Loader reuses a row's fiber
+  // across a config remount, so a remount never fires it. It fires when the row
+  // is disabled or unloaded — the one moment the profile can be left naming a
+  // preset that no longer exists (#928).
+  root.effect(() => () => { void restoreLeftoverDefault(served, options) }, 'dsh-ops: ops-ptc preset default lease')
   return { applyDefault: () => applyDefaultPreset(live, options) }
 }
 
@@ -442,9 +508,11 @@ export function registerOpsPtcPreset(root: Context, options: RegistrationOptions
  * @param registry - the host preset registry.
  * @param slot - release holder the fiber cleanup reads.
  * @param options - test seams; production passes none.
+ * @param live - the holder the operator action reads; the child clears it on teardown.
+ * @param served - the holder the unload lease reads; it survives the child teardown.
  * @returns resolves once the registration is owned by {@link slot}.
  */
-async function activate(ctx: Context, registry: PresetRegistry, slot: Slot, options: RegistrationOptions, live: LiveRegistration): Promise<void> {
+async function activate(ctx: Context, registry: PresetRegistry, slot: Slot, options: RegistrationOptions, live: LiveRegistration, served: LiveRegistration): Promise<void> {
   const definition = await readOpsPtcDefinition(options, ctx)
   if (definition === undefined || slot.disposed) return
   // A failed registration leaves the default preset exactly as it was: this row
@@ -458,4 +526,8 @@ async function activate(ctx: Context, registry: PresetRegistry, slot: Slot, opti
   // The operator action reads this: only a registered preset may be made the default.
   live.ctx = ctx
   live.registry = registry
+  // The unload lease reads this after the injected child is gone (#928).
+  served.ctx = ctx
+  served.registry = registry
+  served.settings = settingsOf(ctx)
 }
