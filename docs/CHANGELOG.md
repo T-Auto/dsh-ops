@@ -38,23 +38,21 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   完整性标签——因此以守卫与令牌对照诊断记录该边界，而非声称代码修复。
 - Document the niu-Git hook failure whose only difference is the shebang:
   `#!/usr/bin/env sh` fails while `#!/bin/sh` runs, so husky v9 hooks are
-  affected. The interpreter resolution lives inside the niu-Git payload, so the
-  entry records the diagnostic pair and the `#!/bin/sh` workaround instead of
-  claiming a repository fix (#958, unresolved-upstream).
+  affected. The entry records the observed diagnostic pair and the `#!/bin/sh`
+  workaround; the interpreter-resolution attribution is an upstream inference,
+  not a verified root cause (#958, unresolved-upstream).
 - 记录 niu-Git 钩子失败：唯一差异是 shebang——`#!/usr/bin/env sh` 失败而
-  `#!/bin/sh` 可运行，husky v9 钩子同样受影响。解释器解析位于 niu-Git 载荷内部，
-  因此该条目记录诊断对照与 `#!/bin/sh` 缓解，而非声称本仓修复（#958，
+  `#!/bin/sh` 可运行，husky v9 钩子同样受影响。条目记录实测诊断对照与
+  `#!/bin/sh` 缓解；解释器解析的归因是上游推断，不是已证根因（#958，
   unresolved-upstream）。
 - Document the per-call console flash on Windows 10 when Windows Terminal is
-  the default terminal: niubash is a console-subsystem binary launched without
-  an interactive parent, so each call asks for a console host. The entry gives
-  the default-terminal comparison as the diagnosis and marks the hidden-console
-  build upstream work, because no dsh-ops setting controls console hosting
-  (#828, unresolved-upstream).
-- 记录 Windows 10 默认终端为 Windows Terminal 时每次调用的控制台闪烁：niubash
-  是无交互父进程启动的控制台子系统二进制，每次调用都会请求控制台宿主。条目给出
-  默认终端对照作为诊断，并标注隐藏控制台构建属上游工作——没有任何 dsh-ops 设置
-  控制控制台宿主（#828，unresolved-upstream）。
+  the default terminal. The entry gives the default-terminal comparison as the
+  diagnosis; the console-host hand-off explanation is an upstream inference, and
+  the hidden-console build remains upstream work, because no dsh-ops setting
+  controls console hosting (#828, unresolved-upstream).
+- 记录 Windows 10 默认终端为 Windows Terminal 时每次调用的控制台闪烁。条目给出
+  默认终端对照作为诊断；控制台宿主交接的解释是上游推断，隐藏控制台构建仍属
+  上游工作——没有任何 dsh-ops 设置控制控制台宿主（#828，unresolved-upstream）。
 - Document the antivirus pattern for Niubash: all pinned files intact except a
   quarantined `niu.exe`, named by the #844 member diagnostic. The entry gives
   the Defender/ESET event collection, the provision restore and the fixed-location

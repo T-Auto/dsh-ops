@@ -205,9 +205,10 @@ not a separate security boundary against the account or an administrator (#870).
 
 Symptom: a repository hook installed through the niu-Git command — for example a
 husky v9 hook — fails when its shebang is `#!/usr/bin/env sh`, while the same
-script with `#!/bin/sh` runs. The `env sh` lookup resolves through the payload's
-own interpreter machinery and differs from the direct `sh` face; that
-resolution lives inside the niu-Git binary tree, not in this repository (#958).
+script with `#!/bin/sh` runs. The observed pair is the diagnosis. The likely
+mechanism — the `env sh` lookup resolving through the payload's own interpreter
+machinery instead of the direct `sh` face — is an upstream inference this
+repository has not verified inside the niu-Git binary tree (#958).
 
 What to do:
 
@@ -215,28 +216,28 @@ What to do:
   `#!/bin/sh` form succeeds.
 - Rewrite the affected hooks to `#!/bin/sh`; husky hooks are plain shell
   scripts, so the shebang is the whole change.
-- Report the payload version and both hook texts to the payload maintainers.
-  This repository can only record the diagnosis, because the
-  shebang-to-interpreter path is inside the niu-Git payload
+- Report the payload version and both hook texts to the payload maintainers;
+  they can confirm or correct the interpreter-resolution attribution
   (unresolved-upstream).
 
 ### `ops_bash` flashes a console window on Windows 10 with Windows Terminal
 
 Symptom: every `ops_bash` call briefly flashes a black console window when
 Windows Terminal is the system's default terminal application on Windows 10.
-The niubash executable is a console-subsystem binary that the host launches
-without an interactive parent, so each call asks the system for a console host;
-the Windows-10 hand-off between Windows Terminal and the classic conhost
-re-creates a visible console per call (#828).
+What is observed is the comparison, not the mechanism: switch the default back
+to the Windows Console Host and see whether the flashing stops. The likely
+mechanism — niubash being a console-subsystem binary launched without an
+interactive parent, so each call asks for a console host and the Windows-10
+terminal hand-off re-creates a visible console — is an upstream inference this
+repository has not verified; no dsh-ops setting controls console hosting, and
+the shipped binary cannot be patched here (#828).
 
 What to do:
 
 - Verify the default terminal setting (Settings → For developers → Terminal)
   and compare the flashing with the default switched back to the Windows
   Console Host; that observation pair is the diagnosis.
-- A hidden-console niubash build is upstream payload work. This repository only
-  records the evidence: no dsh-ops setting controls console hosting, and the
-  shipped binary cannot be patched here (unresolved-upstream).
+- A hidden-console niubash build is upstream payload work (unresolved-upstream).
 
 ### Antivirus quarantined `niu.exe` from the payload
 
