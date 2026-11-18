@@ -248,6 +248,28 @@ try {
     agent.session.mode = 'danger-full-access'
     ok(await call('printf full > full.txt', { workdir: outside }))
     assert.equal(fs.readFileSync(path.join(outside, 'full.txt'), 'utf8'), 'full')
+    agent.session.mode = 'workspace-write'
+  })
+  await test('prepared runtime exposes wpm links without shadowing PATH jq or breaking external builtins (#973)', async () => {
+    const preparedBin = path.join(path.dirname(preparedFile), 'winuxcmd/usr/bin')
+    assert.equal(fs.existsSync(path.join(preparedBin, 'jq.exe')), false)
+    assert.equal(fs.existsSync(path.join(preparedBin, 'link.exe')), false)
+    assert.equal(ok(await call('wpm --help')).exitCode, 0)
+    assert.equal(ok(await call("printf 'alpha\\nbeta\\n' | egrep '^be'")).stdout.text.trim(), 'beta')
+    assert.equal(ok(await call('find allowed.txt -exec test -f {} \\; -print')).stdout.text.trim(), 'allowed.txt')
+    assert.equal(ok(await call("printf 'EXT_ENV' | xargs env printf '%s'")).stdout.text, 'EXT_ENV')
+    const callerBin = path.join(root, 'caller-path')
+    fs.mkdirSync(callerBin, { recursive: true })
+    fs.writeFileSync(path.join(callerBin, 'jq.cmd'), '@echo JQ_FROM_CALLER_PATH\r\n')
+    const previousPath = process.env.PATH
+    process.env.PATH = `${callerBin}${path.delimiter}${previousPath ?? ''}`
+    try {
+      const jqOut = ok(await call('jq --version')).stdout.text.trim()
+      assert.equal(jqOut, 'JQ_FROM_CALLER_PATH')
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH
+      else process.env.PATH = previousPath
+    }
   })
   await test('the real frozen payload remains byte-identical after execution', async () => {
     verifyNiubashTree(path.dirname(file)); assert.equal(fs.existsSync(path.join(path.dirname(file), 'winuxcmd/dev')), false)

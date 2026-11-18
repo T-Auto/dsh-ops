@@ -8,7 +8,7 @@ import { NIUBASH_FACES, NIUBASH_WINUXCMD, niubashFacePath } from './faces.js'
 import { reclaimPreparedNiubash, retirePreparedNiubash } from './prepared-cache.js'
 import {
   NIUBASH_EXECUTION_DIRECTORIES, NIUBASH_HOME_PATH, NIUBASH_PACKAGE_PATH,
-  NIUBASH_MANIFEST_SHA256, NIUBASH_PIN, expectNiubashFile, inspectNiubashTree,
+  NIUBASH_PIN, NIUBASH_PREPARED_SHA256, expectNiubashFile, inspectNiubashTree,
 } from '../cli/niubash-payload.js'
 
 const UNAVAILABLE = 'EXECUTOR_UNAVAILABLE:'
@@ -23,7 +23,7 @@ export function isNiubashExecutable(file: string): boolean {
 
 export function niubashPreparedRoot(env: NodeJS.ProcessEnv = process.env): string {
   const home = env.DSH_HOME ?? path.join(os.homedir(), '.dsh')
-  return path.resolve(home, 'dsh-ops/shells/niubash-prepared', NIUBASH_MANIFEST_SHA256)
+  return path.resolve(home, 'dsh-ops/shells/niubash-prepared', NIUBASH_PREPARED_SHA256)
 }
 
 /** Mount-time selection: synchronous, read-only and content-free, so every mode may ask. */

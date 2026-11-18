@@ -10,7 +10,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { PACKAGE_ROOT, assert, report, test, withTempDir } from './lib/harness.mjs'
 import { cacheInventory, cacheReclaim } from '../lib/cli/cache-reclaim.js'
-import { NIUBASH_MANIFEST_SHA256, NIUBASH_PIN } from '../lib/cli/niubash-payload.js'
+import { NIUBASH_MANIFEST_SHA256, NIUBASH_PIN, NIUBASH_PREPARED_SHA256 } from '../lib/cli/niubash-payload.js'
 import { NIUBASH_FACES } from '../lib/niubash/faces.js'
 import { pendingRoot, recordPendingScratch } from '../lib/cli/pending-scratch.js'
 
@@ -250,8 +250,8 @@ await test('legacy cleanup preserves unknown members, directories, links and sam
 function preparedFixture(root) {
   const home = path.join(root, 'home')
   const prepared = path.join(home, 'dsh-ops', 'shells', 'niubash-prepared')
-  const oldHash = (NIUBASH_MANIFEST_SHA256 === 'a'.repeat(64) ? 'b' : 'a').repeat(64)
-  const names = [oldHash, `${oldHash}.broken-one`, `${NIUBASH_MANIFEST_SHA256}.stage-two`,
+  const oldHash = (NIUBASH_PREPARED_SHA256 === 'a'.repeat(64) ? 'b' : 'a').repeat(64)
+  const names = [oldHash, NIUBASH_MANIFEST_SHA256, `${oldHash}.broken-one`, `${NIUBASH_PREPARED_SHA256}.stage-two`,
     `${oldHash}.retired-three`, `${oldHash}.broken-one.retired-four`]
   fs.mkdirSync(prepared, { recursive: true })
   const directories = names.map(name => {
@@ -267,7 +267,7 @@ await test('exec-tree status and offline reclaim include obsolete prepared versi
   await withTempDir('cache-prepared', root => {
     const { home, prepared, directories } = preparedFixture(root)
     const user = path.join(root, 'user')
-    const current = path.join(prepared, NIUBASH_MANIFEST_SHA256)
+    const current = path.join(prepared, NIUBASH_PREPARED_SHA256)
     const unrelated = ['notes', 'f'.repeat(63), `${'e'.repeat(64)}.stage-`, `${'d'.repeat(64)}.other-one`]
     fs.mkdirSync(user)
     fs.mkdirSync(current)

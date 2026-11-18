@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { niubashPreparedRoot, prepareNiubash, prepareNiubashVersion, publishNiubashVersion, selectNiubash } from '../lib/niubash/runtime.js'
 import { resolveShells } from '../lib/shells/resolve.js'
 import { NIUBASH_FACES } from '../lib/niubash/faces.js'
-import { NIUBASH_PIN, NIUBASH_EXECUTION_DIRECTORIES, NIUBASH_MANIFEST_SHA256, NIUBASH_PACKAGE_PATH } from '../lib/cli/niubash-payload.js'
+import { NIUBASH_PIN, NIUBASH_EXECUTION_DIRECTORIES, NIUBASH_MANIFEST_SHA256, NIUBASH_PREPARED_SHA256, NIUBASH_PACKAGE_PATH } from '../lib/cli/niubash-payload.js'
 import { syntheticNiubashTree } from './lib/niubash-distribution-fixture.mjs'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 
@@ -81,7 +81,7 @@ await test('first command builds one complete private copy; concurrent first cal
   }
   assertPrepared(target)
   for (const name of pinned) assert.notEqual(fs.statSync(path.join(source, name)).ino, fs.statSync(path.join(target, name)).ino, name)
-  assert.deepEqual(fs.readdirSync(path.dirname(target)), [NIUBASH_MANIFEST_SHA256], 'no scratch remains')
+  assert.deepEqual(fs.readdirSync(path.dirname(target)), [NIUBASH_PREPARED_SHA256], 'no scratch remains')
 }))
 await test('later commands only check existence: no reads, writes or hashing', async () => withTempDir('niu-steady', async root => {
   const { target, prepare } = fixture(root)
@@ -111,7 +111,7 @@ await test('a missing or resized prepared member is rebuilt once; a failed rebui
   fs.appendFileSync(executable, 'corrupt')
   assert.equal(await prepareNiubashVersion(source, target), executable)
   assert.equal(fs.statSync(executable).size, NIUBASH_PIN.sizes['niu.exe'])
-  assert.deepEqual(fs.readdirSync(path.dirname(target)), [NIUBASH_MANIFEST_SHA256], 'the damaged version is retired')
+  assert.deepEqual(fs.readdirSync(path.dirname(target)), [NIUBASH_PREPARED_SHA256], 'the damaged version is retired')
   fs.appendFileSync(executable, 'corrupt again')
   let copies = 0
   await patched(fs.promises, { copyFile: async () => { copies++; throw Object.assign(Error('fresh copy refused'), { code: 'EIO' }) } }, () =>
@@ -137,7 +137,7 @@ await test('a failed first preparation is not remembered; the next call tries ag
 await test('the first preparation in a process retires obsolete versions and leftovers once, leaving busy and foreign ones', async () => withTempDir('niu-retire', async root => {
   const { target, prepare } = fixture(root)
   const parent = path.dirname(target), older = 'a'.repeat(64), busy = 'b'.repeat(64)
-  const obsolete = [older, `${older}.broken-x`, `${NIUBASH_MANIFEST_SHA256}.stage-x`, `${older}.retired-x`]
+  const obsolete = [older, `${older}.broken-x`, `${NIUBASH_PREPARED_SHA256}.stage-x`, `${older}.retired-x`]
   const kept = [busy, `${'c'.repeat(64)}.stage-live`, 'unrelated']
   for (const name of [...obsolete, ...kept]) fs.mkdirSync(path.join(parent, name), { recursive: true })
   const renameSync = fs.renameSync
@@ -147,7 +147,7 @@ await test('the first preparation in a process retires obsolete versions and lef
     return renameSync(from, to)
   } }, () => prepare())
   assert.equal(busyAttempts, 1)
-  assert.deepEqual(fs.readdirSync(parent).sort(), [NIUBASH_MANIFEST_SHA256, ...kept].sort())
+  assert.deepEqual(fs.readdirSync(parent).sort(), [NIUBASH_PREPARED_SHA256, ...kept].sort())
 }))
 await test('publication backs off asynchronously only for Windows sharing refusals and recognizes a racing winner', async () => withTempDir('niu-publication', async root => {
   for (const code of ['EPERM', 'EACCES', 'EBUSY']) {
@@ -218,7 +218,34 @@ await test('two independent processes publish the same complete version; the los
   const results = await Promise.allSettled([childPrepare(source, target, barrier), childPrepare(source, target, barrier)])
   for (const result of results) if (result.status === 'rejected') throw result.reason
   assertPrepared(target)
-  assert.deepEqual(fs.readdirSync(path.dirname(target)), [NIUBASH_MANIFEST_SHA256])
+  assert.deepEqual(fs.readdirSync(path.dirname(target)), [NIUBASH_PREPARED_SHA256])
+}))
+await test('face inventory drops unimplemented/conflicting faces, restores missing wpm links, and retires legacy manifest-only prepared caches (#973)', async () => withTempDir('niu-faces-973', async root => {
+  for (const removed of ['jq', 'link']) assert.equal(NIUBASH_FACES.includes(removed), false, `${removed} must not shadow PATH executables`)
+  for (const added of ['chattr', 'egrep', 'envsubst', 'fgrep', 'getfacl', 'getopt', 'killall', 'ldd',
+    'locate', 'logger', 'look', 'lsattr', 'mkgroup', 'mkpasswd', 'namei', 'pgrep', 'pidof', 'pkill',
+    'pldd', 'regtool', 'renice', 'updatedb', 'vmstat', 'w', 'whereis', 'wpm']) {
+    assert.equal(NIUBASH_FACES.includes(added), true, `${added} should be materialized`)
+  }
+  for (const externalBuiltin of ['env', 'false', 'kill', 'test', '[', 'true']) {
+    assert.equal(NIUBASH_FACES.includes(externalBuiltin), true, `${externalBuiltin} remains available to external callers`)
+  }
+  assert.notEqual(NIUBASH_PREPARED_SHA256, NIUBASH_MANIFEST_SHA256, 'prepared key changes when face set changes')
+  const { target, prepare } = fixture(root)
+  const legacyDir = path.join(path.dirname(target), NIUBASH_MANIFEST_SHA256)
+  for (const stale of ['jq.exe', 'link.exe']) {
+    const file = path.join(legacyDir, 'winuxcmd/usr/bin', stale)
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, 'legacy-stale-face')
+  }
+  await prepare()
+  assert.equal(fs.existsSync(legacyDir), false, 'legacy manifest-keyed cache carrying stale jq/link faces is retired')
+  assert.equal(fs.existsSync(path.join(target, face('jq'))), false)
+  assert.equal(fs.existsSync(path.join(target, face('link'))), false)
+  assert.ok(fs.existsSync(path.join(target, face('wpm'))))
+  assert.ok(fs.existsSync(path.join(target, face('egrep'))))
+  assert.ok(fs.existsSync(path.join(target, face('env'))))
+  assert.ok(fs.existsSync(path.join(target, face('test'))))
 }))
 await test('a builder whose scratch the winner retired uses the published winner and retires nothing twice', async () => withTempDir('niu-interrupted', async root => {
   const { source, target, prepare } = fixture(root)
