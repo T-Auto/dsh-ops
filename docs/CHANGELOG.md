@@ -45,6 +45,16 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `#!/bin/sh` 可运行，husky v9 钩子同样受影响。解释器解析位于 niu-Git 载荷内部，
   因此该条目记录诊断对照与 `#!/bin/sh` 缓解，而非声称本仓修复（#958，
   unresolved-upstream）。
+- Document the per-call console flash on Windows 10 when Windows Terminal is
+  the default terminal: niubash is a console-subsystem binary launched without
+  an interactive parent, so each call asks for a console host. The entry gives
+  the default-terminal comparison as the diagnosis and marks the hidden-console
+  build upstream work, because no dsh-ops setting controls console hosting
+  (#828, unresolved-upstream).
+- 记录 Windows 10 默认终端为 Windows Terminal 时每次调用的控制台闪烁：niubash
+  是无交互父进程启动的控制台子系统二进制，每次调用都会请求控制台宿主。条目给出
+  默认终端对照作为诊断，并标注隐藏控制台构建属上游工作——没有任何 dsh-ops 设置
+  控制控制台宿主（#828，unresolved-upstream）。
 - Native tool construction and the publication refusal queue no longer attach listeners or lifetime effects to the composition root. The evidence observer and result admission subscribe on the caller's context with global dispatch, and the refusal queue falls back to the caller lifetime when the root refuses an effect. dsh-tui 0.20 refuses `root.events.on` and `root.effect` from a plugin activation, and the native-tools row is one, so every `dsh-tui --resume` aborted with "cannot resume session" before the agent mounted.
 - 原生工具构造与发布拒绝队列不再向组合根挂监听或生命周期 effect：证据观察者与 result admission 改为在调用方上下文订阅并声明 global 分发，拒绝队列在 root 拒绝 effect 时回落到调用方生命周期。dsh-tui 0.20 会拒绝插件激活期内的 `root.events.on` 与 `root.effect`，而原生工具行正是插件激活，导致每次 `dsh-tui --resume` 都在 agent 挂载前报 "cannot resume session"。
 - The Bash tool description now states the parse contract of `stdout`/`stderr` where the model reads it: `text` may be a partial fragment, `truncated` marks one that must not be parsed as complete structured output, and `spillPath` is optional and not a completeness guarantee. The typed output schema is unchanged: repeating the contract there would cost every PTC request without saying anything the tool text does not. Command semantics, exit codes, result values, limits, spill files, permissions and rendering are unchanged.

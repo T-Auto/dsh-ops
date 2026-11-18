@@ -220,6 +220,24 @@ What to do:
   shebang-to-interpreter path is inside the niu-Git payload
   (unresolved-upstream).
 
+### `ops_bash` flashes a console window on Windows 10 with Windows Terminal
+
+Symptom: every `ops_bash` call briefly flashes a black console window when
+Windows Terminal is the system's default terminal application on Windows 10.
+The niubash executable is a console-subsystem binary that the host launches
+without an interactive parent, so each call asks the system for a console host;
+the Windows-10 hand-off between Windows Terminal and the classic conhost
+re-creates a visible console per call (#828).
+
+What to do:
+
+- Verify the default terminal setting (Settings → For developers → Terminal)
+  and compare the flashing with the default switched back to the Windows
+  Console Host; that observation pair is the diagnosis.
+- A hidden-console niubash build is upstream payload work. This repository only
+  records the evidence: no dsh-ops setting controls console hosting, and the
+  shipped binary cannot be patched here (unresolved-upstream).
+
 ### A second restricted Bash fails while another Bash is still running
 
 The `CreateFileMapping S-<user SID>.<version>, Win32 error 5` failure in #363 came
