@@ -12,6 +12,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
+import { createHash } from 'node:crypto'
 import {
   PANEL_FORMAT, createPanelCollector, fitDocument, foldRecords, panelPaths,
   parseAppendLog, projectEvent, resolvePanelConfig, safeSessionId,
@@ -88,6 +89,85 @@ await test('capture on is lazy: listeners register, but no directory exists befo
   })
 })
 
+await test('skipped workspace warnings are deduplicated across session lifetimes', async () => {
+  const warnings = []
+  const collector = createPanelCollector({ env: SYNTHETIC_HOME, report: message => warnings.push(message) })
+  const message = event('user/message', { source: { kind: 'user' }, content: [{ type: 'text', text: 'sample' }] }, 0)
+  for (let index = 0; index < 64; index++) {
+    const id = `skipped-${index}`
+    collector.observe(sessionFixture(path.join(SYNTHETIC_HOME.DSH_HOME, id), id), message)
+    await collector.close(id)
+  }
+  assert.equal(collector.size, 0)
+  assert.equal(warnings.length, 1)
+  assert.match(warnings[0], /not capturing session "skipped-0"/)
+  await collector.stop()
+})
+
+await test('a late turn end or merge cannot overwrite a sealed report', async () => {
+  await withTempDir('panel-close-merge', async cwd => {
+    const collector = createPanelCollector({ env: SYNTHETIC_HOME })
+    const session = sessionFixture(cwd)
+    collector.observe(session, event('user/message', { source: { kind: 'user' }, content: [{ type: 'text', text: 'keep me' }] }, 0))
+    const closing = collector.close(session.id)
+    collector.observe(session, event('turn/end', { turn: 1 }, 1))
+    await Promise.all([closing, collector.merge(session.id)])
+    const paths = panelPaths(cwd, session.id, { env: SYNTHETIC_HOME })
+    const document = JSON.parse(fs.readFileSync(paths.data, 'utf8'))
+    assert.deepEqual(document.conversation.map(row => row.text), ['keep me'])
+    assert.deepEqual(document.events.files, [])
+    assert.equal(fs.existsSync(paths.wal), false)
+    assert.equal(collector.size, 0)
+    await collector.stop()
+  })
+})
+
+await test('concurrent folds in one workspace both archive the shared viewer', async () => {
+  await withTempDir('panel-concurrent-viewer', async cwd => {
+    let entered, release, secondRead
+    const firstStaging = new Promise(resolve => { entered = resolve })
+    const publish = new Promise(resolve => { release = resolve })
+    const secondFoldReading = new Promise(resolve => { secondRead = resolve })
+    let writes = 0, viewerReads = 0
+    const io = {
+      ...fs.promises,
+      async readFile(file, encoding) {
+        if (encoding === 'utf8' && path.basename(file) === 'panel.html') viewerReads++
+        const contents = await fs.promises.readFile(file, encoding)
+        if (path.basename(file) === 'second.ndjson') secondRead()
+        return contents
+      },
+      async writeFile(file, contents) {
+        if (path.basename(file).startsWith('panel.html.tmp-')) {
+          if (++writes === 1) entered()
+          await publish
+        }
+        await fs.promises.writeFile(file, contents)
+      },
+    }
+    const warnings = []
+    const collector = createPanelCollector({ env: SYNTHETIC_HOME, io, report: message => warnings.push(message) })
+    const ids = ['first', 'second']
+    const observe = id => collector.observe(sessionFixture(cwd, id), event('turn/end', { turn: 1 }, 0))
+    observe(ids[0])
+    await firstStaging
+    observe(ids[1])
+    await secondFoldReading
+    await new Promise(resolve => setImmediate(resolve))
+    const readsWhileStaging = viewerReads
+    release()
+    await collector.flush()
+    assert.equal(readsWhileStaging, 1, 'the second fold joins the first viewer refresh')
+    assert.equal(writes, 1)
+    assert.deepEqual(warnings, [])
+    for (const id of ids) {
+      const document = JSON.parse(fs.readFileSync(path.join(panelDir(cwd), `${id}.json`), 'utf8'))
+      assert.ok(document.archive.some(entry => entry.path === 'panel.html'))
+    }
+    await collector.stop()
+  })
+})
+
 await test('a captured session writes JSON and the viewer into <cwd>/.dsh-ops/panel/', async () => {
   await withTempDir('panel-on', async (cwd) => {
     const collector = createPanelCollector({ config: resolvePanelConfig({ capture: true }), env: SYNTHETIC_HOME, now: () => 1_700_000_000_000 })
@@ -145,6 +225,36 @@ await test('a captured session writes JSON and the viewer into <cwd>/.dsh-ops/pa
     assert.equal(document.events.layout, 'merged')
     assert.equal(document.events.merged, true)
     await collector.dispose()
+  })
+})
+
+await test('a live fold reads its append log once and archives the exact input bytes', async () => {
+  await withTempDir('panel-log-snapshot', async cwd => {
+    const session = sessionFixture(cwd)
+    const paths = panelPaths(cwd, session.id, { env: SYNTHETIC_HOME })
+    fs.mkdirSync(paths.dir, { recursive: true })
+    const wal = Buffer.concat([
+      Buffer.from(JSON.stringify({ record: 'open', sessionId: session.id, cwd }) + '\n'),
+      Buffer.from([0xff, 0x0a]),
+    ])
+    fs.writeFileSync(paths.wal, wal)
+    let reads = 0
+    const io = { ...fs.promises, readFile(file, ...args) {
+      if (file === paths.wal) reads++
+      return fs.promises.readFile(file, ...args)
+    } }
+    const collector = createPanelCollector({ env: SYNTHETIC_HOME, io })
+    collector.observe(session, event('turn/end', { turn: 1 }, 0))
+    await collector.flush()
+    const input = fs.readFileSync(paths.wal)
+    const document = JSON.parse(fs.readFileSync(paths.data, 'utf8'))
+    const log = document.archive.find(entry => entry.role === 'events')
+    assert.equal(reads, 2, 'one recovery read and one fold read')
+    assert.equal(log.bytes, input.length)
+    assert.equal(log.sha256, createHash('sha256').update(input).digest('hex'))
+    assert.equal(document.events.files[0].sha256, log.sha256)
+    assert.equal(document.events.malformed, 1)
+    await collector.stop()
   })
 })
 
