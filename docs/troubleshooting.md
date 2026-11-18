@@ -201,6 +201,25 @@ not a separate security boundary against the account or an administrator (#870).
   switching sessions do not repair it. Selecting an arbitrary Git Bash is not a restricted-mode
   workaround: only a compatible pinned MSYS build may run restricted, never an unconfined fallback.
 
+### `niu`-Git hooks fail with `#!/usr/bin/env sh` while `#!/bin/sh` works
+
+Symptom: a repository hook installed through the niu-Git command — for example a
+husky v9 hook — fails when its shebang is `#!/usr/bin/env sh`, while the same
+script with `#!/bin/sh` runs. The `env sh` lookup resolves through the payload's
+own interpreter machinery and differs from the direct `sh` face; that
+resolution lives inside the niu-Git binary tree, not in this repository (#958).
+
+What to do:
+
+- Confirm the pair from the same hook file: only the shebang differs, and the
+  `#!/bin/sh` form succeeds.
+- Rewrite the affected hooks to `#!/bin/sh`; husky hooks are plain shell
+  scripts, so the shebang is the whole change.
+- Report the payload version and both hook texts to the payload maintainers.
+  This repository can only record the diagnosis, because the
+  shebang-to-interpreter path is inside the niu-Git payload
+  (unresolved-upstream).
+
 ### A second restricted Bash fails while another Bash is still running
 
 The `CreateFileMapping S-<user SID>.<version>, Win32 error 5` failure in #363 came

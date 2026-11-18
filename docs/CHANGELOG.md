@@ -36,6 +36,15 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   普通 bashPath 直接运行，受限模式仍走 confinement（#581）。报告的 full-access 子进程
   Low 令牌（S-1-16-4096）在 0.5.5 上未能复现——本机 full-access 子进程回报调用方自身的
   完整性标签——因此以守卫与令牌对照诊断记录该边界，而非声称代码修复。
+- Document the niu-Git hook failure whose only difference is the shebang:
+  `#!/usr/bin/env sh` fails while `#!/bin/sh` runs, so husky v9 hooks are
+  affected. The interpreter resolution lives inside the niu-Git payload, so the
+  entry records the diagnostic pair and the `#!/bin/sh` workaround instead of
+  claiming a repository fix (#958, unresolved-upstream).
+- 记录 niu-Git 钩子失败：唯一差异是 shebang——`#!/usr/bin/env sh` 失败而
+  `#!/bin/sh` 可运行，husky v9 钩子同样受影响。解释器解析位于 niu-Git 载荷内部，
+  因此该条目记录诊断对照与 `#!/bin/sh` 缓解，而非声称本仓修复（#958，
+  unresolved-upstream）。
 - Native tool construction and the publication refusal queue no longer attach listeners or lifetime effects to the composition root. The evidence observer and result admission subscribe on the caller's context with global dispatch, and the refusal queue falls back to the caller lifetime when the root refuses an effect. dsh-tui 0.20 refuses `root.events.on` and `root.effect` from a plugin activation, and the native-tools row is one, so every `dsh-tui --resume` aborted with "cannot resume session" before the agent mounted.
 - 原生工具构造与发布拒绝队列不再向组合根挂监听或生命周期 effect：证据观察者与 result admission 改为在调用方上下文订阅并声明 global 分发，拒绝队列在 root 拒绝 effect 时回落到调用方生命周期。dsh-tui 0.20 会拒绝插件激活期内的 `root.events.on` 与 `root.effect`，而原生工具行正是插件激活，导致每次 `dsh-tui --resume` 都在 agent 挂载前报 "cannot resume session"。
 - The Bash tool description now states the parse contract of `stdout`/`stderr` where the model reads it: `text` may be a partial fragment, `truncated` marks one that must not be parsed as complete structured output, and `spillPath` is optional and not a completeness guarantee. The typed output schema is unchanged: repeating the contract there would cost every PTC request without saying anything the tool text does not. Command semantics, exit codes, result values, limits, spill files, permissions and rendering are unchanged.
