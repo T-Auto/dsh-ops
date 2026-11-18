@@ -11,6 +11,10 @@ collect [runtime evidence](windows-runtime-evidence.md) before assigning a cause
 
 ---
 
+## Bash disappears or registration repeats during session changes
+
+Session Bash publication is per agent and generation-aware. Overlapping consumers no longer register the same name twice, a queued registration updates the entry only when it settles, and one failed generation is reported once rather than retried in a synchronous storm. A `turn/start` event re-asserts the current authority, so an interrupted turn cannot leave `ops_bash` missing until an unrelated asynchronous event happens to arrive. If a name conflict is reported, capture that single warning and the following turn boundary rather than restarting the host repeatedly (#579, #842, #873).
+
 ## Installation and payloads
 
 ### `bash-win32-x64` is missing under `node_modules/@dsh-ops/`
