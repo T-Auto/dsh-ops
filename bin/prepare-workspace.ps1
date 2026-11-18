@@ -4,6 +4,14 @@ $ErrorActionPreference = 'Stop'
 if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') {
     throw 'DSH_OPS_CONSTRAINED_LANGUAGE: workspace ACL preparation requires PowerShell FullLanguage; no ACL preparation was completed. Keep the host security policy enabled and ask its administrator for a supported preparation path.'
 }
+. (Join-Path $PSScriptRoot 'workspace-acl.ps1')
+# \\wsl.localhost\<distro> and \\wsl$\<distro> are the WSL 9P redirector (#669):
+# the filesystem behind them exposes no NTFS security descriptor, so Get-Acl
+# cannot produce one and no DACL preparation has an object to write. Authority
+# there is the distribution's own uid/gid mapping. This is a prefix decision,
+# not a catch: every other path keeps its existing behaviour below, and a real
+# ACL error on those paths still fails closed.
+if ((Get-DshOpsWorkspaceNtfsState -Path $Workspace) -eq 'wsl-redirector') { Write-Output 'ready'; exit 0 }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 $item = Get-Item -LiteralPath $Workspace -Force
@@ -13,7 +21,6 @@ if (!$item.PSIsContainer) { throw 'Workspace is not a directory' }
 # being a reparse point (#744). The tag check lives on the one branch below
 # that actually writes.
 $acl = Get-Acl -LiteralPath $item.FullName
-. (Join-Path $PSScriptRoot 'workspace-acl.ps1')
 $decision = Get-DshOpsWorkspaceDecision -Acl $acl -Identity $identity -Principal $principal
 if ($decision.State -eq 'denied') { throw $decision.Reason }
 if ($decision.State -eq 'ready') { Write-Output 'ready'; exit 0 }

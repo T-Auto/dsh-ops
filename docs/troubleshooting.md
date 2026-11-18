@@ -285,6 +285,8 @@ This step runs the package's own `bin/prepare-workspace.ps1` with Windows PowerS
 
 A folder that is already ready answers without any reparse-point inspection, so a OneDrive placeholder root passes the fast path (#744). The reparse check runs only on the branch that must add the ACE: cloud-files tags (Microsoft reserves 0x90000000-0x9FFFFFFF, OneDrive's `IO_REPARSE_TAG_CLOUD` family) keep a real directory entry behind the point and are allowed through, while every other tag — mount point, symlink, unknown or unreadable — fails closed with the tag named.
 
+Both Microsoft-fixed WSL redirector prefixes (`\\wsl.localhost\…` and `\\wsl$\…`) answer `ready` before any NTFS inspection, because the 9P filesystem behind them exposes no security descriptor at all and `Get-Acl` there used to abort every workspace-write call (#669). This is a prefix decision, not a catch: on any other path a real ACL error still fails closed.
+
 The message names the cause:
 
 - `PowerShell execution policy blocked dsh-ops's own preparation script …`: dsh-ops passes `-ExecutionPolicy Bypass` (earlier versions did not, so the Windows client default `Restricted` blocked every shell tool, #66). A refusal now means Group Policy (MachinePolicy/UserPolicy) enforces the policy; `Set-ExecutionPolicy -Scope CurrentUser` cannot override it. Check `powershell.exe -NoProfile -Command Get-ExecutionPolicy -List`, ask an administrator, or use danger-full-access for the session.

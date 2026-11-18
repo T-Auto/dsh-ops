@@ -85,3 +85,22 @@ function Get-DshOpsReparseTagDecision {
     if (($Tag -band 4026531840) -eq 2415919104) { return [pscustomobject]@{ State = 'cloud' } }
     return [pscustomobject]@{ State = 'unsupported' }
 }
+
+<#
+Classify one workspace spelling for NTFS ACL evaluation (#669). Pure.
+
+\\wsl.localhost\<distro> and \\wsl$\<distro> are the WSL 9P redirector: the
+filesystem behind it exposes no NTFS security descriptor, so Get-Acl cannot
+produce one and no DACL write has an object. Authority there is the
+distribution's own uid/gid mapping, so those prefixes must not be treated
+as a failed preparation. This is a prefix decision, not a catch swallowing
+ACL errors: everything else is evaluated as NTFS, where a real Get-Acl
+failure still fails closed.
+#>
+function Get-DshOpsWorkspaceNtfsState {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+    if ($Path -match '^(\\\\(\?\\UNC\\)?wsl(\.localhost|\$)\\)') { return 'wsl-redirector' }
+    return 'ntfs'
+}
