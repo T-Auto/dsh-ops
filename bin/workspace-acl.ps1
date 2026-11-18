@@ -62,3 +62,26 @@ function Get-DshOpsWorkspaceDecision {
     # foreign-owner instead. Both are the pre-existing behaviour, kept unchanged.
     [pscustomobject]@{ State = 'needs-preparation' }
 }
+
+<#
+Classify one reparse tag for the preparation branch (#744). This is pure: it
+never opens the point, it only judges the tag value the caller read.
+
+Microsoft reserves 0x90000000-0x9FFFFFFF for cloud-files providers
+(IO_REPARSE_TAG_CLOUD, CLOUD_ROOT, CLOUD_ON_DEMAND): a OneDrive placeholder
+keeps a real directory entry behind the point, so a directory-only
+WRITE_OWNER write still targets a real object and the cloud family is
+allowed through. Every other tag (mount point, symlink, dedup, ...) redirects
+or transforms the view and fails closed with the tag named; a tag that cannot
+be read at all is the caller's error to surface, not a decision to soften.
+#>
+function Get-DshOpsReparseTagDecision {
+    param(
+        [Parameter(Mandatory = $true)][uint32]$Tag
+    )
+    # Decimal constants on purpose: Windows PowerShell 5.1 folds in-band hex
+    # literals (0xF0000000, 0x90000000) into a negative Int32, and a sign-extended
+    # Int64 mask never matches. 4026531840 is 0xF0000000; 2415919104 is 0x90000000.
+    if (($Tag -band 4026531840) -eq 2415919104) { return [pscustomobject]@{ State = 'cloud' } }
+    return [pscustomobject]@{ State = 'unsupported' }
+}

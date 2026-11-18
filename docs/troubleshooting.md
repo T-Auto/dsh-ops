@@ -283,6 +283,8 @@ Before the first restricted `run_code` / `pwsh` / `bash` / `ops_bash` call in a 
 
 This step runs the package's own `bin/prepare-workspace.ps1` with Windows PowerShell 5.1 **as the current user, before sandbox confinement applies**, only on Windows in workspace-write mode, and changes only the workspace root's own DACL. Read-only and danger-full-access sessions skip it.
 
+A folder that is already ready answers without any reparse-point inspection, so a OneDrive placeholder root passes the fast path (#744). The reparse check runs only on the branch that must add the ACE: cloud-files tags (Microsoft reserves 0x90000000-0x9FFFFFFF, OneDrive's `IO_REPARSE_TAG_CLOUD` family) keep a real directory entry behind the point and are allowed through, while every other tag — mount point, symlink, unknown or unreadable — fails closed with the tag named.
+
 The message names the cause:
 
 - `PowerShell execution policy blocked dsh-ops's own preparation script …`: dsh-ops passes `-ExecutionPolicy Bypass` (earlier versions did not, so the Windows client default `Restricted` blocked every shell tool, #66). A refusal now means Group Policy (MachinePolicy/UserPolicy) enforces the policy; `Set-ExecutionPolicy -Scope CurrentUser` cannot override it. Check `powershell.exe -NoProfile -Command Get-ExecutionPolicy -List`, ask an administrator, or use danger-full-access for the session.
