@@ -1,7 +1,7 @@
 /** Stateful capture sink: queued filesystem work and activation lifetime only. */
 import fsp from 'node:fs/promises'
 import path from 'node:path'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { renderPanelHtml } from './render.js'
 import { activityGate } from './activity.js'
 import { object, field, missingFile } from './types.js'
@@ -44,6 +44,7 @@ export function createPanelCollector(options: CollectorOptions = {}) {
   const meta = options.meta ?? {}
   const sessions = new Map<string, SessionState>()
   const noted = new Set<string>()
+  const viewers = new Map<string, Promise<ArchiveMember | undefined>>()
   let disposed = false
   let stopping: Promise<void> | undefined
 
@@ -91,7 +92,7 @@ export function createPanelCollector(options: CollectorOptions = {}) {
     if (existing !== undefined) return existing
     const paths = panelPaths(cwd, sessionId, { env })
     if (paths === undefined || typeof cwd !== 'string') {
-      note(`path:${String(cwd)}`, `dsh-ops panel: not capturing session ${JSON.stringify(sessionId)}: `
+      note('invalid-workspace', `dsh-ops panel: not capturing session ${JSON.stringify(sessionId)}: `
         + 'the session needs an absolute working directory outside the DSH home and a file-name-safe id.', 'warn')
       return undefined
     }
@@ -164,7 +165,16 @@ export function createPanelCollector(options: CollectorOptions = {}) {
   }
 
   /** Write `panel.html` when it is absent or stale, and describe it for the archive. */
-  async function writeViewer(state: SessionState) {
+  function writeViewer(state: SessionState): Promise<ArchiveMember | undefined> {
+    const file = state.paths.html
+    const existing = viewers.get(file)
+    if (existing !== undefined) return existing
+    const work = refreshViewer(state).finally(() => { viewers.delete(file) })
+    viewers.set(file, work)
+    return work
+  }
+
+  async function refreshViewer(state: SessionState) {
     const html = renderPanelHtml()
     let current
     try { current = await io.readText(state.paths.html) } catch (error) {
@@ -172,8 +182,14 @@ export function createPanelCollector(options: CollectorOptions = {}) {
     }
     if (current !== html) {
       await io.mkdir(state.paths.dir, { recursive: true })
-      await io.writeFile(`${state.paths.html}.tmp-${process.pid}`, html)
-      await io.rename(`${state.paths.html}.tmp-${process.pid}`, state.paths.html)
+      const staged = `${state.paths.html}.tmp-${randomUUID()}`
+      try {
+        await io.writeFile(staged, html)
+        await io.rename(staged, state.paths.html)
+      } catch (error) {
+        try { await io.rm(staged, { force: true }) } catch { /* Preserve the original viewer error. */ }
+        throw error
+      }
     }
     return describe(state.paths.html, PANEL_HTML, 'panel')
   }
@@ -189,27 +205,34 @@ export function createPanelCollector(options: CollectorOptions = {}) {
     }
   }
 
+  async function readFoldInput(state: SessionState, final: boolean): Promise<{ text: string; log?: ArchiveMember }> {
+    try {
+      if (final) return { text: await io.readText(state.paths.wal) }
+      const input = await io.readFile(state.paths.wal)
+      const log = { path: `${state.sessionId}.ndjson`, bytes: input.length,
+        sha256: createHash('sha256').update(input).digest('hex'), role: 'events' }
+      return { text: input.toString('utf8'), log }
+    } catch (error) {
+      if (missingFile(error)) return { text: '' }
+      throw error
+    }
+  }
+
   /** Fold the append log into the JSON document and refresh the viewer. */
   async function materialise(state: SessionState, final: boolean): Promise<void> {
     if (state.openFailed) return
     const { paths } = state
-    let text = ''
-    try { text = await io.readText(paths.wal) } catch (error) {
-      if (!missingFile(error)) throw error
-    }
+    const { text, log } = await readFoldInput(state, final)
     const parsed = parseAppendLog(text)
     const document = foldRecords(parsed.records, { config, meta, droppedEvents: state.droppedEvents, malformed: parsed.malformed })
     document.events.mergedAt = new Date(now()).toISOString()
     let viewer
     try { viewer = await writeViewer(state) } catch (error) { fail('viewer', error) }
     const archive: ArchiveMember[] = []
-    if (!final) {
-      const log = await describe(paths.wal, `${state.sessionId}.ndjson`, 'events')
-      if (log !== undefined) {
-        archive.push(log)
-        // `bench/run.schema.json` ties `events.files` to the NDJSON a document was sealed from.
-        document.events.files = [{ path: log.path, events: document.events.records, sha256: log.sha256 }]
-      }
+    if (log !== undefined) {
+      archive.push(log)
+      // Hash the same bytes that the fold parsed, including undecodable bytes.
+      document.events.files = [{ path: log.path, events: document.events.records, sha256: log.sha256 }]
     }
     if (viewer !== undefined) archive.push(viewer)
     document.archive = archive
@@ -223,6 +246,7 @@ export function createPanelCollector(options: CollectorOptions = {}) {
   function merge(sessionId: string, final = false): Promise<void> {
     const state = sessions.get(sessionId)
     if (state === undefined) return Promise.resolve(undefined)
+    if (state.closed && !final) return state.chain
     state.chain = state.chain
       .then(() => materialise(state, final))
       .catch((error) => { fail('merge', error) })
@@ -238,7 +262,7 @@ export function createPanelCollector(options: CollectorOptions = {}) {
         const sessionId = safeSessionId(field(session, 'id'))
         if (sessionId === undefined) return
         const state = open(sessionId, field(field(session, 'header'), 'cwd') ?? field(session, 'cwd'))
-        if (state === undefined || state.openFailed) return
+        if (state === undefined || state.closed || state.openFailed) return
         const projected = projectEvent(event, config)
         if (projected === undefined) return
         append(state, { record: 'event', ...projected })
@@ -257,9 +281,11 @@ export function createPanelCollector(options: CollectorOptions = {}) {
     /** Seal one session: final fold that drops the append log. */
     close(sessionId: string): Promise<void> {
       const state = sessions.get(sessionId)
-      if (state === undefined || state.closed) return Promise.resolve(undefined)
+      if (state === undefined) return Promise.resolve(undefined)
+      if (state.closed) return state.chain
       state.closed = true
-      return merge(sessionId, true).then(() => { sessions.delete(sessionId) })
+      state.chain = merge(sessionId, true).then(() => { sessions.delete(sessionId) })
+      return state.chain
     },
     /** Stop collection without starting a final fold. Await all issued I/O before
      * the loader reports this row disabled; retained append logs remain recoverable. */

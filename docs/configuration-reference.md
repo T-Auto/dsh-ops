@@ -262,6 +262,7 @@ OPS does not bundle or override the host PowerShell executable.
 legacy false remains off. `textLimit` is 64–100000 (default 2000), `maxSessionBytes` is
 65536–268435456 (default 8388608). Capture writes only to the session workspace's `.dsh-ops/panel/`,
 never the real DSH home. Reports can contain conversation/tool text; ignore that directory in Git.
+An enabled collector logs a skipped-working-directory warning once per activation.
 Stopping cancels queued I/O and waits for issued work, retaining recoverable NDJSON rather than
 starting a final fold. `tui` accepts `maxSessions`, `maxActive`, `recentLimit` only; it grants no tool
 execution. See [sidebar limits](tui-panel.md#limits).
