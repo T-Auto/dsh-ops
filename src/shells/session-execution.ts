@@ -57,7 +57,10 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
         (!rule.allowedExitCodes || (value.exitCode != null && rule.allowedExitCodes.includes(value.exitCode))) &&
         stderr.split(/\r?\n/).filter(line => !rule.informationalLines?.some(info => info.toLowerCase() === line.toLowerCase()))
           .some(line => rule.fatalSignatures?.some(signature => line.toLowerCase().includes(signature.toLowerCase()))))
-      const unavailable = runnerFailed || /couldn't create signal pipe|fatal error.*win32 error|sandbox_unavailable/i.test(stderr)
+      // msys-2.0.dll reports a shared-section conflict as "CreateFileMapping %W, %E."
+      // without any "fatal error" prefix: an unrestricted MSYS process created the per-user
+      // section first with no restricted-logon ACE, so the restricted token cannot reopen it (#409).
+      const unavailable = runnerFailed || /couldn't create signal pipe|createfilemapping\b.*win32 error|fatal error.*win32 error|sandbox_unavailable/i.test(stderr)
       const denied = !unavailable && value.exitCode !== 0 && confinement?.denialSignatures?.some(signature => stderr.toLowerCase().includes(signature.toLowerCase()))
       return withBashStatus({ ...value,
         ...(unavailable ? { error: 'EXECUTOR_UNAVAILABLE: the sandbox runtime failed before the command ran; this is not a user authorization denial. Restore the runtime or confinement provider; changing the DSH selector is not a repair. Do not bypass confinement.' } : {}),
