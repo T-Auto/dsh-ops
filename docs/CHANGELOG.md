@@ -55,6 +55,14 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   是无交互父进程启动的控制台子系统二进制，每次调用都会请求控制台宿主。条目给出
   默认终端对照作为诊断，并标注隐藏控制台构建属上游工作——没有任何 dsh-ops 设置
   控制控制台宿主（#828，unresolved-upstream）。
+- Document the antivirus pattern for Niubash: all pinned files intact except a
+  quarantined `niu.exe`, named by the #844 member diagnostic. The entry gives
+  the Defender/ESET event collection, the provision restore and the fixed-location
+  allow-list guidance, and marks the quarantine an external event rather than a
+  code defect (#771).
+- 记录 Niubash 的杀毒软件模式：全部 pinned 文件完好、仅 `niu.exe` 被隔离，由 #844
+  的成员级诊断点名。条目给出 Defender/ESET 事件收集、provision 恢复与固定位置允许
+  列表指引，并把隔离标注为外部事件而非代码缺陷（#771）。
 - Native tool construction and the publication refusal queue no longer attach listeners or lifetime effects to the composition root. The evidence observer and result admission subscribe on the caller's context with global dispatch, and the refusal queue falls back to the caller lifetime when the root refuses an effect. dsh-tui 0.20 refuses `root.events.on` and `root.effect` from a plugin activation, and the native-tools row is one, so every `dsh-tui --resume` aborted with "cannot resume session" before the agent mounted.
 - 原生工具构造与发布拒绝队列不再向组合根挂监听或生命周期 effect：证据观察者与 result admission 改为在调用方上下文订阅并声明 global 分发，拒绝队列在 root 拒绝 effect 时回落到调用方生命周期。dsh-tui 0.20 会拒绝插件激活期内的 `root.events.on` 与 `root.effect`，而原生工具行正是插件激活，导致每次 `dsh-tui --resume` 都在 agent 挂载前报 "cannot resume session"。
 - The Bash tool description now states the parse contract of `stdout`/`stderr` where the model reads it: `text` may be a partial fragment, `truncated` marks one that must not be parsed as complete structured output, and `spillPath` is optional and not a completeness guarantee. The typed output schema is unchanged: repeating the contract there would cost every PTC request without saying anything the tool text does not. Command semantics, exit codes, result values, limits, spill files, permissions and rendering are unchanged.

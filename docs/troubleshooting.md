@@ -238,6 +238,28 @@ What to do:
   records the evidence: no dsh-ops setting controls console hosting, and the
   shipped binary cannot be patched here (unresolved-upstream).
 
+### Antivirus quarantined `niu.exe` from the payload
+
+Symptom: selection reports `EXECUTOR_UNAVAILABLE ... Incomplete Niubash payload:
+niu.exe` while every other pinned file is intact — only `niu.exe` is missing
+(#771). Preparation copies each pinned member verbatim, so a preparation that
+stops at one executable is not a dsh-ops bug: the matching Defender or ESET
+event is the security product quarantining that executable. This is an external
+event; no repository change can prevent it, and the diagnostic naming the
+missing member landed with #844.
+
+What to do:
+
+- Collect the matching event before restoring: Defender
+  `Get-MpThreat` / `Get-MpThreatDetection` (or the ESET detection log) with its
+  timestamp, action and the exact file path.
+- Restore the complete pinned tree with `dsh-ops provision-shells --bash`, which
+  re-verifies every member.
+- An allow-list rule, if you choose one, targets the fixed prepared location —
+  never disable protection or broadly trust the payload tree.
+- If tampering is suspected, hash the restored `niu.exe` and compare it with the
+  receipt.
+
 ### A second restricted Bash fails while another Bash is still running
 
 The `CreateFileMapping S-<user SID>.<version>, Win32 error 5` failure in #363 came
