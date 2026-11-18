@@ -18,6 +18,7 @@ import { InvocationLifetime, InvocationNotStarted } from '../lifecycle/invocatio
 import { monitoredInvoke } from '../execution/monitored.js'
 import { record } from '../execution/boundary.js'
 import { failure, resolveWorker } from '../execution/jobs.js'
+import type { Outcome } from '../kernel/outcome.js'
 import { WORKER_TIMEOUT_MS } from '../execution/protocol.js'
 import { registerStepTailProvider } from '../prompt-injection/index.js'
 import { mountWorkspacePreparation } from '../workspace-preparation.js'
@@ -108,6 +109,15 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       })
     }
 
+    /** Point a declared-but-unselected pool API at the loader; undefined when loading cannot help (#968). */
+    const deferredRejection = (entry: Entry, api: ApiName): Outcome<never> | undefined => {
+      if (gate.dynamic === false || !loadable.includes(api) || !permitted(entry.agent, api) || selected(entry, api)) return undefined
+      return { status: 'error', error: {
+        code: 'SDK_NOT_LOADED', effectState: 'none', retry: 'never',
+        message: `API '${api}' is in this scope's allowed pool but is not loaded into the typed SDK yet; no action was executed.`,
+        nextAction: `Call ${publicToolName('load_sdk')} with tools:["${api}"] and use the API on the next model step; retrying this call without loading fails the same way.`,
+      } }
+    }
     const execute = (entry: Entry, api: ApiName | 'load_sdk'): ToolDefinition['execute'] => async (args, exec) => {
       // The public assembly may finish after its executor sections changed.
       // Refuse that stale verdict rather than dispatching under the old text.
@@ -116,6 +126,9 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         && revision === presentationRevision && permitted(entry.agent, api) && selected(entry, api)
         && (capability(api)?.component === 'file' || tools.executable(publicToolName(api), entry.agent, exec.toolSet) === entry.definitions.get(publicToolName(api)))
       if (!current() || !await isPtc(entry.agent, exec.signal).catch(() => false) || !current()) {
+        // A declared-but-unselected pool API points at the loader; every other admission failure keeps the generic refusal.
+        const deferred = api === 'load_sdk' ? undefined : deferredRejection(entry, api)
+        if (deferred !== undefined) return deferred
         return failure('POLICY_DENIED', 'This API must be admitted for the calling PTC scope; no action executed.')
       }
       if (api === 'load_sdk') {
@@ -147,6 +160,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
           present: activation => activation.agent === entry.agent && permitted(entry.agent, api)
             && selected(entry, api) && activationIsPtc(prompt, activation),
           dispatch: file.dispatch,
+          deferred: () => deferredRejection(entry, api),
         })
         file.granted = { entitled, selected: selection, config }
       }
