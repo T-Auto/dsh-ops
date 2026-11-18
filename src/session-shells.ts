@@ -12,7 +12,7 @@ import { BashArgumentError } from './shells/argument-error.js'
 import { MODES } from './permissions.js'
 import { hostBashDefinition } from './shells/host-tool.js'
 import { withToolChange } from './publication/changes.js'
-import { publicationRegistration } from './publication/reentry.js'
+import { publicationPending, publicationReady, publicationRegistration } from './publication/reentry.js'
 import { startSessionBash } from './shells/session-execution.js'
 import { resolveSessionDirectory } from './adapter/dsh/working-directory.js'
 
@@ -134,6 +134,10 @@ export function bashRefusalValue(error: unknown): ShellResult {
 interface Entry {
   agent: Agent; ctx?: Context; fiber?: Fiber; dispose?: () => void; definition?: HostShellDefinition
   published?: boolean; generation?: number
+  /** True while the refusal queue owns an attempt that has not settled (#842). */
+  pending?: boolean
+  /** Generation of the last failed attempt; one report per generation (#579). */
+  failed?: number
 }
 
 // Preset consumers share an Agent's own registry layer. A newly eligible
@@ -201,28 +205,104 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
       entry.dispose = undefined
       entry.published = undefined
       entry.generation = undefined
+      // A cancelled attempt's settle callback no longer speaks for this entry.
+      entry.pending = false
     }
   }
-  const publish = (entry: Entry, definition: HostShellDefinition) => {
+  /** Whether the host refused this very tool name in this very registry layer. */
+  const nameConflict = (error: unknown): boolean => /is already registered/i.test(errorMessage(error))
+
+  /**
+   * Publish one bash layer for an entry.
+   *
+   * An owned layer that is still allowed stays authoritative when two of this
+   * plugin's rows briefly both serve one agent (a mode or preset transition
+   * overlaps): re-registering the same name in the same layer can only fail
+   * (#842), so the later row stands by until the owner withdraws or unloads.
+   * @param entry - the per-agent entry the layer belongs to.
+   * @param definition - the definition to register.
+   * @param attemptGeneration - the reconcile generation this attempt belongs to.
+   */
+  const publish = (entry: Entry, definition: HostShellDefinition, attemptGeneration: number) => {
     if (!entry.ctx) return
     const previous = bashOwners.get(entry.agent)
-    if (previous && previous.entry !== entry && !previous.allowed()) previous.clear()
-    // A failed publication must leave the session with the definition that last worked rather than
-    // with no bash tool at all (#30). `entry.definition` survives `clear()`, so it holds the last
-    // definition registered successfully for this entry.
+    if (previous && previous.entry !== entry && previous.allowed()) return
+    if (previous && previous.entry !== entry) previous.clear()
+    let dispose: () => void
     try {
-      entry.dispose = publicationRegistration(entry.ctx, () => withToolChange([entry.agent], () => entry.ctx!.tools.register(definition)))
-      entry.definition = definition
-      bashOwners.set(entry.agent, { entry, allowed: () => allowed(entry.agent), clear: () => clear(entry) })
+      dispose = publicationRegistration(entry.ctx, () => withToolChange([entry.agent], () => entry.ctx!.tools.register(definition)))
     } catch (error) {
-      ctx.logger?.warn?.(`dsh-ops: bash publication failed: ${errorMessage(error)}`)
-      if (entry.definition === undefined) return
-      try {
-        entry.dispose = publicationRegistration(entry.ctx, () => withToolChange([entry.agent], () => entry.ctx!.tools.register(entry.definition!)))
-        bashOwners.set(entry.agent, { entry, allowed: () => allowed(entry.agent), clear: () => clear(entry) })
-      }
-      catch (restoreError) { ctx.logger?.warn?.(`dsh-ops: bash restoration failed: ${errorMessage(restoreError)}`) }
+      reportRejected(entry, attemptGeneration, definition, error)
+      return
     }
+    entry.dispose = dispose
+    bashOwners.set(entry.agent, { entry, allowed: () => allowed(entry.agent), clear: () => clear(entry) })
+    admit(entry, dispose, definition, attemptGeneration)
+  }
+
+  /**
+   * Mark one registration attempt live, or report and restore on rejection.
+   *
+   * A queued attempt exists only once the host admits it: the entry stays
+   * pending, never published, so a later rejection cannot leave a session
+   * looking served while its layer is gone (#873).
+   * @param entry - the entry the attempt belongs to.
+   * @param dispose - the attempt's queue handle; also its settle identity.
+   * @param definition - the definition the attempt registers.
+   * @param attemptGeneration - the reconcile generation of the attempt.
+   */
+  const admit = (entry: Entry, dispose: () => void, definition: HostShellDefinition, attemptGeneration: number) => {
+    const live = () => {
+      entry.definition = definition
+      entry.published = true
+      entry.generation = attemptGeneration
+      entry.failed = undefined
+    }
+    if (!publicationPending(dispose)) { live(); return }
+    entry.pending = true
+    void publicationReady(dispose).then(() => {
+      // A superseded attempt no longer speaks for this entry.
+      if (entry.dispose !== dispose) return
+      entry.pending = false
+      live()
+    }, error => {
+      if (entry.dispose !== dispose) return
+      entry.pending = false
+      entry.published = undefined
+      entry.generation = undefined
+      if (bashOwners.get(entry.agent)?.entry === entry) bashOwners.delete(entry.agent)
+      reportRejected(entry, attemptGeneration, definition, error)
+    })
+  }
+
+  /**
+   * Report one failed registration, then restore the definition that last
+   * worked once — but never the identical name the layer just refused.
+   *
+   * The attempt is latched to its generation: later passes at the same
+   * generation skip the entry instead of storming the registry (#579); a turn
+   * boundary or an authority change clears the latch before any retry.
+   * @param entry - the entry whose attempt failed.
+   * @param attemptGeneration - the reconcile generation of the attempt.
+   * @param attempted - the definition the host refused.
+   * @param error - the host failure.
+   */
+  const reportRejected = (entry: Entry, attemptGeneration: number, attempted: HostShellDefinition, error: unknown) => {
+    entry.failed = attemptGeneration
+    ctx.logger?.warn?.(`dsh-ops: bash publication failed: ${errorMessage(error)}`)
+    // Re-registering keeps the session on the definition that last worked
+    // (#30) — unless the registry refused this very name in this layer: the
+    // identical retry used to pair a second failure with the first (#842).
+    if (entry.definition === undefined || entry.definition === attempted || nameConflict(error)) return
+    let restore: () => void
+    try {
+      restore = publicationRegistration(entry.ctx!, () => withToolChange([entry.agent], () => entry.ctx!.tools.register(entry.definition!)))
+    } catch (restoreError) {
+      ctx.logger?.warn?.(`dsh-ops: bash restoration failed: ${errorMessage(restoreError)}`)
+      return
+    }
+    entry.dispose = restore
+    admit(entry, restore, entry.definition!, attemptGeneration)
   }
   const reconcile = (refreshDefinitions = false) => {
     if (refreshDefinitions) ++generation
@@ -233,6 +313,10 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
     for (const [agent, entry] of entries) {
       if (!entry.ctx) continue
       const publishable = permitted.get(agent) === true
+      if (!publishable) entry.failed = undefined
+      // The refusal queue owns a pending attempt, and a failure this generation
+      // already reported itself; only a real change retries (#579).
+      if (publishable && (entry.pending || entry.failed === generation)) continue
       if (entry.dispose && entry.published === publishable && (!publishable || entry.generation === generation)) continue
       clear(entry)
       if (!publishable) continue
@@ -244,8 +328,7 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
             const basis = await resolveSessionDirectory(ctx, exec.agent, exec.signal)
             return { workdir: sessionWorkdir(args, { header: { cwd: basis.cwd } }), basis }
           }, jobs)
-      publish(entry, definition)
-      if (entry.dispose) { entry.published = true; entry.generation = generation }
+      publish(entry, definition, generation)
     }
     for (const [agent, entry] of entries) {
       if (!entry.ctx || permitted.get(agent) || stopped || entry.dispose) continue
@@ -329,6 +412,14 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
     // change which Agent this row serves, so it must rebuild definitions.
     if (type === 'sandbox/mode') scheduleReconcile()
     else if (type === 'agent-preset/selected') scheduleReconcile(true)
+    // A turn boundary re-asserts authority: an interrupted turn can leave state
+    // no other event has reconciled, and the first request of the new turn must
+    // not run on it (#873). Whatever blocked the previous attempt may also be
+    // gone by now, so the per-generation failure latch resets with it.
+    else if (type === 'turn/start') {
+      for (const entry of entries.values()) entry.failed = undefined
+      scheduleReconcile()
+    }
   })
   if (gate.watch) ctx.effect(() => gate.watch!(() => { void scheduleReconcile(true) }), 'dsh-ops: bash mode observer')
   ctx.inject(['sandbox'], () => { scheduleReconcile() })
