@@ -32,7 +32,7 @@ export function startSessionBash({ ctx, bash, active }: { ctx: ShellContext; bas
       assertAuthority()
       try {
         const runtime = native ? await prepareNiubash(bash.file, dshEnv.PATH ?? dshEnv.Path ?? process.env.PATH, signal,
-          { workspaceRoot: typeof policy.workspaceRoot === 'string' ? policy.workspaceRoot : undefined })
+          { workspaceRoot: typeof policy.workspaceRoot === 'string' ? policy.workspaceRoot : undefined, mode: policy.mode })
           : policy.mode === 'danger-full-access' ? { file: bash.file } : confinedBash(bash.file, { source: bash.source })
         if (native) for (const key of Object.keys(env)) if (['PATH', 'NIU_ROOT', 'WINUXCMD_PATH', 'NIU_SKIP_WINUXCMD_ACTIVATION'].includes(key.toUpperCase())) delete env[key]
         Object.assign(env, native ? runtime.env : { ...runtime.env, ...dshEnv })

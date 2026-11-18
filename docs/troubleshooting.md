@@ -134,17 +134,19 @@ publishes the completed tree with an atomic sibling rename. Later calls check on
 prepared `niu.exe` still exists; they do not clone, hash, seal, write an execution receipt or
 dispose a per-call tree. Files the shell writes into its state directories are never inspected.
 
-The prepared runtime must be **outside the session workspace**. Every call checks that boundary
-and still uses the host's subprocess service and sandbox `confine` in restricted modes. In read-only and
-workspace-write modes, the host denies writes to both the source and prepared payload outside the
-workspace. Full-access mode keeps its normal host policy; the prepared directory is not a separate
-security boundary against the account or an administrator.
+The prepared runtime must be **outside the session workspace** in confined sessions. Read-only and
+workspace-write modes check that boundary on every call and still use the host's subprocess service
+and sandbox `confine`; the host denies writes to both the source and prepared payload outside the
+workspace. Full-access mode keeps its normal host policy and runs a prepared root inside the
+workspace — the default `~/.dsh` under a home workspace — instead of refusing it, because it is
+not a separate security boundary against the account or an administrator (#870).
 
 - On first preparation only, Windows scanner/indexer handles can delay the atomic publication
   rename. Only `EPERM`/`EACCES`/`EBUSY` rename refusals are backed off, asynchronously, for up to 10 seconds;
   a persistent failure names the rename in `EXECUTOR_UNAVAILABLE`. Commands are never retried.
-- Put `DSH_HOME` outside the workspace before starting DSH. A workspace containing the prepared
-  runtime is refused rather than silently moving the runtime or running without confinement.
+- For confined sessions, put `DSH_HOME` outside the workspace before starting DSH. A workspace
+  containing the prepared runtime is refused in read-only and workspace-write modes rather than
+  silently moving the runtime or running without confinement; full access runs it where it is.
 - `DSH_OPS_EXEC_ROOT` and `NIUBASH_VERIFY=deep` are deprecated and ignored for new calls. Antivirus
   allow-list rules should target the fixed prepared location, not a per-call temporary directory.
 - For leftovers from older releases, stop **every OPS host and Bash job**, then use the installed

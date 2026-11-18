@@ -7,6 +7,15 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Niubash no longer refuses to prepare its runtime when a full-access session's workspace contains
+  the default `~/.dsh` home (#870). The workspace boundary stays armed in read-only and
+  workspace-write modes, where host workspace labeling and write gating could otherwise reach the
+  executable; full access runs without confinement, so the refusal only made a default `DSH_HOME`
+  under a home workspace unusable.
+- Niubash 在 full-access 会话的 workspace 包含默认 `~/.dsh` 时不再拒绝准备运行时（#870）。
+  workspace 边界在 read-only 与 workspace-write 模式仍然生效——host 的 workspace 标注与写限制
+  本可能经由 workspace 触及可执行文件；full access 本就不经过 confinement，该拒绝只会让默认
+  `DSH_HOME` 落在 home workspace 下的会话完全不可用。
 - Native tool construction and the publication refusal queue no longer attach listeners or lifetime effects to the composition root. The evidence observer and result admission subscribe on the caller's context with global dispatch, and the refusal queue falls back to the caller lifetime when the root refuses an effect. dsh-tui 0.20 refuses `root.events.on` and `root.effect` from a plugin activation, and the native-tools row is one, so every `dsh-tui --resume` aborted with "cannot resume session" before the agent mounted.
 - 原生工具构造与发布拒绝队列不再向组合根挂监听或生命周期 effect：证据观察者与 result admission 改为在调用方上下文订阅并声明 global 分发，拒绝队列在 root 拒绝 effect 时回落到调用方生命周期。dsh-tui 0.20 会拒绝插件激活期内的 `root.events.on` 与 `root.effect`，而原生工具行正是插件激活，导致每次 `dsh-tui --resume` 都在 agent 挂载前报 "cannot resume session"。
 - The Bash tool description now states the parse contract of `stdout`/`stderr` where the model reads it: `text` may be a partial fragment, `truncated` marks one that must not be parsed as complete structured output, and `spillPath` is optional and not a completeness guarantee. The typed output schema is unchanged: repeating the contract there would cost every PTC request without saying anything the tool text does not. Command semantics, exit codes, result values, limits, spill files, permissions and rendering are unchanged.
