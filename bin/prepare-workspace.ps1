@@ -5,17 +5,20 @@ if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') {
     throw 'DSH_OPS_CONSTRAINED_LANGUAGE: workspace ACL preparation requires PowerShell FullLanguage; no ACL preparation was completed. Keep the host security policy enabled and ask its administrator for a supported preparation path.'
 }
 . (Join-Path $PSScriptRoot 'workspace-acl.ps1')
-# \\wsl.localhost\<distro> and \\wsl$\<distro> are the WSL 9P redirector (#669):
-# the filesystem behind them exposes no NTFS security descriptor, so Get-Acl
-# cannot produce one and no DACL preparation has an object to write. Authority
-# there is the distribution's own uid/gid mapping. This is a prefix decision,
-# not a catch: every other path keeps its existing behaviour below, and a real
-# ACL error on those paths still fails closed.
-if ((Get-DshOpsWorkspaceNtfsState -Path $Workspace) -eq 'wsl-redirector') { Write-Output 'ready'; exit 0 }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
 $item = Get-Item -LiteralPath $Workspace -Force
 if (!$item.PSIsContainer) { throw 'Workspace is not a directory' }
+# \\wsl.localhost\<distro> and \\wsl$\<distro> are the WSL 9P redirector (#669):
+# the filesystem behind them exposes no NTFS security descriptor, so Get-Acl
+# cannot produce one and no DACL preparation has an object to write. Authority
+# there is the distribution's own uid/gid mapping. The decision runs after the
+# existence/container validation above — a missing path still fails exactly like
+# any other workspace — and before Get-Acl below, so a live 9P root answers
+# ready instead of dying inside it. This is a prefix decision, not a catch:
+# every other path keeps its existing behaviour, and a real ACL error on those
+# paths still fails closed.
+if ((Get-DshOpsWorkspaceNtfsState -Path $item.FullName) -eq 'wsl-redirector') { Write-Output 'ready'; exit 0 }
 # No reparse walk here: a folder that is already ready answers without any
 # tag inspection, so an OneDrive placeholder root is not refused merely for
 # being a reparse point (#744). The tag check lives on the one branch below
@@ -83,9 +86,11 @@ public static class DshOpsReparseTag {
     }
 }
 '@
-# Cloud placeholders keep a real directory entry behind the point, so the cloud family
-# is allowed through; every other tag redirects the view and fails closed with the tag
-# named, and a point whose tag cannot even be read fails closed too (#744).
+# Cloud placeholders keep a real directory entry behind the point, so the proven
+# cloud-files family (the exact 0x9000?01A shape) is allowed through; every other
+# tag — including the rest of the 0x9xxxxxxx band — redirects the view and fails
+# closed with the tag named, and a point whose tag cannot even be read fails closed
+# too (#744).
 $cursor = $item
 while ($null -ne $cursor) {
     if ($cursor.Attributes -band [IO.FileAttributes]::ReparsePoint) {
