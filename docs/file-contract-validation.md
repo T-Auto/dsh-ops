@@ -42,6 +42,19 @@ rate improvements. Native output fixture reductions are in [Native output](nativ
   `glob`/`grep` under `dynamicTools: false`, or a name excluded by a narrowed
   `allowedTools`), while a resident `inspect_local_file` still replaces `read`.
   The direct provider request still contains only `run_code`.
+- The fallback side of that decision is verified per name and stays usable: a
+  kept official tool is admitted, declared and callable through its SDK binding,
+  withdrawing the row (or an unattached, probe-failing or narrowed projection)
+  restores the official `read`/`glob`/`grep` to the same callable state, and a
+  custom preset keeps every official tool until `replaceOfficial` opts in
+  (default `false`). The kept `write`/`edit`/`read_image` SDK entries are
+  compared through real argument schemas, not empty membership fixtures.
+- Hiding hands those names' workflow to the OPS replacements, whose reviewed
+  differences are documented per tool in the [component reference](component-reference.md):
+  `ops_glob`/`ops_grep` never traverse symlinks, reparse points, hidden files
+  or `.git`, their coverage is paged with explicit completion/truncation
+  fields, and `write`/`edit` stay official precisely because the OPS CAS
+  `expectedRevision` publication contract differs from the host write/edit.
 - Unloading the row restores the original surface. OPS-free PTC receives no OPS
   prompt or SDK. Disabled batching delivers no lesson or reminder, as covered by
   the batching lifecycle suite. Runtime version appears only in explicit diagnostics.
