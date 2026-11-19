@@ -195,6 +195,7 @@ falling back to the built-in surface; scoped diagnostics remain accessible.
 | `discovery` | true except shell profile; false removes the selector/SDK loader, not explicit startup selections |
 | `allowedTools` | all supported loadable tools when discovery is enabled, otherwise empty |
 | `alwaysLoaded` | empty; must be allowed; separate from the Native residentNames profile |
+| `disclosurePolicy` | `on-demand`; explicit first-round disclosure tier for PTC-presentation rows: `full` publishes the whole `allowedTools` pool plus `result` in the first round with no loader — the same tier the builtin rows parse since D3. Native-presentation rows reject the key; illegal values are errors naming the key and the received value or type; nothing ever writes it for you |
 | `replaceOfficial` | false; replaces only ready, admitted file counterparts; conditional official tools may remain visible |
 | `promptPolicy` | true; guidance names only actually published tools |
 | `extraGuidance` | empty; Native-only guidance, rejected in PTC |
