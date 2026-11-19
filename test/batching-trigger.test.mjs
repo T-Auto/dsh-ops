@@ -128,6 +128,66 @@ await test('each of the three categories is decided independently', () => {
   assert.equal(violationsOf(long).shape, false)
 })
 
+await test('waiting on an agent is a dependency barrier, read only from a real dispatch site (#893)', () => {
+  // Dot and bracket calls to wait_agent are both waits, so no shape notice.
+  for (const code of [
+    '// plan: wait for the verification agent\nreturn await tools.wait_agent({ timeout_ms: 30000 })',
+    '// plan: wait for the verification agent\nreturn await tools["wait_agent"]({ timeout_ms: 30000 })',
+  ]) {
+    const shape = analyzeProgram(code)
+    assert.equal(shape.dispatchSites, 1, code)
+    assert.equal(shape.isWaiting, true, code)
+    assert.deepEqual(violationsOf(shape), { plan: false, bypass: false, shape: false }, code)
+  }
+  // The name inside a comment or a message string is not a call and exempts nothing.
+  for (const code of [
+    'const r = await tools.ops_read_files({ files: [{ path: "a" }] })\n// tools.wait_agent({})\nreturn r',
+    'const r = await tools.ops_read_files({ files: [{ path: "a" }] })\nreturn { r, note: "tools.wait_agent( later" }',
+    'const r = await tools.ops_read_files({ files: [{ path: "a" }] })\n// job_output({ job_id: "b", wait: true })\nreturn r',
+    'const r = await tools.ops_read_files({ files: [{ path: "a" }] })\nreturn { r, note: "job_output( or wait: true" }',
+  ]) {
+    const shape = analyzeProgram(code)
+    assert.equal(shape.isWaiting, false, code)
+    assert.equal(violationsOf(shape).shape, true, code)
+  }
+  // A wait does not exempt the plan or bypass checks.
+  assert.equal(violationsOf(analyzeProgram('return await tools.wait_agent({ timeout_ms: 1 })')).plan, true)
+  const shellWait = analyzeProgram('await tools.ops_bash({ description: "list", command: "ls -la" })\nreturn await tools.wait_agent({})')
+  assert.equal(violationsOf(shellWait).bypass, true)
+})
+
+await test('only a single dispatch site earns the single-operation shape notice (#893)', () => {
+  // A search whose result picks the next read cannot be batched ahead of time.
+  const dependent = analyzeProgram('// plan: search; read the matching file\nconst hits = await tools.grep({ pattern: "needle" })\nreturn await tools.read({ file_path: hits.matches[0].path })')
+  assert.equal(dependent.dispatchSites, 2)
+  assert.equal(dependent.isWaiting, false)
+  assert.deepEqual(violationsOf(dependent), { plan: false, bypass: false, shape: false })
+  // Bracket sites count the same way.
+  assert.equal(violationsOf(analyzeProgram('const a = await tools["ops_stat"]({ path: "a" })\nreturn await tools["ops_stat"]({ path: a.path })')).shape, false)
+  // Two sites do not exempt the plan or bypass checks.
+  const twoNoPlan = analyzeProgram('const a = await tools.ops_bash({ description: "list", command: "ls -la" })\nreturn await tools.ops_stat({ path: "a" })')
+  assert.deepEqual(violationsOf(twoNoPlan), { plan: true, bypass: true, shape: false })
+  // A commented-out second call does not lift a real single site out of the notice.
+  assert.equal(violationsOf(analyzeProgram('// plan: read\nconst r = await tools.read({ file_path: "a" })\n// await tools.read({ file_path: "b" })\nreturn r')).shape, true)
+  // The single read keeps its original notice.
+  assert.equal(violationsOf(analyzeProgram('// plan: read\nreturn await tools.read({ file_path: "a" })')).shape, true)
+})
+
+/** The cursor walk body: one dispatch site inside a while loop, many pages read. */
+const WALK_BODY = 'const parts = []\nlet offset = 1\nwhile (offset > 0) {\n  const part = await tools.ops_inspect_local_file({ path: "log.txt", offset, limit: 200 })\n  parts.push(part)\n  offset = part.nextOffset || 0\n}\nreturn parts.length'
+
+await test('cursor pagination loops read many pages without earning a shape notice (#999)', () => {
+  // A cursor walk is one static dispatch site inside a loop: many reads, one program.
+  const walk = analyzeProgram('// plan: page through the log with the cursor\n' + WALK_BODY)
+  assert.equal(walk.dispatchSites, 1, 'the loop body is one static site, not its fan-out')
+  assert.equal(walk.hasBatchingStructure, true)
+  assert.deepEqual(violationsOf(walk), { plan: false, bypass: false, shape: false })
+  // The same walk over an explicit page list is the same shape.
+  const pages = analyzeProgram('// plan: read every page the cursor yields\nconst rows = []\nfor (const cursor of [1, 201, 401]) {\n  rows.push(await tools.read({ file_path: "log.txt", offset: cursor }))\n}\nreturn rows')
+  assert.equal(violationsOf(pages).shape, false)
+  // The loop exemption is not a blanket silence: without the plan line only the plan speaks.
+  assert.deepEqual(violationsOf(analyzeProgram(WALK_BODY)), { plan: true, bypass: false, shape: false })
+})
 
 // ---- the per-turn latch (option 4a: re-armed by compliance, no per-turn cap) ----
 
@@ -137,6 +197,8 @@ const BYPASS = 'const r = await tools.ops_bash({ description: "list", command: "
 const THIN = 'const r = await tools.ops_read_files({ files: [{ path: "a" }] })\nreturn r'
 /** A compliant program: plan line, batched reads, no bypass. */
 const GOOD = '// plan: list the sources; read the manifest\nconst [a, b] = await Promise.all([tools.ops_glob({ pattern: ["src/**"] }), tools.ops_read_files({ files: [{ path: "package.json" }] })])\nreturn { a, b }'
+/** A compliant cursor walk: a plan line and one dispatch site inside a loop. */
+const WALK = '// plan: page through the log with the cursor\n' + WALK_BODY
 
 await test('one category delivers once per turn and stays silent until it is re-armed', () => {
   const latch = createProgramLatch(() => LOADER), agent = {}
@@ -157,6 +219,24 @@ await test('a compliant program re-arms its category, so a regression speaks aga
   assert.equal(latch.isArmed(agent, 'shape'), true, 'and the shape category too')
   // No per-turn cap: the regression earns a fresh notice inside the same turn.
   assert.equal(latch.observe(agent, THIN).category, 'plan', 'the regression speaks again in the same turn')
+})
+
+await test('wait, dependent and cursor programs never spend the shape latch (#999)', () => {
+  const latch = createProgramLatch(), agent = {}
+  // Both speakable categories start spent on a thin single call.
+  assert.equal(latch.observe(agent, THIN).category, 'plan')
+  assert.equal(latch.observe(agent, THIN).category, 'shape')
+  // A real wait, a dependent pair and a cursor walk are legitimate shapes, so the
+  // violation to compliance to re-violation order spends nothing on them.
+  const wait = '// plan: wait for the verification agent\nreturn await tools.wait_agent({ timeout_ms: 30000 })'
+  const dependent = '// plan: search; read the matching file\nconst hits = await tools.grep({ pattern: "needle" })\nreturn await tools.read({ file_path: hits.matches[0].path })'
+  for (const code of [wait, dependent, WALK]) {
+    assert.equal(latch.observe(agent, code), undefined, 'no category is spent on a legitimate shape')
+  }
+  assert.equal(latch.isArmed(agent, 'shape'), true, 'the compliant shapes re-armed it')
+  // ...so the thin regression inside the same turn is accused again.
+  assert.equal(latch.observe(agent, THIN).category, 'plan')
+  assert.equal(latch.observe(agent, THIN).category, 'shape', 'the regression speaks again in the same turn')
 })
 
 await test('priority orders the categories and the others stay armed', () => {
