@@ -35,13 +35,13 @@ present, real PTC presentation, the host's official `read`/`glob`/`grep` left vi
 | 3 | `ops-ptc: {dynamicTools: false}` | `ops_inspect_local_file` | none | no | same set as row 2 (one AND gate, two sides); only the scope differs — see note |
 | 4 | row 3 plus `ops-ptc: {alwaysLoaded: [stat]}` | `ops_inspect_local_file`, `ops_stat` | none | no | both bindings work in the first program |
 | 5 | `ops-ptc: {residentTools: false}` | `ops_load_sdk` | the sixteen-API pool below | yes | the loader is the only binding; `ops_inspect_local_file` is unreachable — `ops_load_sdk({tools:['inspect_local_file']})` answers `INVALID_ARGUMENT` |
-| T | **target, not implemented**: an explicit full selection with `allowedTools: [grep, stat]` | `ops_grep`, `ops_stat` (per #979 §2) | — | no (per #979 §2) | every allowed API callable in the first program; read-only sessions still exclude write APIs |
+| T | **implemented — see the D3 addendum**: an explicit full selection with `allowedTools: [grep, stat]` | `ops_grep`, `ops_stat` (per #979 §2) | — | no (per #979 §2) | every allowed API callable in the first program; read-only sessions still exclude write APIs |
 
 The default loadable pool (rows 1 and 5) is exactly:
 `ops_grep`, `ops_glob`, `ops_replace`, `ops_write_file`, `ops_edit_file`, `ops_diff`,
 `ops_stat`, `ops_copy`, `ops_move`, `ops_remove`, `ops_read_files`, `ops_read_table`,
 `ops_read_docx`, `ops_read_pdf`, `ops_batch`, `ops_result` — the sixteen non-resident
-raw APIs (`PTC_LOADABLE_TOOLS`). Row T's pool would be `ops_grep`, `ops_stat` **plus
+raw APIs (`PTC_LOADABLE_TOOLS`). Row T's pool is `ops_grep`, `ops_stat` **plus
 `ops_result`** (see sign-off item 1).
 
 **Row notes.**
@@ -93,6 +93,7 @@ return r.status
    `dynamicTools:false` (rows 2–4) `ops_result` is **not published at all**. Decision
    needed for the full tier: must its first round publish `ops_result` so spilled refs stay
    consumable (#979 §3)? Current behaviour is locked; nothing here changes it.
+   *(Resolved by the D3 addendum: the full tier's first round publishes `ops_result`.)*
 2. **The global switch versus an explicit full selection.** Today `global.dynamicTools`
    AND-gates every row's loader, including the PTC one. #979 §4 requires that upgrades,
    settings saves and the `global.dynamicTools` switch never pick full **for** the user.
@@ -214,3 +215,52 @@ rejected as unknown), green after. `node test/run.mjs ptc-config-truth` 13/0/0,
 `node test/run.mjs resident-switch` 24/0/0 and `node test/run.mjs settings-rows`
 14/0/0 unchanged on the new parsing path, worker
 `DSH_OPS_WORKER_BIN=runtime/linux-x64/dsh-ops-worker` (sha256 2b5f988d).
+
+
+## D3 addendum — the explicit full tier is published (2026-11-19)
+
+Card [#987](https://github.com/T-Auto/dsh-ops/issues/987), on top of the D2 addendum's
+branch. This slice turns the parsed key into publication behaviour; nothing above
+rewrites the five legacy rows, which stay asserted letter by letter.
+
+**Row T, implemented.** With `{ disclosurePolicy: 'full', allowedTools: [grep, stat] }`
+the first round publishes `ops_grep`, `ops_stat`, `ops_inspect_local_file` (resident)
+and `ops_result`, with no `ops_load_sdk` (#979 §2). The first program can call the
+permitted pool directly (dual verification: the settled declaration set plus a real
+`run_code` binding call through the worker); pool-outside business APIs stay
+unavailable. The builtin plan slice now carries the parsed tier
+(`src/presets/builtin.ts`), and the publication consumes it in
+`src/publication/ptc.ts`.
+
+**Sign-off item 1, resolved conservatively per #979 §3.** The full tier's first round
+publishes `ops_result`: a ref spilled this step must stay consumable, and the unified
+acceptance rule forces the same conclusion — on-demand can always load `result`
+(`loadable = [...allowedTools, 'result']`), so the loaded business set equals the full
+first-round set only if full publishes it. The comparison is pinned by one check.
+
+**Edges, as shipped and asserted.** An empty cap keeps the tier at resident +
+`result` (still no loader). Read-only still removes every mutating API from the
+first round — switching tiers never widens permissions. `residentTools:false` drops
+the resident surface (row 5) but not the explicit tier. Duplicated names collapse to
+one registration. The bundle switch keeps its D2 veto end to end: while
+`global.dynamicTools` is off an explicit full row publishes row 2 letter for letter;
+the row-level `dynamicTools` keeps its loader-only meaning, so a full row that also
+turns the loader off keeps its tier.
+
+**Not done here (by design).** Custom integrations keep the legacy default until D4,
+and `PtcConfig.disclosurePolicy` stays optional for exactly that reason (making it
+required would force touching the custom-integration plan slice this card does not
+own; the builtin plan carries the value, an absent value means on-demand). The
+settings-page entry is D5.
+
+**Verification.** `npm run build`, red first: `node test/run.mjs ptc-declaration-surface`
+4 of 5 failed (every new row T assertion; the legacy loader-less check stayed green)
+and `node test/run.mjs ptc-full-disclosure` failed row T, the comparison, read-only
+and the empty pool before the suite's 120 s deadline. Green after:
+ptc-declaration-surface 5/0/0, ptc-full-disclosure 8/0/0, and the regression locks
+unchanged — ptc-config-truth 13/0/0, resident-switch 24/0/0, ptc-disclosure-policy
+8/0/0, settings-rows 14/0/0; worker
+`DSH_OPS_WORKER_BIN=runtime/linux-x64/dsh-ops-worker` (sha256 2b5f988d). Environment
+note, not a regression: `ptc.test.mjs`'s installed-runtime check asserts precedence
+over `DSH_OPS_WORKER_BIN`, so it runs without that env override (it fails identically
+on the base commit with the override set).

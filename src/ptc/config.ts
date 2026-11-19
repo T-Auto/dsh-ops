@@ -8,8 +8,8 @@ export const PTC_LOADABLE_TOOLS: readonly ApiName[] = [...FILE_TOOLS, ...PTC_TOO
 export type DisclosurePolicy = 'on-demand' | 'full'
 export interface PtcConfig { binaryPath?: string; required: boolean; allowedTools: ApiName[]; alwaysLoaded: ApiName[]; disclosurePolicy?: DisclosurePolicy }
 // parsePtcConfig always fills disclosurePolicy; consumer plan slices that have
-// not been taught the tier yet (the builtin plan until D3, custom integrations
-// until D4) may omit it and keep the legacy on-demand default.
+// not been taught the tier yet (custom integrations until D4) may omit it and
+// keep the legacy on-demand default. The builtin plan carries it since D3.
 export function parsePtcConfig(raw: unknown = {}): PtcConfig {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('PTC config must be an object')
   const input = raw as Record<string, unknown>

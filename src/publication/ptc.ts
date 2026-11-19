@@ -74,10 +74,22 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     let presentationRevision = 0
     ctx.on('system-prompt/change', () => { ++presentationRevision })
     let ownership: Awaited<ReturnType<typeof ownPtcScopes>> | undefined
+    // D3 (#987, #979 §2): an explicit full tier carries the whole permitted
+    // allowedTools pool — plus `result`, the D1 sign-off item 1 decision, so a ref
+    // spilled this step never dead-ends (#979 §3; the unified acceptance rule
+    // also needs it: on-demand can always load `result`) — in the first round,
+    // with no loader. The bundle gate has already pressed an incompatible row
+    // back to on-demand (effectiveMode, sign-off item 2); the row-level
+    // dynamicTools keeps its loader-only meaning, so a full row that also turns
+    // the loader off keeps its explicit tier.
+    const full = config.disclosurePolicy === 'full'
     const resident = new Set<ApiName>(gate.resident === false ? [] : [...PTC_RESIDENT_TOOLS, ...config.alwaysLoaded])
     // A loader-less scope can never select the allowed pool: registering it only
     // lets a host that renders registered definitions declare unreachable APIs.
-    const selectable: ApiName[] = gate.dynamic === false ? [] : [...config.allowedTools, 'result' as ApiName]
+    // The full tier is loader-less by design, so its pool must register: every
+    // member is callable this step.
+    const selectable: ApiName[] = gate.dynamic === false && !full ? [] : [...config.allowedTools, 'result' as ApiName]
+    const selectedFull = new Set<ApiName>(full ? selectable : [])
     const pool = new Set<ApiName>([...resident, ...selectable])
     const owns = (agent: Agent): boolean => !stopped && gate.allows(agent) && Boolean(ownership?.owns(agent))
     const permitted = (agent: Agent, api: ApiName | 'load_sdk'): boolean => {
@@ -89,7 +101,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     const loadable = [...new Set<ApiName>([...config.allowedTools, 'result'])]
     const allowedApis = (agent: Agent): ApiName[] => gate.dynamic === false ? [] : loadable.filter(api => permitted(agent, api))
     const selected = (entry: Entry, api: ApiName | 'load_sdk'): boolean => api === 'load_sdk'
-      ? gate.dynamic !== false : resident.has(api) || entry.selected.has(api)
+      ? gate.dynamic !== false && !full : resident.has(api) || entry.selected.has(api) || selectedFull.has(api)
     const isPtc = async (agent: Agent, signal?: AbortSignal): Promise<boolean> => {
       const assembly = await inspectPresentation(prompt, agent, signal)
       return assembly.tools.length === 1 && assembly.tools[0]?.name === 'run_code'
@@ -246,7 +258,8 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         }
         if (!owns(agent) || entries.get(agent) !== entry) return
         rotateFiles(entry)
-        if (gate.dynamic !== false) publish('load_sdk', sdkDefinition(loadable, execute(entry, 'load_sdk')))
+        // The full tier is loader-less (#979 §2); the legacy tiers keep the loader gate.
+        if (gate.dynamic !== false && !full) publish('load_sdk', sdkDefinition(loadable, execute(entry, 'load_sdk')))
         await Promise.all([...entry.disposers.map(publicationReady), ...[...entry.files.values()].map(file => file.lease.ready())])
       }).catch(async error => {
         // Do not await ready here: this is its own rejection path. Preserve the
