@@ -113,12 +113,16 @@ external English Markdown file:
 - The text follows the published surface. While dynamic loading publishes `ops_load_sdk`, the lesson ships
   byte for byte, load step included. With `dynamicTools: false` the scope publishes no loader, so that step and
   its table row are replaced by a direct-call section that lists the APIs this scope actually publishes; a
-  scope that publishes nothing says so and points at the official tools. The program-shape notices carry the
-  same surface, so `bypass` names neither a loader nor an API the scope cannot reach: its file-work line lists
-  only the file APIs that are loadable (or resident) here, and a shell tool that bypassed them is never offered
-  as the replacement. Two limits are deliberate: the shipped lesson itself is substituted only when the loader is
-  absent (a narrow pool narrows the notices, not the trajectories), and the lists follow the configured pool and the
-  read-only policy without the per-agent ownership narrowing.
+  scope that publishes nothing says so and points at the official tools. When the only file API a loader-less
+  scope publishes is `ops_inspect_local_file`, that section states its contract too: one file by exact path,
+  directories rejected, and with no `ops_glob` or `ops_grep` published nothing here lists or searches, so
+  file work needs concrete paths. The program-shape notices carry the same surface, so `bypass` names neither a
+  loader nor an API the scope cannot reach: its file-work line lists only the file APIs that are loadable (or
+  resident) here, and a shell tool that bypassed them is never offered as the replacement; the narrow-pool load
+  line keeps the lesson's order and loads the published names `for the next program`. Two limits are deliberate:
+  the shipped lesson itself is substituted only when the loader is absent (neither a narrow pool nor a read-only
+  policy rewrites the shipped trajectories; both narrow only the lists a scope composes), and the lists follow
+  the configured pool and the read-only policy without the per-agent ownership narrowing.
 
 `batchingTelemetry` (same row, YAML-only, default `false`) emits one structured log line per delivered
 notice, for example `dsh-ops batching: turn=3 category=plan plan=1 bypass=0 shape=2 total=3`. It is

@@ -183,6 +183,25 @@ const LOAD_HEADING = /\bload(?:ing|er)?\b/i
 export const LOAD_TABLE_ROW_PREFIX = '| ops_read_files before it is loaded'
 
 /**
+ * The path caveat for a loader-less scope that cannot discover paths.
+ *
+ * `ops_inspect_local_file` reads one file by exact path and rejects directories, so a
+ * scope that publishes it without `ops_glob` or `ops_grep` must say where the paths
+ * come from: a model that probes a directory through it spends a failed round trip.
+ * @param resident - public names the scope publishes without loading.
+ * @returns the caveat lines, empty when a listing or search API is published.
+ */
+function exactPathNote(resident: readonly string[]): string[] {
+  if (!resident.includes('ops_inspect_local_file') || resident.includes('ops_glob') || resident.includes('ops_grep')) return []
+  return [
+    '',
+    'File work here has no listing and no search API: `ops_inspect_local_file` reads one',
+    'file by its exact path and rejects directories, so call it with concrete file paths',
+    'you already know.',
+  ]
+}
+
+/**
  * The section that replaces the loader lesson when the scope publishes no loader.
  * @param surface - what the scope publishes.
  * @returns the replacement lines, heading included.
@@ -205,6 +224,7 @@ function directSteps(surface: GuidanceSurface): string[] {
     'step, with no load to spend a program on:',
     '',
     '`' + surface.resident.join('`, `') + '`',
+    ...exactPathNote(surface.resident),
   ]
 }
 
@@ -621,7 +641,7 @@ export function noticeText(category: BatchingCategory, shape: ProgramShape, surf
           ? 'Use the APIs in the current SDK; load only missing names with `tools.ops_load_sdk` for the next program.'
           : fileUsable === 0
             ? 'The loadable pool holds no file API either, so loading adds nothing here.'
-            : 'Load only names this scope publishes with `tools.ops_load_sdk`; an API outside that pool is not reachable.'
+            : 'Load only names this scope publishes with `tools.ops_load_sdk` for the next program; an API outside that pool is not reachable.'
         : fileUsable === 0
           ? 'There is no loader here, and retrying a name will not publish one.'
           : 'There is no loader here: call those APIs directly in the next program.',

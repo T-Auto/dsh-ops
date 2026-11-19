@@ -200,4 +200,22 @@ await test('the shipped file still carries the anchors the renderer rewrites', (
   assert.ok(lines.some(line => line.startsWith(LOAD_TABLE_ROW_PREFIX)), 'the load row is present')
 })
 
+await test('a loader-less scope whose only file API is inspect states the paths it needs', () => {
+  // The acceptance case: with no loader, no listing and no search, a directory cannot be
+  // probed, so the lesson must say where the paths come from instead of letting the model
+  // spend a round trip on a call that cannot succeed.
+  const rendered = renderBatchingGuidance(loadBatchingGuidance(), { loader: false, resident: ['ops_inspect_local_file', 'ops_stat'], loadable: [] })
+  assert.ok(rendered.includes('ops_inspect_local_file'), 'the resident reader is listed')
+  assert.match(rendered, /rejects directories/, 'the directory rejection is stated')
+  assert.match(rendered, /concrete file paths/, 'the exact-path requirement is stated')
+  assert.equal(rendered.includes('ops_load_sdk'), false, 'the loader stays gone')
+})
+
+await test('the path statement stays silent while a listing or search API is published', () => {
+  // A scope that can list or search discovers paths itself; the caveat would read as noise.
+  const rendered = renderBatchingGuidance(loadBatchingGuidance(), { loader: false, resident: ['ops_glob', 'ops_inspect_local_file'], loadable: [] })
+  assert.doesNotMatch(rendered, /rejects directories/, 'a scope that can list needs no caveat')
+  assert.ok(rendered.includes('ops_glob') && rendered.includes('ops_inspect_local_file'), 'the published pair is listed')
+})
+
 report('batching-guidance')

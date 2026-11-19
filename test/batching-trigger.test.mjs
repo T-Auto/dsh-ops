@@ -273,4 +273,15 @@ await test('a scope with no file API does not refer to them', () => {
   assert.doesNotMatch(statOnly, /call those APIs/, 'the pronoun has no referent here')
 })
 
+await test('a narrow pool with a loadable file API is told the load order', () => {
+  const shape = analyzeProgram(BYPASS)
+  // The acceptance scope: the loader is published and grep is loadable, so the notice
+  // must teach load first and call next; a same-program call to grep would throw.
+  const narrow = noticeText('bypass', shape, { loader: true, resident: ['ops_inspect_local_file'], loadable: ['ops_grep'] })
+  assert.match(narrow, /ops_grep/, 'the loadable file API is named')
+  assert.match(narrow, /for the next program/, 'the load lands before the call')
+  assert.equal(narrow.includes('ops_edit_file'), false, 'an unauthorized write API is not named')
+  assert.equal(narrow.includes('ops_read_files'), false, 'an unloadable read API is not named')
+})
+
 report('batching-trigger')
