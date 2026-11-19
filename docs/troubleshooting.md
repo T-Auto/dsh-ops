@@ -83,6 +83,10 @@ Long scripts, heredocs and multi-layer quotes and backslashes make the model esc
 
 A key the `ops_bash` schema does not declare is refused before execution, and the error names both the unknown keys and the accepted ones. This is deliberate — nothing is silently ignored.
 
+### The model calls `bash` instead of `ops_bash`
+
+This package publishes exactly one shell tool, named `ops_bash`; there is no `bash` alias. The tool table is assembled by the host from the names this package declares once (`publicToolName` in `src/policy.ts`), and a misnamed call never reaches this package: the host answers with its own unknown-tool message, so any did-you-mean correction also belongs to the host, not here. Point the model back to the real name — the tool table and the prompt both spell `ops_bash` — instead of expecting a silent alias.
+
 ### Bash script files, PATH precedence and empty input
 
 `script_path` always selects a Bash script; the extension does not select an
