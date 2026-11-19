@@ -7,9 +7,9 @@ export const PTC_LOADABLE_TOOLS: readonly ApiName[] = [...FILE_TOOLS, ...PTC_TOO
 /** The explicit first-round disclosure tier of a PTC row (#986/#979). */
 export type DisclosurePolicy = 'on-demand' | 'full'
 export interface PtcConfig { binaryPath?: string; required: boolean; allowedTools: ApiName[]; alwaysLoaded: ApiName[]; disclosurePolicy?: DisclosurePolicy }
-// parsePtcConfig always fills disclosurePolicy; consumer plan slices that have
-// not been taught the tier yet (custom integrations until D4) may omit it and
-// keep the legacy on-demand default. The builtin plan carries it since D3.
+// parsePtcConfig always fills disclosurePolicy; a slice that omits the key keeps
+// the legacy on-demand default. The builtin plan carries the parsed value since
+// D3; the custom integration path passes the key through since D4 (#988).
 export function parsePtcConfig(raw: unknown = {}): PtcConfig {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('PTC config must be an object')
   const input = raw as Record<string, unknown>

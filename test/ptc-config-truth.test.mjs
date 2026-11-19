@@ -231,11 +231,12 @@ await test('the loader batches 1-5 names per call; the resident startup list has
   assert.deepEqual(full.allowedTools, PTC_LOADABLE_TOOLS)
 })
 
-await test('a legal custom ptc-profile integration is misdiagnosed PUBLICATION_UNAVAILABLE: ops_result (decision item 4)', () => withTempDir('truth-diag-' + ++sequence, async cwd => {
-  // Current behaviour, locked so the D4 fix (#988) cannot land silently: diagnostics
-  // lists ops_result among first-round expected names, but result is selectable, not
-  // resident, so a legal custom PTC integration reads degraded while its only gap is
-  // an API the loader has not selected yet.
+await test('a legal custom ptc-profile integration diagnoses ready after the D4 plan-derived expectations (decision item 4)', () => withTempDir('truth-diag-' + ++sequence, async cwd => {
+  // D4 (#988) flipped this pin: diagnostics used to list ops_result among first-round
+  // expected names, but result is selectable, not resident, so a legal custom PTC
+  // integration read degraded while its only gap was an API the loader had not
+  // selected yet. The expected set now comes from the same disclosure plan the
+  // publication uses, so this row reports ready and no PUBLICATION_UNAVAILABLE.
   const { ctx } = await bootHost({ withWorkingDirectory: true })
   try {
     await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem); await ctx.plugin(NodePtc)
@@ -254,9 +255,9 @@ await test('a legal custom ptc-profile integration is misdiagnosed PUBLICATION_U
     await waitFor(() => opsNames(ctx, agent).includes('ops_inspect_local_file'), { what: 'ops_inspect_local_file published' })
     await wait(100)
     const d = await diagnose(ctx, agent)
-    assert.equal(d.state, 'degraded', JSON.stringify(d.issues))
-    assert.ok(d.issues.some(row => row.code === 'PUBLICATION_UNAVAILABLE' && row.message.includes('ops_result')),
-      'the only missing name is the selectable-but-not-resident result API')
+    assert.equal(d.state, 'ready', JSON.stringify(d.issues))
+    assert.equal(d.issues.some(row => row.code === 'PUBLICATION_UNAVAILABLE'), false,
+      'the selectable-but-not-resident result API is not a publication gap')
   } finally { await shutdown(ctx) }
 }))
 

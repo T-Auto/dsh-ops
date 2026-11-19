@@ -10,8 +10,8 @@ import { publicToolName } from '../policy.js'
 import { definition, PTC_SECTION } from '../projections/ptc/contract.js'
 import { requestedApis, sdkDefinition } from '../projections/ptc/loader.js'
 import { renderSdkDirectory } from '../projections/ptc/directory.js'
-import { PTC_RESIDENT_TOOLS } from '../ptc/config.js'
 import type { ApiName } from '../ptc/config.js'
+import { disclosurePlan } from '../ptc/disclosure.js'
 import { ownPtcScopes } from '../ptc/ownership.js'
 import { BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, createProgramLatch, loadBatchingGuidance } from '../ptc/batching-guidance.js'
 import { InvocationLifetime, InvocationNotStarted } from '../lifecycle/invocations.js'
@@ -81,16 +81,13 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     // with no loader. The bundle gate has already pressed an incompatible row
     // back to on-demand (effectiveMode, sign-off item 2); the row-level
     // dynamicTools keeps its loader-only meaning, so a full row that also turns
-    // the loader off keeps its explicit tier.
-    const full = config.disclosurePolicy === 'full'
-    const resident = new Set<ApiName>(gate.resident === false ? [] : [...PTC_RESIDENT_TOOLS, ...config.alwaysLoaded])
-    // A loader-less scope can never select the allowed pool: registering it only
-    // lets a host that renders registered definitions declare unreachable APIs.
-    // The full tier is loader-less by design, so its pool must register: every
-    // member is callable this step.
-    const selectable: ApiName[] = gate.dynamic === false && !full ? [] : [...config.allowedTools, 'result' as ApiName]
-    const selectedFull = new Set<ApiName>(full ? selectable : [])
-    const pool = new Set<ApiName>([...resident, ...selectable])
+    // the loader off keeps its explicit tier. D4 (#988) moved this derivation into
+    // src/ptc/disclosure.ts so the diagnostics read the same plan instead of
+    // guessing expected names.
+    const plan = disclosurePlan(config, gate.resident !== false, gate.dynamic !== false)
+    const full = plan.full
+    const resident = new Set<ApiName>(plan.firstRound)
+    const pool = new Set<ApiName>(plan.pool)
     const owns = (agent: Agent): boolean => !stopped && gate.allows(agent) && Boolean(ownership?.owns(agent))
     const permitted = (agent: Agent, api: ApiName | 'load_sdk'): boolean => {
       if (!owns(agent) || !ctx.get('ptcRuntime') || !ctx.get('subprocess')) return false
@@ -98,10 +95,10 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       return policy !== undefined && ['read-only', 'workspace-write', 'danger-full-access'].includes(policy.mode)
         && (api === 'load_sdk' || api === 'result' || !capability(api)?.mutates || policy.mode !== 'read-only')
     }
-    const loadable = [...new Set<ApiName>([...config.allowedTools, 'result'])]
+    const loadable = plan.loadable
     const allowedApis = (agent: Agent): ApiName[] => gate.dynamic === false ? [] : loadable.filter(api => permitted(agent, api))
     const selected = (entry: Entry, api: ApiName | 'load_sdk'): boolean => api === 'load_sdk'
-      ? gate.dynamic !== false && !full : resident.has(api) || entry.selected.has(api) || selectedFull.has(api)
+      ? plan.loader : resident.has(api) || entry.selected.has(api)
     const isPtc = async (agent: Agent, signal?: AbortSignal): Promise<boolean> => {
       const assembly = await inspectPresentation(prompt, agent, signal)
       return assembly.tools.length === 1 && assembly.tools[0]?.name === 'run_code'
@@ -259,7 +256,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         if (!owns(agent) || entries.get(agent) !== entry) return
         rotateFiles(entry)
         // The full tier is loader-less (#979 §2); the legacy tiers keep the loader gate.
-        if (gate.dynamic !== false && !full) publish('load_sdk', sdkDefinition(loadable, execute(entry, 'load_sdk')))
+        if (plan.loader) publish('load_sdk', sdkDefinition(loadable, execute(entry, 'load_sdk')))
         await Promise.all([...entry.disposers.map(publicationReady), ...[...entry.files.values()].map(file => file.lease.ready())])
       }).catch(async error => {
         // Do not await ready here: this is its own rejection path. Preserve the
