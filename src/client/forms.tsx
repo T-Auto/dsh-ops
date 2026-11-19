@@ -16,7 +16,9 @@ export function useEditor<T>(form: ConfigPageForm | undefined, read: (value: Rec
   const [draft, setDraft] = useState(() => read(form?.state.value ?? {}))
   const [baseline, setBaseline] = useState<Record<string, unknown>>(() => form?.state.value ?? {})
   const [revision, setRevision] = useState(form?.state.revision)
-  const [dirty, setDirty] = useState(false), [busy, setBusy] = useState(false), [message, setMessage] = useState('')
+  const [dirty, setDirty] = useState(false), [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState<{ key: 'saved' | 'rejected' } | { text: string }>()
+  const message = notice === undefined ? '' : 'key' in notice ? t(notice.key) : notice.text
   // A ready Host document that accepts writes is editable. The Host used to
   // distinguish its own page from another editor's with a `mode` field; that
   // field is gone, so writability is the only gate left.
@@ -24,19 +26,19 @@ export function useEditor<T>(form: ConfigPageForm | undefined, read: (value: Rec
   useEffect(() => {
     if (!dirty) { setDraft(read(form?.state.value ?? {})); setBaseline(form?.state.value ?? {}); setRevision(form?.state.revision) }
   }, [form?.state.revision, form?.state.status, read, dirty])
-  const edit = (value: T) => { setDraft(value); setDirty(true); setMessage('') }
+  const edit = (value: T) => { setDraft(value); setDirty(true); setNotice(undefined) }
   const reset = () => {
     setDraft(read(form?.state.value ?? {})); setBaseline(form?.state.value ?? {})
-    setRevision(form?.state.revision); setDirty(false); setMessage('')
+    setRevision(form?.state.revision); setDirty(false); setNotice(undefined)
   }
   const save = async (operations: readonly SettingsPathOpView[]) => {
     if (!form || !ready || busy || revision === undefined) return
-    setBusy(true); setMessage('')
+    setBusy(true); setNotice(undefined)
     try {
       const accepted = await form.mutate(operations, revision)
-      setMessage(t(accepted ? 'saved' : 'rejected'))
+      setNotice({ key: accepted ? 'saved' : 'rejected' })
       if (accepted) setDirty(false)
-    } catch (error) { setMessage(errorText(error)) }
+    } catch (error) { setNotice({ text: errorText(error) }) }
     finally { setBusy(false) }
   }
   return { draft, baseline, edit, dirty, busy, ready, message, reset, save }

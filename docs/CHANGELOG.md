@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Keep executor selections and switches in one row-editor draft, preserving the original baseline and revision across host refreshes until reset or an accepted save. Saved/refused notices now follow the active page language, including saves completed after a language change; raw host errors remain unchanged (#1028).
+- 执行器选择与开关现在共用行编辑器草稿，在宿主刷新时保留原始基线与修订号，直到重置或保存被接受。保存成功及拒绝提示随页面当前语言更新，包括切换语言后完成的保存；宿主原始错误文本保持不变（#1028）。
+
 - Native tool construction and the publication refusal queue no longer attach listeners or lifetime effects to the composition root. The evidence observer and result admission subscribe on the caller's context with global dispatch, and the refusal queue falls back to the caller lifetime when the root refuses an effect. dsh-tui 0.20 refuses `root.events.on` and `root.effect` from a plugin activation, and the native-tools row is one, so every `dsh-tui --resume` aborted with "cannot resume session" before the agent mounted.
 - 原生工具构造与发布拒绝队列不再向组合根挂监听或生命周期 effect：证据观察者与 result admission 改为在调用方上下文订阅并声明 global 分发，拒绝队列在 root 拒绝 effect 时回落到调用方生命周期。dsh-tui 0.20 会拒绝插件激活期内的 `root.events.on` 与 `root.effect`，而原生工具行正是插件激活，导致每次 `dsh-tui --resume` 都在 agent 挂载前报 "cannot resume session"。
 - The Bash tool description now states the parse contract of `stdout`/`stderr` where the model reads it: `text` may be a partial fragment, `truncated` marks one that must not be parsed as complete structured output, and `spillPath` is optional and not a completeness guarantee. The typed output schema is unchanged: repeating the contract there would cost every PTC request without saying anything the tool text does not. Command semantics, exit codes, result values, limits, spill files, permissions and rendering are unchanged.
