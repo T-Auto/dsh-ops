@@ -2,7 +2,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { Config as MergedConfig } from '../lib/settings/merged.js'
-import { executorOps } from '../lib/client/row-schema.js'
+import { disclosureOps, executorOps } from '../lib/client/row-schema.js'
 import { parse } from 'yaml'
 import { profileFixture } from './lib/settings-profile.mjs'
 // These suites exercise the pre-merge component modules directly.
@@ -105,6 +105,35 @@ await test('real shell form persists executor selection without erasing ordinary
     const saved = fs.readFileSync(patchPath, 'utf8')
     await assert.rejects(mutate([set('bashPath', '')], snapshot().revision), /non-empty string/)
     assert.equal(fs.readFileSync(patchPath, 'utf8'), saved)
+  } finally { await shutdown(ctx) }
+})
+
+await test('the merged row persists the disclosure tier, keeps it through other saves, and clears it back to the absent default', async () => {
+  let observed
+  const { ctx, snapshot, mutate, patchPath } = await profileFixture('ops-merged-disclosure', {
+    Config: MergedConfig, apply(_ctx, config) { observed = config },
+  }, { 'ops-ptc': { enabled: true } })
+  try {
+    const before = snapshot()
+    assert.equal('disclosurePolicy' in before.value['ops-ptc'], false, 'the old profile carries no key')
+    await mutate(disclosureOps(before.value, 'full'), before.revision)
+    await ctx.loader.await()
+    assert.equal(observed.ptc.disclosurePolicy, 'full')
+    assert.equal(observed['ops-ptc'].disclosurePolicy, 'full')
+    assert.match(fs.readFileSync(patchPath, 'utf8'), /disclosurePolicy: full/)
+    // An unrelated save keeps the tier (the page only writes what changed).
+    await mutate([{ op: 'set', path: ['panel', 'enabled'], value: true }], snapshot().revision)
+    await ctx.loader.await()
+    assert.equal(observed.panel.enabled, true)
+    assert.equal(observed.ptc.disclosurePolicy, 'full')
+    assert.equal(observed['ops-ptc'].disclosurePolicy, 'full')
+    // Switching back returns both rows to the absent default, other keys intact.
+    await mutate(disclosureOps(snapshot().value, 'on-demand'), snapshot().revision)
+    await ctx.loader.await()
+    assert.equal('disclosurePolicy' in snapshot().value.ptc, false)
+    assert.equal('disclosurePolicy' in snapshot().value['ops-ptc'], false)
+    assert.doesNotMatch(fs.readFileSync(patchPath, 'utf8'), /disclosurePolicy/)
+    assert.equal(observed.panel.enabled, true, 'other choices survive the tier switch')
   } finally { await shutdown(ctx) }
 })
 

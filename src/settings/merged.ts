@@ -258,6 +258,12 @@ const MODE_SWITCHES: Record<string, Field> = {
 function modeSection(mode: ModeKey): Field {
   return { type: 'object', dict: { enabled: boolean('Apply this mode to its sessions.'),
     ...(mode === 'minimal' ? {} : { residentTools: boolean('Publish baseline file tools independently of dynamic loading.') }),
+    // Only the PTC rows own a disclosure tier; the key is volatile because the
+    // row page's disclosure card writes it, exactly like the executor card
+    // writes bashPath. Absent stays the on-demand default (#989).
+    ...(mode === 'ptc' || mode === 'ops-ptc'
+      ? { disclosurePolicy: editable('string', 'Optional explicit first-round disclosure tier selected on the row page.') }
+      : {}),
     bashPath: editable('string', 'Optional explicit Bash executable selected on the runtime page.'),
     ...MODE_SWITCHES } }
 }
