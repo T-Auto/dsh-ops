@@ -88,6 +88,11 @@ for (const [mode, component] of [['ptc-control', undefined], ['ptc', Ptc], ['ops
         assert.equal(value.kind, 'undefined', 'the replaced official glob binding is gone from the SDK')
         assert.equal(value.ops.status, 'completed')
         assert.ok(value.ops.data.items.some(file => file.endsWith('note.txt')))
+        // The kept names stay present in the program bindings, not only in the
+        // admission set: presence is compared per name across all three views.
+        const kept = await run("return {edit: typeof tools.edit, image: typeof tools.read_image}")
+        assert.equal(kept.edit, 'function', 'the official edit binding stays callable')
+        assert.equal(kept.image, 'function', 'the official read_image binding stays callable')
       }
       if (row) {
         await row.dispose()

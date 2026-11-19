@@ -310,6 +310,9 @@ await test('PTC mode publishes the scoped SDK surface, hides the replaced offici
     await wait(300)
     assert.equal(names(standard).includes('ops_load_sdk'), false)
     await row.dispose()
+    // Withdrawing the row withdraws its replacements too: the official file
+    // tools the PTC row had hidden come back on the registry surface.
+    await waitFor(() => ['read', 'glob', 'grep'].every(name => names(agent).includes(name)), { what: 'official file tools restored with the PTC row' })
   } finally { await shutdown(ctx) }
 }))
 
