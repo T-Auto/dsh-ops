@@ -185,9 +185,12 @@ export async function collectEnvironment({ root, preset, mode, worker = WORKER, 
  * @param {'ptc'|'native'} [options.executor] - force the executor; defaults by mode.
  * @param {string} [options.worker] - the worker binary; defaults to the test build.
  * @param {string} [options.sandboxMode] - recorded with the environment.
+ * @param {Array} [options.hostPlugins] - host plugins (e.g. the official file
+ *   tools) mounted before the shipped row, so a group measures against a real
+ *   official surface instead of an empty registry.
  * @returns {Promise<object>} the booted group, or an invalid-boot report.
  */
-export async function bootEntryGroup(root, { preset = TARGET_PRESET, switches = {}, executor, worker = WORKER, sandboxMode = 'workspace-write' } = {}) {
+export async function bootEntryGroup(root, { preset = TARGET_PRESET, switches = {}, executor, worker = WORKER, sandboxMode = 'workspace-write', hostPlugins = [] } = {}) {
   assert.ok(path.resolve(root).startsWith(path.resolve(TEST_HOME)),
     'the entry only boots groups inside the suite throwaway DSH_HOME, got ' + root)
   const mode = MODE_IDS.includes(preset) ? preset : undefined
@@ -195,7 +198,7 @@ export async function bootEntryGroup(root, { preset = TARGET_PRESET, switches = 
   const environment = await collectEnvironment({ root, preset, mode, worker, row, sandboxMode })
   const ptcPresentation = executor === 'native' ? false : executor === 'ptc' ? true : mode === 'ops-ptc' || mode === 'ptc'
   try {
-    const host = await bootLoop(root, { ptcMode: ptcPresentation, preset, row })
+    const host = await bootLoop(root, { ptcMode: ptcPresentation, preset, row, hostPlugins })
     return { booted: true, host, root, worker, preset, mode, environment, close: () => host.close() }
   } catch (error) {
     const message = String(error?.message ?? error)

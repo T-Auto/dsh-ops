@@ -21,7 +21,7 @@ import { WORKER } from './boundary.mjs'
 import { legacyComponent } from './legacy-component.mjs'
 import { workingDirectoryOver } from './host.mjs'
 let identity = 0
-export async function bootLoop(root, { ptcMode = false, discoveryConfig = {}, preset = 'fixture', row } = {}) {
+export async function bootLoop(root, { ptcMode = false, discoveryConfig = {}, preset = 'fixture', row, hostPlugins = [] } = {}) {
   const ctx = new Context(); ctx.logger.level = 0
   // rc.5 asks the host for the directory a run_code call executes in.
   ctx.provide('workingDirectory', workingDirectoryOver(root))
@@ -30,6 +30,13 @@ export async function bootLoop(root, { ptcMode = false, discoveryConfig = {}, pr
   await ctx.plugin(Tools, {})
   await ctx.plugin(Policy, { mode: 'workspace-write', workspaceRoot: root })
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem, { cwd: root })
+  // The host's own plugins load before any plugin row, exactly as a real profile
+  // orders them; measurement suites use this to give the shipped row a real
+  // official surface (read/glob/grep) to replace (#991).
+  for (const entry of hostPlugins) {
+    const [plugin, config] = Array.isArray(entry) ? entry : [entry, {}]
+    await ctx.plugin(plugin, config)
+  }
   if (ptcMode) await ctx.plugin(NodePtc, {})
   await ctx.plugin(ptcMode ? PtcExecutor : NativeExecutor, {})
   await ctx.plugin(inner => {
