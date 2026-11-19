@@ -266,40 +266,70 @@ note, not a regression: `ptc.test.mjs`'s installed-runtime check asserts precede
 over `DSH_OPS_WORKER_BIN`, so it runs without that env override (it fails identically
 on the base commit with the override set).
 
-## D4 addendum — custom rows follow the publication plan (2026-11-19)
 
-D1 sign-off item 4 is resolved: the custom-integration diagnostic no longer hand-writes
-its expected first-round PTC names. The derivation moved to `src/ptc/disclosure.ts`
-(`disclosurePlan`), read by both `src/publication/ptc.ts` and
-`src/integration/diagnostics.ts`, so `result` — selectable, not resident — no longer
-reads as `PUBLICATION_UNAVAILABLE: ops_result` on a legal `profile: 'ptc'` row, the
-explicit full tier's whole pool is expected when a row selects it, and a genuinely
-missing first-round name still reports. The D1 truth-table pin that locked the
-misdiagnosis is flipped to `ready` in the same change.
+## P5 addendum — four admission verdicts, aligned across registration, declaration and dispatch (2026-11-19)
 
-The custom integration path now parses `disclosurePolicy` with the same contract the
-builtin rows have had since D2: omitted keeps `on-demand`, `'full'` is an explicit
-opt-in, illegal values are errors naming the key, and Native-presentation rows reject
-it. Recorded, deliberately not unified: `alwaysLoaded` outside `allowedTools` stays a
-hard `ConfigError` on the custom path (`src/consumer/options.ts`) while builtin rows
-accept it silently — the difference is asserted on both sides (custom:
-`test/preset-integration.test.mjs`; builtin: `test/ptc-config-truth.test.mjs`).
+**The problem (#997; original repro in #968).** A registered definition is not
+necessarily callable this step, but every refusal read the same: one
+`POLICY_DENIED` ("must be admitted") from the PTC dispatch layer, one
+`PUBLICATION_GRANT_UNAVAILABLE` from the publication source, and — worst —
+`ops_load_sdk` answered `INVALID_ARGUMENT: API is not in this scope's allowed
+pool` for a pool member that read-only forbids. A model could not tell an
+unloaded name from a forbidden one, and a revoked admission read identically to
+a name that never existed.
 
-Three #988 fixtures are pinned end to end — parsed pool, first-round `ops_*` set,
-diagnostic state: a legacy `discovery: false` row (empty pool, inspect only, `ready`),
-a full tier with an unfilled cap (whole pool, loader-less, `ready`) and a full tier
-with `allowedTools: ['stat']` (inspect + stat + result, `ready` — an explicit narrow
-pool never widens to the default whole pool). A native custom preset's visible tool
-set is snapshotted so the diagnostics fix cannot quietly re-shape the Native surface,
-and a worker-less row still reports the genuinely missing first-round name without
-padding the gap with `result`.
+**The four verdicts, one classifier.** `src/publication/ptc.ts` now answers a
+refused dispatch with exactly one of four verdicts, aligned with what
+registration admits and what the SDK declaration shows:
 
-**Verification.** `npm run build`; red first (base d0fcd6f):
-`node test/run.mjs preset-integration` 5 of 13 failed (unknown `disclosurePolicy` key
-twice, the `ops_result` misdiagnosis twice more — the missing-worker gap message was
-padded with `result`), and `node test/run.mjs ptc-config-truth` failed exactly the
-flipped pin (1 of 13). Green after: preset-integration 13/0/0, ptc-config-truth 13/0/0,
-plus unchanged regressions integration-diagnostics, ptc-disclosure-policy,
-ptc-full-disclosure 8/0/0, ptc-declaration-surface, consumer-assembly,
-publication-reentry-rows, settings-rows, preset-registration; worker
-`DSH_OPS_WORKER_BIN=runtime/linux-x64/dsh-ops-worker` (sha256 2b5f988d).
+| verdict | condition | answer |
+| --- | --- | --- |
+| usable this step | resident or selected, permitted | dispatch; never lands in the refusal path |
+| loadable | in the pool, permitted, not selected — and a loader exists | `SDK_NOT_LOADED` naming `ops_load_sdk` and the raw name, effective next model step |
+| permission-forbidden | the sandbox policy refuses the API | `POLICY_DENIED` with explicit permission wording and no load suggestion |
+| revoked | an admission that existed was withdrawn — scope detached, presentation lifted, or permission downgraded on a previously-usable API | `POLICY_DENIED` with revoked wording, distinct from all of the above |
+
+A stale or foreign binding keeps the plain admission refusal, so nothing
+outside the four verdicts gains a new promise. The loader suggestion exists
+only where a loader can actually select: the loader-less scope and the full
+tier keep the honest no-loader denial. `ops_load_sdk` itself now validates
+against the configured pool and splits permission refusals from pool refusals —
+`write_file` under read-only is forbidden, not "not in the pool"; a
+pool-outside name keeps `INVALID_ARGUMENT`. The `SDK_NOT_LOADED` spelling is
+reused from open PR #1007 deliberately, so the eventual merge reads
+consistently; that PR's deferred-pointer plumbing stays owned by it.
+
+**The source layer keeps the same distinction.** A pulled registrar grant
+answers the new `PUBLICATION_GRANT_REVOKED` instead of reading as
+never-available; an agent that never held an eligible grant keeps
+`PUBLICATION_GRANT_UNAVAILABLE`. Grant and pool semantics are untouched —
+only the refusal verdict changed.
+
+**Diagnostic assemblies are not first requests.** An assembly without a step
+tool set now reads the registration surface without clearing pending loads or
+cancelling work; only a real step (tool set present) triggers the
+presentation-withdrawal cleanup. The same agent's two paths stay distinct and
+pinned: registered names (diagnostics) versus declared names (requests) versus
+program bindings — an unloaded name never holds one, so calling it in a
+program is a JS error, never a tool error.
+
+**Scope.** `src/publication/ptc.ts`, `src/publication/registrar.ts`,
+`test/ptc-declaration-surface.test.mjs` (5 → 11 checks), plus
+`test/ptc-directory.test.mjs` (2 assertions) because those lines pinned the
+pre-#997 misclassification of a permission refusal as a pool refusal — the
+exact behaviour this card removes. Teaching copy (P1/P2/P7) and pool semantics
+(D3) are untouched.
+
+**Verification.** `npm run build`; red first:
+`DSH_OPS_WORKER_BIN=runtime/linux-x64/dsh-ops-worker node test/run.mjs
+ptc-declaration-surface` → 5 of 11 checks failed (every new verdict, the
+diagnostic-isolation check and the grant-revoked check; the five legacy checks
+plus the new registered/declared/admitted pin stayed green). Green after:
+ptc-declaration-surface 11/0/0; regressions publication 6 suites, mount 2,
+probe 2, batching 4, and the wider `ptc` family 18 of 19 suites green —
+`ptc.test.mjs` fails only under the `DSH_OPS_WORKER_BIN` override, verified
+to fail identically on the D3 base commit (the installed-runtime resolution
+crash recorded in the D3 verification note) and to skip without the override,
+matching the base. Revoking any classifier line, the loader split or the
+diagnostic-isolation guard turns its own check red again.
+
