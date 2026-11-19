@@ -247,9 +247,14 @@ The plugin renders routing guidance from what it actually published. The excerpt
 
 Standard and Cordis replace the official `read`, `glob` and `grep` with these reviewed read/search
 workflows; every enabled mode replaces the Windows official shell. Their names, arguments and results
-differ from the host tools; calls are never translated or forwarded under an official name. A
-`run_code` presentation (PTC) is never masked: its transport is not gated, while the replaced
-official names stay refused in that scope. The replacement contract covers native presentation only.
+differ from the host tools; calls are never translated or forwarded under an official name. The
+`run_code` transport itself is never masked or gated. The replacement table covers `read`, `glob` and
+`grep` only — `write`, `edit` and `read_image` are never in it — and the replaced officials are hidden
+only after an explicit opt-in: `hideOfficialTools` for the built-in modes, `replaceOfficial` (default
+`false`) for explicit consumers; by default every official tool stays published. The same opt-in
+covers both presentations: under PTC an official name leaves the surface only while the projection can
+serve the matching `ops_*` API, and an unattached, probe-failing or narrowed projection keeps the
+official tool.
 
 <!-- hide-official-scope:start -->
 | Official tool | OPS alternative | Reviewed purpose |
