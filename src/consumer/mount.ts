@@ -17,6 +17,7 @@ import type { ConsumerPlan } from './types.js'
 
 export function mountConsumer(ctx: Context, plan: ConsumerPlan): void {
   const { gate, core } = plan
+  let ptc: ReturnType<typeof mountPtc> | undefined
   let renderShellGuidance: (agent: Agent) => string = () => ''
   const shellOwnsGuidance = (agent: Agent): boolean => Boolean(core.extraGuidance.trim()) && Boolean(renderShellGuidance(agent))
   if (plan.shell) {
@@ -60,6 +61,6 @@ export function mountConsumer(ctx: Context, plan: ConsumerPlan): void {
       { ...plan.native, enabled: plan.discovery }, { ...gate, guidance: core.promptPolicy, extraGuidance: core.extraGuidance,
         extraGuidanceOwner: agent => shellOwnsGuidance(agent) || nativeOwnsGuidance(agent),
         residentTools: () => residents.map(publicToolName), external: plan.external })
-  } else if (plan.files) mountPtc(ctx, plan.ptc, { ...gate, guidance: core.promptPolicy, resident: plan.residentTools, dynamic: plan.discovery })
-  if (plan.replaceOfficial) mountReplacements(ctx, { id: plan.id, targets: plan.replacementTargets, gate, keepOfficial: () => false })
+  } else if (plan.files) ptc = mountPtc(ctx, plan.ptc, { ...gate, guidance: core.promptPolicy, resident: plan.residentTools, dynamic: plan.discovery })
+  if (plan.replaceOfficial) mountReplacements(ctx, { id: plan.id, targets: plan.replacementTargets, gate, keepOfficial: () => false, ptc })
 }
