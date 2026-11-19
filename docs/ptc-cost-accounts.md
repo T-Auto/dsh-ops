@@ -6,7 +6,7 @@ The common accounting mistakes for OPS-PTC are structural: counting the
 `tools:sdk` section twice by adding it on top of a system total that already
 contains it, mixing the Native tool schemas into a PTC measurement, or
 forgetting that the first teaching and the later reminders ride the message
-history, not the system prompt. V1 (#990, `test/lib/ptc-entry.mjs)) already
+history, not the system prompt. V1 (#990, `test/lib/ptc-entry.mjs`) already
 guarantees the measured group truly entered OPS-PTC; this suite extends that
 entry with the byte accounting and never lets the four answers blur together.
 
