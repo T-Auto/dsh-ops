@@ -122,7 +122,8 @@ external English Markdown file:
   line keeps the lesson's order and loads the published names `for the next program`. Two limits are deliberate:
   the shipped lesson itself is substituted only when the loader is absent (neither a narrow pool nor a read-only
   policy rewrites the shipped trajectories; both narrow only the lists a scope composes), and the lists follow
-  the configured pool and the read-only policy without the per-agent ownership narrowing.
+  the configured pool and the read-only policy, while the loadable list also passes the loader's own gate
+  (per-agent ownership and runtime availability), so it is only ever narrower, never wider.
 
 `batchingTelemetry` (same row, YAML-only, default `false`) emits one structured log line per delivered
 notice, for example `dsh-ops batching: turn=3 category=plan plan=1 bypass=0 shape=2 total=3`. It is
