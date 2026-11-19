@@ -178,12 +178,14 @@ await test('read-only scopes never receive a write-class recommendation', () => 
     assert.doesNotMatch(text, /re-submit|overwrite|unlink|delete/i)
   }
 })
-await test('after-input-change failures say what to change; unmatched worker guidance is preserved', () => {
-  const invalid = toOutcome('grep', { pattern: '[', path: '/tmp/p6' }, { status: 'error', error: { code: 'INVALID_ARGUMENT', effectState: 'none', message: 'grep: pattern is not a valid regex', nextAction: 'Correct the request or inspect the manifest.' } })
+await test('after-input-change failures say what to change; other worker guidance is preserved', () => {
+  const invalid = toOutcome('grep', { pattern: '[', path: '/tmp/p6' }, { status: 'error', error: { code: 'INVALID_ARGUMENT', effectState: 'none', message: 'grep: pattern is not a valid regex' } })
   assert.equal(invalid.status, 'error')
   assert.equal(invalid.error.retry, 'after-input-change')
   assert.match(invalid.error.nextAction, /identical request fails identically/)
   assert.doesNotMatch(invalid.error.nextAction, /retry the same|just retry/i)
+  const advised = toOutcome('grep', { pattern: '[', path: '/tmp/p6' }, { status: 'error', error: { code: 'INVALID_ARGUMENT', effectState: 'none', message: 'grep: pattern is not a valid regex', nextAction: 'Correct the request or inspect the manifest.' } })
+  assert.equal(advised.error.nextAction, 'Correct the request or inspect the manifest.')
   const kept = toOutcome('copy', { path: '/tmp/p6/s', to: '/tmp/p6/d', expectedRevision: 'a'.repeat(64) },
     { status: 'error', error: { code: 'CLEANUP_FAILED', effectState: 'unknown', message: 'Could not remove staging sibling x', nextAction: 'Inspect the staging sibling and target before retrying; unpublished bytes may remain.' } })
   assert.equal(kept.error.nextAction, 'Inspect the staging sibling and target before retrying; unpublished bytes may remain.')
