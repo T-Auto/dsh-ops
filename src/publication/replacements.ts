@@ -54,6 +54,22 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
       if (!pending) { pending = ptc!.isPtc(activation); ptcPresentation.set(activation, pending) }
       return pending
     }
+    /** The PTC hiding verdict shared by the shadow `when` and the guidance assembly below. */
+    const hiddenByPtc = (agent: Agent, official: string, counterpart: string): { hidden: boolean; state: string } => {
+      const raw = (RAW_OFFICIAL_REPLACEMENTS as Record<string, ApiName>)[official]
+      // A counterpart the publisher registered (even before the model selects it)
+      // proves a replacement exists; the value of its admission is not consulted,
+      // so loading the SDK cannot change this decision.
+      const served = ptc!.servable(agent)
+      const published = tools.get(counterpart, agent)
+      const candidate = served !== undefined && served.has(raw)
+      const hidden = candidate && published !== undefined && publicationAdmission(published) !== undefined
+      const state = served === undefined ? 'unattached'
+        : !candidate ? 'not-servable'
+        : hidden ? 'hidden'
+        : 'counterpart-missing'
+      return { hidden, state }
+    }
     // Disposed agents and agents with unlinked host scopes must not receive shadows.
     const inactive = new WeakSet<Agent>()
     let stopped = false, mutating = false
@@ -102,9 +118,6 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
               if (tools.get(official, entry.probe) !== definition || sourceFor(activation.agent, official) !== source) return false
               if (keepOfficial() || !gate.allows(activation.agent)) return true
               if (ptc && Object.hasOwn(RAW_OFFICIAL_REPLACEMENTS, official)) {
-                // The PTC publisher decides; the host counterpart lookup below cannot
-                // see SDK bindings and would keep every such name visible.
-                const raw = (RAW_OFFICIAL_REPLACEMENTS as Record<string, ApiName>)[official]
                 let ptcNowValue: boolean
                 try { ptcNowValue = await ptcNow(activation) }
                 catch (error) {
@@ -120,17 +133,7 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
                 }
                 if (ptcNowValue) {
                   // Explicit implementation faults below must surface, not masquerade as a probe failure.
-                  const served = ptc.servable(activation.agent)
-                  // A counterpart the publisher registered (even before the model selects it)
-                  // proves a replacement exists; the value of its admission is not consulted,
-                  // so loading the SDK cannot change this decision.
-                  const published = tools.get(counterpart, activation.agent)
-                  const candidate = served !== undefined && served.has(raw)
-                  const hidden = candidate && published !== undefined && publicationAdmission(published) !== undefined
-                  const state = served === undefined ? 'unattached'
-                    : !candidate ? 'not-servable'
-                    : hidden ? 'hidden'
-                    : 'counterpart-missing'
+                  const { hidden, state } = hiddenByPtc(activation.agent, official, counterpart)
                   notePtc(activation.agent, official, state)
                   return !hidden
                 }
@@ -186,6 +189,49 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
       inactive.add(agent)
       const entry = entries.get(agent)
       if (entry) { entries.delete(agent); lift(agent, entry) }
+    })
+    // Guidance written for a hidden name is a dead pointer: the host renders its
+    // `tool:<name>` sections from registry visibility, and the shadow keeps the name
+    // resolvable, so the text survives hiding. The presentation waterfall is the
+    // supported scope extension point: it retires such sections for the assembly at
+    // hand, and one note names the executable counterpart for a kept official whose
+    // section pointed at a hidden name. Restoring the official entry (row disposed,
+    // switch off, probe failure, unattached projection) restores the text untouched.
+    ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
+      const result = await next()
+      if (stopped || !ptc) return result
+      // The publisher's own assembly handler uses the same presentation predicate;
+      // sections are evaluated before this waterfall, so this cannot recurse.
+      if (!result.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))) return result
+      const agent = context.scope as Agent | undefined
+      if (!agent || keepOfficial() || !gate.allows(agent)) return result
+      const hidden: string[] = []
+      for (const [official, counterpart] of targets) {
+        if (!Object.hasOwn(RAW_OFFICIAL_REPLACEMENTS, official)) continue
+        if (hiddenByPtc(agent, official, counterpart).hidden) hidden.push(official)
+      }
+      if (hidden.length === 0) return result
+      const drop = new Set(hidden.map(name => 'tool:' + name))
+      // A kept official's own section may still teach a hidden name (the pinned host
+      // grep text cross-references read). The text belongs to its provider and is not
+      // rewritten here; the section retires and the note below supplies the alternative.
+      const pointer = new RegExp('\\b(?:' + hidden.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')\\b')
+      const crossReferences: string[] = []
+      for (const [official] of targets) {
+        if (hidden.includes(official) || !Object.hasOwn(RAW_OFFICIAL_REPLACEMENTS, official)) continue
+        const section = result.sections.find(candidate => candidate.name === 'tool:' + official)
+        if (section && section.text && pointer.test(section.text)) { drop.add('tool:' + official); crossReferences.push(official) }
+      }
+      const note = crossReferences.length === 0 ? undefined
+        : `Official ${hidden.join(', ')} ${hidden.length === 1 ? 'is' : 'are'} hidden in this scope; call ${hidden.map(name => targets.get(name)!).join(', ')} instead. ${crossReferences.join(', ')} ${crossReferences.length === 1 ? 'stays' : 'stay'} callable through the tools:sdk declaration.`
+      let noted = false
+      const sections = result.sections.flatMap(section => {
+        if (!drop.has(section.name)) return [section]
+        if (noted || note === undefined) return []
+        noted = true
+        return [{ name: `dsh-ops:replaced-official:${mode}`, text: note, interpolate: false as const }]
+      })
+      return { ...result, sections }
     })
     ctx.on('session/event', (_session, event) => { if ((event as { type: string }).type === 'agent-preset/selected') reconcile() })
     if (gate.watch) ctx.effect(() => gate.watch!(() => reconcile()), `dsh-ops: ${mode} replacement observer`)
