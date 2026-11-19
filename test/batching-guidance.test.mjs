@@ -20,7 +20,7 @@ await test('the shipped guidance is English Markdown with its host-source identi
   }
   assert.equal(BATCHING_GUIDANCE_ID, 'batching-guidance')
   // A wording or format change is a product change and must bump the revision.
-  assert.equal(BATCHING_GUIDANCE_REVISION, '6')
+  assert.equal(BATCHING_GUIDANCE_REVISION, '7')
 })
 
 await test('the guidance loader returns exactly the shipped Markdown file', () => {
@@ -104,6 +104,33 @@ await test('the teacher trajectory pins the first-line plan and a runnable load 
   // File work belongs to the OPS APIs; a shell example here would teach the bypass.
   for (const banned of ['find .', 'ls -la', 'grep -rn']) assert.ok(!text.includes(banned), banned)
   assert.ok(text.length > 2500 && text.length < 9000, 'guidance stays bounded: ' + text.length)
+})
+
+await test('the trim removed repeated prose and the anti-pattern demo', () => {
+  // The first-round lesson enters message history, so it must not repeat itself: the
+  // anti-pattern section and the trailing prose that restated Step 1 are gone, while
+  // the four executable trajectories and their contracts stay byte-identical.
+  const text = loadBatchingGuidance()
+  assert.equal(text.includes('## Anti-pattern, and its rewrite'), false, 'the anti-pattern demo is gone')
+  assert.equal(text.includes('The search is the dependency, so it is awaited first'), false)
+  assert.equal(text.includes('The revision and the context are independent'), false)
+  assert.equal(text.includes('A loop of dispatches is batched work'), false)
+})
+
+await test('the trimmed lesson keeps the four trajectories and restores the two rules', () => {
+  const text = loadBatchingGuidance()
+  for (const heading of [
+    '## Trajectory 1 - reconnaissance', '## Trajectory 2 - search, then read the hits',
+    '## Trajectory 3 - a verified edit', '## Trajectory 4 - paging',
+  ]) assert.ok(text.includes(heading), heading)
+  assert.ok(text.includes('**Load only missing APIs**'), 'load only what the SDK lacks is a core rule')
+  assert.ok(text.includes('**Recheck the SDK after a mode change**'), 'the post-mode-change recheck is a core rule')
+})
+
+await test('the shipped lesson measures its declared trimmed size', () => {
+  // The trim record in the PR declares this size; a wording edit must bump the
+  // revision and this number together. The 84 B delivery prefix is counted separately.
+  assert.equal(Buffer.byteLength(loadBatchingGuidance(), 'utf8'), 7538)
 })
 
 await test('a scope with the loader receives the shipped file unchanged', () => {
