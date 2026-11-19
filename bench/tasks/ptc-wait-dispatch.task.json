@@ -1,0 +1,15 @@
+{
+  "id": "ptc-wait-dispatch",
+  "title": "Move the effective setting to a new value in the one file that owns it",
+  "prompt": "The application reads MAX_UPLOAD_MB from the three JSON layers documented in README.md; a later layer replaces the same key from an earlier one, and packages/*/config.json is not merged. Change the effective value to 900 by editing only the one file that currently provides it, then write that file's repo-relative path to answer.txt, nothing else.",
+  "fixture": {
+    "generator": "configTree",
+    "params": { "seed": 21, "packages": 8, "env": "production" }
+  },
+  "verify": [
+    { "type": "fileEquals", "path": "answer.txt", "expect": "source" },
+    { "type": "fileContains", "path": "config/production.local.json", "text": "\"MAX_UPLOAD_MB\": 900" }
+  ],
+  "repeat": 1,
+  "timeoutMs": 900000
+}
