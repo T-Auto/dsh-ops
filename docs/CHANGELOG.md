@@ -15,6 +15,11 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Replace the `global.forceDefaultOpsPtc` switch with one explicit action: the row's detail page carries a **Make OPS (PTC) the default** button that writes `selectedDefault: ops-ptc` once and answers `applied`/`no-update`/`unavailable`/`failed`. Apply, remount and unload no longer write the default, so a preset chosen on the settings page is not overridden on the next apply, and a saved `global.forceDefaultOpsPtc` key still loads with no effect.
 - 用一次显式操作取代 `global.forceDefaultOpsPtc` 开关：行详情页有一个「设为 OPS (PTC) 默认」按钮，点一次写 `selectedDefault: ops-ptc`，并回报 `applied`/`no-update`/`unavailable`/`failed`。apply、重挂载与卸载都不再改写默认，设置页选定的预设不会在下一次 apply 被覆盖；已保存的 `global.forceDefaultOpsPtc` 键仍可加载但不再生效。
 
+- `ops_edit_file` now accepts text copied from the reversibly escaped Native reader: raw `oldText` matches keep precedence, and only a raw miss tries the decoded rendering. The fallback also decodes `newText`, reports `renderedMatches`, and preserves ambiguity/CAS failures; raw edits and `write_file` remain byte-verbatim (#939).
+- `ops_edit_file` 现在可接受从可逆转义的 Native 读取输出中复制的文本：优先匹配原始 `oldText`，只有原始匹配失败才尝试解码后的渲染形式。回退同样解码 `newText` 并返回 `renderedMatches`，歧义与 CAS 拒绝保持不变；原始编辑与 `write_file` 仍逐字节处理（#939）。
+- The bounded classic-xref PDF reader resolves indirect `/Length` values in either object order while keeping cycle, depth, type, size and mismatch refusals. Direct lengths and the existing stream/xref budgets are unchanged (#788).
+- 有界的经典 xref PDF 读取器现在可按任意对象顺序解析间接 `/Length`，同时保留循环、深度、类型、大小与不一致拒绝。直接长度及现有流/xref 预算不变（#788）。
+
 ## [0.5.5] — 2026-11-13 — Patch release
 
 - A loader-less PTC scope no longer registers the configured `allowedTools` pool: with dynamic loading off nothing could ever select those APIs, and a host assembly without a step tool set declared all sixteen in `tools:sdk`. Resident publication, the default inspect + loader set and selection behavior are unchanged (#887).
