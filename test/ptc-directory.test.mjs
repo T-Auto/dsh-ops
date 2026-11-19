@@ -110,8 +110,12 @@ await test('current authority narrows configured names; unavailable policy does 
   try {
     const agent = await mint()
     agent.session.mode = 'read-only'; await ctx.serial('session/event', agent.session, { type: 'sandbox/mode' })
-    assert.equal((await load(ctx, agent, ['write_file'])).error.code, 'INVALID_ARGUMENT')
-    assert.equal((await load(ctx, agent, ['batch'])).error.code, 'INVALID_ARGUMENT')
+    // #997: a configured name the current authority forbids answers a permission
+    // refusal, not a pool refusal — and it never points back at the loader.
+    const forbidden = (await load(ctx, agent, ['write_file'])).error
+    assert.equal(forbidden.code, 'POLICY_DENIED')
+    assert.ok(!forbidden.message.includes('ops_load_sdk'), 'a permission refusal never points at the loader')
+    assert.equal((await load(ctx, agent, ['batch'])).error.code, 'POLICY_DENIED')
     assert.equal((await load(ctx, agent, ['grep', 'result'])).status, 'completed')
     state.available = false
     await assert.rejects(() => text(ctx, agent), error => error.name === 'ToolActivationError' && error.cause?.message === 'policy unavailable')

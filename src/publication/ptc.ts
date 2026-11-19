@@ -127,12 +127,45 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       const current = () => entries.get(entry.agent) === entry && exec.agent === entry.agent && !exec.signal.aborted
         && revision === presentationRevision && permitted(entry.agent, api) && selected(entry, api)
         && (capability(api)?.component === 'file' || tools.executable(publicToolName(api), entry.agent, exec.toolSet) === entry.definitions.get(publicToolName(api)))
-      if (!current() || !await isPtc(entry.agent, exec.signal).catch(() => false) || !current()) {
+      // P5 (#997): a refusal is one of four verdicts — usable never lands here;
+      // loadable points at the loader only when one exists; permission-forbidden
+      // never suggests loading; and an admission that existed and was withdrawn
+      // answers as revoked, distinct from all of the above.
+      const refusal = (ptc: boolean): ReturnType<typeof failure> => {
+        if (entries.get(entry.agent) !== entry) {
+          return failure('POLICY_DENIED', 'This PTC scope has been withdrawn; the retained admission is revoked. No action executed.')
+        }
+        if (exec.agent !== entry.agent || exec.signal.aborted
+          || (capability(api)?.component !== 'file' && tools.executable(publicToolName(api), entry.agent, exec.toolSet) !== entry.definitions.get(publicToolName(api)))) {
+          return failure('POLICY_DENIED', 'This API must be admitted for the calling PTC scope; no action executed.')
+        }
+        if (!ptc || revision !== presentationRevision) {
+          return failure('POLICY_DENIED', 'The PTC presentation of this scope has been withdrawn; the retained admission is revoked. No action executed.')
+        }
+        if (!permitted(entry.agent, api)) {
+          const wasUsable = api !== 'load_sdk' && (resident.has(api) || entry.selected.has(api) || selectedFull.has(api))
+          return failure('POLICY_DENIED', wasUsable
+            ? 'This API was admitted for the calling PTC scope, but the sandbox policy has since withdrawn its permission; the admission is revoked. No action executed.'
+            : 'The current sandbox policy does not permit this API for the calling PTC scope; no action executed.')
+        }
+        if (!selected(entry, api)) {
+          return api !== 'load_sdk' && gate.dynamic !== false && !full
+            ? failure('SDK_NOT_LOADED', `This API (${String(api)}) is not loaded for the current step. Call tools.${publicToolName('load_sdk')} with its raw name; the selection takes effect on the next model step.`)
+            : failure('POLICY_DENIED', 'This API is not admitted for the current step and no loader can select it; no action executed.')
+        }
         return failure('POLICY_DENIED', 'This API must be admitted for the calling PTC scope; no action executed.')
       }
+      const ptc = await isPtc(entry.agent, exec.signal).catch(() => false)
+      if (!current() || !ptc || !current()) return refusal(ptc)
       if (api === 'load_sdk') {
-        const requested = requestedApis(args, allowedApis(entry.agent))
+        // Validate against the configured pool, then split permission refusals from
+        // pool refusals: a mutating API under read-only is inside its pool yet
+        // forbidden, and reloading cannot change that permission (#997).
+        const requested = requestedApis(args, gate.dynamic === false ? [] : loadable)
         if (typeof requested === 'string') return failure('INVALID_ARGUMENT', requested)
+        const forbidden = requested.filter(name => !permitted(entry.agent, name))
+        if (forbidden.length) return failure('POLICY_DENIED',
+          'The current sandbox policy does not permit ' + forbidden.join(', ') + ' for the calling PTC scope; no action executed.')
         for (const name of requested) entry.pending.add(name)
         return { status: 'completed', tools: requested, nextTurn: true }
       }
@@ -299,7 +332,10 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       // Sections are evaluated before the public presentation waterfall. Shared
       // file names are callable in both executors, so they cannot select PTC text.
       const ptc = result.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
-      if (!isPresentationProbe(context)) {
+      // A diagnostic assembly carries no step tool set: it reads the registration
+      // surface and is never a model request, so it must not consume pending loads
+      // or cancel work the way a withdrawn request would (#997).
+      if (!isPresentationProbe(context) && context.toolSet) {
         const entry = entries.get(context.scope as Agent)
         if (entry && !ptc) {
           entry.pending.clear(); entry.calls.cancel('PTC presentation withdrawn')
