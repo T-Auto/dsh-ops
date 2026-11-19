@@ -85,6 +85,12 @@ Native guidance; `allowedTools`/`alwaysLoaded` accept loadable raw API names onl
 [Progressive PTC SDK loading](ptc-sdk-loading.md)). The three `spill*` keys bound host subprocess spill
 retention, described under built-in advanced configuration below.
 
+The exact first-round `ops_*` name sets for the five legacy inputs — defaults,
+`global.dynamicTools:false`, row `dynamicTools:false`, that row plus `alwaysLoaded:[stat]`, and
+`residentTools:false` — are locked letter by letter in the
+[D1 truth table](design-decisions-20261119.md). Old `dynamicTools:false` publishes only the
+resident/always-loaded surface and must not be read as a full selection.
+
 ### Batch-call guidance (`batchingGuidance`)
 
 Off contributes no extra context. The code default is on for `ops-ptc` only, even when a legacy profile replaces the whole row config without that section; explicit `batchingGuidance: false` still disables it. On, the guidance is delivered in two places, from an

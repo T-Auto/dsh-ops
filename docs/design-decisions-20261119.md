@@ -1,0 +1,122 @@
+# OPS-PTC legacy configuration: the five-input truth table
+
+[中文](设计决策-20261119.md)
+
+Decision date: 2026-11-19. Baseline: `main` at 58f6e28. Card:
+[#985](https://github.com/T-Auto/dsh-ops/issues/985) (D1), workflow
+[#979](https://github.com/T-Auto/dsh-ops/issues/979), overall plan
+[#978](https://github.com/T-Auto/dsh-ops/issues/978).
+
+This document locks **current** publication behaviour; it implements nothing. Every
+row is asserted letter by letter by `node test/run.mjs ptc-config-truth`
+(`test/ptc-config-truth.test.mjs`). Byte budgets are deliberately out of scope here —
+the V slices measure them.
+
+## How one input reaches the tool set
+
+| Stage | Where | What it does |
+| --- | --- | --- |
+| Row/global keys | `src/settings/merged.ts` `resolveMergedConfig` | Validates the row; defaults `dynamicTools` and `residentTools` to true (`global` has no resident key) |
+| AND gate | `effectiveMode` (`src/settings/merged.ts`), `dynamicForMode` | Row `dynamicTools` AND `global.dynamicTools`; the global switch "keeps the operator's intent and simply stops applying" |
+| Consumer plan | `src/presets/builtin.ts` `applyResolvedMode` | `gate.resident = config.residentTools`, `gate.dynamic = config.dynamicTools` (the gated value), `plan.ptc = { allowedTools, alwaysLoaded }` |
+| Publication | `src/publication/ptc.ts` `mountPtc` | `resident` = `PTC_RESIDENT_TOOLS` + `alwaysLoaded`, empty when `gate.resident === false`; `selectable` = `allowedTools` + `result`, empty when `gate.dynamic === false`; a tool is callable when resident **or** previously selected; `ops_load_sdk` is published only while `gate.dynamic !== false` |
+
+## The truth table
+
+Mode `ops-ptc` (the `ptc` row publishes the same first-round set; only
+`batchingGuidance` differs). Measured on Linux, `danger-full-access`, native worker
+present, real PTC presentation, the host's official `read`/`glob`/`grep` left visible;
+`ops_bash` is absent because POSIX rows keep the host shell.
+
+| # | Input (one line of `dsh-ops` row config) | Callable this step | Loadable, not loaded | Loader | run_code first-program view |
+| --- | --- | --- | --- | --- | --- |
+| 1 | defaults (no keys) | `ops_inspect_local_file`, `ops_load_sdk` | the sixteen-API pool below | yes | `tools.ops_inspect_local_file` and `tools.ops_load_sdk` work; a `ops_load_sdk({tools:['grep']})` receipt completes but `ops_grep` is callable only in the **next** program |
+| 2 | `global: {dynamicTools: false}` | `ops_inspect_local_file` | none | no | `tools.ops_inspect_local_file` works; there is no `tools.ops_load_sdk` |
+| 3 | `ops-ptc: {dynamicTools: false}` | `ops_inspect_local_file` | none | no | same set as row 2 (one AND gate, two sides); only the scope differs — see note |
+| 4 | row 3 plus `ops-ptc: {alwaysLoaded: [stat]}` | `ops_inspect_local_file`, `ops_stat` | none | no | both bindings work in the first program |
+| 5 | `ops-ptc: {residentTools: false}` | `ops_load_sdk` | the sixteen-API pool below | yes | the loader is the only binding; `ops_inspect_local_file` is unreachable — `ops_load_sdk({tools:['inspect_local_file']})` answers `INVALID_ARGUMENT` |
+| T | **target, not implemented**: an explicit full selection with `allowedTools: [grep, stat]` | `ops_grep`, `ops_stat` (per #979 §2) | — | no (per #979 §2) | every allowed API callable in the first program; read-only sessions still exclude write APIs |
+
+The default loadable pool (rows 1 and 5) is exactly:
+`ops_grep`, `ops_glob`, `ops_replace`, `ops_write_file`, `ops_edit_file`, `ops_diff`,
+`ops_stat`, `ops_copy`, `ops_move`, `ops_remove`, `ops_read_files`, `ops_read_table`,
+`ops_read_docx`, `ops_read_pdf`, `ops_batch`, `ops_result` — the sixteen non-resident
+raw APIs (`PTC_LOADABLE_TOOLS`). Row T's pool would be `ops_grep`, `ops_stat` **plus
+`ops_result`** (see sign-off item 1).
+
+**Row notes.**
+
+- Rows 2 and 3 publish the same OPS set because both feed one AND gate. Their inputs are
+  still different: the global switch also gates the Native discovery entry of
+  `standard`/`cordis`/`minimal` (`dynamicForMode`), the row switch only its own mode.
+- Row 4 shows `dynamicTools:false` does **not** suppress `alwaysLoaded`: the startup list
+  rides the resident set, with no loader to select the rest of the cap.
+- Row 5 shows `residentTools:false` drops the whole resident set, including
+  `ops_inspect_local_file`, which is not loadable either (it is not in
+  `PTC_LOADABLE_TOOLS`).
+- **Old off is a different input from a full selection** (#985 counterexample): with
+  `allowedTools: [grep, stat]` and `dynamicTools: false` the first round is
+  `ops_inspect_local_file` alone — neither `ops_grep` nor `ops_stat` nor the loader.
+  Reading `dynamicTools:false` as "publish everything allowed" would put `ops_grep` and
+  `ops_stat` in that first round, changing old users' cost and permission expectations;
+  #907 implicitly flipped exactly that and #910 reverted it (#979 §4).
+
+**Read-only and writable instances.** Read-only members of the default pool:
+`ops_grep`, `ops_stat`, `ops_glob`, `ops_diff`, `ops_read_files`, `ops_read_table`,
+`ops_read_docx`, `ops_read_pdf`. Writable members: `ops_replace`, `ops_write_file`,
+`ops_edit_file`, `ops_copy`, `ops_move`, `ops_remove`, `ops_batch`. In a read-only
+session `permitted` (`src/publication/ptc.ts`) removes every mutating API from the
+loadable pool and a load request for one answers `INVALID_ARGUMENT`;
+`ops_result` and `ops_load_sdk` are exempt from the mutation check. No suite here
+changes the sandbox mode; D3 covers read-only.
+
+A program you can read letter by letter:
+
+```js
+// plan: row 1 — load grep now, use it in the next program
+const picked = await tools.ops_load_sdk({ tools: ['grep'] })
+return { picked } // picked.status === 'completed'; ops_grep is NOT callable in this program
+```
+
+```js
+// plan: row 4 — stat is resident here, callable in the first program
+const r = await tools.ops_stat({ path: 'a' })
+return r.status
+```
+
+## Maintainer sign-off items — recorded, deliberately not implemented
+
+1. **The implicit `ops_result` exception.** Today `loadable = [...allowedTools, 'result']`
+   unconditionally, and `permitted` exempts `result` from the read-only mutation check, so
+   `ops_result` stays loadable even when the cap omits it (covered today by
+   `test/resident-switch.test.mjs`, "result exception remains loadable"). With
+   `dynamicTools:false` (rows 2–4) `ops_result` is **not published at all**. Decision
+   needed for the full tier: must its first round publish `ops_result` so spilled refs stay
+   consumable (#979 §3)? Current behaviour is locked; nothing here changes it.
+2. **The global switch versus an explicit full selection.** Today `global.dynamicTools`
+   AND-gates every row's loader, including the PTC one. #979 §4 requires that upgrades,
+   settings saves and the `global.dynamicTools` switch never pick full **for** the user.
+   Decision needed: does `global.dynamicTools:false` also suppress an explicitly selected
+   full row, or does the explicit opt-in win over the bundle switch?
+3. **Explicit resident versus the cap.** Today `alwaysLoaded` is validated against the
+   loadable pool only (`src/ptc/config.ts`), never against `allowedTools`:
+   `{ allowedTools: [grep], alwaysLoaded: [stat] }` publishes `stat` as resident with no
+   diagnostic, and `residentTools:false` silently drops the whole resident set including
+   `alwaysLoaded`. Decision needed: which of these conflicts get a readable diagnostic in
+   D2, and whether `alwaysLoaded` must be inside `allowedTools`.
+
+## Scope
+
+No publication default, no diagnostic and no third user mode is introduced here. Per
+#985, disagreements on the sign-off items go to the maintainers on the card before D2/D3
+implement anything. Pure legacy configurations keep the tool sets above before and after
+this slice — that is what the suite asserts.
+
+## Verification
+
+- `npm run build`, then `node test/run.mjs ptc-config-truth` — 11 passed / 0 skipped / 0
+  failed on the baseline (first run matched the code-read prediction on every row).
+- Red proof that the assertions bind behaviour, not each other: changing only the row-5
+  expected constant in the suite makes exactly that row's check fail
+  ("1 of 11 check(s) failed"); restoring the constant returns the suite to green.
+- `node test/run.mjs resident-switch` — unchanged neighbour suite, see the PR.
