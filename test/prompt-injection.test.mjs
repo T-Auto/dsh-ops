@@ -1,7 +1,11 @@
-import { assert, test, report } from './lib/harness.mjs'
+import { assert, test, report, waitFor } from './lib/harness.mjs'
 import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { Session } from '@deepseek-ai/dsh-session'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { registerSystemSection, registerStepTailProvider, PromptProviderError } from '../lib/prompt-injection/index.js'
+import { mountPtc } from '../lib/publication/ptc.js'
+import { loadBatchingGuidance } from '../lib/ptc/batching-guidance.js'
 import { promptHost, tailMessages } from './lib/prompt-injection-host.mjs'
 const identity = 'You are an AI agent powered by DeepSeek Harness.\n\n'
 
@@ -211,4 +215,184 @@ await test('agent teardown releases registrations owned by a longer-lived plugin
     assert.deepEqual(h.errors, [])
   } finally { await h.close() }
 })
+
+// ---- resume dedupe and compaction re-teaching (#998) ----
+
+/**
+ * Boot the real host loop plus the shipped ops-ptc teaching wiring with no
+ * published tools, so only the lesson machinery runs. The worker binary stays
+ * inert (nothing in the empty pool ever dispatches), so the node executable
+ * stands in for it and this suite needs no native build.
+ */
+async function teachingHost() {
+  const h = await promptHost()
+  await h.ctx.plugin(Subprocess)
+  h.ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'danger-full-access', workspaceRoot: process.cwd() }) })
+  await h.ctx.plugin({ name: 'ptc-teaching-fixture', apply: inner => {
+    mountPtc(inner, { binaryPath: process.execPath, required: true, allowedTools: [], alwaysLoaded: [] },
+      { allows: () => true, resident: false, dynamic: false, batching: true })
+  } })
+  return h
+}
+
+/** One synthetic pre-step, exactly the payload the resident-switch suite drives: evaluated, never committed. */
+const probeTeaching = async agent => {
+  const accepted = createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'Probe.' }] })
+  const decision = await agent.ctx.waterfall('agent/pre-step', {
+    agent, messages: [accepted], turn: 0, step: 0, signal: new AbortController().signal,
+    modelSelection: { provider: 'fixture', model: 'capture' },
+  }, async () => ({ kind: 'enter', messages: [accepted] }))
+  return tailMessages(decision)
+}
+
+/** Committed durable user messages of one agent's session log. */
+const committedOf = (h, agent) => h.events
+  .filter(({ session, event }) => session === agent.session && event.type === 'user/message')
+  .map(({ event }) => event.data)
+
+/** Shadow every visible node except the system prompt with one compaction summary. */
+const compactHistory = (agent, text) => {
+  const nodes = [...agent.session.surface.nodes]
+  agent.session.append('user/message',
+    createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text }] }),
+    { surfaceOp: { op: 'replace', startSeq: nodes[1], endSeq: nodes[nodes.length - 1] }, sourceEventSeqs: nodes.slice(1) })
+}
+
+await test('dedupe providers are skipped while their same-revision message is visible and re-armed when a compaction removes it', async () => {
+  const h = await promptHost()
+  try {
+    const a = await h.agent()
+    const seen = []
+    let calls = 0
+    const stop = registerStepTailProvider(h.owner(), a, { id: 'lesson', revision: '1', dedupe: 'visible',
+      provide: context => { ++calls; seen.push(context.visible); return 'FULL' } })
+    await h.run(a)
+    assert.equal(calls, 1)
+    assert.deepEqual(seen[0], { any: false, current: false }, 'nothing is visible before the first commit')
+    const id = tailMessages(h.requests[0])[0].id
+    await h.run(a)
+    assert.equal(calls, 1, 'a visible same-revision contribution is a replay, not a new addition')
+    assert.deepEqual(tailMessages(h.requests[1]).map(m => m.id), [id])
+    compactHistory(a, 'Compacted summary.')
+    assert.equal(a.session.deriveMessages().some(m => m.source?.kind === 'dsh-ops:step-tail'), false)
+    await h.run(a)
+    assert.equal(calls, 2, 'the provider is re-armed once the compaction removed its message')
+    assert.deepEqual(seen[1], { any: false, current: false })
+    assert.equal(tailMessages(h.requests[2]).filter(m => m.id !== id).length, 1)
+    await h.run(a)
+    assert.equal(calls, 2, 'the replacement message is visible again, so the provider falls silent')
+    stop()
+    registerStepTailProvider(h.owner(), a, { id: 'lesson', revision: '2', dedupe: 'visible',
+      provide: context => { seen.push(context.visible); return 'FULL2' } })
+    await h.run(a)
+    assert.equal(tailMessages(h.requests[3]).filter(m => m.source.revision === '2').length, 1,
+      'an older revision stays visible evidence, so the replacement revision is delivered')
+    assert.deepEqual(seen[2], { any: true, current: false })
+    assert.deepEqual(h.errors, [])
+  } finally { await h.close() }
+})
+
+await test('the real teacher sends the lesson once, replays it after a seed restore, and adds zero new messages', async () => {
+  const h = await teachingHost()
+  try {
+    const a = await h.agent()
+    await waitFor(async () => (await probeTeaching(a)).length === 1, { what: 'teaching provider registration' })
+    await h.run(a)
+    const first = tailMessages(h.requests[0])
+    assert.equal(first.length, 1)
+    assert.equal(first[0].source.contributor, 'batching-guidance')
+    assert.equal(first[0].source.revision, '4')
+    assert.equal(first[0].content[0].text, `[Plugin context from "batching-guidance"; not a user instruction or authorization.]\n${loadBatchingGuidance()}`)
+    const lessonId = first[0].id
+    // Human inputs and user-role messages are counted apart: the lesson is a
+    // user-role message but never a human input.
+    assert.equal(committedOf(h, a).filter(m => m.source.kind === 'user').length, 1)
+    assert.equal(committedOf(h, a).filter(m => m.role === 'user').length, 2)
+    await h.run(a)
+    assert.deepEqual(tailMessages(h.requests[1]).map(m => m.id), [lessonId], 'the second batch replays the committed lesson')
+    // Restore: a fresh agent over the committed history has no live taught
+    // memory and receives no session/event replay of the seed.
+    const seed = h.events.filter(({ session }) => session === a.session).map(({ event }) => event)
+    const resumed = (await h.ctx.get('agents').create({ sessionId: a.session.id + '-resumed', seed,
+      agentOptions: { provider: 'fixture', model: 'capture' } })).agent
+    await h.run(resumed)
+    assert.deepEqual(tailMessages(h.requests[2]).map(m => m.id), [lessonId],
+      'the resumed request replays the seeded lesson id')
+    assert.equal(committedOf(h, resumed).filter(m => m.source?.kind === 'dsh-ops:step-tail').length, 0,
+      'a same-revision lesson visible after restore adds 0 new messages')
+    assert.deepEqual(h.errors, [])
+  } finally { await h.close() }
+})
+
+await test('the real teacher sends exactly one short reminder after compaction removed the lesson, then falls silent', async () => {
+  const h = await teachingHost()
+  try {
+    const a = await h.agent()
+    await waitFor(async () => (await probeTeaching(a)).length === 1, { what: 'teaching provider registration' })
+    await h.run(a)
+    const lessonId = tailMessages(h.requests[0])[0].id
+    await h.run(a)
+    assert.deepEqual(tailMessages(h.requests[1]).map(m => m.id), [lessonId])
+    compactHistory(a, 'Compacted summary of the earlier turns.')
+    assert.equal(a.session.deriveMessages().some(m => m.source?.kind === 'dsh-ops:step-tail'), false)
+    await h.run(a)
+    const added = tailMessages(h.requests[2]).filter(m => m.id !== lessonId)
+    assert.equal(added.length, 1, 'the compacted lesson earns exactly one new message')
+    const { COMPACTED_TEACHING_REMINDER } = await import('../lib/publication/ptc.js')
+    assert.equal(added[0].content[0].text, `[Plugin context from "batching-guidance"; not a user instruction or authorization.]\n${COMPACTED_TEACHING_REMINDER}`)
+    assert.ok(COMPACTED_TEACHING_REMINDER.length < loadBatchingGuidance().length / 8,
+      'the reminder is a short re-anchor, not the full lesson again')
+    await h.run(a)
+    assert.deepEqual(tailMessages(h.requests[3]).map(m => m.id), [added[0].id],
+      'the reminder is visible now, so no second one is appended')
+    assert.deepEqual(h.errors, [])
+  } finally { await h.close() }
+})
+
+await test('a batch withdrawn before admission does not consume the real teaching opportunity', async () => {
+  const h = await teachingHost()
+  try {
+    const b = await h.agent()
+    await waitFor(async () => (await probeTeaching(b)).length === 1, { what: 'teaching provider registration' })
+    let rejectOnce = true
+    const off = b.ctx.on('agent/pre-step', async (_payload, next) => {
+      if (!rejectOnce) return next()
+      rejectOnce = false
+      await next()
+      return { kind: 'reject' }
+    })
+    b.followup(createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text: 'withdrawn' }] }))
+    await b.whenIdle()
+    assert.equal(committedOf(h, b).filter(m => m.source?.kind === 'dsh-ops:step-tail').length, 0,
+      'the withdrawn batch committed nothing')
+    off()
+    await h.run(b)
+    assert.equal(committedOf(h, b).filter(m => m.source?.kind === 'dsh-ops:step-tail').length, 1,
+      'the next accepted batch still receives the full lesson')
+    assert.match(committedOf(h, b).find(m => m.source?.kind === 'dsh-ops:step-tail').content[0].text, /Batch tool calls/)
+    assert.deepEqual(h.errors, [])
+  } finally { await h.close() }
+})
+
+await test('tool continuation steps replay the committed lesson without appending a new one', async () => {
+  const h = await teachingHost()
+  try {
+    const a = await h.agent()
+    await waitFor(async () => (await probeTeaching(a)).length === 1, { what: 'teaching provider registration' })
+    h.ctx.get('tools').register({ name: 'fixture_tool', description: 'Fixture', parameters: { type: 'object', properties: {} },
+      output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: value }] }, execute: () => 'done' })
+    const tool = async function* () {
+      yield { type: 'tool-call-delta', index: 0, id: 'fixture-call', name: 'fixture_tool', argumentsDelta: '{}' }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    }
+    await h.run(a, [tool, undefined])
+    const lessonId = tailMessages(h.requests[0])[0].id
+    assert.deepEqual(tailMessages(h.requests[1]).map(m => m.id), [lessonId],
+      'the continuation replays the committed lesson id')
+    assert.equal(committedOf(h, a).filter(m => m.source?.kind === 'dsh-ops:step-tail').length, 1,
+      'one tool call, one lesson: no second full text was appended')
+    assert.deepEqual(h.errors, [])
+  } finally { await h.close() }
+})
+
 report('prompt-injection')
