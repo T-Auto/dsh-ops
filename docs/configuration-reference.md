@@ -74,6 +74,7 @@ the row's status card, which sets it once when pressed. Generation and the manua
 | `hidePwsh` | true | Hide the official Windows shell while Bash is available; disabled entirely when `global.hidePwsh` is false |
 | `hideOfficialTools` | true | Hide the official file tools this mode replaces; disabled entirely when `global.hideOfficialTools` is false |
 | `dynamicTools` | true | Publish the progressive SDK loader `ops_load_sdk`; effective only while `global.dynamicTools` is also on (AND gate) |
+| `disclosurePolicy` | `on-demand` | YAML-only explicit first-round disclosure tier: `on-demand` keeps the legacy progressive path (resident + loader); `full` publishes the whole `allowedTools` pool plus `result` in the first round with no loader (implemented; see the D3 addendum in docs/design-decisions-20261119.md). Effective only while `global.dynamicTools` is on — the explicit opt-in never overrides the bundle switch; while it is off the row keeps its legacy resident/always-loaded surface and the saved choice is preserved. Rejected on non-PTC rows; illegal values are errors naming the key and the received value or type. No upgrade, settings save or switch flip ever writes this key for you |
 | `batchingGuidance` | true for `ops-ptc`, false otherwise | Teach once at session start (logged history, system prompt untouched), then correct the shape of root `run_code` programs: `bypass`, `plan` and `shape` each latch once per turn and re-arm when the program complies; the notice rides the triggering result as `additionalContexts` and never blocks or rewrites the program. Text lives in the editable `prompts/batching-guidance.md`. YAML-only; an omitted `ops-ptc` section in a legacy whole-row profile override retains true; explicit false disables it |
 | `spillRetentionDays` | 30 | Host subprocess spill retention window; `0` reports only and never deletes |
 | `spillTotalBudgetMiB` | 256 | Total retained spill budget in MiB; `0` disables the budget |
@@ -84,6 +85,14 @@ The remaining keys (`binaryPath`, `required`, `denyCredentialReads`, `promptPoli
 Native guidance; `allowedTools`/`alwaysLoaded` accept loadable raw API names only, see
 [Progressive PTC SDK loading](ptc-sdk-loading.md)). The three `spill*` keys bound host subprocess spill
 retention, described under built-in advanced configuration below.
+
+The exact first-round `ops_*` name sets for the five legacy inputs — defaults,
+`global.dynamicTools:false`, row `dynamicTools:false`, that row plus `alwaysLoaded:[stat]`, and
+`residentTools:false` — are locked letter by letter in the
+[D1 truth table](design-decisions-20261119.md). Old `dynamicTools:false` publishes only the
+resident/always-loaded surface and must not be read as a full selection; the explicit full tier
+is a separate `disclosurePolicy` opt-in whose parsing contract and conservative precedence are
+recorded in the same document's D2 addendum, with publication owned by the D3 slice.
 
 ### Batch-call guidance (`batchingGuidance`)
 
