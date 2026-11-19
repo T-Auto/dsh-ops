@@ -65,7 +65,7 @@ const stepKey = (step) => step.api + ' ' + JSON.stringify(step.args)
  * @param {(fact: string) => void} add - record one failed fact.
  * @returns {number} how many legitimate waits the trajectory spent.
  */
-function scanReissues(steps, add) {
+export function scanReissues(steps, add) {
   let waits = 0
   const previous = new Map()
   for (const step of steps) {
@@ -93,7 +93,7 @@ function scanReissues(steps, add) {
  * @param {{index: number, program: number, api: string, args: object, response: object}[]} steps - every call in order.
  * @returns {number} how many responses the model had to act on.
  */
-function countOpportunities(steps) {
+export function countOpportunities(steps) {
   return steps.filter((step) => {
     const response = step.response ?? {}
     if (SIGNAL_STATUSES.includes(response.status)) return true
