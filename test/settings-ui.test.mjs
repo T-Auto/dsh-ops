@@ -141,6 +141,80 @@ await test('an invalid typed path blocks the save and names the host reason', as
   } finally { await view.close() }
 })
 
+await test('the disclosure card picks the tier, cancels edits, and never writes an untouched old profile', async () => {
+  const writes = []
+  const form = { state: ready({}), mutate: async ops => { writes.push(ops); return true } }
+  const view = await mount(RowForm, { form, Switch: TestSwitch })
+  try {
+    const card = group(view.container, en.disclosureTitle)
+    assert.ok(card, 'the disclosure card renders')
+    const radios = card.querySelectorAll('input[type=radio]')
+    assert.equal(radios.length, 2)
+    assert.equal(radios[0].checked, true, 'an old profile shows the on-demand default')
+    assert.equal(radios[1].checked, false)
+    // The bundle switch keeps its veto: while dynamic tools are off the card
+    // names the suspension instead of hiding the choice.
+    await click(switchIn(group(view.container, en.groupGlobal), en.dynamicTools))
+    assert.ok(card.textContent.includes(en.disclosureSuspended), 'the suspended full tier is named')
+    await click(button(view.container, en.reset))
+    assert.equal(card.textContent.includes(en.disclosureSuspended), false, 'reset restores the running tier')
+    // Cancel before saving: reset restores the saved tier and writes nothing.
+    await click(radios[1])
+    await click(button(view.container, en.reset))
+    assert.equal(card.querySelectorAll('input[type=radio]')[0].checked, true, 'reset restores the saved tier')
+    assert.deepEqual(writes, [], 'a cancelled edit is never written')
+    // Saving the full tier writes both PTC rows once.
+    await click(card.querySelectorAll('input[type=radio]')[1])
+    await click(button(view.container, en.save))
+    assert.deepEqual(writes[0], [
+      { op: 'set', path: ['ptc', 'disclosurePolicy'], value: 'full' },
+      { op: 'set', path: ['ops-ptc', 'disclosurePolicy'], value: 'full' },
+    ])
+    // Disagreeing saved rows are named, never reduced to a favourite.
+    const mixed = { state: ready({ 'ops-ptc': { disclosurePolicy: 'full' } }, 'v2'), mutate: async ops => { writes.push(ops); return true } }
+    await view.render({ form: mixed, Switch: TestSwitch })
+    const mixedCard = group(view.container, en.disclosureTitle)
+    assert.ok(mixedCard.textContent.includes(en.disclosureMixed), 'a disagreement is named')
+    assert.equal(mixedCard.querySelectorAll('input[type=radio]')[0].checked, false, 'mixed checks neither radio')
+    assert.equal(mixedCard.querySelectorAll('input[type=radio]')[1].checked, false)
+  } finally { await view.close() }
+})
+
+await test('a saved full tier reads back through the real host and other saves keep it', async () => {
+  let observed
+  const fixture = await profileFixture('disclosure-page', {
+    Config: (await import('../lib/settings/merged.js')).Config, apply(_ctx, config) { observed = config },
+  }, {})
+  let pending
+  const form = {
+    state: ready(fixture.snapshot().value, fixture.snapshot().revision),
+    mutate(ops, revision) {
+      return pending = (async () => {
+        await fixture.mutate(ops, revision); await fixture.ctx.loader.await()
+        form.state = ready(fixture.snapshot().value, fixture.snapshot().revision)
+        return true
+      })()
+    },
+  }
+  const view = await mount(RowForm, { form, Switch: TestSwitch })
+  try {
+    const card = group(view.container, en.disclosureTitle)
+    await click(card.querySelectorAll('input[type=radio]')[1])
+    await click(button(view.container, en.save)); await act(async () => { await pending })
+    assert.equal(observed.ptc.disclosurePolicy, 'full')
+    assert.equal(observed['ops-ptc'].disclosurePolicy, 'full')
+    // Reopening the page reads the saved choice back.
+    await view.render({ form, Switch: TestSwitch })
+    assert.equal(group(view.container, en.disclosureTitle).querySelectorAll('input[type=radio]')[1].checked, true)
+    // Saving another card's switch never loses the tier.
+    await click(switchIn(group(view.container, en.groupOther), en.featurePanel))
+    await click(button(view.container, en.save)); await act(async () => { await pending })
+    assert.equal(observed.panel.enabled, true)
+    assert.equal(observed.ptc.disclosurePolicy, 'full', 'the saved tier survives an unrelated save')
+    assert.equal(observed['ops-ptc'].disclosurePolicy, 'full')
+  } finally { await view.close(); await shutdown(fixture.ctx) }
+})
+
 await test('rendered preset hints describe default conditional PowerShell hiding', async () => {
   const form = { state: ready({}), mutate: async () => true }
   const view = await mount(RowForm, { form, Switch: TestSwitch })

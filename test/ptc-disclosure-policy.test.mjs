@@ -31,9 +31,11 @@ await test('input class 2 (legal value): on-demand and full parse and ride the s
     assert.equal(resolveModeConfig({ disclosurePolicy: 'full' }, mode).disclosurePolicy, 'full', mode)
     assert.equal(resolveModeConfig({ disclosurePolicy: 'on-demand' }, mode).disclosurePolicy, 'on-demand', mode)
   }
-  // D2 adds no settings-page field: the key stays YAML-only (the entry is D5).
+  // D5 (#989) moved the key onto the merged row page as a volatile string the
+  // disclosure card owns; the legacy per-mode form keeps it YAML-only.
   assert.equal('disclosurePolicy' in modeFields('ops-ptc'), false)
-  assert.equal('disclosurePolicy' in Config.dict['ops-ptc'].dict, false)
+  assert.equal('disclosurePolicy' in Config.dict['ops-ptc'].dict, true)
+  assert.equal(Config.dict['ops-ptc'].dict.disclosurePolicy.meta.volatile, true)
 })
 
 await test('input class 3 (misspelled value): the diagnostic names the key and the value', () => {
