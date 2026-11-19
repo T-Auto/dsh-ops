@@ -32,21 +32,23 @@ export interface ExecutorSurface {
 export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Installed?: boolean; executor: ExecutorSurface }) {
   const { form, t, Switch, pwsh7Installed, executor } = props
   // A stable reader: a fresh closure would re-run the editor's effect every render.
-  const read = useMemo(() => (value: Record<string, unknown>) => readRowValues(value, { pwsh7Installed }), [pwsh7Installed])
+  const read = useMemo(() => (value: Record<string, unknown>) => ({
+    switches: readRowValues(value, { pwsh7Installed }), choice: readExecutor(value),
+  }), [pwsh7Installed])
   const editor = useEditor(form, read, t)
   const [opened, setOpened] = useState<Record<string, boolean>>({})
-  const [choice, setChoice] = useState<ExecutorChoice>(() => readExecutor(form?.state.value ?? {}))
+  const choice = editor.draft.choice
+  const setChoice = (value: ExecutorChoice) => editor.edit({ ...editor.draft, choice: value })
   const [check, setCheck] = useState<{ ok: boolean; text: string }>()
   const [saving, setSaving] = useState(false)
   // The saved row is the baseline: a Host reload while the page is dirty must not
   // silently adopt somebody else's executor.
   useEffect(() => {
     if (editor.dirty) return
-    setChoice(readExecutor(editor.baseline))
     setCheck(undefined)
   }, [editor.baseline, editor.dirty])
   if (!editor.ready) return <Unavailable {...props} />
-  const draft = editor.draft, gates = bundleGates(draft)
+  const draft = editor.draft.switches, gates = bundleGates(draft)
   const savedChoice = readExecutor(editor.baseline)
   const executorDirty = executorDiffers(choice, editor.baseline)
   const candidates = executor.snapshot?.git ?? []
@@ -89,7 +91,7 @@ export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Ins
   const pwsh7Link = draft['other.pwsh7Link'] === true
   // Detection would turn this on; an explicit off is worth naming so it is not read as a bug.
   const explicitOff = pwsh7Installed === true && draft['other.pwsh7Link'] === false
-  const set = (flat: string, value: boolean) => editor.edit({ ...draft, [flat]: value })
+  const set = (flat: string, value: boolean) => editor.edit({ ...editor.draft, switches: { ...draft, [flat]: value } })
   return <form className="ops-settings" onSubmit={event => { void submit(event) }}>
     {groupsFor(editor.baseline).map(group => {
       const enabled = group.toggle ? draft[`${group.id}.enabled`] !== false : true
@@ -179,7 +181,7 @@ export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Ins
       </div>
     </section>
     <FormActions busy={editor.busy || saving} dirty={editor.dirty || executorDirty} valid
-      reset={() => { editor.reset(); setChoice(savedChoice); setCheck(undefined) }} message={editor.message} t={t} />
+      reset={() => { editor.reset(); setCheck(undefined) }} message={editor.message} t={t} />
   </form>
 }
 
