@@ -15,6 +15,7 @@ import * as tuiModule from './components/tui/index.js'
 import * as downloadGuardModule from './components/download-guard/index.js'
 import { configureResultCacheGc } from './kernel/result-cache-gc.js'
 import { registerOpsPtcPreset } from './presets/ops-ptc/register.js'
+import { assertHostFloor } from './adapter/dsh/host-floor.js'
 export { Config } from './settings/merged.js'
 export { applyComponent } from './legacy/host.js'
 export const name = 'dsh-ops'
@@ -31,6 +32,11 @@ export const name = 'dsh-ops'
 
 export async function apply(root: Context, rawConfig: unknown): Promise<void> {
   const config = resolveMergedConfig(rawConfig)
+  // Activation-time host support boundary (#701): an older host hears one named
+  // diagnosis here instead of loading halfway and failing with TypeError scope
+  // errors backstage and EXECUTOR_UNAVAILABLE in front. An unknown host version
+  // cannot be proven below the floor, so it loads as before.
+  await assertHostFloor(root)
   const host = root
   const mount = async (module: { apply(...args: unknown[]): unknown }, state: { enabled: boolean; raw?: Record<string, unknown>; config: unknown }, slice?: Record<string, unknown>): Promise<void> => {
     if (!state.enabled) return

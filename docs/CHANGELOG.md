@@ -21,6 +21,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - The Niubash face list no longer names applets the frozen winuxcmd answers with "command not found" (measured: jq, link): a generated argv0 stub for those shadowed the system command with an entry that could not run it (#966). A prepared cache that still carries a face the list no longer declares is judged damaged and rebuilt from the pinned source, so a stale stub cannot survive a cache reuse.
 - Niubash face 清单不再包含冻结 winuxcmd 以 "command not found" 回应的 applet（实测：jq、link）：为它们生成的 argv0 桩会以一个无法运行的入口遮蔽系统命令（#966）。已 prepared 的缓存若仍携带清单不再声明的 face，会被判损坏并从固定源重建，旧桩无法在缓存复用中存活。
 
+- Activation refuses an older host once, in one named diagnosis: a version below the package's own `engines.dsh` floor (`>=0.2.2-rc.1 <0.2.3-0`) fails `apply` at its first step with the floor, the host-reported version and the upgrade path, instead of loading halfway and dying in TypeError scope errors backstage with EXECUTOR_UNAVAILABLE in front (#701). An unreadable manifest or a version the host will not reveal cannot be proven below the floor, so both load as before; the range stays the single source of truth, read from the manifest beside the running build, never a copy.
+- 激活期具名拒绝一次过旧宿主：低于本包自身 `engines.dsh` 下界（`>=0.2.2-rc.1 <0.2.3-0`）的版本让 `apply` 在第一步即失败，诊断给出下限、宿主实测版本与升级路径，而不是加载到一半在后场死于 TypeError scope 错误、前场只看到 EXECUTOR_UNAVAILABLE（#701）。清单不可读或宿主不肯报版本时无法证明低于下限，两者照旧加载；范围以清单为唯一事实源，从运行构建旁的 manifest 读取，绝不复制副本。
+
 ## [0.5.5] — 2026-11-13 — Patch release
 
 - A loader-less PTC scope no longer registers the configured `allowedTools` pool: with dynamic loading off nothing could ever select those APIs, and a host assembly without a step tool set declared all sixteen in `tools:sdk`. Resident publication, the default inspect + loader set and selection behavior are unchanged (#887).
