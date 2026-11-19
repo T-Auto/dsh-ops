@@ -7,7 +7,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { assert, test, report, PACKAGE_ROOT } from './lib/harness.mjs'
-import { BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, LOAD_SECTION_HEADING, LOAD_TABLE_ROW_PREFIX, loadBatchingGuidance, renderBatchingGuidance } from '../lib/ptc/batching-guidance.js'
+import { BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, LOAD_PROSE_ANCHOR, LOAD_SECTION_HEADING, LOAD_TABLE_ROW_PREFIX, loadBatchingGuidance, renderBatchingGuidance } from '../lib/ptc/batching-guidance.js'
 
 /** The editable guidance file shipped at the package root, outside the build output. */
 const GUIDANCE_FILE = path.join(PACKAGE_ROOT, 'prompts', 'batching-guidance.md')
@@ -20,7 +20,7 @@ await test('the shipped guidance is English Markdown with its host-source identi
   }
   assert.equal(BATCHING_GUIDANCE_ID, 'batching-guidance')
   // A wording or format change is a product change and must bump the revision.
-  assert.equal(BATCHING_GUIDANCE_REVISION, '5')
+  assert.equal(BATCHING_GUIDANCE_REVISION, '6')
 })
 
 await test('the guidance loader returns exactly the shipped Markdown file', () => {
@@ -119,6 +119,11 @@ await test('a loader-less scope is never taught to load', () => {
   // The defect this guards: the lesson named a call that cannot succeed in this scope.
   assert.equal(rendered.includes('ops_load_sdk'), false, 'the unreachable loader is gone')
   assert.equal(rendered.includes(LOAD_SECTION_HEADING), false, 'the load section is replaced')
+  // The Step 1 prose taught the same entry without naming the loader tool, so its
+  // wording must not survive beside a section that says there is no loader.
+  assert.equal(rendered.includes('SDK loading'), false, 'the Step 1 load prose is gone')
+  assert.equal(rendered.includes('separate program'), false, 'no load entry is advertised')
+  assert.ok(rendered.includes('Run independent calls under Promise.all'), 'the shared split lesson survives')
   assert.ok(rendered.includes('## Step 3 - call what is published'), 'the step that remains is named')
   assert.ok(rendered.includes('ops_glob') && rendered.includes('ops_grep'), 'the resident names are listed instead')
   // Everything shared with the loader path survives verbatim: the lesson is not truncated.
@@ -198,6 +203,9 @@ await test('the shipped file still carries the anchors the renderer rewrites', (
   const lines = loadBatchingGuidance().split('\n')
   assert.ok(lines.some(line => line.trim() === LOAD_SECTION_HEADING), 'the load heading is present')
   assert.ok(lines.some(line => line.startsWith(LOAD_TABLE_ROW_PREFIX)), 'the load row is present')
+  // The Step 1 prose must sit on its own line, or the prose filter would cut a shared
+  // line short and leave the split lesson truncated.
+  assert.ok(lines.some(line => line.startsWith(LOAD_PROSE_ANCHOR)), 'the load prose is a whole line')
 })
 
 await test('a loader-less scope whose only file API is inspect states the paths it needs', () => {

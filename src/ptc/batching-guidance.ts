@@ -15,7 +15,7 @@ import { literalShellFileWork } from './shell-file-work.js'
 /** Identity of the guidance in the host message source. */
 export const BATCHING_GUIDANCE_ID = 'batching-guidance'
 /** Revision of the guidance text; bump it when the wording or the file format changes. */
-export const BATCHING_GUIDANCE_REVISION = '5'
+export const BATCHING_GUIDANCE_REVISION = '6'
 
 /** The shipped guidance file, resolved from this module's own location (src or lib). */
 const DEFAULT_GUIDANCE_FILE = new URL('../../prompts/batching-guidance.md', import.meta.url)
@@ -158,6 +158,9 @@ function stripLoader(rows: readonly string[]): string[] {
       }
       if (row.startsWith(LOAD_TABLE_ROW_PREFIX)) continue
       if (row.includes('ops_load_sdk')) continue
+      // The Step 1 prose advertises the same entry without naming the loader tool, so
+      // it must not survive beside a replacement section that says there is no loader.
+      if (row.includes(LOAD_PROSE_ANCHOR)) continue
       kept.push(row)
       continue
     }
@@ -181,6 +184,8 @@ const LOAD_HEADING = /\bload(?:ing|er)?\b/i
 
 /** The one table row that teaches the loader. */
 export const LOAD_TABLE_ROW_PREFIX = '| ops_read_files before it is loaded'
+/** The opening words of the Step 1 prose that teaches SDK loading without the tool name. */
+export const LOAD_PROSE_ANCHOR = 'SDK loading'
 
 /**
  * The path caveat for a loader-less scope that cannot discover paths.
