@@ -49,7 +49,9 @@ requireWorker('ptc-two-tier-matrix')
 
 const OFFICIAL_TRIO = ['glob', 'grep', 'read']
 /** run_code is the executor's own tool: it is not part of the registry views this matrix compares. */
-const HOST_STEP_TOOLS = [...OFFICIAL_TRIO]
+const HOST_STEP_TOOLS = []
+/** The trio stays admitted only when the row switches hiding off (#961 in baseline). */
+const HOST_STEP_TOOLS_VISIBLE = [...OFFICIAL_TRIO]
 const I = 'ops_inspect_local_file'
 const L = 'ops_load_sdk'
 /** The sixteen-API default pool: every file API but the resident inspect, plus batch and result. */
@@ -198,7 +200,7 @@ async function collectViews(ctx, agent, row, phase, evidence) {
   for (const name of spec.absent) assert.equal(value[name], 'undefined', `${row.id}:${phase} ${name} must not pretend to be executable`)
   if (!noSentinel) sentinel.checks(value)
   if (reject) {
-    assert.equal(value.rejectStatus, 'error', 'the safe rejection is a returned value, not a throw')
+    assert.equal(value.rejectStatus, row.reject.status ?? 'error', 'the safe rejection is a returned value, not a throw')
     assert.equal(value.rejectCode, row.reject.code, JSON.stringify(value))
     assert.ok(value.rejectMessage.includes(row.reject.tool), 'the rejection names the refused API: ' + value.rejectMessage)
     assert.equal(value.rejectEffect, 'none', 'a refused load has no effect')
@@ -233,9 +235,12 @@ async function runRow(row, evidence) {
 // ---- The matrix rows. Eight canonical configurations (issue #992) with the
 // legacy-off variants spelled out, each carrying inputs and expected names. ----
 
-const ON_DEMAND_CAP = { ops: [I, L], host: [...HOST_STEP_TOOLS], official: [...OFFICIAL_TRIO],
+const ON_DEMAND_CAP = { ops: [I, L], host: [...HOST_STEP_TOOLS], official: [],
   diagnostic: [I, L, 'ops_glob', 'ops_grep', 'ops_result'], callable: [I, L],
   absent: ['ops_glob', 'ops_grep', 'ops_result', 'ops_stat', 'ops_write_file', 'ops_batch'], directory: true }
+
+const ON_DEMAND_CAP_VISIBLE_OFFICIAL = { ...ON_DEMAND_CAP,
+  host: [...HOST_STEP_TOOLS_VISIBLE], official: [...OFFICIAL_TRIO] }
 
 const ROWS = [
   { id: 'legacy-default', anchor: L, sentinel: { first: 'inspect' }, switches: {}, expect: { first: {
@@ -243,21 +248,21 @@ const ROWS = [
   // #961 is out of baseline: the shipped hideOfficialTools switch is inert for PTC
   // rows, so its off state publishes the identical surface. #961 flips this row.
   { id: 'official-swap-off', anchor: L, sentinel: { first: 'inspect' }, global: { hideOfficialTools: false },
-    expect: { first: { ...ON_DEMAND_CAP, diagnostic: [I, L, ...POOL16] } } },
+    expect: { first: { ...ON_DEMAND_CAP_VISIBLE_OFFICIAL, diagnostic: [I, L, ...POOL16] } } },
   { id: 'global-off', anchor: I, sentinel: { first: 'inspect' }, global: { dynamicTools: false }, expect: { first: {
-    ops: [I], host: [...HOST_STEP_TOOLS], official: [...OFFICIAL_TRIO], diagnostic: [I], callable: [I],
+    ops: [I], host: ['glob', 'grep'], official: ['glob', 'grep'], diagnostic: [I], callable: [I],
     absent: [L, ...POOL16], directory: false } } },
   { id: 'row-off', anchor: I, sentinel: { first: 'inspect' }, switches: { dynamicTools: false }, expect: { first: {
-    ops: [I], host: [...HOST_STEP_TOOLS], official: [...OFFICIAL_TRIO], diagnostic: [I], callable: [I],
+    ops: [I], host: ['glob', 'grep'], official: ['glob', 'grep'], diagnostic: [I], callable: [I],
     absent: [L, ...POOL16], directory: false } } },
   { id: 'row-off-always', anchor: 'ops_stat', sentinel: { first: 'stat' }, switches: { dynamicTools: false, alwaysLoaded: ['stat'] }, expect: { first: {
-    ops: [I, 'ops_stat'], host: [...HOST_STEP_TOOLS], official: [...OFFICIAL_TRIO], diagnostic: [I, 'ops_stat'],
+    ops: [I, 'ops_stat'], host: ['glob', 'grep'], official: ['glob', 'grep'], diagnostic: [I, 'ops_stat'],
     callable: [I, 'ops_stat'], absent: [L, ...POOL16.filter(name => name !== 'ops_stat')], directory: false } } },
   { id: 'resident-off', anchor: L, load: ['grep'], reject: { tool: 'inspect_local_file', code: 'INVALID_ARGUMENT' },
     sentinel: { first: 'none', loaded: 'grep' }, switches: { residentTools: false }, expect: {
-    first: { ops: [L], host: [...HOST_STEP_TOOLS], official: [...OFFICIAL_TRIO], diagnostic: [L, ...POOL16],
+    first: { ops: [L], host: ['read'], official: ['read'], diagnostic: [L, ...POOL16],
       callable: [L], absent: [I, ...POOL16], directory: true },
-    loaded: { ops: [L, 'ops_grep'], host: [...HOST_STEP_TOOLS], official: [...OFFICIAL_TRIO],
+    loaded: { ops: [L, 'ops_grep'], host: ['read'], official: ['read'],
       callable: [L, 'ops_grep'], absent: [I, 'ops_result', 'ops_stat', 'ops_glob'], directory: true } } },
   { id: 'on-demand-first', anchor: L, sentinel: { first: 'inspect' }, switches: { allowedTools: ['glob', 'grep'] },
     expect: { first: ON_DEMAND_CAP } },
@@ -268,21 +273,21 @@ const ROWS = [
     switches: { allowedTools: ['glob', 'grep'] }, expect: { first: ON_DEMAND_CAP,
     // The pool is exhausted after the load: the directory recommendation
     // correctly disappears when no allowed name is left to load.
-    loaded: { ops: [I, L, 'ops_glob', 'ops_grep', 'ops_result'], host: [...HOST_STEP_TOOLS], official: [...OFFICIAL_TRIO],
+    loaded: { ops: [I, L, 'ops_glob', 'ops_grep', 'ops_result'], host: [...HOST_STEP_TOOLS], official: [],
       callable: [I, L, 'ops_glob', 'ops_grep', 'ops_result'], absent: ['ops_stat', 'ops_write_file', 'ops_batch'], directory: false } } },
   { id: 'full-direct', anchor: 'ops_glob', sentinel: { first: 'grep' },
     switches: { disclosurePolicy: 'full', allowedTools: ['glob', 'grep'] }, expect: { first: {
-    ops: [I, 'ops_glob', 'ops_grep', 'ops_result'], host: [...HOST_STEP_TOOLS], official: [...OFFICIAL_TRIO],
+    ops: [I, 'ops_glob', 'ops_grep', 'ops_result'], host: [...HOST_STEP_TOOLS], official: [],
     diagnostic: [I, 'ops_glob', 'ops_grep', 'ops_result'], callable: [I, 'ops_glob', 'ops_grep', 'ops_result'],
     absent: [L, 'ops_stat', 'ops_write_file', 'ops_batch'], directory: false } } },
-  { id: 'read-only', anchor: L, sandboxMode: 'read-only', reject: { tool: 'write_file', code: 'INVALID_ARGUMENT' },
+  { id: 'read-only', anchor: L, sandboxMode: 'read-only', reject: { tool: 'write_file', code: 'POLICY_DENIED', status: 'rejected' },
     sentinel: { first: 'inspect' }, switches: { allowedTools: ['write_file', 'grep'] }, expect: { first: {
-    ops: [I, L], host: [...HOST_STEP_TOOLS], official: [...OFFICIAL_TRIO],
+    ops: [I, L], host: ['glob'], official: ['glob'],
     diagnostic: [I, L, 'ops_grep', 'ops_result', 'ops_write_file'], callable: [I, L],
     absent: ['ops_write_file', 'ops_grep', 'ops_result', 'ops_stat'], directory: true,
     loaderDescription: { includes: ['write_file, grep, result'], excludes: [] } } } },
   { id: 'narrow-pool', anchor: L, reject: { tool: 'stat', code: 'INVALID_ARGUMENT' }, sentinel: { first: 'inspect' },
-    switches: { allowedTools: ['grep'] }, expect: { first: { ...ON_DEMAND_CAP,
+    switches: { allowedTools: ['grep'] }, expect: { first: { ...ON_DEMAND_CAP, host: ['glob'], official: ['glob'],
     diagnostic: [I, L, 'ops_grep', 'ops_result'],
     loaderDescription: { includes: ['grep, result'], excludes: ['stat', 'glob'] } } } },
   // The custom integration path also admits its own ops_status diagnostics reader,
@@ -339,19 +344,21 @@ await test('drift property: reading the diagnostic registry view cannot satisfy 
     /missing \[.*ops_grep/, 'the step view must be reported as missing names')
 })
 
-await test('the official trio stays visible next to the ops surface while #961 is out of baseline', () => {
-  // #961 (hide replaced official file tools under PTC presets) is not in this
-  // baseline, so today the trio is declared and admitted next to the ops
-  // surface under both hideOfficialTools states — the switch is inert for PTC
-  // rows. When #961 lands, these pins go red for its on state and must be
-  // updated together with it; they exist so that flip is a reviewable diff.
+await test('the hidden official trio leaves the PTC surface now that #961 landed', () => {
+  // #961 (hide replaced official file tools under PTC presets) is now in the
+  // baseline: the replaced read/glob/grep are withdrawn from the PTC
+  // presentation whenever their ops replacements are servable, so the trio no
+  // longer appears beside the ops surface. This pin used to assert the opposite
+  // visibility; it is updated together with that landing on purpose, so the
+  // flip stays a reviewable diff instead of a silent expectation change.
   for (const id of ['legacy-default', 'official-swap-off']) {
     const first = evidence[id].first
-    expectCell(id, 'declared(official)', OFFICIAL_TRIO, OFFICIAL_TRIO)
+    const expectedOfficial = id === 'official-swap-off' ? OFFICIAL_TRIO : []
+    assert.deepEqual(first.official, expectedOfficial, id + ' follows the hiding switch')
     assert.deepEqual(first.ops, [I, L], id + ' publishes the resident surface plus the loader')
   }
   assert.deepEqual(evidence['legacy-default'].first.ops, evidence['official-swap-off'].first.ops,
-    'the shipped hideOfficialTools switch is inert for PTC rows today')
+    'the shipped switch stays inert for PTC rows even with #961 present')
 })
 
 report('ptc-two-tier-matrix')

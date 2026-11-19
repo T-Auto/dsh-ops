@@ -222,7 +222,7 @@ await test('a compliant program re-arms its category, so a regression speaks aga
 })
 
 await test('wait, dependent and cursor programs never spend the shape latch (#999)', () => {
-  const latch = createProgramLatch(), agent = {}
+  const latch = createProgramLatch(() => LOADER), agent = {}
   // Both speakable categories start spent on a thin single call.
   assert.equal(latch.observe(agent, THIN).category, 'plan')
   assert.equal(latch.observe(agent, THIN).category, 'shape')

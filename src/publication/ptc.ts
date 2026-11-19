@@ -152,6 +152,18 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     // the triggering tool result, so no system-prompt bytes are spent up front.
     // One latch for the program-shape trigger. It observes the root run_code program,
     // which is the only place the whole step is visible.
+    // What this scope publishes decides which guidance text is truthful, and the answer
+    // is per agent: a read-only policy removes the mutating calls even when the row names
+    // them. Ownership and runtime availability are checked separately, so teaching never
+    // depends on mount order.
+    const surfaceFor = (agent: Agent): GuidanceSurface => {
+      const mode = ctx.get('sandboxPolicy')?.resolve({ session: agent.session })?.mode
+      return {
+        loader: plan.loader,
+        resident: [...resident].filter(api => reachable(mode, api)).map(api => publicToolName(api)),
+        loadable: allowedApis(agent).map(api => publicToolName(api)),
+      }
+    }
     const shapeLatch = createProgramLatch(surfaceFor)
     const guidanceMessage = async (turn: number, text: string): Promise<UserMessage> => {
       const createUserMessage = await loadUserMessage()
@@ -184,7 +196,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
           return failure('POLICY_DENIED', 'The PTC presentation of this scope has been withdrawn; the retained admission is revoked. No action executed.')
         }
         if (!permitted(entry.agent, api)) {
-          const wasUsable = api !== 'load_sdk' && (resident.has(api) || entry.selected.has(api) || selectedFull.has(api))
+          const wasUsable = api !== 'load_sdk' && (resident.has(api) || entry.selected.has(api))
           return failure('POLICY_DENIED', wasUsable
             ? 'This API was admitted for the calling PTC scope, but the sandbox policy has since withdrawn its permission; the admission is revoked. No action executed.'
             : 'The current sandbox policy does not permit this API for the calling PTC scope; no action executed.')
@@ -285,7 +297,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
               // compaction removed it after it was taught, so one short
               // re-anchor; a fresh session gets the full lesson.
               if (context.visible.any || !entry.taught) {
-                const text = loadBatchingGuidance()
+                const text = renderBatchingGuidance(loadBatchingGuidance(), surfaceFor(agent))
                 return text.length > 0 ? text : undefined
               }
               return COMPACTED_TEACHING_REMINDER

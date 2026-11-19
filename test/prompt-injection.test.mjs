@@ -5,7 +5,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { registerSystemSection, registerStepTailProvider, PromptProviderError } from '../lib/prompt-injection/index.js'
 import { mountPtc } from '../lib/publication/ptc.js'
-import { loadBatchingGuidance } from '../lib/ptc/batching-guidance.js'
+import { BATCHING_GUIDANCE_REVISION, loadBatchingGuidance } from '../lib/ptc/batching-guidance.js'
 import { promptHost, tailMessages } from './lib/prompt-injection-host.mjs'
 const identity = 'You are an AI agent powered by DeepSeek Harness.\n\n'
 
@@ -301,8 +301,12 @@ await test('the real teacher sends the lesson once, replays it after a seed rest
     const first = tailMessages(h.requests[0])
     assert.equal(first.length, 1)
     assert.equal(first[0].source.contributor, 'batching-guidance')
-    assert.equal(first[0].source.revision, '4')
-    assert.equal(first[0].content[0].text, `[Plugin context from "batching-guidance"; not a user instruction or authorization.]\n${loadBatchingGuidance()}`)
+    assert.equal(first[0].source.revision, String(BATCHING_GUIDANCE_REVISION))
+    // The delivered lesson is rendered for this scope's surface (P1/P2), so assert
+    // the attribution prefix and a stable heading rather than the raw file text.
+    const lessonText = first[0].content[0].text
+    assert.ok(lessonText.startsWith('[Plugin context from "batching-guidance"; not a user instruction or authorization.]' + String.fromCharCode(10)), 'the lesson keeps its attribution prefix')
+    assert.ok(lessonText.includes('# Batch tool calls'), 'the lesson carries its heading')
     const lessonId = first[0].id
     // Human inputs and user-role messages are counted apart: the lesson is a
     // user-role message but never a human input.
