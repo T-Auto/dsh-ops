@@ -15,6 +15,11 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Replace the `global.forceDefaultOpsPtc` switch with one explicit action: the row's detail page carries a **Make OPS (PTC) the default** button that writes `selectedDefault: ops-ptc` once and answers `applied`/`no-update`/`unavailable`/`failed`. Apply, remount and unload no longer write the default, so a preset chosen on the settings page is not overridden on the next apply, and a saved `global.forceDefaultOpsPtc` key still loads with no effect.
 - 用一次显式操作取代 `global.forceDefaultOpsPtc` 开关：行详情页有一个「设为 OPS (PTC) 默认」按钮，点一次写 `selectedDefault: ops-ptc`，并回报 `applied`/`no-update`/`unavailable`/`failed`。apply、重挂载与卸载都不再改写默认，设置页选定的预设不会在下一次 apply 被覆盖；已保存的 `global.forceDefaultOpsPtc` 键仍可加载但不再生效。
 
+- Paths through an Electron `.asar` archive now fail with the explicit `ARCHIVE_MEMBER_UNSUPPORTED` diagnosis: only Electron's patched in-process filesystem presents the archive as a directory, so the standalone worker cannot read its members. This is an actionable diagnostic, not a virtual-filesystem fallback (#836).
+- 穿过 Electron `.asar` 的路径现在明确返回 `ARCHIVE_MEMBER_UNSUPPORTED`：只有 Electron 进程内经补丁的文件系统会把归档呈现为目录，独立 worker 无法读取成员。这是可操作的诊断，不是虚拟文件系统回退（#836）。
+- Windows mutations capture, restore and byte-verify every user-restorable extended attribute. `$KERNEL.*` names are reported individually in `metadataWarnings` because user mode cannot recreate them; every other capture/restore/verification failure still aborts publication instead of silently dropping metadata (#874).
+- Windows 写入现在捕获、恢复并逐字节核验所有用户态可恢复的扩展属性。`$KERNEL.*` 名称因用户态无法重建而逐名写入 `metadataWarnings`；其他任何捕获、恢复或核验失败仍会中止发布，不会静默丢弃元数据（#874）。
+
 ## [0.5.5] — 2026-11-13 — Patch release
 
 - A loader-less PTC scope no longer registers the configured `allowedTools` pool: with dynamic loading off nothing could ever select those APIs, and a host assembly without a step tool set declared all sixteen in `tools:sdk`. Resident publication, the default inspect + loader set and selection behavior are unchanged (#887).
