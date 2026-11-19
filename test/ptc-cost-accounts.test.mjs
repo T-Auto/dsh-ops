@@ -211,9 +211,13 @@ await test('the four accounts of one OPS-PTC group: system, its SDK subset, the 
   // when #961 lands, this turns red on purpose and the accounts must be re-run.
   for (const name of ['ops_inspect_local_file', 'ops_load_sdk']) assert.ok(snapshots.steady.sdk.names.includes(name), name)
   for (const name of ['ops_glob', 'ops_grep', 'ops_read_files']) assert.ok(snapshots.loaded.sdk.names.includes(name), name)
+  // #961 has landed: the replaced official bindings are withdrawn from the PTC
+  // SDK whenever their ops replacement is servable, so the ledger pins the hidden
+  // state. The official provider is still mounted, which the unmeasurable branch
+  // below keeps honest when it is not.
   for (const name of OFFICIAL) {
-    assert.ok(snapshots.loaded.sdk.names.includes(name),
-      'baseline fact: the official ' + name + ' is declared beside its ops replacement; if this fails, PR #961 landed — re-run and update the ledger docs')
+    assert.equal(snapshots.loaded.sdk.names.includes(name), false,
+      '#961 landed: the official ' + name + ' is withdrawn from the PTC SDK')
   }
   // C: run_code stays the only wire transport on every request.
   for (const request of requests) assert.deepEqual(request.wireNames, ['run_code'])
