@@ -264,3 +264,41 @@ unchanged — ptc-config-truth 13/0/0, resident-switch 24/0/0, ptc-disclosure-po
 note, not a regression: `ptc.test.mjs`'s installed-runtime check asserts precedence
 over `DSH_OPS_WORKER_BIN`, so it runs without that env override (it fails identically
 on the base commit with the override set).
+
+## D4 addendum — custom rows follow the publication plan (2026-11-19)
+
+D1 sign-off item 4 is resolved: the custom-integration diagnostic no longer hand-writes
+its expected first-round PTC names. The derivation moved to `src/ptc/disclosure.ts`
+(`disclosurePlan`), read by both `src/publication/ptc.ts` and
+`src/integration/diagnostics.ts`, so `result` — selectable, not resident — no longer
+reads as `PUBLICATION_UNAVAILABLE: ops_result` on a legal `profile: 'ptc'` row, the
+explicit full tier's whole pool is expected when a row selects it, and a genuinely
+missing first-round name still reports. The D1 truth-table pin that locked the
+misdiagnosis is flipped to `ready` in the same change.
+
+The custom integration path now parses `disclosurePolicy` with the same contract the
+builtin rows have had since D2: omitted keeps `on-demand`, `'full'` is an explicit
+opt-in, illegal values are errors naming the key, and Native-presentation rows reject
+it. Recorded, deliberately not unified: `alwaysLoaded` outside `allowedTools` stays a
+hard `ConfigError` on the custom path (`src/consumer/options.ts`) while builtin rows
+accept it silently — the difference is asserted on both sides (custom:
+`test/preset-integration.test.mjs`; builtin: `test/ptc-config-truth.test.mjs`).
+
+Three #988 fixtures are pinned end to end — parsed pool, first-round `ops_*` set,
+diagnostic state: a legacy `discovery: false` row (empty pool, inspect only, `ready`),
+a full tier with an unfilled cap (whole pool, loader-less, `ready`) and a full tier
+with `allowedTools: ['stat']` (inspect + stat + result, `ready` — an explicit narrow
+pool never widens to the default whole pool). A native custom preset's visible tool
+set is snapshotted so the diagnostics fix cannot quietly re-shape the Native surface,
+and a worker-less row still reports the genuinely missing first-round name without
+padding the gap with `result`.
+
+**Verification.** `npm run build`; red first (base d0fcd6f):
+`node test/run.mjs preset-integration` 5 of 13 failed (unknown `disclosurePolicy` key
+twice, the `ops_result` misdiagnosis twice more — the missing-worker gap message was
+padded with `result`), and `node test/run.mjs ptc-config-truth` failed exactly the
+flipped pin (1 of 13). Green after: preset-integration 13/0/0, ptc-config-truth 13/0/0,
+plus unchanged regressions integration-diagnostics, ptc-disclosure-policy,
+ptc-full-disclosure 8/0/0, ptc-declaration-surface, consumer-assembly,
+publication-reentry-rows, settings-rows, preset-registration; worker
+`DSH_OPS_WORKER_BIN=runtime/linux-x64/dsh-ops-worker` (sha256 2b5f988d).
