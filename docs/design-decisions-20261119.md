@@ -264,3 +264,80 @@ unchanged — ptc-config-truth 13/0/0, resident-switch 24/0/0, ptc-disclosure-po
 note, not a regression: `ptc.test.mjs`'s installed-runtime check asserts precedence
 over `DSH_OPS_WORKER_BIN`, so it runs without that env override (it fails identically
 on the base commit with the override set).
+
+## V3 addendum — the data-driven acceptance matrix (#992, 2026-11-19)
+
+Card [#992](https://github.com/T-Auto/dsh-ops/issues/992). This slice adds tests and
+assertion helpers only: no publication behaviour changes. One new suite,
+`test/ptc-two-tier-matrix.test.mjs` (16 checks), drives every configuration as data.
+
+**The matrix.** Eight canonical rows — legacy default, legacy off (the
+`global.dynamicTools:false`, row-level `dynamicTools:false`, that row plus
+`alwaysLoaded:[stat]`, and `residentTools:false` variants), on-demand first step,
+on-demand after loading, the explicit full first round, read-only, a narrow pool,
+and a custom `profile: 'ptc'` integration — each carrying its config inputs and the
+exact business names it must publish. Every row is measured in three views with one
+shared comparator: the SDK text the model reads (declared), the step admission the
+loop resolves (admitted), and the `run_code` program bindings (callable). A fourth,
+clearly separate view collects the no-toolSet diagnostic assembly: a host assembly
+that omits the step tool set reads every registered definition, so it is a
+registration superset, never an admission proof — the default row's diagnostic shows
+all sixteen pool APIs plus inspect and the loader while its step admits exactly
+inspect + loader.
+
+**Sentinels and safe rejections.** Every row executes a real no-side-effect sentinel
+through the real worker (`ops_inspect_local_file`, `ops_stat`, or `ops_grep` over a
+fixture file); the read-only row's inspect runs with the sandbox in read-only mode.
+Write authority is asserted with a safe rejection: under read-only,
+`ops_load_sdk({tools:['write_file']})` answers `INVALID_ARGUMENT` naming the refused
+API with `effectState: 'none'` — no worker spawn, no side effect — and the
+`ops_write_file` binding stays absent in all three step views while remaining visible
+in the registration diagnostic.
+
+**The drift property is itself asserted.** Removing any single expected name from a
+row's collected set fails exactly its cell and prints the culprit; inventing a name
+fails as extra; and reading the diagnostic registry view where a step view is
+required fails with the pool named. Demonstrated live for the PR: corrupting the
+global-off row's expected set (as if the dynamic gate had been removed) fails with
+`global-off:first/declared(ops) drifted: missing [ops_load_sdk]`, and restoring the
+row returns the suite to green.
+
+**Unified acceptance.** With the same permission tier, the on-demand loaded business
+set equals the full first round on both publication paths (preset and custom
+integration) — the load set must include `result`, forced by the D3 sign-off item 1
+rule, so the comparison is exact including `ops_result`. A loaded API becomes
+callable only in the next program; an unloaded or permission-revoked one never
+pretends to be executable (`typeof` stays `'undefined'` in every row's probe).
+
+**#961 pinning.** [#961](https://github.com/T-Auto/dsh-ops/issues/961) (hide replaced
+official file tools under PTC presets) is not in this baseline, so the matrix pins
+today's truth: the official `read`/`glob`/`grep` trio is declared (in the `: `
+SDK shape, next to the `: {` ops shape) and admitted beside the ops surface under
+both `global.hideOfficialTools` states — the switch is inert for PTC rows today, and
+the `official-swap-off` row records it letter for letter. When #961 lands, these pins
+go red for its on state and must be updated together with it; they exist so that flip
+is a reviewable diff, not a silent drift.
+
+**Platform note.** The matrix is measured on Linux with the real worker, no Windows
+simulation; POSIX rows keep the host shell, so `ops_bash` is absent from every
+expected set. The Windows surface keeps its own suites on real Windows machines.
+
+**Current-state facts recorded along the way.** The custom integration path admits
+its own `ops_status` diagnostics reader — admitted and callable beside the pool, but
+never declared (it has no SDK projection) and not part of the two-tier kernel, so the
+unified comparison excludes it. The loader description carries the configured cap
+(`Configured raw names (current authority may narrow this pool): …`), not the
+sandbox-narrowed one; a narrow pool narrows it correctly. The directory
+recommendation text disappears once the configured pool is exhausted. Byte budgets
+are V2 and real-model rounds are V5; the loader-less declaration half owned by
+`test/ptc-declaration-surface.test.mjs` belongs to P5 and is untouched.
+
+**Verification.** `npm run build`; red first (the honest sequence): the first run
+failed 5 rows on boot mechanics and 3 on wrong expectations — every correction
+matched shipped behaviour or fixed the suite's own probe (the raw-name `tools.glob`
+vs `ops_glob` binding typo, the lossless-JSON sentinel, the loader-less host set).
+Green after: `DSH_OPS_WORKER_BIN=runtime/linux-x64/dsh-ops-worker` (sha256 2b5f988d)
+`node test/run.mjs ptc-two-tier-matrix` → all 16 checks passed in ~11 s; regressions
+unchanged: ptc-full-disclosure 8/0/0, ptc-declaration-surface 5/0/0,
+ptc-config-truth 13/0/0, resident-switch 24/0/0; `npm run check:size` clean.
+
