@@ -74,7 +74,9 @@ async function setup(cwd, mode, switches, global = {}, override = {}) {
   presets.set(scopeOf(preset), mode)
   for (const name of ['read', 'glob', 'grep']) preset.tools.register({ name, description: name,
     parameters: { type: 'object', properties: {} }, output: { schema: { type: 'object' }, render: () => [] }, execute: async () => ({}) })
-  const agent = { id, session: { id, mode: 'danger-full-access', header: { cwd }, append() {}, read() { return [] } } }
+  // The derived history the teaching dedupe reads; batching tests commit into it.
+  const committed = []
+  const agent = { id, session: { id, mode: 'danger-full-access', header: { cwd }, append() {}, read() { return [] }, committed, deriveMessages: () => committed } }
   agent.ctx = await scoped(preset, agent, scopeOf(preset))
   if (mode === 'ptc' || mode === 'ops-ptc') await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply: inner => { selectExecutor(inner, 'ptc') } })
   agents.push(agent)
@@ -198,6 +200,7 @@ await test('ops-ptc batchingGuidance teaches until the lesson is committed to hi
     // admission never becomes history, so the lesson must be offered again.
     assert.equal(stepTailMessages(await drivePreStep(agent, 2)).length, 1, 'an uncommitted lesson is offered again')
     // Once the host reports the durable message, the lesson is spent for the session.
+    agent.session.committed.push(first[0])
     await ctx.serial('session/event', agent.session, { type: 'user/message', data: { source: first[0].source } })
     assert.equal(stepTailMessages(await drivePreStep(agent, 3)).length, 0, 'a committed lesson is never repeated')
   } finally { await shutdown(ctx) }

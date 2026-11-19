@@ -28,6 +28,12 @@ import { publicationRegistration, publicationReady } from './reentry.js'
 import { retired as retiredLegacyRow } from '../settings/legacy.js'
 export { resolvePtcConfig } from '../config.js'
 export const name = 'dsh-ops-ptc'
+/**
+ * Short re-anchor delivered once when a compaction removed the full lesson from
+ * the visible history: the compaction summary is assumed to keep the gist, so
+ * one line re-points the operating rule instead of re-sending the whole lesson.
+ */
+export const COMPACTED_TEACHING_REMINDER = 'The batch-call guidance delivered earlier is no longer visible in this session history. Keep grouping independent tool calls in one run_code program under Promise.all, open every program with a first-line // plan:, and route file work through the ops_* APIs instead of the shell or Node IO.'
 
 interface Entry {
   agent: Agent
@@ -39,7 +45,7 @@ interface Entry {
   pending: Set<ApiName>
   definitions: Map<string, ToolDefinition>
   disposers: (() => void)[]
-  /** Whether the teacher trajectory reached session history, not merely the pre-step. */
+  /** Whether the lesson reached this agent's durable history, not merely the pre-step. After a compaction removes it from view, this latch is what earns the short re-anchor instead of the full text. */
   taught: boolean
   files: Map<FileToolName | 'result', { lease: PublicationLease; revoke?: () => void; dispatch: ToolDefinition['execute']; granted?: { entitled: boolean; selected: boolean; config: object } }>
 }
@@ -197,13 +203,24 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
           // The provider must not latch here. A batch can still be withdrawn before
           // admission (cancellation, rejection), and latching on the return value
           // would then skip the lesson for the whole session without a trace.
+          // The framework skips the provider while the same-revision lesson is
+          // visible, so a session restored from that history adds 0 new messages
+          // instead of re-teaching what the model can already see.
           entry.disposers.push(registerStepTailProvider(entry.ctx, agent, {
             id: BATCHING_GUIDANCE_ID,
             revision: BATCHING_GUIDANCE_REVISION,
-            provide() {
-              if (entry.taught) return undefined
-              const text = loadBatchingGuidance()
-              return text.length > 0 ? text : undefined
+            dedupe: 'visible',
+            provide(context) {
+              // Reaching here means the model cannot currently see the lesson:
+              // an older revision visible is a wording change, so the new text
+              // teaches anew; nothing visible with the latch set means a
+              // compaction removed it after it was taught, so one short
+              // re-anchor; a fresh session gets the full lesson.
+              if (context.visible.any || !entry.taught) {
+                const text = loadBatchingGuidance()
+                return text.length > 0 ? text : undefined
+              }
+              return COMPACTED_TEACHING_REMINDER
             },
           }))
           // The program-shape trigger observes the ROOT run_code call: only there is

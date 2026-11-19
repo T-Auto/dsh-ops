@@ -285,7 +285,7 @@ await test('dedupe providers are skipped while their same-revision message is vi
     registerStepTailProvider(h.owner(), a, { id: 'lesson', revision: '2', dedupe: 'visible',
       provide: context => { seen.push(context.visible); return 'FULL2' } })
     await h.run(a)
-    assert.equal(tailMessages(h.requests[3]).filter(m => m.source.revision === '2').length, 1,
+    assert.equal(tailMessages(h.requests[4]).filter(m => m.source.revision === '2').length, 1,
       'an older revision stays visible evidence, so the replacement revision is delivered')
     assert.deepEqual(seen[2], { any: true, current: false })
     assert.deepEqual(h.errors, [])
