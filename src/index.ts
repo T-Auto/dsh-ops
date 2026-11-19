@@ -5,7 +5,7 @@ import { resolveModeConfig } from './presets/config.js'
 import { resolveMergedConfig, effectiveMode, dynamicForMode } from './settings/merged.js'
 import { MODE_IDS } from './presets/types.js'
 import { beginMergedRow, endMergedRow } from './settings/legacy.js'
-import { mountIntegration } from './integration/index.js'
+import { mountIntegration, mountModeDiagnostics } from './integration/index.js'
 import { gateConsumer } from './consumer/gates.js'
 import { resolveIntegrationConfig } from './consumer/options.js'
 import { mountRuntimeSettings } from './settings/runtime-host.js'
@@ -65,10 +65,13 @@ export async function apply(root: Context, rawConfig: unknown): Promise<void> {
     for (const mode of MODE_IDS) {
       const state = config[mode]
       const effective = resolveModeConfig(effectiveMode(state, config.global, typeof config.other.raw?.pwsh7Link === 'boolean' ? config.other.raw.pwsh7Link : companionVersion({ sweep: false }) !== undefined), mode)
-      await host.plugin({ name: `dsh-ops/consumer-${mode}`, apply(ctx: Context) {
+      await host.plugin({ name: `dsh-ops/consumer-${mode}`, async apply(ctx: Context) {
         applyResolvedMode(ctx, effective, mode, { enabled: state.enabled,
           discovery: { ...config.discovery.config, enabled: config.discovery.enabled },
           dynamic: dynamicForMode(state, config.global) })
+        // Built-in modes answer ops_status too (#753): the named diagnosis used
+        // to exist only behind an external preset row.
+        await mountModeDiagnostics(ctx, mode)
       } })
     }
     for (const row of Object.values(config.presets)) {
