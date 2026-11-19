@@ -32,7 +32,8 @@ must be the first line of the program, before code or blank lines.
 ## Step 1 - split by dependency
 
 Run independent calls under Promise.all. Await dependencies sequentially in the same
-program. SDK loading requires a separate program before using the new bindings.
+program.
+SDK loading requires a separate program before using the new bindings.
 
 ## Step 2 - reconcile
 
