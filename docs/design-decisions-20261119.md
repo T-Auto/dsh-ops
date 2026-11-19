@@ -196,7 +196,8 @@ absolute for every disclosure shape. The row-level `dynamicTools` keeps its
 loader-only meaning: the full tier publishes no loader (#979 §2), so a row that
 also turns the loader off keeps its explicit tier. `effectiveMode` encodes this
 gate; the saved intent is preserved exactly like the existing dynamicTools AND
-gate preserves it.
+gate preserves it. This is the conservative resolution; maintainers may revisit
+it.
 
 **Serialization.** `hostConfig` (the save-path serializer) preserves an explicit
 choice verbatim and never auto-writes the key: reading → saving an unrelated
