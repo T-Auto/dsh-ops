@@ -169,3 +169,48 @@ this slice — that is what the suite asserts.
   1–5-per-call cap with the count-cap-free resident startup list, and the legal
   custom PTC integration misdiagnosed `PUBLICATION_UNAVAILABLE: ops_result`. The
   suite now reports 13 passed / 0 skipped / 0 failed on the baseline.
+
+## D2 addendum — the explicit disclosure policy key, parsed (2026-11-19)
+
+Card [#986](https://github.com/T-Auto/dsh-ops/issues/986), on top of this table's
+branch. This addendum records what D2 locked and resolves sign-off item 2's
+precedence question conservatively; publication of the full tier remains D3.
+
+**The key.** The `ptc` and `ops-ptc` rows accept a YAML-only
+`disclosurePolicy: 'on-demand' | 'full'` (default `'on-demand'` = the legacy path
+of this table, letter for letter). Illegal values are errors naming the key and
+the received value or type; non-PTC rows (`minimal`, `standard`, `cordis`)
+reject the key with `disclosurePolicy applies to the ptc and ops-ptc rows only`.
+The builtin consumer plan slice and custom integrations keep the legacy default
+until D3/D4 teach them the tier.
+
+**Sign-off item 2, resolved conservatively per #979 §4.** An explicit full
+selection is a *distinct opt-in* and never overrides the bundle switch: while
+`global.dynamicTools` is off, the full tier is not applied — the row keeps its
+legacy resident/alwaysLoaded surface (row 2 of this table) — and the saved
+choice stays untouched in the row config, re-applying when the switch returns
+on. This keeps every §4 guarantee in one direction: upgrades, settings saves
+and switch flips never write or erase the key, and the operator's off stays
+absolute for every disclosure shape. The row-level `dynamicTools` keeps its
+loader-only meaning: the full tier publishes no loader (#979 §2), so a row that
+also turns the loader off keeps its explicit tier. `effectiveMode` encodes this
+gate; the saved intent is preserved exactly like the existing dynamicTools AND
+gate preserves it.
+
+**Serialization.** `hostConfig` (the save-path serializer) preserves an explicit
+choice verbatim and never auto-writes the key: reading → saving an unrelated
+setting → reading again keeps `'full'`, and every legacy input — the five rows
+of this table included — resolves with the key absent at both the raw and
+serialized layers.
+
+**Still not implemented.** Truth-table row T stays a target: nothing publishes
+the full tier yet (D3 owns `src/publication/ptc.ts` and the builtin plan slice),
+there is no settings-page entry (D5), and sign-off items 1, 3 and 4 remain open
+as recorded above.
+
+**Verification.** `npm run build`, then `node test/run.mjs ptc-disclosure-policy`
+— 8 checks, red first (8 of 8 failed on the unimplemented baseline, the key
+rejected as unknown), green after. `node test/run.mjs ptc-config-truth` 13/0/0,
+`node test/run.mjs resident-switch` 24/0/0 and `node test/run.mjs settings-rows`
+14/0/0 unchanged on the new parsing path, worker
+`DSH_OPS_WORKER_BIN=runtime/linux-x64/dsh-ops-worker` (sha256 2b5f988d).

@@ -232,6 +232,12 @@ export function effectiveMode(state: FeatureState<ModeConfig>, global: GlobalSwi
     hidePwsh: flag(raw, 'hidePwsh', state.config.hidePwsh) && global.hidePwsh && !pwsh7Link,
     hideOfficialTools: flag(raw, 'hideOfficialTools', true) && global.hideOfficialTools,
     dynamicTools: flag(raw, 'dynamicTools', true) && global.dynamicTools,
+    // Sign-off item 2 (docs/design-decisions-20261119.md), taken conservatively
+    // per #979 §4: the explicit full tier is its own opt-in and never overrides
+    // the bundle switch. While the switch is off the effective slice says
+    // on-demand, so the row keeps its legacy resident/alwaysLoaded surface; the
+    // saved choice stays untouched in state.raw and re-applies when switched on.
+    ...(raw.disclosurePolicy === 'full' && !global.dynamicTools ? { disclosurePolicy: 'on-demand' } : {}),
   }
 }
 
