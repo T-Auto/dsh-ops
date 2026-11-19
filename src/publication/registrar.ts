@@ -142,15 +142,14 @@ export async function acquire(ctx: Context, scope: object | undefined, name: str
         if (!matching.length) {
           // Same-agent grants with no entitled member can still explain themselves: a pool
           // publication points its caller at the loader instead of a retry-never denial (#968).
-          const advice = [...grants].find(grant => grant.agent === exec.agent && typeof grant.deferred === 'function')
-          if (advice !== undefined) {
-            const deferred = advice.deferred
-            if (typeof deferred === 'function') {
-              try {
-                const outcome = deferred()
-                if (outcome !== undefined && 'error' in outcome) return outcome
-              } catch { /* an unavailable advisor falls back to the generic denial */ }
-            }
+          // Consult every same-agent advisor in grant order: one that cannot help — by
+          // answering undefined or by throwing — must not mask later grants that can.
+          for (const advisor of grants) {
+            if (advisor.agent !== exec.agent || typeof advisor.deferred !== 'function') continue
+            try {
+              const outcome = advisor.deferred()
+              if (outcome !== undefined && 'error' in outcome) return outcome
+            } catch { /* an unavailable advisor falls through to the next one */ }
           }
           return denied('PUBLICATION_GRANT_UNAVAILABLE')
         }
