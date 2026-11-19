@@ -205,7 +205,11 @@ export function apply(root: Context, raw?: unknown): void {
       const masks = maskable(context.scope)
       const leaked = collapsed ? [] : tools.definitions(context.scope, context.toolSet).map(tool => tool.name).filter(name => masks.has(name))
       if (leaked.length) throw block(context.scope, `assembled surface still contains hidden official tools: ${leaked.join(', ')}`)
-      return result
+      // Section text resolves before this waterfall, so a hidden tool's own
+      // `tool:<name>` section still instructs a call this scope refuses. Drop the
+      // section together with the mask instead of leaving stale guidance behind.
+      const stale = new Set([...masks].map(name => `tool:${name}`))
+      return stale.size ? { ...result, sections: result.sections.filter(section => !stale.has(section.name)) } : result
     })
     ctx.on('agent/created', ({ agent }) => { attach(agent); return undefined })
     ctx.on('agent/disposed', ({ agent }) => {

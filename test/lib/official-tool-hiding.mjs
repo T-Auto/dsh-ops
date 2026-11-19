@@ -150,6 +150,27 @@ export async function officialToolHidingMountChecks() {
       assert.ok((await assemble(ctx, current)).tools.some(t => t.name === 'read'))
     } finally { await shutdown(ctx) }
   })
+  await test('a hidden official tool loses its own prompt section with the mask', async () => {
+    const { ctx } = await bootHost()
+    try {
+      await replacements(ctx)
+      for (const name of ['read', 'glob', 'grep', 'foreign']) ctx.tools.register(tool(name))
+      // The host resolves each `tool:<name>` section before this component's
+      // assembly waterfall, so the masked tool's own guidance would otherwise
+      // still tell the model to call a tool the captured step refuses.
+      for (const name of ['read', 'glob', 'grep', 'foreign']) {
+        ctx.get('systemPrompt').section({ name: `tool:${name}`, order: 5000, text: `Use the ${name} tool.` })
+      }
+      const hiding = await mount(ctx)
+      const agent = await mint(ctx, 'prompt-section-hide-agent')
+      const sections = (await assemble(ctx, agent)).sections.map(section => section.name)
+      for (const name of ['read', 'glob', 'grep']) assert.equal(sections.includes(`tool:${name}`), false)
+      assert.ok(sections.includes('tool:foreign'), 'an unselected tool keeps its own guidance')
+      await hiding.dispose()
+      const restored = (await assemble(ctx, agent)).sections.map(section => section.name)
+      for (const name of ['read', 'glob', 'grep']) assert.ok(restored.includes(`tool:${name}`), `${name} guidance returns with its tool`)
+    } finally { await shutdown(ctx) }
+  })
   await test('unselected stock tools stay visible and dispatchable without warning lists', async () => {
     const { ctx } = await bootHost()
     try {
