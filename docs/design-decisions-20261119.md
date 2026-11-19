@@ -104,6 +104,51 @@ return r.status
    diagnostic, and `residentTools:false` silently drops the whole resident set including
    `alwaysLoaded`. Decision needed: which of these conflicts get a readable diagnostic in
    D2, and whether `alwaysLoaded` must be inside `allowedTools`.
+   Supplementary contrast fact (append-only audit, same day): the **custom
+   integration path** is stricter — `src/consumer/options.ts:100` rejects a custom PTC
+   config whose `alwaysLoaded` escapes `allowedTools` with
+   `alwaysLoaded must be in allowedTools`, while the built-in rows accept the same
+   shape silently (locked above by the suite's "escapes the allowedTools cap" check).
+   The diagnostic inconsistency is owned by the D4 card (#988); D1 records the current
+   state only.
+4. **`ops_result` misdiagnosed as unpublished on a legal custom PTC integration.**
+   `src/integration/diagnostics.ts` lists `'result'` among the first-round expected
+   visible names of every PTC integration scope, but `result` is selectable, not
+   resident (`PTC_RESIDENT_TOOLS` is `inspect_local_file` alone), so it becomes
+   visible only after a loader call selects it. A perfectly legal custom
+   `profile: 'ptc'` integration is therefore diagnosed `degraded` with
+   `PUBLICATION_UNAVAILABLE: ops_result` while its only gap is an API the loader has
+   not selected yet — verified by booting such an integration; the suite's
+   "misdiagnosed PUBLICATION_UNAVAILABLE" check locks it. Built-in mode rows never
+   mount diagnostics at all (`mountDiagnostics` runs only from `mountIntegration`),
+   so the misreport is reachable only through the custom-integration path. The fix is
+   owned by the D4 card (#988); D1 records the current state only.
+
+## Settings-page copy — recorded verbatim
+
+The settings page and its row switch describe the dynamic-tools switch as a
+"discovery entry". The shipped strings, recorded verbatim from
+`src/client/locales.ts`:
+
+| Key | English | 中文 |
+| --- | --- | --- |
+| `dynamicToolsHint` | "When off, no preset offers the discovery entry." | "关闭后没有任何预设提供发现入口。" |
+| `swDynamicToolsHint` | "Offers the discovery entry to this preset. Applies only while the bundle switch is on." | "为该预设提供发现入口。仅在总开关开启时生效。" |
+
+What the PTC row actually publishes for that entry is the typed loader
+`ops_load_sdk` (truth-table rows 1 and 5), not a discovery-style tool: the wording
+and the artifact differ. Unifying the wording is the D5 slice of #979; this card
+records the gap only.
+
+## Loader batching — recorded current behaviour
+
+One `ops_load_sdk` call accepts 1–5 exact raw API names (`requestedApis` in
+`src/projections/ptc/loader.ts` — `tools must contain 1-5 exact raw API names`), so
+filling the sixteen-name default pool takes at least four calls. `alwaysLoaded` and
+the rest of the resident set carry no count cap: `parsePtcConfig`
+(`src/ptc/config.ts`) validates each name against the loadable pool, never the
+list's length, and resident APIs publish without any loader call. Locked by the
+suite's "loader batches 1-5 names" check.
 
 ## Scope
 
@@ -120,3 +165,7 @@ this slice — that is what the suite asserts.
   expected constant in the suite makes exactly that row's check fail
   ("1 of 11 check(s) failed"); restoring the constant returns the suite to green.
 - `node test/run.mjs resident-switch` — unchanged neighbour suite, see the PR.
+- Supplementary audit (append-only, same day): two checks were added — the loader's
+  1–5-per-call cap with the count-cap-free resident startup list, and the legal
+  custom PTC integration misdiagnosed `PUBLICATION_UNAVAILABLE: ops_result`. The
+  suite now reports 13 passed / 0 skipped / 0 failed on the baseline.

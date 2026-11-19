@@ -16,7 +16,9 @@ import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
 import { apply } from '../lib/index.js'
 import { resolveMergedConfig, effectiveMode, dynamicForMode } from '../lib/settings/merged.js'
 import { resolveModeConfig } from '../lib/modes/config.js'
-import { PTC_LOADABLE_TOOLS, PTC_RESIDENT_TOOLS } from '../lib/ptc/config.js'
+import { PTC_LOADABLE_TOOLS, PTC_RESIDENT_TOOLS, parsePtcConfig } from '../lib/ptc/config.js'
+import { requestedApis } from '../lib/projections/ptc/loader.js'
+import { integration, diagnose } from '../lib/integration/index.js'
 import { publicToolName } from '../lib/policy.js'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { prepareStep, executeCall, selectExecutor } from './lib/executor.mjs'
@@ -213,5 +215,49 @@ await test('the ptc row publishes the same first-round set as ops-ptc', async ()
   const set = await firstRoundOps('ptc', {}, {}, 'ops_inspect_local_file')
   assert.deepEqual(set, ROW_DEFAULT)
 })
+
+await test('the loader batches 1-5 names per call; the resident startup list has no count cap', () => {
+  // Current behaviour, locked so a silent cap change cannot pass: one load_sdk call
+  // accepts 1-5 exact raw names, so the sixteen-name pool needs at least four calls,
+  // while alwaysLoaded publishes any validated list with no length limit.
+  const empty = requestedApis({ tools: [] }, PTC_LOADABLE_TOOLS)
+  assert.equal(typeof empty, 'string', 'an empty request is rejected')
+  assert.ok(String(empty).includes('1-5'), 'the rejection names the 1-5 contract')
+  assert.equal(typeof requestedApis({ tools: PTC_LOADABLE_TOOLS.slice(0, 6) }, PTC_LOADABLE_TOOLS), 'string', 'a six-name request is rejected')
+  assert.deepEqual(requestedApis({ tools: ['grep', 'grep', 'stat'] }, PTC_LOADABLE_TOOLS), ['grep', 'stat'], 'duplicates collapse; a legal pair loads')
+  assert.equal(Math.ceil(PTC_LOADABLE_TOOLS.length / 5), 4, 'sixteen names need at least four loader calls')
+  const full = parsePtcConfig({ allowedTools: PTC_LOADABLE_TOOLS, alwaysLoaded: PTC_LOADABLE_TOOLS })
+  assert.deepEqual(full.alwaysLoaded, PTC_LOADABLE_TOOLS, 'no count cap on the startup list')
+  assert.deepEqual(full.allowedTools, PTC_LOADABLE_TOOLS)
+})
+
+await test('a legal custom ptc-profile integration is misdiagnosed PUBLICATION_UNAVAILABLE: ops_result (decision item 4)', () => withTempDir('truth-diag-' + ++sequence, async cwd => {
+  // Current behaviour, locked so the D4 fix (#988) cannot land silently: diagnostics
+  // lists ops_result among first-round expected names, but result is selectable, not
+  // resident, so a legal custom PTC integration reads degraded while its only gap is
+  // an API the loader has not selected yet.
+  const { ctx } = await bootHost({ withWorkingDirectory: true })
+  try {
+    await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem); await ctx.plugin(NodePtc)
+    ctx.provide('sandboxPolicy', { resolve: ({ session } = {}) => ({ mode: session?.mode ?? 'danger-full-access', workspaceRoot: cwd, sessionId: session?.id }) })
+    ctx.provide('agentPresets', { composedPreset: () => undefined })
+    const agents = []
+    ctx.provide('agents', { list: () => [...agents] })
+    await ctx.plugin(integration({ preset: 'truth-diag-ptc', profile: 'ptc', binaryPath: WORKER, required: true }))
+    const id = 'truth-diag-' + ++sequence
+    const agent = { id, session: { id, mode: 'danger-full-access', header: { cwd, agentPreset: 'truth-diag-ptc' } } }
+    await ctx.plugin({ inject: ['tools'], apply(inner) { agent.ctx = createScope(inner, agent).ctx } })
+    await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply: inner => { selectExecutor(inner, 'ptc') } })
+    agents.push(agent)
+    await ctx.serial('agent/created', { agent })
+    agent.prepared = await prepareStep(ctx, agent)
+    await waitFor(() => opsNames(ctx, agent).includes('ops_inspect_local_file'), { what: 'ops_inspect_local_file published' })
+    await wait(100)
+    const d = await diagnose(ctx, agent)
+    assert.equal(d.state, 'degraded', JSON.stringify(d.issues))
+    assert.ok(d.issues.some(row => row.code === 'PUBLICATION_UNAVAILABLE' && row.message.includes('ops_result')),
+      'the only missing name is the selectable-but-not-resident result API')
+  } finally { await shutdown(ctx) }
+}))
 
 report('ptc-config-truth')
