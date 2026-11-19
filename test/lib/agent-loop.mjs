@@ -15,12 +15,13 @@ import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import FileSystem from '@deepseek-ai/dsh-fs-local'
 import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
 import { integration } from '../../lib/integration/index.js'
+import { apply as applyShippedRow } from '../../lib/index.js'
 import { assert } from './harness.mjs'
 import { WORKER } from './boundary.mjs'
 import { legacyComponent } from './legacy-component.mjs'
 import { workingDirectoryOver } from './host.mjs'
 let identity = 0
-export async function bootLoop(root, { ptcMode = false, discoveryConfig = {} } = {}) {
+export async function bootLoop(root, { ptcMode = false, discoveryConfig = {}, preset = 'fixture', row } = {}) {
   const ctx = new Context(); ctx.logger.level = 0
   // rc.5 asks the host for the directory a run_code call executes in.
   ctx.provide('workingDirectory', workingDirectoryOver(root))
@@ -45,11 +46,16 @@ export async function bootLoop(root, { ptcMode = false, discoveryConfig = {} } =
     inner.on('tools/execute', async (exec, next) => { const result = await next(); results.push({ exec, result }); return result })
     inner.on('agent/error', ({ error }) => errors.push(String(error?.stack ?? error)))
   })
-  const ptcFiber = await ctx.plugin(integration({ preset: 'fixture', profile: ptcMode ? 'ptc' : 'native',
-    binaryPath: WORKER, required: true, ...discoveryConfig }))
+  // Without a row the composition is the custom-preset integration fixture; with
+  // one it is the shipped single row exactly as a profile mounts it, so a suite
+  // can exercise a real mode (e.g. ops-ptc) instead of a synthetic preset.
+  const composition = row === undefined
+    ? integration({ preset, profile: ptcMode ? 'ptc' : 'native', binaryPath: WORKER, required: true, ...discoveryConfig })
+    : { name: 'dsh-ops-shipped-row', apply: inner => applyShippedRow(inner, row) }
+  const ptcFiber = await ctx.plugin(composition)
   await ctx.plugin(Loop, { agents: [], maxParallelToolCalls: 3 })
   async function agent(parentAgent) {
-    const { agent } = await ctx.get('agents').create({ sessionId: 'real-loop-' + ++identity, meta: { cwd: root, agentPreset: 'fixture' }, parentAgent,
+    const { agent } = await ctx.get('agents').create({ sessionId: 'real-loop-' + ++identity, meta: { cwd: root, agentPreset: preset }, parentAgent,
       agentOptions: { provider: 'fixture', model: 'scripted' } })
     // Exercise a real committed mode event immediately before the first assembly.
     setSandboxMode(agent.session, 'workspace-write')
