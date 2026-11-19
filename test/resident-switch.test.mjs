@@ -216,6 +216,53 @@ await test('a loader-less ops-ptc row teaches only what it publishes', () => wit
     assert.equal(text.includes('ops_load_sdk'), false, 'the unreachable loader is gone')
     assert.match(text, /call what is published/, 'the direct-call step replaces it')
     assert.match(text, /ops_stat/, 'the published API is listed instead')
+    // The only file API this scope publishes is the resident reader, so the lesson must
+    // state its contract: directories are rejected, concrete paths are required.
+    assert.match(text, /rejects directories/, 'the inspect path requirement is taught')
+  } finally { await shutdown(ctx) }
+}))
+
+/** The replaced Step 3 section of a taught loader-less lesson, as flat JSON text. */
+const step3Of = taught => {
+  const lesson = JSON.stringify(taught)
+  return lesson.slice(lesson.indexOf('call what is published'), lesson.indexOf('Trajectory 1'))
+}
+
+await test('a read-only loader-less lesson and notice keep the mutating API out', () => withTempDir('batching-readonly-lesson', async cwd => {
+  const { ctx, agent } = await setup(cwd, 'ops-ptc', { residentTools: true, dynamicTools: false,
+    batchingGuidance: true, alwaysLoaded: ['edit_file'], allowedTools: ['stat'] })
+  try {
+    await waitFor(() => names(ctx, agent).includes(publicToolName('inspect_local_file')))
+    // The row always loads the mutating API, so only the read-only policy can keep it
+    // out of the direct-call list: the surface is resolved at delivery time.
+    agent.session.mode = 'read-only'
+    const taught = stepTailMessages(await drivePreStep(agent, 1))
+    assert.equal(taught.length, 1, JSON.stringify(taught))
+    const step3 = step3Of(taught)
+    assert.ok(step3.length > 0, 'the direct-call section is present')
+    assert.equal(step3.includes('ops_edit_file'), false, 'the read-only surface drops the mutating API')
+    assert.match(step3, /ops_inspect_local_file/, 'the resident reader stays listed')
+    assert.match(step3, /rejects directories/, 'the exact-path note stays with the reader')
+    // The same surface narrows the bypass notice: no write API, the reader stays named.
+    const result = await executeCall(ctx, { agent, toolSet: agent.prepared.toolSet, name: 'run_code',
+      arguments: { description: 'shape fixture', code: 'const r = await tools.ops_bash({ description: "list", command: "ls -la" })\nreturn r.stdout.text' },
+      callId: 'readonly-lesson-' + ++sequence, signal: new AbortController().signal })
+    const notice = JSON.stringify(result.additionalContexts ?? [])
+    assert.equal(notice.includes('ops_edit_file'), false, 'the notice keeps the mutating API out')
+    assert.match(notice, /ops_inspect_local_file/, 'the resident reader stays named')
+  } finally { await shutdown(ctx) }
+}))
+
+await test('a writable loader-less lesson lists what its row always loads', () => withTempDir('batching-writable-lesson', async cwd => {
+  const { ctx, agent } = await setup(cwd, 'ops-ptc', { residentTools: true, dynamicTools: false,
+    batchingGuidance: true, alwaysLoaded: ['edit_file'], allowedTools: ['stat'] })
+  try {
+    await waitFor(() => names(ctx, agent).includes(publicToolName('edit_file')))
+    // Without the read-only policy the same row teaches its whole resident list, which
+    // is what keeps the narrowing keyed on the policy instead of always on.
+    const taught = stepTailMessages(await drivePreStep(agent, 1))
+    assert.equal(taught.length, 1, JSON.stringify(taught))
+    assert.match(step3Of(taught), /ops_edit_file/, 'a writable scope teaches what its row always loads')
   } finally { await shutdown(ctx) }
 }))
 
