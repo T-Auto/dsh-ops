@@ -184,31 +184,48 @@ const drivePreStep = async (agent, turn) => {
 /** Plugin-authored contexts appended to the accepted user batch. */
 const stepTailMessages = decision => decision.messages.filter(message => message.source?.kind === 'dsh-ops:step-tail')
 
-await test('ops-ptc batchingGuidance teaches until the lesson is committed to history', () => withTempDir('batching-teach', async cwd => {
+/** The one-time full lesson, told from a per-violation notice by its contributor suffix. */
+const lesson = context => context.source?.kind === 'dsh-ops:step-tail' && context.source?.contributor === 'batching-guidance:lesson'
+
+await test('ops-ptc batchingGuidance teaches once on the first run_code result, never in the user batch', () => withTempDir('batching-teach', async cwd => {
   const { ctx, agent } = await setup(cwd, 'ops-ptc', { residentTools: true, dynamicTools: true,
     batchingGuidance: true, alwaysLoaded: ['stat'], allowedTools: ['stat'] })
   try {
     await waitFor(() => names(ctx, agent).includes(publicToolName('stat')))
-    const first = stepTailMessages(await drivePreStep(agent, 1))
+    // A user-role lesson reads as fresh user input, and the model answers the
+    // lesson instead of the task (#929): the user batch stays free of guidance.
+    assert.equal(stepTailMessages(await drivePreStep(agent, 1)).length, 0)
+    // The lesson rides the first accepted root run_code tool result through the
+    // same-step ephemeral inbox, which the host never logs as user history.
+    const taught = async callId => {
+      const run = await executeCall(ctx, { agent, toolSet: agent.prepared.toolSet, name: 'run_code',
+        arguments: { description: 'Compliant fixture', code: '// plan: two checks\nconst [a, b] = await Promise.all([tools.ops_stat({ path: "x" }), tools.ops_stat({ path: "y" })])\nreturn [a.status, b.status]' },
+        callId, signal: new AbortController().signal })
+      assert.equal(run.isError, false, JSON.stringify(run))
+      return (run.additionalContexts ?? []).filter(context => context.source?.kind === 'dsh-ops:step-tail' && context.source?.contributor === 'batching-guidance:lesson')
+    }
+    const first = await taught('batching-teach-1')
     assert.equal(first.length, 1, JSON.stringify(first))
-    assert.equal(first[0].source.contributor, 'batching-guidance')
     assert.match(JSON.stringify(first), /Batch tool calls/)
     assert.match(JSON.stringify(first), /not a user instruction or authorization/)
-    // The pre-step decision is not the commit point: a batch withdrawn before
-    // admission never becomes history, so the lesson must be offered again.
-    assert.equal(stepTailMessages(await drivePreStep(agent, 2)).length, 1, 'an uncommitted lesson is offered again')
-    // Once the host reports the durable message, the lesson is spent for the session.
-    await ctx.serial('session/event', agent.session, { type: 'user/message', data: { source: first[0].source } })
-    assert.equal(stepTailMessages(await drivePreStep(agent, 3)).length, 0, 'a committed lesson is never repeated')
+    // Teach once: a second root call never repeats the lesson.
+    assert.equal((await taught('batching-teach-2')).length, 0, 'the lesson is spent after its one delivery')
+    // Nothing re-enters the user batch once the lesson is delivered.
+    assert.equal(stepTailMessages(await drivePreStep(agent, 2)).length, 0)
   } finally { await shutdown(ctx) }
 }))
 
-await test('ops-ptc without batchingGuidance teaches nothing on the first turn', () => withTempDir('batching-teach-off', async cwd => {
+await test('ops-ptc without batchingGuidance teaches nothing at all', () => withTempDir('batching-teach-off', async cwd => {
   const { ctx, agent } = await setup(cwd, 'ops-ptc', { residentTools: true, dynamicTools: false,
     batchingGuidance: false, alwaysLoaded: ['stat'], allowedTools: ['stat'] })
   try {
     await waitFor(() => names(ctx, agent).includes(publicToolName('stat')))
     assert.equal(stepTailMessages(await drivePreStep(agent, 1)).length, 0)
+    const run = await executeCall(ctx, { agent, toolSet: agent.prepared.toolSet, name: 'run_code',
+      arguments: { description: 'Thin fixture', code: 'const r = await tools.ops_stat({ path: "a" })\nreturn r.status' },
+      callId: 'batching-off-teach', signal: new AbortController().signal })
+    assert.equal(run.isError, false, JSON.stringify(run))
+    assert.equal((run.additionalContexts ?? []).length, 0, 'switch off: no listener, therefore no lesson and no notice')
   } finally { await shutdown(ctx) }
 }))
 
@@ -224,12 +241,13 @@ await test('the root run_code trigger answers on its own tool result', () => wit
     // A compliant program earns nothing, which is what keeps the notice meaningful.
     const good = await run('// plan: stat one path; stat another\nconst [a, b] = await Promise.all([tools.ops_stat({ path: "a" }), tools.ops_stat({ path: "b" })])\nreturn { a, b }')
     assert.equal(good.isError, false, JSON.stringify(good))
-    assert.equal(contexts(good).length, 0, 'a compliant program earns no notice')
+    assert.equal(contexts(good).filter(context => !lesson(context)).length, 0, 'a compliant program earns no notice')
+    assert.equal(contexts(good).filter(lesson).length, 1, 'the one-time lesson rides the first root result')
     // No plan line: the plan category speaks, and it says only that the comment is missing.
     const thin = await run('const r = await tools.ops_stat({ path: "a" })\nreturn r.status')
     assert.equal(thin.isError, false, JSON.stringify(thin))
     assert.match(text(thin), /did not open with a plan line/, 'the plan notice rides the root result')
-    assert.doesNotMatch(text(thin), /Promise\.all/, 'the plan notice stays about the comment')
+    assert.doesNotMatch(JSON.stringify(contexts(thin).filter(context => !lesson(context))), /Promise\.all/, 'the plan notice stays about the comment')
     // A shell listing is a bypass; the notice names the API that replaces it.
     const bypass = await run('const r = await tools.ops_bash({ description: "list", command: "ls -la" })\nreturn r.stdout.text')
     assert.match(text(bypass), /ops_glob/, 'the bypass notice names the listing tool')
