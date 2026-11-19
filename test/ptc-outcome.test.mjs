@@ -100,6 +100,94 @@ await test('host schema validation and generated SDK enforce the discriminated e
     assert.ok(validateJsonSchemaValue(schema, bad).length > 0)
   }
 })
+await test('partial pages recommend the same-path next page and a complete page recommends none', () => {
+  const args = { path: '/tmp/p6/eleven.txt', offset: 1, limit: 5 }
+  const partial = { status: 'partial', complete: false, nextOffset: 6, total: 11, items: [{ line: 5, text: 'line-5' }] }
+  const page1 = toOutcome('inspect_local_file', args, structuredClone(partial))
+  assert.equal(page1.status, 'partial')
+  assert.match(page1.nextAction, /ops_inspect_local_file \{"path":"\/tmp\/p6\/eleven\.txt","offset":6,"limit":5\}/)
+  assert.match(page1.nextAction, /complete=true/)
+  assert.deepEqual(validateJsonSchemaValue(outcomeSchema(canonicalOutput('inspect_local_file')), page1), [])
+  const page2 = toOutcome('inspect_local_file', { ...args, offset: 6 }, { ...structuredClone(partial), nextOffset: 11, items: [{ line: 10, text: 'line-10' }] })
+  assert.match(page2.nextAction, /"offset":11/)
+  const last = toOutcome('inspect_local_file', { ...args, offset: 11 }, { status: 'completed', complete: true, total: 11, items: [{ line: 11, text: 'line-11' }] })
+  assert.equal(last.status, 'completed')
+  assert.equal('nextAction' in last, false, 'a complete page is the stop signal, never another read')
+})
+await test('directory rejections recommend only listing APIs callable in this step', () => {
+  const refused = () => ({ status: 'error', error: { code: 'INVALID_ARGUMENT', effectState: 'none',
+    message: 'inspect_local_file: path is a directory; choose a file, or list directory entries with the shell',
+    nextAction: 'Correct the request or inspect the manifest.' } })
+  const surface = names => ({ callable: new Set(names), readOnly: false })
+  const listed = toOutcome('inspect_local_file', { path: '/tmp/p6/adir' }, refused(), surface(['ops_inspect_local_file', 'ops_glob']))
+  assert.equal(listed.status, 'error')
+  assert.match(listed.error.nextAction, /ops_glob \{"path":"\/tmp\/p6\/adir","pattern":\["\*"\]\}/)
+  assert.match(listed.error.nextAction, /concrete file path/)
+  const unloaded = toOutcome('inspect_local_file', { path: '/tmp/p6/adir' }, refused(), surface(['ops_inspect_local_file']))
+  assert.doesNotMatch(unloaded.error.nextAction, /ops_glob|ops_grep/)
+  assert.match(unloaded.error.nextAction, /concrete file path/)
+  const unknown = toOutcome('inspect_local_file', { path: '/tmp/p6/adir' }, refused())
+  assert.doesNotMatch(unknown.error.nextAction, /ops_glob|ops_grep|shell/)
+  assert.match(unknown.error.nextAction, /concrete file path/)
+})
+await test('invalid UTF-8 recommends a parameterized hex view the reader schema accepts', () => {
+  const refused = () => ({ status: 'error', error: { code: 'ERR_INVALID_ENCODING', effectState: 'none',
+    message: 'inspect_local_file: File is not valid UTF-8',
+    nextAction: 'Use a dedicated document/binary reader, or inspect with view=hex; do not replace invalid bytes with lossy text.' } })
+  const inspect = toOutcome('inspect_local_file', { path: '/tmp/p6/blob.bin' }, refused())
+  assert.equal(inspect.status, 'error')
+  assert.match(inspect.error.nextAction, /ops_inspect_local_file \{"path":"\/tmp\/p6\/blob\.bin","view":"hex"\}/)
+  const items = () => ({ status: 'partial', complete: false, nextIndex: 1, failed: 1,
+    items: [{ path: '/tmp/p6/blob.bin', error: { code: 'ERR_INVALID_ENCODING', effectState: 'none', message: 'File is not valid UTF-8' } }] })
+  const pointed = toOutcome('read_files', { files: [{ path: '/tmp/p6/blob.bin' }] }, items(), { callable: new Set(['ops_read_files', 'ops_inspect_local_file']), readOnly: false })
+  assert.equal(pointed.status, 'error')
+  assert.match(pointed.error.nextAction, /ops_inspect_local_file \{"path":"\/tmp\/p6\/blob\.bin","view":"hex"\}/)
+  const stranded = toOutcome('read_files', { files: [{ path: '/tmp/p6/blob.bin' }] }, items())
+  assert.doesNotMatch(stranded.error.nextAction, /"view":"hex"/)
+  assert.match(stranded.error.nextAction, /not valid UTF-8/)
+})
+await test('revision conflicts recommend the concrete fresh-revision read; read-only never re-submits', () => {
+  const refused = () => ({ status: 'conflict', error: { code: 'REVISION_CONFLICT', effectState: 'none',
+    message: 'edit_file: Revision differs from expectedRevision; nothing was changed. Inspect before retrying.',
+    nextAction: 'Inspect the current revision before preparing a new request; do not blindly retry.' } })
+  const args = { path: '/tmp/p6/editable.txt', expectedRevision: 'a'.repeat(64), edits: [{ oldText: 'alpha', newText: 'beta' }] }
+  const writable = toOutcome('edit_file', args, refused(), { callable: new Set(['ops_edit_file', 'ops_stat']), readOnly: false })
+  assert.equal(writable.status, 'conflict')
+  assert.match(writable.error.nextAction, /ops_stat \{"path":"\/tmp\/p6\/editable\.txt"\}/)
+  assert.match(writable.error.nextAction, /expectedRevision/)
+  const unknown = toOutcome('edit_file', args, refused())
+  assert.match(unknown.error.nextAction, /revision/)
+  assert.doesNotMatch(unknown.error.nextAction, /do not blindly retry/)
+  const fenced = toOutcome('edit_file', args, refused(), { callable: new Set(['ops_stat']), readOnly: true })
+  assert.doesNotMatch(fenced.error.nextAction, /re-submit|retry/)
+  assert.match(fenced.error.nextAction, /ops_stat \{"path":"\/tmp\/p6\/editable\.txt"\}/)
+})
+await test('read-only scopes never receive a write-class recommendation', () => {
+  const readOnly = { callable: new Set(['ops_inspect_local_file', 'ops_glob', 'ops_stat', 'ops_read_files']), readOnly: true }
+  const cases = [
+    ['inspect_local_file', { path: '/tmp/p6/adir' }, { status: 'error', error: { code: 'INVALID_ARGUMENT', effectState: 'none', message: 'inspect_local_file: path is a directory; choose a file' } }],
+    ['inspect_local_file', { path: '/tmp/p6/blob.bin' }, { status: 'error', error: { code: 'ERR_INVALID_ENCODING', effectState: 'none', message: 'inspect_local_file: File is not valid UTF-8' } }],
+    ['edit_file', { path: '/tmp/p6/e', expectedRevision: 'a'.repeat(64), edits: [{ oldText: 'a', newText: 'b' }] }, { status: 'conflict', error: { code: 'REVISION_CONFLICT', effectState: 'none', message: 'edit_file: Revision differs' } }],
+    ['inspect_local_file', { path: '/tmp/p6/f', offset: 1, limit: 5 }, { status: 'partial', complete: false, nextOffset: 6, items: [{ line: 5, text: 'x' }] }],
+  ]
+  const writes = ['ops_write_file', 'ops_edit_file', 'ops_copy', 'ops_move', 'ops_remove', 'ops_replace', 'ops_batch', 'ops_bash']
+  for (const [tool, args, data] of cases) {
+    const out = toOutcome(tool, args, structuredClone(data), readOnly)
+    const text = (out.status === 'partial' ? out.nextAction : out.error.nextAction) ?? ''
+    for (const name of writes) assert.ok(!text.includes(name), tool + ' recommended ' + name)
+    assert.doesNotMatch(text, /re-submit|overwrite|unlink|delete/i)
+  }
+})
+await test('after-input-change failures say what to change; unmatched worker guidance is preserved', () => {
+  const invalid = toOutcome('grep', { pattern: '[', path: '/tmp/p6' }, { status: 'error', error: { code: 'INVALID_ARGUMENT', effectState: 'none', message: 'grep: pattern is not a valid regex', nextAction: 'Correct the request or inspect the manifest.' } })
+  assert.equal(invalid.status, 'error')
+  assert.equal(invalid.error.retry, 'after-input-change')
+  assert.match(invalid.error.nextAction, /identical request fails identically/)
+  assert.doesNotMatch(invalid.error.nextAction, /retry the same|just retry/i)
+  const kept = toOutcome('copy', { path: '/tmp/p6/s', to: '/tmp/p6/d', expectedRevision: 'a'.repeat(64) },
+    { status: 'error', error: { code: 'CLEANUP_FAILED', effectState: 'unknown', message: 'Could not remove staging sibling x', nextAction: 'Inspect the staging sibling and target before retrying; unpublished bytes may remain.' } })
+  assert.equal(kept.error.nextAction, 'Inspect the staging sibling and target before retrying; unpublished bytes may remain.')
+})
 await test('canonical metadata accepts unavailable timestamps without weakening numeric fields', () => {
   for (const [tool, data] of [
     ['stat', { exists: true, modifiedMs: null, bytes: 2 }],
