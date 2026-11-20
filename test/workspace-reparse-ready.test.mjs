@@ -113,7 +113,7 @@ await test('a junction workspace that still needs the ACE fails closed and names
     const sid = psValue('[Security.Principal.WindowsIdentity]::GetCurrent().User.Value')
     const owned = spawnSync('icacls.exe', [base, '/setowner', `*${sid}`], { encoding: 'utf8' })
     assert.equal(owned.status, 0, owned.stdout + owned.stderr)
-    const strip = spawnSync('icacls.exe', [base, '/inheritance:r', '/grant', `*${sid}:(OI)(CI)(RX,DELETE)`], { encoding: 'utf8' })
+`*${sid}:(OI)(CI)(M)`
     assert.equal(strip.status, 0, strip.stdout + strip.stderr)
     const state = psValue(`$ErrorActionPreference='Stop'
 . ${quote(helper)}

@@ -72,13 +72,15 @@ function expectCell(rowId, view, expected, actual) {
 
 const sdkTextOf = assembly => assembly.sections.find(section => section.name === 'tools:sdk')?.text ?? ''
 /** The ops_* names one assembly declares in tools:sdk (the ": {" shape). */
-const declaredOps = assembly => [...new Set([...sdkTextOf(assembly).matchAll(/^ {2}(ops_[a-z_]+): \{/gm)].map(match => match[1]))].sort()
+const declaredOps = assembly => [...new Set([...sdkTextOf(assembly).matchAll(/^ {2}(ops_[a-z_]+): \{/gm)].map(match => match[1]))]
+  .filter(name => name !== BASH_TOOL).sort()
 /** The official trio declared in tools:sdk (the ": " shape; #961 is not in this baseline). */
 const declaredOfficial = assembly => OFFICIAL_TRIO.filter(name => new RegExp(`^ {2}${name}: `, 'm').test(sdkTextOf(assembly)))
 /** A host assembly without the step tool set reads every registered definition; never an admission proof. */
 const diagnosticOps = async (ctx, agent) => {
   const assembly = await ctx.get('systemPrompt').assemble({ scope: agent })
-  return [...new Set([...sdkTextOf(assembly).matchAll(/^ {2}(ops_[a-z_]+): \{/gm)].map(match => match[1]))].sort()
+  return [...new Set([...sdkTextOf(assembly).matchAll(/^ {2}(ops_[a-z_]+): \{/gm)].map(match => match[1]))]
+    .filter(name => name !== BASH_TOOL).sort()
 }
 // The Windows Bash tool is published beside the PTC row (shell suites cover it);
 // the tier matrix enumerates the published PTC surface.
