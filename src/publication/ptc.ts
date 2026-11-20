@@ -13,14 +13,13 @@ import { renderSdkDirectory } from '../projections/ptc/directory.js'
 import { PTC_RESIDENT_TOOLS } from '../ptc/config.js'
 import type { ApiName } from '../ptc/config.js'
 import { ownPtcScopes } from '../ptc/ownership.js'
-import { BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, createProgramLatch, loadBatchingGuidance } from '../ptc/batching-guidance.js'
+import { BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_LESSON_ID, BATCHING_GUIDANCE_REVISION, createProgramLatch, loadBatchingGuidance } from '../ptc/batching-guidance.js'
 import { InvocationLifetime, InvocationNotStarted } from '../lifecycle/invocations.js'
 import { monitoredInvoke } from '../execution/monitored.js'
 import { record } from '../execution/boundary.js'
 import { failure, resolveWorker } from '../execution/jobs.js'
 import type { Outcome } from '../kernel/outcome.js'
 import { WORKER_TIMEOUT_MS } from '../execution/protocol.js'
-import { registerStepTailProvider } from '../prompt-injection/index.js'
 import { mountWorkspacePreparation } from '../workspace-preparation.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
 import { activationIsPtc, inspectPresentation, isPresentationProbe } from './presentation.js'
@@ -101,11 +100,13 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     // One latch for the program-shape trigger. It observes the root run_code program,
     // which is the only place the whole step is visible.
     const shapeLatch = createProgramLatch()
-    const guidanceMessage = async (turn: number, text: string): Promise<UserMessage> => {
+    // The one-time lesson and the per-violation notices share a revision; the
+    // contributor suffix lets listeners tell the full lesson from a notice.
+    const guidanceMessage = async (turn: number, text: string, contributor: string = BATCHING_GUIDANCE_ID): Promise<UserMessage> => {
       const createUserMessage = await loadUserMessage()
       return createUserMessage({
-        source: { kind: 'dsh-ops:step-tail', contributor: BATCHING_GUIDANCE_ID, revision: BATCHING_GUIDANCE_REVISION, turn, step: 0 },
-        content: [{ type: 'text', text: `[Plugin context from ${JSON.stringify(BATCHING_GUIDANCE_ID)}; not a user instruction or authorization.]\n${text}` }],
+        source: { kind: 'dsh-ops:step-tail', contributor, revision: BATCHING_GUIDANCE_REVISION, turn, step: 0 },
+        content: [{ type: 'text', text: `[Plugin context from ${JSON.stringify(contributor)}; not a user instruction or authorization.]\n${text}` }],
       })
     }
 
@@ -194,20 +195,6 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
             if (payload.agent === agent) shapeLatch.noteTurn(agent, payload.turn)
             return next()
           }))
-          // Teach the rules once, before the model's first request: a step-tail
-          // message rides the first accepted user batch and enters history.
-          // The provider must not latch here. A batch can still be withdrawn before
-          // admission (cancellation, rejection), and latching on the return value
-          // would then skip the lesson for the whole session without a trace.
-          entry.disposers.push(registerStepTailProvider(entry.ctx, agent, {
-            id: BATCHING_GUIDANCE_ID,
-            revision: BATCHING_GUIDANCE_REVISION,
-            provide() {
-              if (entry.taught) return undefined
-              const text = loadBatchingGuidance()
-              return text.length > 0 ? text : undefined
-            },
-          }))
           // The program-shape trigger observes the ROOT run_code call: only there is
           // the whole program text visible. Nested tools.ops_* calls carry a parent
           // token, and their arguments say nothing about the shape of the step.
@@ -217,22 +204,40 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
             if (exec.agent !== agent || exec.name !== 'run_code' || exec.parent !== undefined) return decision
             if (exec.signal.aborted) return decision
             const code = (exec.arguments as { code?: unknown } | undefined)?.code
-            const notice = shapeLatch.observe(agent, code)
-            if (notice === undefined) return decision
+            // Teach the rules once, riding the first accepted root run_code result:
+            // additionalContexts is the same-step ephemeral inbox, never logged
+            // history, so a lesson can never read as fresh user input and the
+            // model's answer cannot loop on its own guidance (#929). The latch is
+            // set at the delivery point: a post-execute decision that returns is
+            // the tool result the host renders, with no later admission step that
+            // could still withdraw it.
+            const contexts = [...(decision.additionalContexts ?? [])]
             try {
-              const message = await guidanceMessage(notice.turn, notice.text)
-              // Observation only: one line, no context, no new dependency.
-              if (gate.telemetry === true) {
-                const counts = shapeLatch.stats(agent)
-                ctx.logger.info('dsh-ops batching: turn=' + notice.turn + ' category=' + notice.category
-                  + ' plan=' + counts.plan + ' bypass=' + counts.bypass + ' shape=' + counts.shape + ' total=' + counts.total)
+              if (!entry.taught) {
+                const text = loadBatchingGuidance()
+                if (text.length > 0) {
+                  contexts.push(await guidanceMessage(shapeLatch.stats(agent).turn, text, BATCHING_GUIDANCE_LESSON_ID))
+                  entry.taught = true
+                }
+              }
+              const notice = shapeLatch.observe(agent, code)
+              if (notice !== undefined) {
+                const message = await guidanceMessage(notice.turn, notice.text)
+                // Observation only: one line, no context, no new dependency.
+                if (gate.telemetry === true) {
+                  const counts = shapeLatch.stats(agent)
+                  ctx.logger.info('dsh-ops batching: turn=' + notice.turn + ' category=' + notice.category
+                    + ' plan=' + counts.plan + ' bypass=' + counts.bypass + ' shape=' + counts.shape + ' total=' + counts.total)
+                }
+                contexts.push(message)
               }
               // Append only: the tool result keeps its own value, content and contexts.
-              return { ...decision, additionalContexts: [...(decision.additionalContexts ?? []), message] }
+              return contexts.length > 0 ? { ...decision, additionalContexts: contexts } : decision
             } catch (error) {
-              // A delivery failure is an optimisation loss, never a tool failure.
+              // A delivery failure is an optimisation loss, never a tool failure:
+              // contexts already collected still ride this result.
               ctx.logger.warn('dsh-ops: batching notice delivery failed: ' + String(error))
-              return decision
+              return contexts.length > 0 ? { ...decision, additionalContexts: contexts } : decision
             }
           }))
         }
@@ -319,13 +324,10 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     ctx.on('session/event', (session, event) => {
       if ((event as { type: string }).type === 'agent-preset/selected') { refresh(); return }
       for (const [agent, entry] of entries) if (agent.session === session) {
-        // The lesson counts as taught only once it is durable history: the step-tail
-        // snapshot can be withdrawn before admission, and a cancelled request must
-        // leave the next accepted batch free to teach it again.
-        if (event.type === 'user/message') {
-          const source = (event as { data?: { source?: { kind?: string; contributor?: string } } }).data?.source
-          if (source?.kind === 'dsh-ops:step-tail' && source.contributor === BATCHING_GUIDANCE_ID) entry.taught = true
-        } else if (event.type === 'step/end') {
+        // The batching lesson no longer latches on user/message events: it rides
+        // the first accepted root run_code tool result, whose returned decision is
+        // the delivery point itself, so there is no admission step to wait for.
+        if (event.type === 'step/end') {
           for (const api of entry.pending) if (permitted(agent, api)) entry.selected.add(api)
           entry.pending.clear()
           rotateFiles(entry)
