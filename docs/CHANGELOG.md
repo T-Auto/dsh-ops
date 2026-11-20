@@ -7,6 +7,60 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Niubash no longer refuses to prepare its runtime when a full-access session's workspace contains
+  the default `~/.dsh` home (#870). The workspace boundary stays armed in read-only and
+  workspace-write modes, where host workspace labeling and write gating could otherwise reach the
+  executable; full access runs without confinement, so the refusal only made a default `DSH_HOME`
+  under a home workspace unusable.
+- Niubash 在 full-access 会话的 workspace 包含默认 `~/.dsh` 时不再拒绝准备运行时（#870）。
+  workspace 边界在 read-only 与 workspace-write 模式仍然生效——host 的 workspace 标注与写限制
+  本可能经由 workspace 触及可执行文件；full access 本就不经过 confinement，该拒绝只会让默认
+  `DSH_HOME` 落在 home workspace 下的会话完全不可用。
+- ops_bash classifies the msys-2.0.dll shared-section startup failure
+  ("CreateFileMapping S-<user SID>.<n>, Win32 error 5", printed without any "fatal
+  error" prefix) as EXECUTOR_UNAVAILABLE with `sandbox.runnerFailed`, so a restricted
+  token hitting an unrestricted MSYS holder's per-user section is no longer presented
+  as a bare non-zero exit (#409).
+- ops_bash 将 msys-2.0.dll 的共享段启动失败（"CreateFileMapping S-<用户 SID>.<n>,
+  Win32 error 5"，打印时不带任何 "fatal error" 前缀）归类为 EXECUTOR_UNAVAILABLE 并带
+  `sandbox.runnerFailed`：受限令牌撞上非受限 MSYS 持有者的用户级共享段时，不再只呈现
+  一个裸的非零退出码（#409）。
+- A regression guard locks the full-access projection of ops_bash: the selected
+  payload spawns without sandbox.confine and a plain bashPath runs directly, while
+  confined modes still route through confinement (#581). The reported full-access
+  child carrying a Low token (S-1-16-4096) did not reproduce on 0.5.5 — a
+  full-access child reported the caller's own integrity label here — so the guard
+  and the token-comparison diagnosis document the boundary instead of claiming a
+  code fix.
+- 回归守卫锁定 ops_bash 的 full-access 投影：所选载荷不经 sandbox.confine 直接 spawn，
+  普通 bashPath 直接运行，受限模式仍走 confinement（#581）。报告的 full-access 子进程
+  Low 令牌（S-1-16-4096）在 0.5.5 上未能复现——本机 full-access 子进程回报调用方自身的
+  完整性标签——因此以守卫与令牌对照诊断记录该边界，而非声称代码修复。
+- Document the niu-Git hook failure whose only difference is the shebang:
+  `#!/usr/bin/env sh` fails while `#!/bin/sh` runs, so husky v9 hooks are
+  affected. The entry records the observed diagnostic pair and the `#!/bin/sh`
+  workaround; the interpreter-resolution attribution is an upstream inference,
+  not a verified root cause (#958, unresolved-upstream).
+- 记录 niu-Git 钩子失败：唯一差异是 shebang——`#!/usr/bin/env sh` 失败而
+  `#!/bin/sh` 可运行，husky v9 钩子同样受影响。条目记录实测诊断对照与
+  `#!/bin/sh` 缓解；解释器解析的归因是上游推断，不是已证根因（#958，
+  unresolved-upstream）。
+- Document the per-call console flash on Windows 10 when Windows Terminal is
+  the default terminal. The entry gives the default-terminal comparison as the
+  diagnosis; the console-host hand-off explanation is an upstream inference, and
+  the hidden-console build remains upstream work, because no dsh-ops setting
+  controls console hosting (#828, unresolved-upstream).
+- 记录 Windows 10 默认终端为 Windows Terminal 时每次调用的控制台闪烁。条目给出
+  默认终端对照作为诊断；控制台宿主交接的解释是上游推断，隐藏控制台构建仍属
+  上游工作——没有任何 dsh-ops 设置控制控制台宿主（#828，unresolved-upstream）。
+- Document the antivirus pattern for Niubash: all pinned files intact except a
+  quarantined `niu.exe`, named by the #844 member diagnostic. The entry gives
+  the Defender/ESET event collection, the provision restore and the fixed-location
+  allow-list guidance, and marks the quarantine an external event rather than a
+  code defect (#771).
+- 记录 Niubash 的杀毒软件模式：全部 pinned 文件完好、仅 `niu.exe` 被隔离，由 #844
+  的成员级诊断点名。条目给出 Defender/ESET 事件收集、provision 恢复与固定位置允许
+  列表指引，并把隔离标注为外部事件而非代码缺陷（#771）。
 - Native tool construction and the publication refusal queue no longer attach listeners or lifetime effects to the composition root. The evidence observer and result admission subscribe on the caller's context with global dispatch, and the refusal queue falls back to the caller lifetime when the root refuses an effect. dsh-tui 0.20 refuses `root.events.on` and `root.effect` from a plugin activation, and the native-tools row is one, so every `dsh-tui --resume` aborted with "cannot resume session" before the agent mounted.
 - 原生工具构造与发布拒绝队列不再向组合根挂监听或生命周期 effect：证据观察者与 result admission 改为在调用方上下文订阅并声明 global 分发，拒绝队列在 root 拒绝 effect 时回落到调用方生命周期。dsh-tui 0.20 会拒绝插件激活期内的 `root.events.on` 与 `root.effect`，而原生工具行正是插件激活，导致每次 `dsh-tui --resume` 都在 agent 挂载前报 "cannot resume session"。
 - The Bash tool description now states the parse contract of `stdout`/`stderr` where the model reads it: `text` may be a partial fragment, `truncated` marks one that must not be parsed as complete structured output, and `spillPath` is optional and not a completeness guarantee. The typed output schema is unchanged: repeating the contract there would cost every PTC request without saying anything the tool text does not. Command semantics, exit codes, result values, limits, spill files, permissions and rendering are unchanged.

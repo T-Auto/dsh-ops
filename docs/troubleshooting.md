@@ -109,6 +109,28 @@ What to do:
 - Or switch the session to `danger-full-access`, where `bashPath` runs directly.
 - Check with the profile's own copy: `node "<profile>\node_modules\dsh-ops\bin\dsh-ops.mjs" ladder --config <file>` reports `restricted: yes/no` for the resolved bash.
 
+### A full-access `ops_bash` child seems to keep the restricted Low token
+
+The session mode projects straight through in full access: the selected payload
+spawns without `sandbox.confine`, a plain `bashPath` runs directly, and the child
+carries the session's own token. Compare the tokens from the same caller before
+assigning a cause (#581):
+
+```console
+MSYS2_ARG_CONV_EXCL='*' /c/Windows/System32/whoami.exe /groups
+```
+
+The `Mandatory Label` line is the child's integrity level: `S-1-16-4096` is Low,
+`S-1-16-8192` Medium, and an elevated caller reports higher. A confined-mode child
+is expected to differ from the host shell; a full-access child must match the
+session's own level. A full-access child that still reports Low is a host
+token-construction difference, not a dsh-ops setting: collect both `whoami.exe
+/groups` outputs, the DSH core, OPS and Bash payload versions, and the exact
+executable paths, and report them with the [runtime evidence
+guide](windows-runtime-evidence.md). The plugin-side projection is guarded by
+`test/shells-full-access-confinement.test.mjs`, which fails if a full-access
+call ever routes through `confinedBash` or `sandbox.confine`.
+
 ### Restricted Bash is still preparing, or its last preparation was interrupted
 
 Symptom, in a read-only or workspace-write session: an `EXECUTOR_UNAVAILABLE` whose second segment names a stage, for example `EXECUTOR_UNAVAILABLE: bash-staging-failed: …`, `bash-generation-quarantine-failed: …` or `bash-lifecycle-lock-busy: …`.
@@ -134,17 +156,19 @@ publishes the completed tree with an atomic sibling rename. Later calls check on
 prepared `niu.exe` still exists; they do not clone, hash, seal, write an execution receipt or
 dispose a per-call tree. Files the shell writes into its state directories are never inspected.
 
-The prepared runtime must be **outside the session workspace**. Every call checks that boundary
-and still uses the host's subprocess service and sandbox `confine` in restricted modes. In read-only and
-workspace-write modes, the host denies writes to both the source and prepared payload outside the
-workspace. Full-access mode keeps its normal host policy; the prepared directory is not a separate
-security boundary against the account or an administrator.
+The prepared runtime must be **outside the session workspace** in confined sessions. Read-only and
+workspace-write modes check that boundary on every call and still use the host's subprocess service
+and sandbox `confine`; the host denies writes to both the source and prepared payload outside the
+workspace. Full-access mode keeps its normal host policy and runs a prepared root inside the
+workspace — the default `~/.dsh` under a home workspace — instead of refusing it, because it is
+not a separate security boundary against the account or an administrator (#870).
 
 - On first preparation only, Windows scanner/indexer handles can delay the atomic publication
   rename. Only `EPERM`/`EACCES`/`EBUSY` rename refusals are backed off, asynchronously, for up to 10 seconds;
   a persistent failure names the rename in `EXECUTOR_UNAVAILABLE`. Commands are never retried.
-- Put `DSH_HOME` outside the workspace before starting DSH. A workspace containing the prepared
-  runtime is refused rather than silently moving the runtime or running without confinement.
+- For confined sessions, put `DSH_HOME` outside the workspace before starting DSH. A workspace
+  containing the prepared runtime is refused in read-only and workspace-write modes rather than
+  silently moving the runtime or running without confinement; full access runs it where it is.
 - `DSH_OPS_EXEC_ROOT` and `NIUBASH_VERIFY=deep` are deprecated and ignored for new calls. Antivirus
   allow-list rules should target the fixed prepared location, not a per-call temporary directory.
 - For leftovers from older releases, stop **every OPS host and Bash job**, then use the installed
@@ -176,6 +200,66 @@ security boundary against the account or an administrator.
 - A missing or corrupt source needs the complete pinned payload restored. Repeated calls or
   switching sessions do not repair it. Selecting an arbitrary Git Bash is not a restricted-mode
   workaround: only a compatible pinned MSYS build may run restricted, never an unconfined fallback.
+
+### `niu`-Git hooks fail with `#!/usr/bin/env sh` while `#!/bin/sh` works
+
+Symptom: a repository hook installed through the niu-Git command — for example a
+husky v9 hook — fails when its shebang is `#!/usr/bin/env sh`, while the same
+script with `#!/bin/sh` runs. The observed pair is the diagnosis. The likely
+mechanism — the `env sh` lookup resolving through the payload's own interpreter
+machinery instead of the direct `sh` face — is an upstream inference this
+repository has not verified inside the niu-Git binary tree (#958).
+
+What to do:
+
+- Confirm the pair from the same hook file: only the shebang differs, and the
+  `#!/bin/sh` form succeeds.
+- Rewrite the affected hooks to `#!/bin/sh`; husky hooks are plain shell
+  scripts, so the shebang is the whole change.
+- Report the payload version and both hook texts to the payload maintainers;
+  they can confirm or correct the interpreter-resolution attribution
+  (unresolved-upstream).
+
+### `ops_bash` flashes a console window on Windows 10 with Windows Terminal
+
+Symptom: every `ops_bash` call briefly flashes a black console window when
+Windows Terminal is the system's default terminal application on Windows 10.
+What is observed is the comparison, not the mechanism: switch the default back
+to the Windows Console Host and see whether the flashing stops. The likely
+mechanism — niubash being a console-subsystem binary launched without an
+interactive parent, so each call asks for a console host and the Windows-10
+terminal hand-off re-creates a visible console — is an upstream inference this
+repository has not verified; no dsh-ops setting controls console hosting, and
+the shipped binary cannot be patched here (#828).
+
+What to do:
+
+- Verify the default terminal setting (Settings → For developers → Terminal)
+  and compare the flashing with the default switched back to the Windows
+  Console Host; that observation pair is the diagnosis.
+- A hidden-console niubash build is upstream payload work (unresolved-upstream).
+
+### Antivirus quarantined `niu.exe` from the payload
+
+Symptom: selection reports `EXECUTOR_UNAVAILABLE ... Incomplete Niubash payload:
+niu.exe` while every other pinned file is intact — only `niu.exe` is missing
+(#771). Preparation copies each pinned member verbatim, so a preparation that
+stops at one executable is not a dsh-ops bug: the matching Defender or ESET
+event is the security product quarantining that executable. This is an external
+event; no repository change can prevent it, and the diagnostic naming the
+missing member landed with #844.
+
+What to do:
+
+- Collect the matching event before restoring: Defender
+  `Get-MpThreat` / `Get-MpThreatDetection` (or the ESET detection log) with its
+  timestamp, action and the exact file path.
+- Restore the complete pinned tree with `dsh-ops provision-shells --bash`, which
+  re-verifies every member.
+- An allow-list rule, if you choose one, targets the fixed prepared location —
+  never disable protection or broadly trust the payload tree.
+- If tampering is suspected, hash the restored `niu.exe` and compare it with the
+  receipt.
 
 ### A second restricted Bash fails while another Bash is still running
 

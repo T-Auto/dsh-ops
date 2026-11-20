@@ -163,13 +163,16 @@ async function physicalPath(file: string): Promise<string> {
 
 /** Command-time runtime for a selected payload. Host workspace labeling must never reach an
  * executable through the workspace or a junction into it, so the prepared root is checked first.
+ * Full access runs without confinement and keeps the account's own authority over every path
+ * (#870); the refusal guards exactly the confined modes that label and gate the workspace.
  */
 export async function prepareNiubash(selected: string, inheritedPath = process.env.PATH ?? process.env.Path ?? '', signal: AbortSignal,
-  { workspaceRoot, env = process.env }: { workspaceRoot?: string; env?: NodeJS.ProcessEnv } = {}): Promise<NativeShellRuntime> {
+  { workspaceRoot, mode, env = process.env }: { workspaceRoot?: string; mode?: 'read-only' | 'workspace-write' | 'danger-full-access'; env?: NodeJS.ProcessEnv } = {}): Promise<NativeShellRuntime> {
   signal.throwIfAborted()
   if (!path.isAbsolute(selected) || !isNiubashExecutable(selected)) throw unavailable('expected an absolute niu.exe path')
   const source = path.dirname(selected), target = niubashPreparedRoot(env)
-  if (workspaceRoot && (inside(target, path.resolve(workspaceRoot)) || inside(await physicalPath(target), await physicalPath(workspaceRoot)))) {
+  if (workspaceRoot && mode !== 'danger-full-access'
+    && (inside(target, path.resolve(workspaceRoot)) || inside(await physicalPath(target), await physicalPath(workspaceRoot)))) {
     throw unavailable('the prepared payload must be outside the session workspace; move DSH_HOME outside the workspace')
   }
   let file: string
