@@ -46,6 +46,10 @@ export function compactRanges(input: Row, value: Row): string[] | undefined {
     if (!item.lines.length) output.push(item.total === 0 ? '(empty file)' : '(no lines in this range)')
     output.push(`[revision=${item.revision}; ${item.complete ? 'end of file; complete=true' : `more lines; nextOffset=${item.next}`}]`)
   }
+  // The compact reader states the escape contract once for the whole result (#939).
+  const escaped = observed.reduce(
+    (count, item) => count + item.lines.filter(line => encodeSourceLine(line.text) !== line.text).length, 0)
+  if (escaped) output.push(`[Notice: ${escaped} rendered line(s) use reversible escapes; ops_edit_file matches oldText as raw bytes first, then as this displayed form decoded.]`)
   output.push(`[Notice: ${observed.length}/${input.files.length} requested ranges returned.]`)
   return output
 }

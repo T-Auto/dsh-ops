@@ -65,11 +65,12 @@ bundle:
 - **Pressing the button**: while the `ops-ptc` preset is registered, the plugin writes
   `selectedDefault: ops-ptc` on `agent-preset-registry` — the same volatile field the Agent presets settings
   page writes. That click is the only thing that overrides a manual choice.
-- **Doing nothing**: nothing is written. Apply, a remount caused by saving another switch, and disabling the row
-  all leave the current default alone, so a preset picked on the settings page survives restarts.
-- **Disabling or unloading the `dsh-ops` row**: releases the registration and leaves the default alone, even when
-  it names `ops-ptc`. Switch the default to another preset before removing the row, otherwise new sessions may
-  try to resolve a preset that no longer exists.
+- **Doing nothing**: nothing is written. Apply and a remount caused by saving another switch leave the current
+  default alone, so a preset picked on the settings page survives restarts.
+- **Disabling or unloading the `dsh-ops` row**: releases the registration, then checks the live default. If it still
+  names `ops-ptc`, the row lease restores the host's `config.default`; a default naming any other preset is never
+  rewritten. A missing or rejecting settings service reports the leftover and asks the operator to choose another
+  default instead of pretending the profile was repaired.
 - The button answers with a status: `applied`, `no-update` (it is already the default), or `unavailable`/`failed`
   with the reason — the preset is not registered, the host settings service is missing, or the write was rejected.
 - The written value persists through the host settings layer into the profile's `cordis.patch.yml` (an
@@ -82,9 +83,9 @@ In the host picker the preset is named `OPS (PTC)` and described as
 
 ## Setting another default preset manually
 
-`ops-ptc` becomes the default only through the button above (or the settings page). Nothing restores it
-automatically, so pick another default before you disable or unload the row. Other default presets are still
-decided by the host/operator:
+`ops-ptc` becomes the default only through the button above (or the settings page). Removing the row restores the
+host default only when the current selection is still `ops-ptc`; it never restores `ops-ptc` itself. Other default
+presets are still decided by the host/operator:
 
 - **Host Agent presets settings page**: picking an already registered preset such as `standard` or `ptc`
   persists `selectedDefault`.
@@ -107,10 +108,11 @@ default comes from that profile's own composition.
 
 ### Risks and rollback
 
-- **After pressing the button**: the choice is an ordinary settings-page selection, so it survives restarts. It
-  is not restored when the row is disabled or unloaded; pick another default before removing the row.
-- **Before disabling or unloading**: set the default to another preset on the settings page. The plugin no longer
-  rewrites it, and new sessions otherwise try to resolve a preset that vanished with the row.
+- **After pressing the button**: the choice is an ordinary settings-page selection, so it survives restarts. If the
+  row is removed while this choice is still active, the lease restores the host default instead of stranding it.
+- **Before disabling or unloading**: no manual rewrite is required while the default is `ops-ptc`; the row handles
+  that case. A default belonging to another preset is left exactly as the operator chose it. If restoration cannot
+  be persisted, choose another default on the settings page after the warning.
 - A missing fragment or a host upgrade that breaks parsing leaves the preset unavailable while the tools keep
   working; the default preset stays untouched and the button reports `unavailable`. Regenerate the fragment and
   restart the host to recover.
@@ -126,9 +128,9 @@ default comes from that profile's own composition.
 | Plugin-manager row | a dedicated preset row | no preset row; lives and dies with the `dsh-ops` row |
 | Publication surface | official PTC tools | same as the `ptc` section: `run_code` under real PTC presentation plus the same-stack typed SDK file tools |
 | Compaction | official `compaction-basic` | official `compaction-basic` as well; no `dsh-compress-codex` |
-| Batch-call guidance | none | `batchingGuidance`: defaults true in code and the packaged `ops-ptc` section, including legacy whole-row overrides that omit the section; explicit false disables it; one lesson at session start, then shape notices for root `run_code` programs (`bypass`/`plan`/`shape`, each latched per turn and re-armed by compliance) appended as `additionalContexts`; text in the editable `prompts/batching-guidance.md` |
+| Batch-call guidance | none | `batchingGuidance`: defaults true in code and the packaged `ops-ptc` section, including legacy whole-row overrides that omit the section; explicit false disables it; one lesson riding the first accepted root `run_code` result, then shape notices for root `run_code` programs (`bypass`/`plan`/`shape`, each latched per turn and re-armed by compliance); both are delivered as `additionalContexts` that never enter logged history; text in the editable `prompts/batching-guidance.md` |
 | Single-row section | `ptc` | `ops-ptc` (same keys plus `batchingGuidance`) |
-| Default preset | decided by the host/operator | set once by the detail page's button (`applied`/`no-update`); never forced or restored automatically |
+| Default preset | decided by the host/operator | set once by the detail page's button (`applied`/`no-update`); never forced; unloading restores the host default only when the current selection is still `ops-ptc` |
 | Ordering | order 2 | order 6, sorted after the official rows |
 
 Having both modes over one tool surface is the point of the contrast arm: `ptc` keeps the official preset

@@ -121,6 +121,51 @@ await test('grant diagnostics distinguish missing or conflicting dispatch from i
   } finally { await shutdown(ctx) }
 })
 
+await test('no-entitled advisors answer in grant order; undefined or throwing ones do not mask later guidance', async () => {
+  const { ctx, tools } = await bootHost()
+  try {
+    const a = agentScope(ctx, 'advised')
+    const guidance = { status: 'error', error: { code: 'ADVISOR_GUIDANCE', effectState: 'none', retry: 'never',
+      message: 'point at the loader', nextAction: 'load the API first' } }
+    // One entry can hold several same-agent file grants (for example a PTC pool grant
+    // and a discovery pool grant for the same public name). Consultation must cover
+    // every grant in insertion order: an advisor that cannot help — by answering
+    // undefined or by throwing — must not mask a later grant's pointer with the
+    // generic retry-never denial (#968 review finding).
+    const lease = await acquire(ctx, undefined, name, canonical)
+    const consulted = []
+    const silent = () => { consulted.push('silent'); return undefined }
+    const broken = () => { consulted.push('broken'); throw new Error('advisor exploded') }
+    const guiding = () => { consulted.push('guiding'); return guidance }
+    lease.grant(grant(a, 'silent', { entitled: false, deferred: silent }))
+    lease.grant(grant(a, 'broken', { entitled: false, deferred: broken }))
+    lease.grant(grant(a, 'guiding', { entitled: false, deferred: guiding }))
+    const definition = tools.get(name) ?? tools.definitions().find(candidate => candidate.name === name)
+    assert.ok(definition, 'a lease whose grants are all not-entitled still registers')
+    const result = await definition.execute({}, { agent: a, toolSet: { view: () => new Map([[name, definition]]) } })
+    assert.deepEqual(result, guidance, 'the third advisor must answer instead of the generic denial')
+    assert.deepEqual(consulted, ['silent', 'broken', 'guiding'], 'every advisor is consulted once, in grant order')
+    // Control: the first advisor that answers wins; consultation never runs past it.
+    const ordered = await acquire(ctx, undefined, name + '-order', canonical)
+    const firstOutcome = { ...guidance, error: { ...guidance.error, code: 'FIRST_WINS' } }
+    let later = 0
+    ordered.grant(grant(a, 'answers-first', { entitled: false, deferred: () => firstOutcome }))
+    ordered.grant(grant(a, 'never-asked', { entitled: false, deferred: () => { ++later; return guidance } }))
+    const second = tools.get(name + '-order')
+    assert.deepEqual(await second.execute({}, { agent: a, toolSet: { view: () => new Map([[name + '-order', second]]) } }), firstOutcome)
+    assert.equal(later, 0, 'consultation stops at the first advisor that answers')
+    // Control: no advisor able to help keeps the honest generic denial.
+    const helpless = await acquire(ctx, undefined, name + '-silent', canonical)
+    helpless.grant(grant(a, 'cannot-help', { entitled: false, deferred: () => undefined }))
+    helpless.grant(grant(a, 'explodes', { entitled: false, deferred: () => { throw new Error('no guidance') } }))
+    const third = tools.get(name + '-silent')
+    const denied = await third.execute({}, { agent: a, toolSet: { view: () => new Map([[name + '-silent', third]]) } })
+    assert.equal(denied.status, 'rejected')
+    assert.equal(denied.error.code, 'PUBLICATION_GRANT_UNAVAILABLE')
+    lease.dispose(); ordered.dispose(); helpless.dispose()
+  } finally { await shutdown(ctx) }
+})
+
 await test('late ancestor source withdraws fallback synchronously and unload stays conservative', async () => {
   const { ctx, tools } = await bootHost()
   const steps = []

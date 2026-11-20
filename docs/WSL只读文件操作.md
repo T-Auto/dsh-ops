@@ -1,6 +1,6 @@
 # 可选 WSL 只读文件操作
 
-实测 DSH rc.2 宿主无法通过 Windows `Get-Acl` 准备 WSL UNC 工作区。因此 workspace-write 下原有 PTC 运行时会拒绝启动，旧版缓存准备也可能不可用。内联 Native 读取仍可运行；字节裁剪的请求回退后与原 Windows 结果完全一致，包括输出不完整标志。OPS 不修改权限模式，也不绕过宿主拒绝。独立 full-access 夹具验证共享 PTC 文件绑定；这是测试范围说明，不是扩大用户权限的建议。
+Windows `Get-Acl` 无法准备 WSL UNC 工作区：`\\wsl.localhost\<发行版>` 与 `\\wsl$\<发行版>` 是 9P 重定向器，其后端文件系统根本不暴露 NTFS 安全描述符，未加区分的准备脚本因此在每个 WSL 工作区上直接死掉，workspace-write 下的 `run_code` 全部失败（#669）。工作区引导脚本现在会在完成存在性与目录验证之后、触碰 `Get-Acl` 之前，对恰好这两个微软固定前缀直接回答 `ready`——这是前缀判定，不是吞掉 ACL 错误的 catch：不存在的路径与其他任何缺失工作区一样失败，其他任何路径保持原有行为，真实的 ACL 故障依然闭锁失败。此类根目录上的旧版缓存准备仍可能不可用。内联 Native 读取可运行；字节裁剪的请求回退后与原 Windows 结果完全一致，包括输出不完整标志。OPS 不修改权限模式，也不绕过宿主拒绝。独立 full-access 夹具验证共享 PTC 文件绑定；这是测试范围说明，不是扩大用户权限的建议。
 
 full-access 下，缺少 `sandbox.prepareResultStorage` 的宿主有意不启用可选存储，避免仅为缓存准备工作区 ACL（#411）。这两种旧宿主情形下，WSL 验收脚本会验证未授予存储权限，并逐字段对比关闭 WSL 开关后的 Windows 结果。宿主提供仅缓存准备能力时，缺少引用仍会导致验收失败，且必须能够分页。Windows 缓存契约套件另以该能力的测试实现验证真实私有 ACL 准备、溢出、分页和清理；这不代表已发布的宿主提供了该能力。
 
@@ -12,9 +12,9 @@ English: [Optional WSL file reads](wsl-readonly.md).
 
 在 Windows x64 上，可在启动 DSH 的环境中设置 `DSH_OPS_WSL_READS=1`，为工作目录位于 `\\wsl.localhost\<发行版>\...` 或 `\\wsl$\<发行版>\...` 的会话启用 Linux 侧 `ops_glob`、`ops_grep` 和 `ops_read_files`。此功能主要减少 WSL 网络文件系统上的重复元数据访问。WSL 启动和校验也有固定开销，小文件读取可能更慢；应先测量实际工作目录再广泛启用。
 
-安装包必须同时包含普通 Windows worker，以及版本一致、凭据文件校验通过的 `runtime/linux-x64/dsh-ops-worker`。发行版须已安装、支持 Linux x64，并提供 `/usr/bin/wslpath` 和 `/usr/bin/sha256sum`。OPS 不安装 WSL，也不下载运行时。显式 `workerPath` 或 `DSH_OPS_WORKER_BIN` 选择仍使用原有 Windows 路径。关闭环境开关后，新请求恢复原有路径。
+安装包必须同时包含普通 Windows worker，以及版本一致、凭据文件校验通过的 `runtime/linux-x64/dsh-ops-worker`。发行版须已安装、支持 Linux x64，并提供 `/bin/sh`、`/usr/bin/wslpath` 与 `/usr/bin/sha256sum`。OPS 不安装 WSL，也不下载运行时。显式 `workerPath` 或 `DSH_OPS_WORKER_BIN` 选择仍使用原有 Windows 路径。关闭环境开关后，新请求恢复原有路径。
 
-worker 通过 `wsl.exe --distribution <名称> --exec <已校验的 worker>` 接收 JSON 数据，不运行命令 shell 或模型提供的代码。输入路径须属于会话所在发行版。每次调用都会重新解析 Windows 盘符挂载，包括凭据拒绝根和 worker 路径，并核对 Linux 侧可见文件的 SHA-256。Linux 遍历仍采用 Windows 不区分大小写的凭据拒绝规则和保留文件名限制。符号链接、特殊对象仍执行 no-follow；无效文件名属于扫描缺口，不得宣称计数完整。
+worker 通过 `wsl.exe --distribution <名称> --exec <已校验的 worker>` 接收 JSON 数据；worker 本身不运行命令 shell 或模型提供的代码。准备工作是每次调用一次固定的 `/bin/sh -c` 脚本（#576）：脚本文本是常量，所有盘符根、凭据拒绝根与 worker 路径都以位置参数传递，任何 Windows 路径都无法改变命令形状——盘符挂载仍按每次调用重新解析，Linux 侧可见文件的 SHA-256 仍须与打包凭据一致。输入路径须属于会话所在发行版。Linux 遍历仍采用 Windows 不区分大小写的凭据拒绝规则和保留文件名限制。符号链接、特殊对象仍执行 no-follow；无效文件名属于扫描缺口，不得宣称计数完整。
 
 工具名称、参数 schema、提示词、相对路径基准及宿主读取记录不变。只转换已定义的结果路径字段为 UNC，不改写文件内容。写入、Bash、PTC 执行和结果缓存所有权仍保留在原有 Windows 路径。
 

@@ -101,6 +101,62 @@ await test('real reference pages follow a bounded cursor to completion and relea
     assert.equal((await call(root, 'result', { action: 'release', id: legacy.data.id })).status, 'completed')
   })
 })
+await test('paged reads follow the recommended next action to a complete stop', async () => {
+  await withTempDir('ptc-follow', async root => {
+    const file = path.join(root, 'eleven.txt')
+    fs.writeFileSync(file, Array.from({ length: 11 }, (_, n) => 'line-' + (n + 1)).join('\n') + '\n')
+    let args = { path: file, offset: 1, limit: 5 }
+    const advanced = []
+    for (let page = 0; page < 4; page++) {
+      const out = await call(root, 'inspect_local_file', args)
+      if (out.status === 'completed') {
+        assert.equal(out.data.complete, true)
+        assert.equal('nextAction' in out, false, 'a complete page recommends no further read')
+        break
+      }
+      assert.equal(out.status, 'partial')
+      assert.ok(out.data.nextOffset > args.offset)
+      advanced.push(out.data.nextOffset)
+      assert.match(out.nextAction, /ops_inspect_local_file/)
+      assert.match(out.nextAction, new RegExp('"offset":' + out.data.nextOffset + ','))
+      const next = decodeContinuation(out.continuation).args
+      assert.equal(next.path, file)
+      args = next
+    }
+    assert.deepEqual(advanced, [6, 11], '11 lines in limit-5 pages end after three pages')
+  })
+})
+await test('recoverable read errors name a same-scope next step instead of dead pointers', async () => {
+  await withTempDir('ptc-recover', async root => {
+    fs.mkdirSync(path.join(root, 'adir'))
+    fs.writeFileSync(path.join(root, 'blob.bin'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0xfe, 0x00, 0x33]))
+    const dir = await call(root, 'inspect_local_file', { path: path.join(root, 'adir') })
+    assert.equal(dir.status, 'error')
+    assert.equal(dir.error.retry, 'after-input-change')
+    assert.doesNotMatch(dir.error.nextAction, /ops_glob|ops_grep|shell/, 'no listing API is known callable without a step surface')
+    assert.match(dir.error.nextAction, /concrete file path/)
+    const binary = await call(root, 'inspect_local_file', { path: path.join(root, 'blob.bin') })
+    assert.equal(binary.status, 'error')
+    assert.equal(binary.error.code, 'ERR_INVALID_ENCODING')
+    assert.match(binary.error.nextAction, /ops_inspect_local_file \{"path":/)
+    assert.match(binary.error.nextAction, /"view":"hex"\}/)
+    const hex = await call(root, 'inspect_local_file', { path: path.join(root, 'blob.bin'), view: 'hex' })
+    assert.ok(['completed','partial'].includes(hex.status))
+    assert.equal(hex.data.items[0].view, 'hex')
+    const batched = await call(root, 'read_files', { files: [{ path: path.join(root, 'blob.bin') }] })
+    assert.equal(batched.status, 'error')
+    assert.equal(batched.data.items[0].error.code, 'ERR_INVALID_ENCODING')
+    assert.match(batched.error.nextAction, /not valid UTF-8/)
+    assert.doesNotMatch(batched.error.nextAction, /"view":"hex"/, 'without a step surface no cross-tool call is recommended')
+    const editable = path.join(root, 'editable.txt')
+    fs.writeFileSync(editable, 'alpha\n')
+    const stale = await call(root, 'edit_file', { path: editable, expectedRevision: hash('other\n'), edits: [{ oldText: 'alpha', newText: 'beta' }] })
+    assert.equal(stale.status, 'conflict')
+    assert.match(stale.error.nextAction, /revision/)
+    assert.doesNotMatch(stale.error.nextAction, /do not blindly retry/)
+    assert.equal(fs.readFileSync(editable, 'utf8'), 'alpha\n')
+  })
+})
 await test('every worker API was validated and unexpected callback rejection becomes an unknown value', async () => {
   assert.deepEqual([...seen].sort(), [...PTC_API_TOOLS].sort())
   for (const tool of ['result','write_file']) {

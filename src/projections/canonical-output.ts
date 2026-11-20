@@ -3,7 +3,11 @@ import type { ToolDefinition, ToolExecutionResult } from '../adapter/dsh/types.j
 import type { Outcome } from '../kernel/outcome.js'
 import { toOutcome } from './ptc/outcome.js'
 import type { CanonicalData } from './ptc/outcome.js'
+import type { NextStepSurface } from './ptc/next-step.js'
 import { outcomeSchema } from './ptc/schema.js'
+
+/** Resolves the calling step's reachable surface at dispatch time. */
+type SurfaceFor = (exec: Parameters<ToolDefinition['execute']>[1]) => NextStepSurface
 
 /** No raw receipt exists for data-less failures; replay the serializable error facts instead. */
 function nativeValue(value: unknown): unknown {
@@ -18,11 +22,11 @@ function nativeResult(result: Readonly<ToolExecutionResult>): Readonly<ToolExecu
 }
 
 /** Adapt a raw kernel definition without registering it or retaining per-call state. */
-export function canonicalOutput(tool: string, definition: ToolDefinition): ToolDefinition {
+export function canonicalOutput(tool: string, definition: ToolDefinition, surfaceFor?: SurfaceFor): ToolDefinition {
   const { output } = definition
   return {
     ...definition,
-    execute: async (args, exec) => toOutcome(tool, args, await definition.execute(args, exec)),
+    execute: async (args, exec) => toOutcome(tool, args, await definition.execute(args, exec), surfaceFor?.(exec)),
     // Hooks belong to the raw Native projection; preserve execution identity and
     // content while leaving the host's final canonical value untouched.
     ...(definition.projectContent ? {

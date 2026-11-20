@@ -247,6 +247,58 @@ function savedBashPaths(raw: Record<string, unknown>): SavedBashPath[] {
   return list
 }
 
+/** The mode sections that own a PTC publication surface and its disclosure tier. */
+export const DISCLOSURE_SECTIONS = Object.freeze(['ptc', 'ops-ptc'] as const)
+
+/** One disclosure tier as the page holds it, or \`mixed\` when the saved rows disagree. */
+export type DisclosureSelection = 'on-demand' | 'full' | 'mixed'
+
+/** The two tiers an operator can actually pick; \`mixed\` only describes saved state. */
+export type DisclosureTier = Exclude<DisclosureSelection, 'mixed'>
+
+/**
+ * Read the disclosure tier the saved rows stand for.
+ * @param raw - the saved row config.
+ * @returns the agreed tier, or \`mixed\` when the two PTC rows disagree.
+ */
+export function readDisclosure(raw: Record<string, unknown>): DisclosureSelection {
+  const tiers = new Set(DISCLOSURE_SECTIONS.map(section =>
+    objectAt(raw[section]).disclosurePolicy === 'full' ? 'full' : 'on-demand'))
+  return tiers.size === 1 ? [...tiers][0]! : 'mixed'
+}
+
+/**
+ * Whether the page's tier still differs from what is saved.
+ * @param selection - the operator's current choice.
+ * @param raw - the saved row config.
+ * @returns true when saving must write the tier.
+ */
+export function disclosureDiffers(selection: DisclosureSelection, raw: Record<string, unknown>): boolean {
+  return selection !== readDisclosure(raw)
+}
+
+/**
+ * The write operations that turn the saved rows into the reviewed tier.
+ *
+ * \`full\` pins both PTC rows; \`on-demand\` returns every row that carries the key
+ * to the absent default, so an old profile saved through the card is
+ * letter-identical to one that never met it.
+ * @param raw - the saved row config.
+ * @param tier - the operator's choice.
+ * @returns \`set\` operations for \`full\`, \`unset\` for the default rung.
+ */
+export function disclosureOps(raw: Record<string, unknown>, tier: DisclosureTier): SettingsPathOpView[] {
+  const operations: SettingsPathOpView[] = []
+  for (const section of DISCLOSURE_SECTIONS) {
+    const saved = objectAt(raw[section]).disclosurePolicy
+    if (tier === 'full' ? saved === 'full' : saved === undefined) continue
+    operations.push(tier === 'full'
+      ? { op: 'set', path: [section, 'disclosurePolicy'], value: 'full' }
+      : { op: 'unset', path: [section, 'disclosurePolicy'] })
+  }
+  return operations
+}
+
 /** Whether a path names the Niubash executable rather than an MSYS bash. */
 const niubashPath = (value: string): boolean => /(^|[\/])niu\.exe$/i.test(value)
 
