@@ -18,6 +18,7 @@ import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
 import fs from 'node:fs'
 import path from 'node:path'
 import { apply } from '../lib/index.js'
+import { BASH_TOOL } from '../lib/policy.js'
 import { disclosureOps } from '../lib/client/row-schema.js'
 import { profileFixture } from './lib/settings-profile.mjs'
 import { bootHost, shutdown } from './lib/host.mjs'
@@ -28,10 +29,11 @@ import { WORKER, requireWorker } from './lib/boundary.mjs'
 requireWorker('settings-disclosure-e2e')
 
 let sequence = 0
-// The integration diagnostics row publishes ops_status beside every built-in preset
-// (#753); this suite enumerates the PTC disclosure tier, whose own verdicts are
-// asserted here. That row has its own suite (integration-status-builtin).
-const names = (ctx, agent) => ctx.get('tools').definitions(agent, agent.prepared?.toolSet).map(tool => tool.name).filter(name => name !== 'ops_status').sort()
+// The integration diagnostics row (ops_status, #753) and the Windows Bash tool
+// are published beside the PTC tier and have their own suites; this enumeration
+// is the PTC disclosure surface.
+const names = (ctx, agent) => ctx.get('tools').definitions(agent, agent.prepared?.toolSet).map(tool => tool.name)
+  .filter(name => name !== 'ops_status' && name !== BASH_TOOL).sort()
 const opsNames = (ctx, agent) => names(ctx, agent).filter(name => name.startsWith('ops_'))
 
 /** One turn boundary, the way the loop issues it. */

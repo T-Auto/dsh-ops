@@ -43,6 +43,7 @@ import { integration } from '../lib/integration/index.js'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { prepareStep, executeCall, selectExecutor } from './lib/executor.mjs'
 import { assert, test, report, wait, waitFor, withTempDir } from './lib/harness.mjs'
+import { BASH_TOOL } from '../lib/policy.js'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
 
 requireWorker('ptc-two-tier-matrix')
@@ -79,7 +80,10 @@ const diagnosticOps = async (ctx, agent) => {
   const assembly = await ctx.get('systemPrompt').assemble({ scope: agent })
   return [...new Set([...sdkTextOf(assembly).matchAll(/^ {2}(ops_[a-z_]+): \{/gm)].map(match => match[1]))].sort()
 }
+// The Windows Bash tool is published beside the PTC row (shell suites cover it);
+// the tier matrix enumerates the published PTC surface.
 const admittedNames = (ctx, agent) => ctx.get('tools').definitions(agent, agent.prepared.toolSet).map(tool => tool.name)
+  .filter(name => name !== BASH_TOOL)
 /** The integration diagnostics row publishes ops_status beside every built-in preset (#753). */
 const OPS_ADMITTED_EXTRA = ['ops_status']
 const admittedOps = names => names.filter(name => name.startsWith('ops_')).sort()

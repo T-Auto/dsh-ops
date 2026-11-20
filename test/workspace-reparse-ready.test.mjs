@@ -104,16 +104,16 @@ await test('a junction workspace that still needs the ACE fails closed and names
   await withTempDir('prepare-reparse-need', async (base) => {
     const root = junctionFixture(base)
     const backups = path.join(TEST_HOME, 'prepare-reparse-need-backups')
-    // Replace every inherited ACE with one caller-owned RX grant, so the
-    // folder no longer holds WRITE_OWNER but stays listable and cleanable:
-    // the decision must be needs-preparation, the one branch that writes and
-    // therefore the one branch allowed to look at tags. The owner is taken
-    // first because an elevated runner defaults new-object ownership to
-    // Administrators, which would make the decision foreign-owner instead.
+    // The decision reads the junction object's own DACL: Get-Acl opens the point
+    // itself, while icacls follows it to the target. Strip the inheritable ACEs at
+    // the junction's parent instead, so propagation reaches the point: RX+DELETE
+    // drops WRITE_OWNER and keeps the harness able to clean up, while the caller
+    // still owns both objects. That is exactly the branch that writes the DACL and
+    // may therefore look at the reparse tag (#744).
     const sid = psValue('[Security.Principal.WindowsIdentity]::GetCurrent().User.Value')
-    const owned = spawnSync('icacls.exe', [root, '/setowner', `*${sid}`], { encoding: 'utf8' })
+    const owned = spawnSync('icacls.exe', [base, '/setowner', `*${sid}`], { encoding: 'utf8' })
     assert.equal(owned.status, 0, owned.stdout + owned.stderr)
-    const strip = spawnSync('icacls.exe', [root, '/inheritance:r', '/grant', `*${sid}:(RX)`], { encoding: 'utf8' })
+    const strip = spawnSync('icacls.exe', [base, '/inheritance:r', '/grant', `*${sid}:(OI)(CI)(RX,DELETE)`], { encoding: 'utf8' })
     assert.equal(strip.status, 0, strip.stdout + strip.stderr)
     const state = psValue(`$ErrorActionPreference='Stop'
 . ${quote(helper)}

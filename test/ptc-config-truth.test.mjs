@@ -19,7 +19,7 @@ import { resolveModeConfig } from '../lib/modes/config.js'
 import { PTC_LOADABLE_TOOLS, PTC_RESIDENT_TOOLS, parsePtcConfig } from '../lib/ptc/config.js'
 import { requestedApis } from '../lib/projections/ptc/loader.js'
 import { integration, diagnose } from '../lib/integration/index.js'
-import { publicToolName } from '../lib/policy.js'
+import { BASH_TOOL, publicToolName } from '../lib/policy.js'
 import { bootHost, shutdown } from './lib/host.mjs'
 import { prepareStep, executeCall, selectExecutor } from './lib/executor.mjs'
 import { assert, test, report, wait, waitFor, withTempDir } from './lib/harness.mjs'
@@ -84,10 +84,11 @@ await test('today alwaysLoaded escapes the allowedTools cap with no diagnostic (
 
 requireWorker('ptc-config-truth')
 let sequence = 0
-// The integration diagnostics row publishes ops_status beside every built-in preset
-// (#753); this suite enumerates the PTC disclosure tier, whose own verdicts are
-// asserted here. That row has its own suite (integration-status-builtin).
-const names = (ctx, agent) => ctx.get('tools').definitions(agent, agent.prepared?.toolSet).map(tool => tool.name).filter(name => name !== 'ops_status').sort()
+// The integration diagnostics row (ops_status, #753) and the Windows Bash tool
+// are published beside the PTC tier and have their own suites; this enumeration
+// is the PTC disclosure surface.
+const names = (ctx, agent) => ctx.get('tools').definitions(agent, agent.prepared?.toolSet).map(tool => tool.name)
+  .filter(name => name !== 'ops_status' && name !== BASH_TOOL).sort()
 const opsNames = (ctx, agent) => names(ctx, agent).filter(name => name.startsWith('ops_'))
 async function step(ctx, agent) {
   ctx.emit('session/event', agent.session, { type: 'step/end', turn: 1, step: ++sequence })

@@ -58,7 +58,10 @@ await test('real worker Native text and run_code share the canonical file outcom
       name: h.definition.name, arguments: { path: dir } })
     assert.equal(refused.value.status, 'error', JSON.stringify(refused))
     assert.equal(refused.value.error.code, 'INVALID_ARGUMENT')
-    assert.match(refused.value.error.nextAction, new RegExp('ops_glob \\{"path":' + JSON.stringify(dir) + ',"pattern":\\["\\*"\\]\\}'),
+    // The path is JSON-quoted inside the recommendation; on Windows its backslashes
+    // are regexp escapes, so the literal prefix must be escaped too.
+    const escapedDir = JSON.stringify(dir).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    assert.match(refused.value.error.nextAction, new RegExp('ops_glob \\{"path":' + escapedDir + ',"pattern":\\["\\*"\\]\\}'),
       'the step surface resolves, so the recommendation names the registered listing API')
     assert.match(refused.value.error.nextAction, /concrete file path/)
   } finally {
