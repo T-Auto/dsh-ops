@@ -81,6 +81,10 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - 禁用或卸载 `dsh-ops` 行不再遗留 `selectedDefault: ops-ptc`：若当前默认仍指向被移除的预设，行级清理会恢复宿主配置的默认值；指向任何其他预设的选择绝不改写。settings 服务缺失或拒绝写入时会明确报告残留，不会猜测修复（#928）。
 - Session Bash publication now deduplicates overlapping row ownership, carries queued registration identity to settlement, latches one failure per generation, and re-asserts authority at `turn/start`. This closes the append-reentry retry storm, duplicate-registration pair and interrupted-turn tool disappearance without weakening per-agent authority (#579, #842, #873).
 - 会话 Bash 发布现在会对重叠行所有权去重，把排队注册的身份跟踪到结算，每代只报告一次失败，并在 `turn/start` 重新断言权限。修复 append 重入重试风暴、成对重复注册与中断回合后的工具消失，同时不削弱每个 agent 的权限边界（#579、#842、#873）。
+- `ops_edit_file` now accepts text copied from the reversibly escaped Native reader: raw `oldText` matches keep precedence, and only a raw miss tries the decoded rendering. The fallback also decodes `newText`, reports `renderedMatches`, and preserves ambiguity/CAS failures; raw edits and `write_file` remain byte-verbatim (#939).
+- `ops_edit_file` 现在可接受从可逆转义的 Native 读取输出中复制的文本：优先匹配原始 `oldText`，只有原始匹配失败才尝试解码后的渲染形式。回退同样解码 `newText` 并返回 `renderedMatches`，歧义与 CAS 拒绝保持不变；原始编辑与 `write_file` 仍逐字节处理（#939）。
+- The bounded classic-xref PDF reader resolves indirect `/Length` values in either object order while keeping cycle, depth, type, size and mismatch refusals. Direct lengths and the existing stream/xref budgets are unchanged (#788).
+- 有界的经典 xref PDF 读取器现在可按任意对象顺序解析间接 `/Length`，同时保留循环、深度、类型、大小与不一致拒绝。直接长度及现有流/xref 预算不变（#788）。
 
 ## [0.5.5] — 2026-11-13 — Patch release
 

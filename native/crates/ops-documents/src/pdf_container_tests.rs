@@ -337,3 +337,84 @@ fn stream_roots_reserved_generations_and_direct_oversize_decode_are_refused() {
     };
     assert_eq!(decode(&raw).unwrap_err().code, "OUTPUT_LIMIT");
 }
+
+#[test]
+fn indirect_stream_lengths_resolve_through_the_xref_without_recovery() {
+    // #788: Word and LibreOffice emit "/Length N G R". The integer provider may
+    // sit at any xref offset; one bounded probe re-lexes its exact header.
+    let pdf = fixture(&[
+        b"<<>>",
+        b"9",
+        b"<< /Length 2 0 R >>\nstream\n(Hi) Tj\n\nendstream",
+    ]);
+    let document = parse(&pdf).unwrap();
+    assert_eq!(
+        document.object((3, 0)).unwrap().stream,
+        Some(b"(Hi) Tj\n\n".as_slice())
+    );
+    // The provider may also follow the stream object in file order.
+    let reversed = fixture(&[
+        b"<<>>",
+        b"<< /Length 3 0 R >>\nstream\nxy\nendstream",
+        b"2",
+    ]);
+    assert_eq!(
+        parse(&reversed).unwrap().object((2, 0)).unwrap().stream,
+        Some(b"xy".as_slice())
+    );
+    // Only a plain integer object resolves: absent, dictionary, chained,
+    // generation-mismatched and oversized providers all fail closed.
+    rejected(
+        &fixture(&[b"<<>>", b"9", b"<< /Length 4 0 R >>\nstream\nxy\nendstream"]),
+        "DOCUMENT_PARSE_ERROR",
+    );
+    rejected(
+        &fixture(&[b"<<>>", b"<<>>", b"<< /Length 2 0 R >>\nstream\nxy\nendstream"]),
+        "DOCUMENT_PARSE_ERROR",
+    );
+    rejected(
+        &fixture(&[
+            b"<<>>",
+            b"3 0 R",
+            b"<< /Length 2 0 R >>\nstream\nxy\nendstream",
+            b"9",
+        ]),
+        "DOCUMENT_PARSE_ERROR",
+    );
+    rejected(
+        &fixture(&[b"<<>>", b"9", b"<< /Length 2 1 R >>\nstream\nxy\nendstream"]),
+        "DOCUMENT_PARSE_ERROR",
+    );
+    rejected(
+        &fixture(&[
+            b"<<>>",
+            b"1048577",
+            b"<< /Length 2 0 R >>\nstream\nxy\nendstream",
+        ]),
+        "OUTPUT_LIMIT",
+    );
+    // A free xref entry is never a Length provider.
+    let mut free = fixture(&[b"<<>>", b"9", b"<< /Length 2 0 R >>\nstream\nxy\nendstream"]);
+    let at = free.windows(7).position(|w| w == b"2 0 obj").unwrap();
+    free = replace(
+        &free,
+        format!("{at:010} 00000 n ").as_bytes(),
+        format!("{at:010} 65535 f ").as_bytes(),
+    );
+    rejected(&free, "DOCUMENT_PARSE_ERROR");
+    // The probe runs before the ordered scan reaches a duplicated offset and
+    // refuses a header that disagrees with the referenced identity.
+    let mut aliased = fixture(&[
+        b"<<>>",
+        b"<< /Length 3 0 R >>\nstream\nxy\nendstream",
+        b"2",
+    ]);
+    let stream_at = aliased.windows(7).position(|w| w == b"2 0 obj").unwrap();
+    let provider_at = aliased.windows(7).position(|w| w == b"3 0 obj").unwrap();
+    aliased = replace(
+        &aliased,
+        format!("{provider_at:010} 00000 n ").as_bytes(),
+        format!("{stream_at:010} 00000 n ").as_bytes(),
+    );
+    rejected(&aliased, "DOCUMENT_PARSE_ERROR");
+}
