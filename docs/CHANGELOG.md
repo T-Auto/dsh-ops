@@ -85,6 +85,10 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `ops_edit_file` 现在可接受从可逆转义的 Native 读取输出中复制的文本：优先匹配原始 `oldText`，只有原始匹配失败才尝试解码后的渲染形式。回退同样解码 `newText` 并返回 `renderedMatches`，歧义与 CAS 拒绝保持不变；原始编辑与 `write_file` 仍逐字节处理（#939）。
 - The bounded classic-xref PDF reader resolves indirect `/Length` values in either object order while keeping cycle, depth, type, size and mismatch refusals. Direct lengths and the existing stream/xref budgets are unchanged (#788).
 - 有界的经典 xref PDF 读取器现在可按任意对象顺序解析间接 `/Length`，同时保留循环、深度、类型、大小与不一致拒绝。直接长度及现有流/xref 预算不变（#788）。
+- Paths through an Electron `.asar` archive now fail with the explicit `ARCHIVE_MEMBER_UNSUPPORTED` diagnosis: only Electron's patched in-process filesystem presents the archive as a directory, so the standalone worker cannot read its members. This is an actionable diagnostic, not a virtual-filesystem fallback (#836).
+- 穿过 Electron `.asar` 的路径现在明确返回 `ARCHIVE_MEMBER_UNSUPPORTED`：只有 Electron 进程内经补丁的文件系统会把归档呈现为目录，独立 worker 无法读取成员。这是可操作的诊断，不是虚拟文件系统回退（#836）。
+- Windows mutations capture, restore and byte-verify every user-restorable extended attribute. `$KERNEL.*` names are reported individually in `metadataWarnings` because user mode cannot recreate them; every other capture/restore/verification failure still aborts publication instead of silently dropping metadata (#874).
+- Windows 写入现在捕获、恢复并逐字节核验所有用户态可恢复的扩展属性。`$KERNEL.*` 名称因用户态无法重建而逐名写入 `metadataWarnings`；其他任何捕获、恢复或核验失败仍会中止发布，不会静默丢弃元数据（#874）。
 
 ## [0.5.5] — 2026-11-13 — Patch release
 
