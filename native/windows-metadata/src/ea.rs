@@ -24,7 +24,7 @@ pub const MAX_EA_ENTRIES: usize = 4096;
 /// The kernel-mode EA name prefix; user-mode NtSetEaFile refuses these names.
 const KERNEL_EA_PREFIX: &[u8] = b"$kernel.";
 const FILE_EA_INFORMATION: u32 = 7;
-const NO_MORE_EAS: i32 = 0xC000_191u32 as i32;
+const NO_MORE_EAS: i32 = 0x0C00_0191_u32 as i32;
 const BUFFER_OVERFLOW: i32 = 0x8000_0005u32 as i32;
 
 #[link(name = "ntdll")]
@@ -334,11 +334,11 @@ mod tests {
         let a = vec![entry(b"A.ONE", b"v1"), entry(b"B.TWO", b"v2")];
         let reordered = vec![entry(b"B.TWO", b"v2"), entry(b"A.ONE", b"v1")];
         assert!(same_restorable(&a, &reordered));
-        assert!(!same_restorable(&a, &vec![entry(b"A.ONE", b"different")]));
-        assert!(!same_restorable(&a, &vec![entry(b"A.ONE", b"v1")]));
+        assert!(!same_restorable(&a, &[entry(b"A.ONE", b"different")]));
+        assert!(!same_restorable(&a, &[entry(b"A.ONE", b"v1")]));
         assert!(!same_restorable(
             &a,
-            &vec![
+            &[
                 entry(b"A.ONE", b"v1"),
                 entry(b"B.TWO", b"v2"),
                 entry(b"C.NEW", b"v"),

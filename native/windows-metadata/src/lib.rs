@@ -737,7 +737,7 @@ mod tests {
         assert_eq!(restored.entries.len(), 1);
         assert_eq!(restored.entries[0].name, b"DSH-OPS.TEST".to_vec());
         assert_eq!(restored.entries[0].value, b"fixture".to_vec());
-        assert_eq!(std::fs::read(&root.join("staged")).unwrap(), b"payload");
+        assert_eq!(std::fs::read(root.join("staged")).unwrap(), b"payload");
         drop(parent);
         std::fs::remove_dir_all(&root).unwrap();
     }
