@@ -207,9 +207,7 @@ fn append_entries(bytes: &[u8], captured: &mut CapturedEas) -> io::Result<()> {
             if at == bytes.len() {
                 return Ok(());
             }
-            return Err(unsupported(
-                "Truncated Windows extended-attribute record",
-            ));
+            return Err(unsupported("Truncated Windows extended-attribute record"));
         }
         let next =
             u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]) as usize;
@@ -219,9 +217,7 @@ fn append_entries(bytes: &[u8], captured: &mut CapturedEas) -> io::Result<()> {
         let name_at = at + 8;
         let value_at = name_at + name_length + 1;
         if value_at + value_length > bytes.len() || bytes.get(name_at + name_length) != Some(&0) {
-            return Err(unsupported(
-                "Truncated Windows extended-attribute record",
-            ));
+            return Err(unsupported("Truncated Windows extended-attribute record"));
         }
         let name = &bytes[name_at..name_at + name_length];
         if name.is_empty() || name.iter().any(|b| !b.is_ascii()) {

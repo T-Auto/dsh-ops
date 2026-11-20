@@ -716,9 +716,12 @@ mod tests {
         assert!(observed.kernel.is_empty());
         // #874: capture must describe the EA set instead of refusing the file.
         let file = File::open(&path).unwrap();
-        assert!(VolumeCapabilities::query(&file).unwrap().extended_attributes());
-        let captured =
-            Metadata::capture(&file).expect("user EAs must be captured, not rejected");
+        assert!(
+            VolumeCapabilities::query(&file)
+                .unwrap()
+                .extended_attributes()
+        );
+        let captured = Metadata::capture(&file).expect("user EAs must be captured, not rejected");
         let parent = std::fs::OpenOptions::new()
             .read(true)
             .custom_flags(0x02000000)
@@ -789,7 +792,10 @@ mod tests {
         captured.verify(&staging).unwrap();
         drop(staging);
         drop(file);
-        assert_eq!(std::fs::read(root.join("kernel-staged")).unwrap(), b"payload");
+        assert_eq!(
+            std::fs::read(root.join("kernel-staged")).unwrap(),
+            b"payload"
+        );
         drop(parent);
         std::fs::remove_dir_all(&root).unwrap();
     }

@@ -353,11 +353,7 @@ fn indirect_stream_lengths_resolve_through_the_xref_without_recovery() {
         Some(b"(Hi) Tj\n\n".as_slice())
     );
     // The provider may also follow the stream object in file order.
-    let reversed = fixture(&[
-        b"<<>>",
-        b"<< /Length 3 0 R >>\nstream\nxy\nendstream",
-        b"2",
-    ]);
+    let reversed = fixture(&[b"<<>>", b"<< /Length 3 0 R >>\nstream\nxy\nendstream", b"2"]);
     assert_eq!(
         parse(&reversed).unwrap().object((2, 0)).unwrap().stream,
         Some(b"xy".as_slice())
@@ -369,7 +365,11 @@ fn indirect_stream_lengths_resolve_through_the_xref_without_recovery() {
         "DOCUMENT_PARSE_ERROR",
     );
     rejected(
-        &fixture(&[b"<<>>", b"<<>>", b"<< /Length 2 0 R >>\nstream\nxy\nendstream"]),
+        &fixture(&[
+            b"<<>>",
+            b"<<>>",
+            b"<< /Length 2 0 R >>\nstream\nxy\nendstream",
+        ]),
         "DOCUMENT_PARSE_ERROR",
     );
     rejected(
@@ -404,11 +404,7 @@ fn indirect_stream_lengths_resolve_through_the_xref_without_recovery() {
     rejected(&free, "DOCUMENT_PARSE_ERROR");
     // The probe runs before the ordered scan reaches a duplicated offset and
     // refuses a header that disagrees with the referenced identity.
-    let mut aliased = fixture(&[
-        b"<<>>",
-        b"<< /Length 3 0 R >>\nstream\nxy\nendstream",
-        b"2",
-    ]);
+    let mut aliased = fixture(&[b"<<>>", b"<< /Length 3 0 R >>\nstream\nxy\nendstream", b"2"]);
     let stream_at = aliased.windows(7).position(|w| w == b"2 0 obj").unwrap();
     let provider_at = aliased.windows(7).position(|w| w == b"3 0 obj").unwrap();
     aliased = replace(

@@ -84,10 +84,7 @@ pub fn checked_leaf(raw: &str, allow_missing: bool) -> Result<Target> {
     let name = names.pop().unwrap_or_else(|| ".".into());
     for component in names {
         let metadata = parent.symlink_metadata(&component)?;
-        if regular(&metadata, true).is_err()
-            && metadata.is_file()
-            && asar_archive(&component)
-        {
+        if regular(&metadata, true).is_err() && metadata.is_file() && asar_archive(&component) {
             // #836: Electron presents .asar archives as directories only through
             // its own patched in-process filesystem. The standalone worker sees
             // a regular file, so a member path can never resolve; name the

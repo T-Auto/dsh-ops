@@ -1,11 +1,8 @@
-import { assert, test, report, waitFor } from './lib/harness.mjs'
+import { assert, test, report } from './lib/harness.mjs'
 import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { Session } from '@deepseek-ai/dsh-session'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import { registerSystemSection, registerStepTailProvider, PromptProviderError } from '../lib/prompt-injection/index.js'
-import { mountPtc } from '../lib/publication/ptc.js'
-import { BATCHING_GUIDANCE_REVISION, loadBatchingGuidance } from '../lib/ptc/batching-guidance.js'
 import { promptHost, tailMessages } from './lib/prompt-injection-host.mjs'
 const identity = 'You are an AI agent powered by DeepSeek Harness.\n\n'
 

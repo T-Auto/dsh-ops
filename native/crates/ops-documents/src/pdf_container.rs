@@ -97,17 +97,18 @@ fn stream_length(
 ) -> Result<usize> {
     let length = match get(dict, b"Length")? {
         Value::Ref(number, generation) => {
-            let (offset, entry_generation, active) =
-                *entries.get(&(*number as usize)).ok_or_else(|| {
-                    bad("PDF stream Length does not name an xref entry")
-                })?;
+            let (offset, entry_generation, active) = *entries
+                .get(&(*number as usize))
+                .ok_or_else(|| bad("PDF stream Length does not name an xref entry"))?;
             if !active || entry_generation != *generation {
                 return Err(bad(
                     "PDF stream Length must name an active xref entry with a matching generation",
                 ));
             }
             if !data.get(offset).is_some_and(u8::is_ascii_digit) {
-                return Err(bad("PDF stream Length xref must point exactly to an object header"));
+                return Err(bad(
+                    "PDF stream Length xref must point exactly to an object header",
+                ));
             }
             let mut lexer = Lexer {
                 data,

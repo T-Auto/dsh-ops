@@ -41,17 +41,26 @@ fn near_audit_names_are_not_reserved_components() {
 fn asar_file_components_are_archive_members_not_traversal_bypasses() {
     let root = std::env::temp_dir().join(format!("dsh-ops-asar-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&root).unwrap();
+    // macOS reaches the temp directory through /var -> /private/var, and checked_leaf
+    // refuses a symlinked component, so pin the canonical spelling before walking.
+    let root = std::fs::canonicalize(&root).unwrap();
     std::fs::write(root.join("bundle.asar"), b"archive bytes").unwrap();
     // #836: Electron presents a real .asar FILE as a directory only through its
     // own patched filesystem; the worker names the archive member instead of
     // implying a no-follow bypass.
-    let failure = match checked_leaf(root.join("bundle.asar").join("app.js").to_str().unwrap(), true)
-    {
+    let failure = match checked_leaf(
+        root.join("bundle.asar").join("app.js").to_str().unwrap(),
+        true,
+    ) {
         Err(failure) => failure,
         Ok(_) => panic!("a file component must not become a traversable directory"),
     };
     assert_eq!(failure.code, "ARCHIVE_MEMBER_UNSUPPORTED");
-    assert!(failure.message.contains("bundle.asar"), "{}", failure.message);
+    assert!(
+        failure.message.contains("bundle.asar"),
+        "{}",
+        failure.message
+    );
     // A genuine directory keeps working: the .asar spelling is not reserved.
     std::fs::create_dir(root.join("folder.asar")).unwrap();
     std::fs::write(root.join("folder.asar").join("inner.js"), b"real").unwrap();

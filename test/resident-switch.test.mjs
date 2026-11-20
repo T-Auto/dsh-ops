@@ -13,9 +13,6 @@ import { PTC_RESIDENT_TOOLS } from '../lib/ptc/config.js'
 import { publicToolName, BASH_TOOL } from '../lib/policy.js'
 import { bootHost, shutdown, scopedToolNames } from './lib/host.mjs'
 import { prepareStep, executeCall, selectExecutor } from './lib/executor.mjs'
-import fs from 'node:fs'
-import path from 'node:path'
-import { createHash } from 'node:crypto'
 import { assert, test, report, waitFor, withTempDir } from './lib/harness.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
 
@@ -74,9 +71,7 @@ async function setup(cwd, mode, switches, global = {}, override = {}) {
   presets.set(scopeOf(preset), mode)
   for (const name of ['read', 'glob', 'grep']) preset.tools.register({ name, description: name,
     parameters: { type: 'object', properties: {} }, output: { schema: { type: 'object' }, render: () => [] }, execute: async () => ({}) })
-  // The derived history the teaching dedupe reads; batching tests commit into it.
-  const committed = []
-  const agent = { id, session: { id, mode: 'danger-full-access', header: { cwd }, append() {}, read() { return [] }, committed, deriveMessages: () => committed } }
+  const agent = { id, session: { id, mode: 'danger-full-access', header: { cwd }, append() {}, read() { return [] } } }
   agent.ctx = await scoped(preset, agent, scopeOf(preset))
   if (mode === 'ptc' || mode === 'ops-ptc') await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply: inner => { selectExecutor(inner, 'ptc') } })
   agents.push(agent)

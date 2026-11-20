@@ -169,7 +169,11 @@ fn find_unique(text: &str, needle: &str) -> Result<usize> {
         )
     })?;
     // Count overlapping occurrences as well ("aa" in "aaa" is ambiguous).
-    let next_character = text[at..].chars().next().expect("nonempty match").len_utf8();
+    let next_character = text[at..]
+        .chars()
+        .next()
+        .expect("nonempty match")
+        .len_utf8();
     if text[at + next_character..].contains(needle) {
         return Err(Failure::new(
             "EDIT_CONFLICT",
@@ -902,7 +906,10 @@ mod tests {
     fn raw_literals_keep_precedence_over_the_rendered_interpretation() {
         let root = std::fs::canonicalize(std::env::temp_dir())
             .unwrap()
-            .join(format!("dsh-ops-rendered-precedence-{}", uuid::Uuid::new_v4()));
+            .join(format!(
+                "dsh-ops-rendered-precedence-{}",
+                uuid::Uuid::new_v4()
+            ));
         std::fs::create_dir(&root).unwrap();
         let path = root.join("precedence.txt");
         // The file holds BOTH a literal backslash-t pair and a raw tab; an
