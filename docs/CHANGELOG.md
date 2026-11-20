@@ -77,6 +77,11 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Replace the `global.forceDefaultOpsPtc` switch with one explicit action: the row's detail page carries a **Make OPS (PTC) the default** button that writes `selectedDefault: ops-ptc` once and answers `applied`/`no-update`/`unavailable`/`failed`. Apply, remount and unload no longer write the default, so a preset chosen on the settings page is not overridden on the next apply, and a saved `global.forceDefaultOpsPtc` key still loads with no effect.
 - 用一次显式操作取代 `global.forceDefaultOpsPtc` 开关：行详情页有一个「设为 OPS (PTC) 默认」按钮，点一次写 `selectedDefault: ops-ptc`，并回报 `applied`/`no-update`/`unavailable`/`failed`。apply、重挂载与卸载都不再改写默认，设置页选定的预设不会在下一次 apply 被覆盖；已保存的 `global.forceDefaultOpsPtc` 键仍可加载但不再生效。
 
+- Unloading or disabling the `dsh-ops` row no longer strands `selectedDefault: ops-ptc`: when the live default still names the removed preset, the row lease restores the host's configured default. A default naming any other preset is never rewritten, and a missing or rejecting settings service reports the leftover instead of guessing (#928).
+- 禁用或卸载 `dsh-ops` 行不再遗留 `selectedDefault: ops-ptc`：若当前默认仍指向被移除的预设，行级清理会恢复宿主配置的默认值；指向任何其他预设的选择绝不改写。settings 服务缺失或拒绝写入时会明确报告残留，不会猜测修复（#928）。
+- Session Bash publication now deduplicates overlapping row ownership, carries queued registration identity to settlement, latches one failure per generation, and re-asserts authority at `turn/start`. This closes the append-reentry retry storm, duplicate-registration pair and interrupted-turn tool disappearance without weakening per-agent authority (#579, #842, #873).
+- 会话 Bash 发布现在会对重叠行所有权去重，把排队注册的身份跟踪到结算，每代只报告一次失败，并在 `turn/start` 重新断言权限。修复 append 重入重试风暴、成对重复注册与中断回合后的工具消失，同时不削弱每个 agent 的权限边界（#579、#842、#873）。
+
 ## [0.5.5] — 2026-11-13 — Patch release
 
 - A loader-less PTC scope no longer registers the configured `allowedTools` pool: with dynamic loading off nothing could ever select those APIs, and a host assembly without a step tool set declared all sixteen in `tools:sdk`. Resident publication, the default inspect + loader set and selection behavior are unchanged (#887).
