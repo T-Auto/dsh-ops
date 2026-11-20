@@ -104,17 +104,22 @@ await test('a junction workspace that still needs the ACE fails closed and names
   await withTempDir('prepare-reparse-need', async (base) => {
     const root = junctionFixture(base)
     const backups = path.join(TEST_HOME, 'prepare-reparse-need-backups')
-    // The decision reads the junction object's own DACL: Get-Acl opens the point
-    // itself, while icacls follows it to the target. Strip the inheritable ACEs at
-    // the junction's parent instead, so propagation reaches the point: RX+DELETE
-    // drops WRITE_OWNER and keeps the harness able to clean up, while the caller
-    // still owns both objects. That is exactly the branch that writes the DACL and
-    // may therefore look at the reparse tag (#744).
+    // Get-Acl reads the junction object's own security descriptor: it opens the
+    // reparse point itself, which is why icacls — which follows the point — could
+    // not prepare this fixture. Set-Acl uses the same handle, so one call both
+    // takes ownership for the caller and installs a protected DACL that grants
+    // Modify but never WRITE_OWNER. The decision must then be needs-preparation:
+    // the one branch that writes, and therefore the branch allowed to read tags.
     const sid = psValue('[Security.Principal.WindowsIdentity]::GetCurrent().User.Value')
-    const owned = spawnSync('icacls.exe', [base, '/setowner', `*${sid}`], { encoding: 'utf8' })
-    assert.equal(owned.status, 0, owned.stdout + owned.stderr)
-`*${sid}:(OI)(CI)(M)`
-    assert.equal(strip.status, 0, strip.stdout + strip.stderr)
+    const prepared = psValue(`$ErrorActionPreference='Stop'
+$sid = New-Object Security.Principal.SecurityIdentifier(${quote(sid)})
+$acl = New-Object Security.AccessControl.DirectorySecurity
+$acl.SetAccessRuleProtection($true, $false)
+$acl.SetOwner($sid)
+$acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, [Security.AccessControl.FileSystemRights]::Modify, 'None', 'None', 'Allow')))
+Set-Acl -LiteralPath ${quote(root)} -AclObject $acl
+'ok'`)
+    assert.equal(prepared, 'ok')
     const state = psValue(`$ErrorActionPreference='Stop'
 . ${quote(helper)}
 $acl=Get-Acl -LiteralPath ${quote(root)}
