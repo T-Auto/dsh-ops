@@ -367,6 +367,10 @@ Before the first restricted `run_code` / `pwsh` / `bash` / `ops_bash` call in a 
 
 This step runs the package's own `bin/prepare-workspace.ps1` with Windows PowerShell 5.1 **as the current user, before sandbox confinement applies**, only on Windows in workspace-write mode, and changes only the workspace root's own DACL. Read-only and danger-full-access sessions skip it.
 
+A folder that is already ready answers without any reparse-point inspection, so a OneDrive placeholder root passes the fast path (#744). The reparse check runs only on the branch that must add the ACE: the proven cloud-files family — the exact 0x9000?01A shape (`IO_REPARSE_TAG_CLOUD`, `CLOUD_ROOT`, `CLOUD_ON_DEMAND`) — keeps a real directory entry behind the point and is allowed through, while the rest of Microsoft's 0x90000000-0x9FFFFFFF band is unproven and fails closed exactly like every other tag — mount point, symlink, unknown or unreadable — with the tag named.
+
+Both Microsoft-fixed WSL redirector prefixes (`\\wsl.localhost\…` and `\\wsl$\…`) answer `ready` after the existence and container validation and before any NTFS inspection, because the 9P filesystem behind them exposes no security descriptor at all and `Get-Acl` there used to abort every workspace-write call (#669). This is a prefix decision, not a catch: a missing path still fails, and on any other path a real ACL error still fails closed.
+
 The message names the cause:
 
 - `PowerShell execution policy blocked dsh-ops's own preparation script …`: dsh-ops passes `-ExecutionPolicy Bypass` (earlier versions did not, so the Windows client default `Restricted` blocked every shell tool, #66). A refusal now means Group Policy (MachinePolicy/UserPolicy) enforces the policy; `Set-ExecutionPolicy -Scope CurrentUser` cannot override it. Check `powershell.exe -NoProfile -Command Get-ExecutionPolicy -List`, ask an administrator, or use danger-full-access for the session.
