@@ -13,6 +13,8 @@ import { invoke, failure } from '../../execution/files.js'
 import { InvocationLifetime, InvocationNotStarted } from '../../lifecycle/invocations.js'
 import { canonicalOutput } from '../canonical-output.js'
 import { canonicalOutput as canonicalSchema } from '../ptc/canonical-schema.js'
+import type { NextStepSurface } from '../ptc/next-step.js'
+import { visibleNames } from '../../publication/surface.js'
 import { acquireResultAdmission } from '../../publication/result-admission.js'
 import { createNativeReadDedup } from './read-dedup.js'
 
@@ -31,6 +33,13 @@ export class NativeFileTools {
   private stopped: boolean
   private readonly readDedup: ReturnType<typeof createNativeReadDedup>
   private readonly resultAdmission: ReturnType<typeof acquireResultAdmission>
+  /** The step-reachable surface at dispatch time: exactly what the host admitted. */
+  private readonly surfaceOf = (exec: Execution): NextStepSurface => {
+    const tools = this.ctx.get('tools')
+    const policy = this.ctx.get('sandboxPolicy')?.resolve({ session: exec.agent?.session })
+    return { callable: new Set(tools !== undefined && exec.agent !== undefined && exec.toolSet !== undefined
+      ? visibleNames(tools, exec.agent, exec.toolSet) : []), readOnly: policy?.mode === 'read-only' }
+  }
   private unregisterProvider: (() => void) | undefined
   constructor({ ctx, config, report }: { ctx: Context; config: NativeRuntimeConfig; report?: Reporter }) {
     this.ctx = ctx
@@ -65,7 +74,7 @@ export class NativeFileTools {
     const execute: ToolDefinition['execute'] = (args, exec) => this.call(rawName, args, exec)
     const source = this.readDedup.wrap(rawName === 'result' ? resultDefinition(execute) : definition(rawName, execute))
     const typed = rawName === 'glob' || rawName === 'grep' || rawName === 'read_files'
-    return canonicalOutput(rawName, typed ? { ...source, output: { ...source.output, schema: canonicalSchema(rawName) } } : source)
+    return canonicalOutput(rawName, typed ? { ...source, output: { ...source.output, schema: canonicalSchema(rawName) } } : source, this.surfaceOf)
   }
 
   async call(tool: NativeToolName, args: unknown, exec: Execution): Promise<unknown> {

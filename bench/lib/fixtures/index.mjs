@@ -3,8 +3,8 @@
  * name -> builder registry, and the derivation functions that recompute each
  * builder's expectation from the bytes it wrote.
  *
- * The catalogue is split by family — `csv` / `log` / `tree` / `symbol` / `corpus`
- * / `deep` / `repair` — but re-exported from this one path so the tasks, `run.mjs`
+ * The catalogue is split by family — `csv` / `log` / `tree` / `symbol` / `paged`
+ * / `corpus` / `deep` / `repair` — but re-exported from this one path so the tasks
  * and the suites keep a single import. The scaffold itself lives in
  * `./internal.mjs`, which imports nothing, so the graph is a DAG: barrel ->
  * family -> scaffold. The shared names are still re-exported from here, because
@@ -20,6 +20,7 @@ import { symbolTree } from './symbol.mjs'
 import { deepModule } from './deep.mjs'
 import { deepCorpus } from './corpus.mjs'
 import { brokenProject, gatePipeline } from './repair.mjs'
+import { pagedLog } from './paged.mjs'
 
 export { deriveLargeCsv, largeCsv } from './csv.mjs'
 export { deriveLogStats, deriveNoisySuite, logStats, noisySuite } from './log.mjs'
@@ -28,6 +29,7 @@ export { deriveSymbolTree, symbolTree } from './symbol.mjs'
 export { deepModule, deriveDeepModule } from './deep.mjs'
 export { deepCorpus } from './corpus.mjs'
 export { brokenProject, gatePipeline } from './repair.mjs'
+export { derivePagedLog, pagedLog } from './paged.mjs'
 export { drawIndices, hexRun, mulberry32, pad, pick, randInt, WORDS } from './internal.mjs'
 
 /**
@@ -58,5 +60,5 @@ export function generate(name, params = {}) {
  */
 export const GENERATORS = {
   grepTree, renameTree, largeCsv, brokenProject, logStats, configTree,
-  deepModule, deepCorpus, noisySuite, symbolTree, gatePipeline,
+  deepModule, deepCorpus, noisySuite, symbolTree, gatePipeline, pagedLog,
 }

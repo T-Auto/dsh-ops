@@ -1,8 +1,8 @@
-import type { Agent, Context, PreStepDecision, UserMessage } from '../adapter/dsh/types.js'
+import type { Agent, Context, Message, PreStepDecision, UserMessage } from '../adapter/dsh/types.js'
 import { loadUserMessage } from '../adapter/dsh/host.js'
 import { PromptProviderError } from './types.js'
-import type { PromptContribution, PromptDisposer, StepTailContext, StepTailProviderOptions, SystemSectionOptions } from './types.js'
-export type { PromptContribution, PromptDisposer, StepTailContext, StepTailProviderOptions, SystemSectionOptions } from './types.js'
+import type { PromptContribution, PromptDisposer, StepTailContext, StepTailProviderOptions, SystemSectionOptions, VisibleContribution } from './types.js'
+export type { PromptContribution, PromptDisposer, StepTailContext, StepTailProviderOptions, SystemSectionOptions, VisibleContribution } from './types.js'
 export { PromptProviderError } from './types.js'
 
 interface TailEntry { options: StepTailProviderOptions; active: boolean; lifetime: AbortController }
@@ -20,6 +20,21 @@ function stateFor(agent: Agent): AgentState {
 function validate(options: PromptContribution): void {
   if (!options.id.trim() || !options.revision.trim()) throw new TypeError('Prompt id and revision must be nonempty strings.')
   if (!Number.isFinite(options.priority ?? 0)) throw new TypeError('Prompt priority must be finite.')
+  if ((options as StepTailProviderOptions).dedupe !== undefined && (options as StepTailProviderOptions).dedupe !== 'visible') {
+    throw new TypeError('Step-tail dedupe must be "visible".')
+  }
+}
+/** Read one contribution's visibility from the derived model-visible history. */
+function readVisibility(history: readonly Message[], id: string, revision: string): VisibleContribution {
+  let any = false, current = false
+  for (const message of history) {
+    if (message.role !== 'user') continue
+    const source = message.source
+    if (source?.kind !== 'dsh-ops:step-tail' || source.contributor !== id) continue
+    any = true
+    if (source.revision === revision) { current = true; break }
+  }
+  return { any, current }
 }
 function lifetime(owner: Context, agent: Agent, cleanup: PromptDisposer): PromptDisposer {
   let active = true
@@ -71,17 +86,26 @@ function ordered(entries: Iterable<TailEntry>): TailEntry[] {
   return [...entries].sort((a, b) => (a.options.priority ?? 0) - (b.options.priority ?? 0)
     || (a.options.id < b.options.id ? -1 : a.options.id > b.options.id ? 1 : 0))
 }
-async function appendTails(state: AgentState, payload: Omit<StepTailContext, 'messages'>, decision: PreStepDecision): Promise<PreStepDecision> {
+async function appendTails(state: AgentState, payload: Omit<StepTailContext, 'messages' | 'visible'>, decision: PreStepDecision): Promise<PreStepDecision> {
   if (decision.kind !== 'enter' || !decision.messages.length || payload.signal.aborted || !state.tails.size) return decision
   const entries = ordered(state.tails.values())
-  const context: StepTailContext = Object.freeze({ ...payload, messages: freeze(structuredClone(decision.messages)) })
+  // The committed history is the visibility evidence for every provider: read it
+  // once per batch, before this batch itself commits, so a contribution replayed
+  // from a restored session is distinguishable from a new addition and a
+  // compaction that removed one is distinguishable from a fresh session.
+  const history = payload.agent.session.deriveMessages()
+  const context: Omit<StepTailContext, 'visible'> = Object.freeze({ ...payload, messages: freeze(structuredClone(decision.messages)) })
   const pending: { entry: TailEntry; text: string }[] = []
   for (const entry of entries) {
     if (payload.signal.aborted) return decision
     if (!entry.active) continue
+    const visible = readVisibility(history, entry.options.id, entry.options.revision)
+    // A same-revision message already visible is a historical replay, not a new
+    // addition: the provider is skipped entirely instead of re-teaching.
+    if (entry.options.dedupe === 'visible' && visible.current) continue
     try {
       const signal = AbortSignal.any([payload.signal, entry.lifetime.signal])
-      const text = await cancellable(Promise.resolve().then(() => entry.active && !signal.aborted ? entry.options.provide(Object.freeze({ ...context, signal })) : undefined), signal)
+      const text = await cancellable(Promise.resolve().then(() => entry.active && !signal.aborted ? entry.options.provide(Object.freeze({ ...context, signal, visible })) : undefined), signal)
       if (payload.signal.aborted) return decision
       if (text !== undefined && typeof text !== 'string') throw new TypeError('Step-tail providers must return text or undefined.')
       if (text && entry.active) pending.push({ entry, text })

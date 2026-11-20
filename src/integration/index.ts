@@ -31,7 +31,9 @@ export async function mountIntegration(ctx: Context, config: IntegrationConfig):
     presentation: config.presentation, residentTools: config.residentTools, residentNames: config.residentNames,
     discovery: config.discovery, native: config.native, ptc: config.ptc,
     replaceOfficial: config.replaceOfficial || config.hidePwsh,
-    replacementTargets: replacementTargets(config.replaceOfficial && config.files && config.presentation === 'native', config.hidePwsh && config.shell),
+    // Both host presentations are covered: a native consumer keeps the old path,
+    // and a PTC consumer resolves reachability through the publisher accessor.
+    replacementTargets: replacementTargets(config.replaceOfficial && config.files, config.hidePwsh && config.shell),
     section: `preset-${config.preset}`,
     external: { allowed: config.externalTools, alwaysLoaded: config.externalAlwaysLoaded, disabled: config.externalDisabled },
   })

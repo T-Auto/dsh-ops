@@ -6,7 +6,7 @@
  * and a malformed row still fails loud and names the offending key.
  */
 import { LEGACY_FASTCTX_KEYS, resolveConfig, type ResolvedConfig } from '../config.js'
-import { parsePtcConfig, type PtcConfig } from '../ptc/config.js'
+import { parsePtcConfig, type DisclosurePolicy, type PtcConfig } from '../ptc/config.js'
 import { editable, settingsConfig, type Field } from '../settings/schema.js'
 import { configObject } from '../settings/schema.js'
 import type { ModeId } from './types.js'
@@ -15,6 +15,8 @@ import type { ModeId } from './types.js'
 export interface ModeConfig extends ResolvedConfig {
   allowedTools: PtcConfig['allowedTools']
   alwaysLoaded: PtcConfig['alwaysLoaded']
+  /** Explicit first-round disclosure tier; the default 'on-demand' is the legacy path (#986). */
+  disclosurePolicy: DisclosurePolicy
   /** Publish Bash for this preset's sessions. */
   bash: boolean
   /** Hide the official Windows shell by default while Bash is available. */
@@ -37,12 +39,14 @@ export const MODE_CONFIG_KEYS: readonly string[] = Object.freeze([
   'binaryPath', 'required', 'denyCredentialReads', 'promptPolicy', 'extraGuidance',
   'bashPath', 'publishBashTool', 'allowSystemShellFallback', 'configUpdateVersion',
   'spillRetentionDays', 'spillTotalBudgetMiB', 'spillSweepEnabled',
-  'allowedTools', 'alwaysLoaded',
+  'allowedTools', 'alwaysLoaded', 'disclosurePolicy',
   'bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools', 'residentTools',
   'batchingGuidance', 'batchingTelemetry',
 ])
 
-const PTC_KEYS = new Set(['allowedTools', 'alwaysLoaded'])
+const PTC_KEYS = new Set(['allowedTools', 'alwaysLoaded', 'disclosurePolicy'])
+/** The mode rows that own a PTC publication surface, hence the disclosure policy. */
+const PTC_POLICY_MODES: readonly ModeId[] = ['ptc', 'ops-ptc']
 /** Boolean switches and gates, each supplying its own default below. */
 const SWITCH_KEYS = new Set(['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools', 'residentTools', 'batchingGuidance', 'batchingTelemetry'])
 
@@ -63,6 +67,11 @@ export function resolveModeConfig(rawConfig?: unknown, mode?: ModeId): ModeConfi
       throw new Error(`unknown key(s) ${JSON.stringify(key)}; accepted keys are ${MODE_CONFIG_KEYS.map(entry => JSON.stringify(entry)).join(', ')}`)
     }
   }
+  // The disclosure policy names a PTC publication tier: a row without a PTC
+  // surface must fail loud instead of silently carrying the key.
+  if (Object.hasOwn(raw, 'disclosurePolicy') && mode !== undefined && !PTC_POLICY_MODES.includes(mode)) {
+    throw new Error('disclosurePolicy applies to the ptc and ops-ptc rows only')
+  }
   const core = Object.fromEntries(Object.entries(raw).filter(([key]) => !PTC_KEYS.has(key) && !SWITCH_KEYS.has(key)))
   const ptc = Object.fromEntries(Object.entries(raw).filter(([key]) => PTC_KEYS.has(key)))
   const switches = Object.fromEntries(Object.entries(raw).filter(([key]) => SWITCH_KEYS.has(key)))
@@ -76,6 +85,7 @@ export function resolveModeConfig(rawConfig?: unknown, mode?: ModeId): ModeConfi
   const resolved = resolveConfig({ ...core, publishBashTool: bash })
   const api = parsePtcConfig(ptc)
   return { ...resolved, allowedTools: api.allowedTools, alwaysLoaded: api.alwaysLoaded,
+    disclosurePolicy: api.disclosurePolicy ?? 'on-demand',
     bash, hidePwsh: sw('hidePwsh', true),
     hideOfficialTools: sw('hideOfficialTools', true), dynamicTools: sw('dynamicTools', true),
     residentTools: mode !== 'minimal' && sw('residentTools', true),

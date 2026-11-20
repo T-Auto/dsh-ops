@@ -59,3 +59,16 @@ The test reproduces that mismatch with the real host plugin and records the
 section's ownership. Correcting the host callback to honor current step admission
 remains a host dependency of #866. OPS does not rewrite that third-party prompt or
 modify the shared registry, and does not add a permanent name-mapping prompt.
+
+The PTC side of that mismatch is closed at the supported assembly extension point
+(#983, `src/publication/replacements.ts`): when the shadow hides
+`read`/`glob`/`grep` for a PTC presentation, the assembled prompt retires the
+provider's `tool:read`/`tool:glob`/`tool:grep` sections instead of teaching hidden
+names. A kept official whose section still points at a hidden name — the pinned
+host grep text cross-references read — is retired with it and one note names the
+executable OPS counterpart; a kept section without such a pointer survives. Withdrawing
+the replacement restores the provider text verbatim. `test/ptc-guidance-cleanup.test.mjs`
+pins this against the real `@deepseek-ai/dsh-tool-fs`/`-fs-search` plugins, including
+the byte deltas by section group on the Linux fixture: SDK −2,011 B, the three
+guidance sections −338 B, outer wire 0 B. #866 stays open for the Native presentation,
+where the host section is intentionally untouched.

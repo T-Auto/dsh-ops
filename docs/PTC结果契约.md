@@ -11,7 +11,7 @@ English: [PTC result contracts](ptc-outcomes.md).
 | 状态 | 必需字段 | 调用方操作 |
 | --- | --- | --- |
 | `completed` | `data` | 处理本次请求对应的结果。 |
-| `partial` | `data`、不完整的 `coverage`、`continuation` | 检查已保留数据，显式读取剩余范围或引用页。 |
+| `partial` | `data`、不完整的 `coverage`、`continuation`、可选 `nextAction` | 按 `nextAction` 给出的显式调用续读；报告 `complete=true` 的那一页就是最后一页。 |
 | `rejected`、`conflict`、`error`、`unknown` | `error`，可选保留 `data` | 根据 `code`、`effectState`、`retry` 和 `nextAction` 处理。 |
 
 成功的 plan 只表示规划完成，不表示修改已执行。`result.put` 不回显行仍可表示存储完成。
@@ -38,6 +38,13 @@ return { code: result.error.code, effectState: result.error.effectState,
 续取使用 `result.page`，绝不重复写入。引用页沿原引用推进，不会生成嵌套引用。没有进展、
 物理搜索未完成、描述符过大或无法安全续取时，返回 `RESULT_PARTIAL`、保留数据与明确指引，
 不伪造游标。每次续取仍核实当前权限与 SDK 可见性；没有自动执行或自动重试工具的辅助器。
+
+`nextAction` 推荐是可执行的，不是装饰：它给出带字面参数的具体调用——分页读取按同一路径的
+`nextOffset` 续读、非 UTF-8 字节改用 hex `view`、目录路径被拒时指向本步已注册的列举 API、
+`REVISION_CONFLICT` 指向重读最新 revision。推荐尊重当前步骤的可达集合：本步未准入的 API
+绝不会出现在文案里（此时直接要求提供具体文件路径），任何写类 API 都不会被推荐，只读作用域
+不会收到重新提交的建议。缺少 worker 指引的 `after-input-change` 失败会直说原样请求必然
+同样失败；已有明确恢复指引的错误保持原文不变。
 
 搜索扫描覆盖、快照捕获完整性和页面完整性是不同事实。读完已存储页不代表原始扫描完整。
 使用快照时检查 `data.source` 和原始搜索报告，详见[结果预算](结果预算.md)。

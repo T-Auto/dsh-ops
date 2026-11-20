@@ -17,7 +17,7 @@ export const BATCHING_GUIDANCE_ID = 'batching-guidance'
 /** Contributor of the one-time full lesson; the per-violation notices keep the base id. */
 export const BATCHING_GUIDANCE_LESSON_ID = `${BATCHING_GUIDANCE_ID}:lesson`
 /** Revision of the guidance text; bump it when the wording or the file format changes. */
-export const BATCHING_GUIDANCE_REVISION = '4'
+export const BATCHING_GUIDANCE_REVISION = '7'
 
 /** The shipped guidance file, resolved from this module's own location (src or lib). */
 const DEFAULT_GUIDANCE_FILE = new URL('../../prompts/batching-guidance.md', import.meta.url)
@@ -25,6 +25,8 @@ const DEFAULT_GUIDANCE_FILE = new URL('../../prompts/batching-guidance.md', impo
 /** Loaded text by absolute location; a failed load caches '' instead of retrying. */
 const loaded = new Map<string, string>()
 let warned = false
+/** Reported once: the shipped file lost the anchor the loader-less rendering rewrites. */
+let warnedAnchor = false
 
 /** Report an unreadable guidance file once, never once per agent or call. */
 function warnUnavailable(location: string, error: unknown): void {
@@ -62,6 +64,273 @@ export function loadBatchingGuidance(filePath?: string | URL): string {
   }
 }
 
+/**
+ * What one PTC scope actually publishes, in public tool names.
+ *
+ * The guidance file teaches progressive disclosure, and its loader lesson assumes
+ * `ops_load_sdk` is reachable. The loader is only published while dynamic loading is
+ * on, so the same text must not reach a scope that has none: it would spend a round
+ * trip in that scope on a call that cannot succeed.
+ */
+export interface GuidanceSurface {
+  /** Whether the scope publishes `ops_load_sdk`. */
+  readonly loader: boolean
+  /** Public names the scope publishes without loading. */
+  readonly resident: readonly string[]
+  /** Public names the loader can add, empty when the scope publishes no loader. */
+  readonly loadable: readonly string[]
+}
+
+/** The file-work APIs the guidance names, in the order it names them. */
+const FILE_APIS: readonly string[] = Object.freeze([
+  'ops_glob', 'ops_grep', 'ops_read_files', 'ops_inspect_local_file', 'ops_edit_file',
+])
+
+/**
+ * One sentence naming the file-work APIs the scope really publishes.
+ *
+ * The shipped wording is kept when every name it mentions is available, so the
+ * common loader scope reads exactly as before; a narrower scope gets the subset and
+ * a scope with none of them is pointed at the official tools instead.
+ * @param names - public names available for file work in this scope.
+ * @returns the sentence for the bypass notice.
+ */
+function fileWorkHint(names: readonly string[]): string {
+  const usable = FILE_APIS.filter(name => names.includes(name))
+  if (usable.length === 0) return 'No OPS file API is available here: do file work with the official tools.'
+  if (usable.length === FILE_APIS.length) {
+    return 'List with `ops_glob`, search with `ops_grep`, read with `ops_read_files` or `ops_inspect_local_file`, edit with `ops_edit_file`.'
+  }
+  return 'Do file work with the APIs this scope publishes: `' + usable.join('`, `') + '`.'
+}
+
+/**
+ * Drop every section whose heading names loading.
+ *
+ * The fallback path runs when the shipped file no longer carries the anchor: a
+ * renamed heading still leaves the old lesson in place, and pairing it with the
+ * replacement would put two contradicting steps in one document.
+ * @param rows - guidance lines.
+ * @returns the lines without loader-named sections.
+ */
+function dropLoadSections(rows: readonly string[]): string[] {
+  const kept: string[] = []
+  let dropping = false
+  let fence: string | null = null
+  for (const row of rows) {
+    if (fence !== null) {
+      if (row.trim().startsWith(fence)) fence = null
+      if (!dropping) kept.push(row)
+      continue
+    }
+    const opening = /^\s*(```+|~~~+)/.exec(row)
+    if (opening !== null) {
+      fence = opening[1]!
+      if (!dropping) kept.push(row)
+      continue
+    }
+    // A heading inside a fence is example text, and only a word that means loading may
+    // drop a section: "payload", "download" and "workload" are ordinary prose.
+    if (row.startsWith('## ')) dropping = LOAD_HEADING.test(row)
+    if (!dropping) kept.push(row)
+  }
+  return kept
+}
+
+/**
+ * Remove every trace of the load step from the lines that stay in the document.
+ *
+ * A fenced block is dropped as a unit when it teaches loading: deleting the call and
+ * keeping the lines that consumed the loaded names would ship a half example that a
+ * model can copy.
+ * @param rows - guidance lines outside the replaced section.
+ * @returns the lines without the load step.
+ */
+function stripLoader(rows: readonly string[]): string[] {
+  const kept: string[] = []
+  let fence: string | null = null
+  let block: string[] = []
+  for (const row of rows) {
+    if (fence === null) {
+      const opening = /^\s*(```+|~~~+)/.exec(row)
+      if (opening !== null) {
+        fence = opening[1]!
+        block = [row]
+        continue
+      }
+      if (row.startsWith(LOAD_TABLE_ROW_PREFIX)) continue
+      if (row.includes('ops_load_sdk')) continue
+      // The Step 1 prose advertises the same entry without naming the loader tool, so
+      // it must not survive beside a replacement section that says there is no loader.
+      if (row.includes(LOAD_PROSE_ANCHOR)) continue
+      kept.push(row)
+      continue
+    }
+    block.push(row)
+    if (row.trim().startsWith(fence)) {
+      if (!block.some(line => line.includes('ops_load_sdk'))) kept.push(...block)
+      fence = null
+      block = []
+    }
+  }
+  // An unterminated fence keeps its lines: dropping the tail of a drifted file would
+  // hide more than the load step.
+  kept.push(...block)
+  return kept
+}
+
+/** The heading that starts the loader lesson in the guidance file. */
+export const LOAD_SECTION_HEADING = '## Step 3 - load before you call'
+/** A heading that names loading, by word: "payload" is not a load step. */
+const LOAD_HEADING = /\bload(?:ing|er)?\b/i
+
+/** The one table row that teaches the loader. */
+export const LOAD_TABLE_ROW_PREFIX = '| ops_read_files before it is loaded'
+/** The opening words of the Step 1 prose that teaches SDK loading without the tool name. */
+export const LOAD_PROSE_ANCHOR = 'SDK loading'
+
+/**
+ * The path caveat for a loader-less scope that cannot discover paths.
+ *
+ * `ops_inspect_local_file` reads one file by exact path and rejects directories, so a
+ * scope that publishes it without `ops_glob` or `ops_grep` must say where the paths
+ * come from: a model that probes a directory through it spends a failed round trip.
+ * @param resident - public names the scope publishes without loading.
+ * @returns the caveat lines, empty when a listing or search API is published.
+ */
+function exactPathNote(resident: readonly string[]): string[] {
+  if (!resident.includes('ops_inspect_local_file') || resident.includes('ops_glob') || resident.includes('ops_grep')) return []
+  return [
+    '',
+    'File work here has no listing and no search API: `ops_inspect_local_file` reads one',
+    'file by its exact path and rejects directories, so call it with concrete file paths',
+    'you already know.',
+  ]
+}
+
+/**
+ * The section that replaces the loader lesson when the scope publishes no loader.
+ * @param surface - what the scope publishes.
+ * @returns the replacement lines, heading included.
+ */
+function directSteps(surface: GuidanceSurface): string[] {
+  if (surface.resident.length === 0) {
+    return [
+      '## Step 3 - what this scope publishes',
+      '',
+      'This scope publishes no OPS API and no loader. Work with the official tools;',
+      'an `ops_*` name outside the SDK is not available here, and retrying will not',
+      'make one appear.',
+    ]
+  }
+  return [
+    '## Step 3 - call what is published',
+    '',
+    'This scope publishes no loader: every API already in the SDK is callable directly,',
+    'and a name outside it is not available. Calling what you already have is the whole',
+    'step, with no load to spend a program on:',
+    '',
+    '`' + surface.resident.join('`, `') + '`',
+    ...exactPathNote(surface.resident),
+  ]
+}
+
+/**
+ * The index of the heading that ends the section starting at `start`.
+ * @param lines - the guidance lines.
+ * @param start - the section heading index.
+ * @returns the next heading index, or the line count when the section is last.
+ */
+/**
+ * The index of the load-step heading, ignoring anything inside a fence.
+ *
+ * A fenced example that quotes the heading is text, not structure: taking it for the
+ * anchor would cut the document in the wrong place.
+ * @param lines - the guidance lines.
+ * @returns the heading index, or -1 when the file lost it.
+ */
+function anchorIndex(lines: readonly string[]): number {
+  let fence: string | null = null
+  for (let index = 0; index < lines.length; index += 1) {
+    const row = lines[index]!
+    if (fence !== null) {
+      if (row.trim().startsWith(fence)) fence = null
+      continue
+    }
+    const opening = /^\s*(```+|~~~+)/.exec(row)
+    if (opening !== null) {
+      fence = opening[1]!
+      continue
+    }
+    if (row.trim() === LOAD_SECTION_HEADING) return index
+  }
+  return -1
+}
+
+function nextHeading(lines: readonly string[], from: number): number {
+  let fence: string | null = null
+  for (let index = from; index < lines.length; index += 1) {
+    const row = lines[index]!
+    if (fence !== null) {
+      if (row.trim().startsWith(fence)) fence = null
+      continue
+    }
+    const opening = /^\s*(```+|~~~+)/.exec(row)
+    if (opening !== null) {
+      fence = opening[1]!
+      continue
+    }
+    if (row.startsWith('## ')) return index
+  }
+  return lines.length
+}
+
+/**
+ * The index of the heading that ends the section starting at `start`.
+ * @param lines - the guidance lines.
+ * @param start - the section heading index.
+ * @returns the next heading index outside any fence, or the line count.
+ */
+function sectionEnd(lines: readonly string[], start: number): number {
+  return nextHeading(lines, start + 1)
+}
+
+/**
+ * Render the guidance for one published surface.
+ *
+ * A scope with the loader receives the file byte for byte, so the default path is
+ * unchanged. A loader-less scope receives the same lesson with the load step
+ * replaced: the prose that tells the model to load cannot be true there.
+ * @param text - the loaded guidance file.
+ * @param surface - what the scope publishes.
+ * @returns the model-facing guidance text.
+ */
+export function renderBatchingGuidance(text: string, surface: GuidanceSurface): string {
+  if (text === '' || surface.loader) return text
+  const lines = text.split('\n')
+  const start = anchorIndex(lines)
+  // Lines that teach loading, and the table row that points at it, never reach a
+  // scope without a loader. The replacement is inserted after this filter, so the
+  // filter can never eat the section it was built to produce.
+  if (start < 0) {
+    // A drifted file is a plugin defect, not a model-facing surprise: say so once,
+    // then still keep the lesson free of an unreachable call.
+    if (!warnedAnchor) {
+      warnedAnchor = true
+      console.warn('dsh-ops: the batching guidance lost its "' + LOAD_SECTION_HEADING
+        + '" anchor; the load step is replaced before the first section instead.')
+    }
+    const body = dropLoadSections(stripLoader(lines))
+    const at = nextHeading(body, 0)
+    return [...body.slice(0, at), ...directSteps(surface), '', ...body.slice(at)].join('\n')
+  }
+  // Insert the replacement exactly where the load step stood, so the document keeps
+  // its heading order and the shared sections keep their positions.
+  const before = stripLoader(lines.slice(0, start))
+  const after = stripLoader(lines.slice(sectionEnd(lines, start)))
+  return [...before, ...directSteps(surface), '', ...after].join('\n')
+}
+
 // ---- program shape: what one run_code program says about its step ----
 
 /** A program shorter than this is treated as single-step unless it is structured. */
@@ -83,7 +352,9 @@ const PLAN_ENTRY_SEPARATOR = /[;；]/u
 const DISPATCH = /\btools\s*(?:\.\s*([A-Za-z_$][\w$]*)|\[\s*['"]([^'"]+)['"]\s*\])\s*\(/gu
 const BATCHED = /Promise\.all|Promise\.allSettled|\.map\s*\(|for\s*\(|while\s*\(|forEach\s*\(|\[\s*\.\.\./u
 const BRANCHING = /\bif\s*\(|\btry\s*\{|\bswitch\s*\(|\?\s*[^:]{1,80}:/u
-const WAITING = /\bwait\s*:\s*true|job_output\s*\(/u
+const WAITING = /\bwait\s*:\s*true\b/u
+/** Tools whose call is itself a wait on other work, recognised only at a real dispatch site. */
+const WAITING_TOOL = /^(?:wait_agent|job_output)$/u
 const BYPASS = /node:fs|node:child_process|\bfs\./u
 const SHELL_TOOL = /^(?:pwsh|bash|shell|ops_bash|pwsh_persistent|bash_persistent)$/u
 
@@ -274,7 +545,10 @@ export function analyzeProgram(code: unknown): ProgramShape {
     dispatchSites: sites.length,
     hasBatchingStructure: BATCHED.test(code),
     hasBranching: BRANCHING.test(code),
-    isWaiting: WAITING.test(code),
+    // Waiting on an agent or job is a dependency barrier; tool waits count only at a
+    // real dispatch site and `wait: true` only in executable code, so comments and
+    // strings never exempt a program.
+    isWaiting: WAITING.test(readable.bare) || sites.some(match => WAITING_TOOL.test(match[1] ?? match[2] ?? '')),
     // Comments and message text are not file work; module specifiers stay readable
     // so a real import of node:fs still bypasses.
     bypassesFileTools: BYPASS.test(readable.bare) || shellForFiles,
@@ -308,8 +582,11 @@ export function violationsOf(shape: ProgramShape): ProgramViolations {
     plan: !shape.hasFirstLinePlan,
     bypass: shape.bypassesFileTools,
     // Waiting on a job and branching are legitimate non-batched shapes, and a long
-    // program is not judged from its text alone.
-    shape: !shape.hasBatchingStructure && !shape.hasBranching && !shape.isWaiting && shape.chars < THIN_CODE_CHARS,
+    // program is not judged from its text alone. The notice claims a single operation,
+    // so it needs exactly one dispatch site: two sequential sites may be dependent, and
+    // the text alone cannot prove they could have run in parallel.
+    shape: shape.dispatchSites === 1 && !shape.hasBatchingStructure && !shape.hasBranching && !shape.isWaiting
+      && shape.chars < THIN_CODE_CHARS,
   }
 }
 
@@ -353,7 +630,7 @@ export interface ProgramLatch {
  * @param shape - the program shape the notice describes.
  * @returns the model-facing text, without the plugin-context envelope.
  */
-export function noticeText(category: BatchingCategory, shape: ProgramShape): string {
+export function noticeText(category: BatchingCategory, shape: ProgramShape, surface: GuidanceSurface): string {
   if (category === 'plan') {
     return [
       'Your last program did not open with a plan line.',
@@ -362,10 +639,27 @@ export function noticeText(category: BatchingCategory, shape: ProgramShape): str
     ].join('\n')
   }
   if (category === 'bypass') {
+    // Every line names only what this scope publishes: a hardcoded tool list would
+    // contradict the sentence that explains the scope two lines below it.
+    // Resident APIs need no load, so they count as reachable beside the pool.
+    const available = surface.loader
+      ? [...new Set([...surface.resident, ...surface.loadable])]
+      : [...surface.resident]
+    const fileUsable = FILE_APIS.filter(name => available.includes(name)).length
+    const coversFiles = fileUsable === FILE_APIS.length
     return [
       'Your last program did file work through the shell or Node IO, which bypasses path policy and the audit trail.',
-      'List with `ops_glob`, search with `ops_grep`, read with `ops_read_files` or `ops_inspect_local_file`, edit with `ops_edit_file`.',
-      'Use the APIs in the current SDK; load only missing names with `tools.ops_load_sdk` for the next program.',
+      // A pool that cannot load `ops_edit_file` must not be told to load it either.
+      fileWorkHint(available),
+      surface.loader
+        ? coversFiles
+          ? 'Use the APIs in the current SDK; load only missing names with `tools.ops_load_sdk` for the next program.'
+          : fileUsable === 0
+            ? 'The loadable pool holds no file API either, so loading adds nothing here.'
+            : 'Load only names this scope publishes with `tools.ops_load_sdk` for the next program; an API outside that pool is not reachable.'
+        : fileUsable === 0
+          ? 'There is no loader here, and retrying a name will not publish one.'
+          : 'There is no loader here: call those APIs directly in the next program.',
     ].join('\n')
   }
   return [
@@ -384,7 +678,7 @@ export function noticeText(category: BatchingCategory, shape: ProgramShape): str
  * by the notice text, while a missed correction lasts the rest of the turn.
  * @returns the latch; state is keyed by agent identity and never serialized.
  */
-export function createProgramLatch(): ProgramLatch {
+export function createProgramLatch(surfaceOf: (agent: Agent) => GuidanceSurface): ProgramLatch {
   const states = new WeakMap<Agent, { turn: number; armed: Record<BatchingCategory, boolean>; sent: Record<BatchingCategory, number> }>()
   const fresh = (turn: number) => ({ turn, armed: { plan: true, bypass: true, shape: true }, sent: { plan: 0, bypass: 0, shape: 0 } })
   const stateFor = (agent: Agent) => {
@@ -410,7 +704,8 @@ export function createProgramLatch(): ProgramLatch {
       if (category === undefined) return undefined
       state.armed[category] = false
       state.sent[category] += 1
-      return { category, turn: state.turn, text: noticeText(category, shape) }
+      // Read-only policy is per agent, so the surface is resolved at delivery time.
+      return { category, turn: state.turn, text: noticeText(category, shape, surfaceOf(agent)) }
     },
     isArmed(agent, category) { return stateFor(agent).armed[category] },
     stats(agent) {
