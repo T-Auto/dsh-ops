@@ -19,6 +19,9 @@ export function mountConsumer(ctx: Context, plan: ConsumerPlan): void {
   const { gate, core } = plan
   let renderShellGuidance: (agent: Agent) => string = () => ''
   const shellOwnsGuidance = (agent: Agent): boolean => Boolean(core.extraGuidance.trim()) && Boolean(renderShellGuidance(agent))
+  // A shell slot whose executor never resolved must never hide the official tools it was
+  // going to replace (#962): the replacement would advertise a counterpart that cannot run.
+  let bashUnavailable = false
   if (plan.shell) {
     // Host subprocess spills outlive the call that produced them upstream, so the
     // row that publishes the shell also owns one bounded retention runtime.
@@ -31,6 +34,7 @@ export function mountConsumer(ctx: Context, plan: ConsumerPlan): void {
     // Resolved once at mount: a slot whose executor never resolved publishes no tool at all, so the
     // section below has to report that instead of rendering nothing for the whole session.
     const bashResolution = shells.bash
+    bashUnavailable = !bashResolution.available
     ctx.inject(['tools'], inner => mountSessionBash(inner, core, shells, gate))
     if (core.promptPolicy) ctx.inject(['tools', 'systemPrompt'], inner => {
       mountJobWaitGuidance(inner, plan.id, gate)
@@ -61,5 +65,5 @@ export function mountConsumer(ctx: Context, plan: ConsumerPlan): void {
         extraGuidanceOwner: agent => shellOwnsGuidance(agent) || nativeOwnsGuidance(agent),
         residentTools: () => residents.map(publicToolName), external: plan.external })
   } else if (plan.files) mountPtc(ctx, plan.ptc, { ...gate, guidance: core.promptPolicy, resident: plan.residentTools, dynamic: plan.discovery })
-  if (plan.replaceOfficial) mountReplacements(ctx, { id: plan.id, targets: plan.replacementTargets, gate, keepOfficial: () => false })
+  if (plan.replaceOfficial) mountReplacements(ctx, { id: plan.id, targets: plan.replacementTargets, gate, keepOfficial: () => bashUnavailable })
 }

@@ -7,6 +7,30 @@ import { publicationAdmission } from './registrar.js'
 import { loadScopes } from '../adapter/dsh/host.js'
 import type { PublicationGate } from './types.js'
 
+/** Bash preparation stages that no retry of the same call can repair; each lifts the official fallback (#962). */
+const UNRECOVERABLE_BASH_STAGES = new Set(['bash-runtime-missing', 'bash-ipc-mismatch', 'bash-lifecycle-lock-busy', 'bash-cache-unusable'])
+
+/**
+ * Whether one settled replacement-counterpart value reports a runtime failure that
+ * retrying the same call cannot repair (#962). Only Bash preparation stages without a
+ * retry remedy qualify: a staging interruption is repaired by the next call, and lifting
+ * the shadow for it would flap between two tool sets. The stage is the stable second
+ * segment of the model-facing EXECUTOR_UNAVAILABLE text (src/bash-runtime-failure.ts);
+ * bash-runtime-incompatible keeps its own complete message without that prefix, so its
+ * stage name inside the message is its identifier. PTC Outcome failures carry a structured
+ * error object, never this text, so they never classify.
+ * @param value - one settled tool-call value.
+ * @returns whether the official fallback must be restored for the calling agent.
+ */
+export function unrecoverableCounterpartRuntime(value: unknown): boolean {
+  if (value === null || typeof value !== 'object') return false
+  const error = (value as { error?: unknown }).error
+  if (typeof error !== 'string') return false
+  const stage = /^EXECUTOR_UNAVAILABLE:\s*([a-z-]+):/.exec(error)
+  if (stage !== null) return UNRECOVERABLE_BASH_STAGES.has(stage[1]!)
+  return error.includes('bash-runtime-incompatible')
+}
+
 interface Shadow { source: ToolDefinition; definition: ToolDefinition; dispose(): void }
 interface Entry { shadows: Map<string, Shadow>; probe: object }
 
@@ -30,6 +54,9 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
     const entries = new Map<Agent, Entry>()
     // Disposed agents and agents with unlinked host scopes must not receive shadows.
     const inactive = new WeakSet<Agent>()
+    // Agents whose counterpart reported an unrecoverable runtime failure keep their official tools (#962).
+    const broken = new WeakSet<Agent>()
+    const counterparts = new Set(targets.values())
     let stopped = false, mutating = false
     let scheduled: ReturnType<typeof setImmediate> | undefined
     const defer = (): void => {
@@ -74,7 +101,7 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
               // Own registrations bypass restrictions in the host view. The empty descendant
               // probe makes our shadow inherited, so even agent-local restrictions still apply.
               if (tools.get(official, entry.probe) !== definition || sourceFor(activation.agent, official) !== source) return false
-              if (keepOfficial() || !gate.allows(activation.agent)) return true
+              if (keepOfficial() || broken.has(activation.agent) || !gate.allows(activation.agent)) return true
               const replacement = tools.get(counterpart, activation.agent)
               if (!replacement) return true
               const admission = publicationAdmission(replacement)
@@ -126,6 +153,19 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
       inactive.add(agent)
       const entry = entries.get(agent)
       if (entry) { entries.delete(agent); lift(agent, entry) }
+    })
+    // Fail open (#962): a counterpart that settled with an unrecoverable runtime failure
+    // stops hiding the official tool from the agent's next model step. The latch is per
+    // agent: the payload is shared, but each agent's own accepted call is the evidence
+    // that its shadow is a dead end, and one agent's repair never guesses for another.
+    ctx.on('tools/post-execute', async (exec, result, next) => {
+      const decision = await next()
+      if (decision.kind !== 'accept' || !exec.agent || !counterparts.has(exec.name)) return decision
+      const value = (result as { value?: unknown } | undefined)?.value
+      if (!unrecoverableCounterpartRuntime(value) || broken.has(exec.agent)) return decision
+      broken.add(exec.agent)
+      ctx.logger.warn(`dsh-ops: ${mode} replacement counterpart ${exec.name} reported an unrecoverable runtime failure; the official tools stay available for this agent`)
+      return decision
     })
     ctx.on('session/event', (_session, event) => { if ((event as { type: string }).type === 'agent-preset/selected') reconcile() })
     if (gate.watch) ctx.effect(() => gate.watch!(() => reconcile()), `dsh-ops: ${mode} replacement observer`)

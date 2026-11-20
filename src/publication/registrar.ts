@@ -13,6 +13,8 @@ export interface PublicationGrant {
   dispatch(args: unknown, exec: ToolRunContext): Promise<unknown>
   /** Presentation may only narrow this captured grant; it never chooses dispatch. */
   present?(activation: ToolActivationContext): boolean | Promise<boolean>
+  /** Outcome for a caller whose grants exist but none is entitled: a deferred-selection pointer, not a silent dead end (#968). */
+  deferred?(): Outcome<never> | undefined
   cancel?(): void
 }
 export interface PublicationLease {
@@ -137,7 +139,21 @@ export async function acquire(ctx: Context, scope: object | undefined, name: str
           return denied('PUBLICATION_IDENTITY_MISMATCH')
         }
         const matching = eligible(exec.agent)
-        if (!matching.length || matching.some(grant => grant.dispatch !== matching[0].dispatch)) return denied('PUBLICATION_GRANT_UNAVAILABLE')
+        if (!matching.length) {
+          // Same-agent grants with no entitled member can still explain themselves: a pool
+          // publication points its caller at the loader instead of a retry-never denial (#968).
+          // Consult every same-agent advisor in grant order: one that cannot help — by
+          // answering undefined or by throwing — must not mask later grants that can.
+          for (const advisor of grants) {
+            if (advisor.agent !== exec.agent || typeof advisor.deferred !== 'function') continue
+            try {
+              const outcome = advisor.deferred()
+              if (outcome !== undefined && 'error' in outcome) return outcome
+            } catch { /* an unavailable advisor falls through to the next one */ }
+          }
+          return denied('PUBLICATION_GRANT_UNAVAILABLE')
+        }
+        if (matching.some(grant => grant.dispatch !== matching[0].dispatch)) return denied('PUBLICATION_GRANT_UNAVAILABLE')
         const controller = new AbortController()
         const caller = exec.signal
         const abort = () => controller.abort(caller?.reason)
