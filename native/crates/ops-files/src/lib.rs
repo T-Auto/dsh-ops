@@ -4,6 +4,7 @@ pub mod cache_io;
 mod file;
 pub mod file_path;
 pub mod paths;
+mod rendered_text;
 #[cfg(all(test, unix))]
 use cap_std::ambient_authority;
 #[cfg(unix)]

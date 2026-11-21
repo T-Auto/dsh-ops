@@ -24,9 +24,10 @@ this row before removing obsolete overrides; OPS does not rewrite profiles autom
 
 Standard and Cordis publish resident Native tools; Minimal has no file baseline; PTC publishes
 typed APIs with a separate SDK loader; OPS PTC (`ops-ptc`) is registered at plugin runtime and keeps
-that surface, adding the batch-call guidance from the editable `prompts/batching-guidance.md` once at
-session start, then shape notices for root `run_code` programs (`bypass`/`plan`/`shape`, each latched per
- turn) appended as `additionalContexts` (on in the packaged bundle; see [presets](presets.md)).
+that surface, adding the batch-call guidance from the editable `prompts/batching-guidance.md`: one lesson on
+the first accepted pre-step batch, then shape notices for root `run_code` programs
+(`bypass`/`plan`/`shape`, each latched per turn), all delivered as plain user messages (source kind `user`,
+no plugin envelope) that enter logged history (on in the packaged bundle; see [presets](presets.md)).
 The default preset is set by one button on the row's detail page; nothing forces or restores it automatically.
 Residency, dynamic loading, Bash, file replacement and
 Windows host-shell hiding are independently controlled. Global gates preserve saved per-preset
@@ -275,7 +276,7 @@ Use `ops_bash`'s `command` for short commands and pipelines. For scripts longer 
 
 `script_path` accepts only the script path, so the script body is not repeated in the `ops_bash` arguments. `command` and `script_path` are mutually exclusive and exactly one is required. This interface cannot repair JSON that the model or host failed to parse; an unparseable tool call still requires a host/model retry.
 
-`ops_bash` requires a non-empty `description` and keeps the host Bash fields and result kinds: `foreground`, `background`, or `promoted`. Its default timeout is 120 seconds and the cap is 600 seconds. When the host jobs service is available, `run_in_background: true` returns a job ID immediately; a foreground timeout promotes the same running job. Use the host `job_output` and `job_kill` tools to collect or stop it. Without host jobs, the background parameter is absent and a foreground timeout stops the command. Unknown arguments are rejected before execution.
+`ops_bash` requires a non-empty `description` and keeps the host Bash fields and result kinds: `foreground`, `background`, or `promoted`. Its default timeout is 120 seconds and the cap is 600 seconds. When the host jobs service is available, `run_in_background: true` returns a job ID immediately; a foreground timeout promotes the same running job. Use the host `job_output` and `job_kill` tools to collect or stop it. `job_kill` terminates the whole process tree: daemons the command started and left attached to its pipes (an adb server, a dev-server watcher) go down with it, so stop such daemons on their own channel first, start them detached, or begin daemon-like work with `run_in_background` so the tree decision stays deliberate. Without host jobs, the background parameter is absent and a foreground timeout stops the command. Unknown arguments are rejected before execution.
 
 The host job list and waiting view use `description` as the task label. Both `background` and `promoted` results include that same `label` beside `jobId`, and the rendered result quotes it. When migrating from the old `ops_run_background` / `ops_job_output` / `ops_job_kill` tools, start work with `ops_bash`'s `run_in_background` (or let a foreground call promote), then use the host `job_output` / `job_kill` with the returned ID. Keep `description` concise so the job is recognizable while waiting.
 

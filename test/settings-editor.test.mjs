@@ -176,5 +176,47 @@ await test('in-flight save completion uses the current language while raw host e
   } finally { await view.close() }
 })
 
+await test('disclosure-only drafts keep their revision across host refresh and reset to the latest tier', async () => {
+  const calls = []
+  const form = { state: ready({}), mutate: async (...args) => { calls.push(args); return false } }
+  const view = await mount(form)
+  const full = () => view.container.querySelectorAll('input[name=ops-disclosure]')[1]
+  try {
+    await click(full())
+    form.state = ready({ ptc: { disclosurePolicy: 'full' } }, 'v2')
+    await view.render(zh)
+    assert.equal(full().checked, true, 'host refresh retains the chosen tier')
+    await click(view.save())
+    assert.deepEqual(calls, [[[
+      { op: 'set', path: ['ptc', 'disclosurePolicy'], value: 'full' },
+      { op: 'set', path: ['ops-ptc', 'disclosurePolicy'], value: 'full' },
+    ], 'v1']])
+    assert.equal(view.status(), zh.rejected)
+    await click(view.reset())
+    assert.equal(full().checked, false, 'reset adopts the latest mixed tier')
+    assert.equal(view.save().disabled, true)
+    await view.render(en)
+    await click(view.switch()); await click(view.save())
+    assert.deepEqual(calls[1], [[switchOp], 'v2'])
+  } finally { await view.close() }
+})
+
+await test('executor drafts do not adopt or overwrite a concurrently changed disclosure tier', async () => {
+  const calls = []
+  const form = { state: ready({}), mutate: async (...args) => { calls.push(args); return false } }
+  const view = await mount(form)
+  try {
+    await click(view.radio('git')); await type(view, selectedPath)
+    form.state = ready({ ptc: { disclosurePolicy: 'full' }, 'ops-ptc': { disclosurePolicy: 'full' } }, 'v2')
+    await view.render()
+    assert.equal(view.container.querySelector('input[name=ops-disclosure]').checked, true)
+    await click(view.save())
+    assert.deepEqual(calls, [[pathOps(selectedPath), 'v1']], 'executor-only save must not write disclosure')
+    await click(view.reset())
+    assert.equal(view.container.querySelectorAll('input[name=ops-disclosure]')[1].checked, true)
+    assert.equal(view.save().disabled, true)
+  } finally { await view.close() }
+})
+
 dom.window.close()
 report('settings-editor')

@@ -41,7 +41,12 @@ export function hostFailure(message: string, timeoutMs = 120_000, effects: 'none
 export function renderHostBash(value: HostBashResult): string {
   const directory = value.resolvedFrom === undefined ? '' : `[cwd: resolvedFrom=${JSON.stringify(value.resolvedFrom)}; cwdSource=${JSON.stringify(value.cwdSource)}]\n`
   if (value.kind === 'background') return directory + `started background job ${value.jobId} (${JSON.stringify(value.label)})`
-  if (value.kind === 'promoted') return directory + `${value.output || '(no output)'}\n[still running after ${value.timeoutMs}ms; moved to background job ${value.jobId} (${JSON.stringify(value.label)})]\nUse job_output to collect output and job_kill to stop the command.`
+  // The host owns what a job kill reaches (its subprocess and job layer), so this
+  // render can only be honest about it: killing the job terminates the whole process
+  // tree, including daemons the command started and left attached to its pipes, and
+  // the model has to know that before job_kill takes out an adb server or a dev
+  // watcher that was supposed to survive (#814).
+  if (value.kind === 'promoted') return directory + `${value.output || '(no output)'}\n[still running after ${value.timeoutMs}ms; moved to background job ${value.jobId} (${JSON.stringify(value.label)})]\nCollect output with job_output, or stop the command with job_kill. job_kill terminates the whole process tree, including daemons this command started and left attached to it (an adb server, a dev-server watcher); stop such daemons on their own channel first, or start them detached, so a job kill cannot reach them. Daemon-like or long-lived work belongs in run_in_background from the start.`
   const { exitCode, signal, ...rest } = value
   const body = renderBashResult(rest)
   const markers = []

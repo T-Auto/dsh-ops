@@ -7,6 +7,7 @@ import { activationIsPtc, isNativePresentation, isPresentationProbe } from '../p
 import { visibleNames } from '../publication/surface.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
 import { failure, resolveWorker } from '../execution/files.js'
+import type { Outcome } from '../kernel/outcome.js'
 import { capability, DISCOVERY_TOOL_NAME } from '../capabilities/registry.js'
 import { DISCOVERY_DESCRIPTION, DISCOVERY_PARAMETERS, DISCOVERY_OUTPUT } from '../capabilities/discovery.js'
 import { publicToolName, renderToolingPolicy } from '../policy.js'
@@ -93,6 +94,23 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
       const api = apiByName.get(name)
       return api !== undefined && selectable(agent, api) && (config.alwaysLoaded.includes(api) || entry.selected.has(api))
     }
+    /** Point a declared-but-unselected capability at the selector; undefined when discovery cannot select it (#764). */
+    const deferredRejection = (agent: Agent, entry: Entry, name: string, provider?: Provider): Outcome<never> | undefined => {
+      if (!selected(agent, entry, DISCOVER)) return undefined
+      if (provider !== undefined) {
+        if (!externalPool(agent).includes(provider) || !externalAvailable(provider, agent)
+          || gate.external?.alwaysLoaded.includes(name) || provider.capability.disclosure === 'resident'
+          || entry.externalSelected.has(provider.token)) return undefined
+      } else {
+        const api = apiByName.get(name)
+        if (api === undefined || !selectable(agent, api) || config.alwaysLoaded.includes(api) || entry.selected.has(api)) return undefined
+      }
+      return { status: 'error', error: {
+        code: 'CAPABILITY_NOT_SELECTED', effectState: 'none', retry: 'never',
+        message: `Capability '${name}' is discoverable for this scope but is not selected yet; no action was executed.`,
+        nextAction: `Call ${DISCOVER} with a select: query naming it (for example query: "select:${name}"); the tool becomes available on the next model step.`,
+      } }
+    }
     const rotateFiles = (agent: Agent, entry: Entry): void => {
       for (const [api, file] of entry.files) {
         const entitled = selected(agent, entry, publicToolName(api))
@@ -103,6 +121,7 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
           dispatch: async () => undefined,
           present: async activation => activation.agent === agent && entries.get(agent) === entry
             && permitted(agent, api) && !await activationIsPtc(prompt, activation),
+          deferred: () => deferredRejection(agent, entry, publicToolName(api)),
         })
         file.entitled = entitled
       }
@@ -113,6 +132,9 @@ export function mountDiscovery(root: Context, raw: unknown, gate: DiscoveryGate)
         const current = () => !exec.signal.aborted && entries.get(agent) === entry && exec.agent === agent
           && selected(agent, entry, source.name, provider) && tools.executable(source.name, agent, exec.toolSet) === definition
         if (!current() || !await isNativePresentation(prompt, agent, exec.signal).catch(() => false) || !current()) {
+          // A registered-but-unselected capability points at the selector; every other admission failure keeps the generic refusal.
+          const deferred = deferredRejection(agent, entry, source.name, provider)
+          if (deferred !== undefined) return deferred
           return failure('POLICY_DENIED', 'This Native capability must be admitted for the calling scope; no action executed.')
         }
         if (!provider) return source.execute(args, exec)

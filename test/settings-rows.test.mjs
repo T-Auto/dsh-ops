@@ -4,10 +4,10 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { companionVersion } from '../lib/settings/companion.js'
-import { GROUPS, ROW_ID, groupsFor, bundleGates, changedFields, executorDiffers, executorOps, flatKey, readExecutor, readRowValues } from '../lib/client/row-schema.js'
+import { GROUPS, ROW_ID, groupsFor, bundleGates, changedFields, executorDiffers, executorOps, flatKey, readExecutor, readRowValues, readDisclosure, disclosureDiffers, disclosureOps } from '../lib/client/row-schema.js'
 import { hasStatus, statusView } from '../lib/client/detail.js'
 import { en } from '../lib/client/locales.js'
-import { Config, effectiveMode, resolveMergedConfig } from '../lib/settings/merged.js'
+import { Config, effectiveMode, hostConfig, resolveMergedConfig } from '../lib/settings/merged.js'
 import { readRowValues as draftFor } from '../lib/client/row-schema.js'
 const t = key => en[key]
 const SWITCHES = ['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools']
@@ -25,9 +25,12 @@ await test('the page matches the host descriptor, and the opt-in switches share 
     const group = GROUPS.find(entry => entry.id === section)
     const expected = section === 'minimal' ? SWITCHES : ['bash', 'hidePwsh', 'hideOfficialTools', 'residentTools', 'dynamicTools']
     assert.deepEqual(group.fields.map(spec => spec.path[1]), expected, section)
-    // bashPath belongs to the executor card rather than the boolean switch grid.
-    assert.deepEqual([...group.fields.map(spec => spec.path[1]), 'enabled', 'bashPath'].sort(), Object.keys(Config.dict[section].dict).sort(), section)
+    // bashPath belongs to the executor card; the two PTC rows' disclosurePolicy
+    // belongs to the disclosure card — neither is a boolean switch above.
+    const cardKeys = ['bashPath', ...(section === 'ptc' || section === 'ops-ptc' ? ['disclosurePolicy'] : [])]
+    assert.deepEqual([...group.fields.map(spec => spec.path[1]), 'enabled', ...cardKeys].sort(), Object.keys(Config.dict[section].dict).sort(), section)
     assert.equal(Config.dict[section].dict.bashPath.meta.volatile, true)
+    if (section === 'ptc' || section === 'ops-ptc') assert.equal(Config.dict[section].dict.disclosurePolicy.meta.volatile, true)
   }
   // compat/panel/tui used to be three single-switch cards; they are one card now.
   const other = GROUPS.find(group => group.id === 'other')
@@ -135,6 +138,35 @@ await test('the executor card reads the saved rows and writes exactly one choice
   assert.equal(executorDiffers({ engine: 'git', path: 'C:/x/bash.exe' }, {}), true)
   assert.equal(executorDiffers({ engine: 'niubash', path: '' }, {}), false)
   assert.equal(executorDiffers({ engine: 'git', path: 'C:/a/bash.exe' }, { ptc: { bashPath: 'C:/a/bash.exe' } }), false)
+})
+
+await test('the disclosure card reads the saved rows and writes exactly one tier', () => {
+  // Old profiles (key absent) and an explicit on-demand both read as the default rung.
+  assert.deepEqual(readDisclosure({}), 'on-demand')
+  assert.equal(readDisclosure({ ptc: { disclosurePolicy: 'on-demand' } }), 'on-demand')
+  assert.equal(readDisclosure({ ptc: { disclosurePolicy: 'full' }, 'ops-ptc': { disclosurePolicy: 'full' } }), 'full')
+  assert.equal(readDisclosure({ 'ops-ptc': { disclosurePolicy: 'full' } }), 'mixed', 'a row that disagrees is named, never reduced to a favourite')
+  // Full writes both PTC rows; on-demand returns them to the absent default.
+  assert.deepEqual(disclosureOps({}, 'full'), [
+    { op: 'set', path: ['ptc', 'disclosurePolicy'], value: 'full' },
+    { op: 'set', path: ['ops-ptc', 'disclosurePolicy'], value: 'full' },
+  ])
+  assert.deepEqual(disclosureOps({ ptc: { disclosurePolicy: 'full' }, 'ops-ptc': { disclosurePolicy: 'full' } }, 'full'), [])
+  assert.deepEqual(disclosureOps({ 'ops-ptc': { disclosurePolicy: 'full' } }, 'on-demand'), [{ op: 'unset', path: ['ops-ptc', 'disclosurePolicy'] }])
+  assert.deepEqual(disclosureOps({}, 'on-demand'), [])
+  assert.equal(disclosureDiffers('full', {}), true)
+  assert.equal(disclosureDiffers('on-demand', {}), false, 'an untouched old profile is not dirty')
+  assert.equal(disclosureDiffers('full', { ptc: { disclosurePolicy: 'full' }, 'ops-ptc': { disclosurePolicy: 'full' } }), false)
+  // Old configs are never migrated to full: the resolved tier and every save
+  // path keep the absent key (#989 acceptance B).
+  assert.equal(resolveMergedConfig({})['ops-ptc'].config.disclosurePolicy, 'on-demand')
+  assert.equal('disclosurePolicy' in hostConfig({})['ops-ptc'], false)
+  // A saved full choice survives reopening and saving another switch (D).
+  const saved = { ptc: { disclosurePolicy: 'full' }, 'ops-ptc': { disclosurePolicy: 'full' } }
+  assert.equal(readDisclosure(saved), 'full', 'reopening reads the saved tier back')
+  const draft = readRowValues(saved)
+  draft['panel.enabled'] = true
+  assert.deepEqual(changedFields(draft, saved), [{ op: 'set', path: ['panel', 'enabled'], value: true }], 'the tier is not rewritten by an unrelated save')
 })
 
 await test('the status section belongs to the bundle and to the one row', () => {

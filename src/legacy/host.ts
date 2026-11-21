@@ -1,6 +1,7 @@
 /** Retained pre-single-row component behavior; never part of the current composition root. */
 import type { Context } from '../adapter/dsh/types.js'
 import type { Agent } from '../adapter/dsh/types.js'
+import type { ResolvedToolSet } from '../adapter/dsh/types.js'
 import type {} from '../adapter/dsh/types.js'
 import type {} from '../adapter/dsh/types.js'
 import { resolveConfig } from '../config.js'
@@ -31,13 +32,15 @@ function report(ctx: Context, message: string, level = 'error'): void {
   else if (level === 'warn') console.warn(message)
   else console.error(message)
 }
-function visibleTools(ctx: Context, agent?: Agent): string[] {
+function visibleTools(ctx: Context, agent?: Agent, toolSet?: ResolvedToolSet): string[] {
   try {
     const tools = ctx.get('tools')
     // Names only, through the view: `schemas()` projected every visible definition —
     // 34.2 ms for 258 tools at the published runtime's surface shape — to keep a
-    // handful of owned names, and this section renders once per assembly.
-    return tools ? visibleNames(tools, agent) : []
+    // handful of owned names, and this section renders once per assembly. The toolSet
+    // read is the honest one: a host that ignores `when` in its definition reads would
+    // otherwise advertise a registered-but-unadmitted tool the step excludes (#934).
+    return tools ? visibleNames(tools, agent, toolSet) : []
   } catch { return [] }
 }
 
@@ -119,7 +122,7 @@ export function applyComponent(root: Context, rawConfig: unknown, component: Com
       order: SECTION_ORDERS[TOOLING_SECTION] + (component === 'shell' ? 1 : 0),
       interpolate: false,
       text: context => renderToolingPolicy({
-        published: visibleTools(ctx, context.agent).filter(name => owned.includes(name)),
+        published: visibleTools(ctx, context.agent ?? context.scope as Agent, context.toolSet).filter(name => owned.includes(name)),
         shellComponent: component === 'shell',
         extraGuidance: config.extraGuidance,
       }),

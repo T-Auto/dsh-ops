@@ -12,7 +12,8 @@ import { joinMode, onModesChange } from './registry.js'
 import type { ModeId } from './types.js'
 
 export function replacementTargets(mode: ModeId, platform: string = process.platform, hidePwsh = false): ReadonlyMap<string, string> {
-  return consumerTargets(MODE_PLANS[mode].nativeFiles, MODE_PLANS[mode].shell && hidePwsh, platform as NodeJS.Platform)
+  const plan = MODE_PLANS[mode]
+  return consumerTargets(plan.nativeFiles || plan.ptc, plan.shell && hidePwsh, platform as NodeJS.Platform)
 }
 export function applyMode(root: Context, rawConfig: unknown, mode: ModeId): void {
   applyResolvedMode(root, resolveModeConfig(rawConfig, mode), mode)
@@ -51,9 +52,9 @@ export function applyResolvedMode(root: Context, config: ModeConfig, mode: ModeI
     shell: enabled && plan.shell && config.bash && process.platform === 'win32',
     presentation: plan.ptc ? 'ptc' : 'native', residentTools: enabled && config.residentTools,
     discovery: plan.ptc ? config.dynamicTools : options.discovery !== undefined && options.dynamic !== false && discovery.enabled,
-    native: discovery, ptc: { binaryPath: config.binaryPath, required: config.required, allowedTools: config.allowedTools, alwaysLoaded: config.alwaysLoaded },
+    native: discovery, ptc: { binaryPath: config.binaryPath, required: config.required, allowedTools: config.allowedTools, alwaysLoaded: config.alwaysLoaded, disclosurePolicy: config.disclosurePolicy },
     replaceOfficial: enabled && (config.hideOfficialTools || config.hidePwsh),
-    replacementTargets: consumerTargets(config.hideOfficialTools && plan.nativeFiles, config.hidePwsh && config.bash && plan.shell),
+    replacementTargets: consumerTargets(config.hideOfficialTools && (plan.nativeFiles || plan.ptc), config.hidePwsh && config.bash && plan.shell),
     section: plan.section === null ? null : `mode-${plan.section}`,
     external: { allowed: [], alwaysLoaded: [], disabled: [] },
   })

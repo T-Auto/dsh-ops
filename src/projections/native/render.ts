@@ -89,6 +89,10 @@ function inspect(args: Row, value: Row): string[] {
     }
     if (!group.length) output.push(value.lineCount === 0 ? '(empty file)' : '(no lines in this range)')
   }
+  // Escaped display is a contract the model must be able to round-trip: say so
+  // once per result, exactly when it matters (#939).
+  const escaped = items.filter(item => typeof item.text === 'string' && contentLine(item.text) !== item.text)
+  if (escaped.length) output.push(`[Notice: ${escaped.length} rendered line(s) use reversible escapes; ops_edit_file matches oldText as raw bytes first, then as this displayed form decoded.]`)
   output.push(...notices(value, items.length, textTotal !== undefined && value.total === textTotal ? ['total'] : []))
   return output
 }
@@ -112,7 +116,7 @@ const mutations = new Set<string>(FILE_MUTATIONS)
 function receiptItems(value: Row): string[] {
   return rows(value.items).map(item => `${label(item.path ?? '(path unavailable)')}: ${facts(item, [
     'status', 'removed', 'changed', 'revision', 'revisionBefore', 'revisionAfter', 'bytes', 'bytesBefore', 'bytesAfter',
-    'lineCountBefore', 'lineCount', 'replacements', 'metadata', 'metadataWarnings', 'error',
+    'lineCountBefore', 'lineCount', 'replacements', 'renderedMatches', 'metadata', 'metadataWarnings', 'error',
   ])}`)
 }
 function receipts(tool: string, value: Row): string[] {
