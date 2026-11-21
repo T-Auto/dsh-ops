@@ -21,6 +21,19 @@ Return enough status and completion facts for the next decision.
 8. **Recheck the SDK after a mode change**: a mode or component switch can change
    the pool; read the current SDK before planning the next call.
 
+## Sandbox permissions
+
+`sandbox_permissions` accepts only `workspace-write` or `danger-full-access`, and
+`justification` must accompany it. Never invent a tier name: an invalid value rejects
+the whole program before any line runs.
+
+- **read-only**: reads and searches only. To write, request `workspace-write` (or
+  `danger-full-access`) with a reason.
+- **workspace-write**: work inside the workspace needs no request. Request
+  `danger-full-access` only to leave the workspace.
+- **danger-full-access**: the widest tier. Never send `sandbox_permissions` or
+  `justification`: no wider target exists, and any value invents one.
+
 ## Step 0 - the plan line
 
 Declare the intended calls on the first line of every program:

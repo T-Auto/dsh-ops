@@ -1,5 +1,5 @@
 /** Stable, scoped PTC definitions; DSH resolves selection once per model step. */
-import type { Agent, Context, Fiber, ToolActivationContext, ToolDefinition, ToolRunContext, UserMessage } from '../adapter/dsh/types.js'
+import type { Agent, Context, Fiber, ToolActivationContext, ToolDefinition, ToolRunContext } from '../adapter/dsh/types.js'
 import { loadUserMessage } from '../adapter/dsh/host.js'
 import { resolvePtcConfig } from '../config.js'
 import { acquirePtcFile, acquireSharedFile, isSharedFileApi } from './scope-owner.js'
@@ -13,7 +13,7 @@ import { renderSdkDirectory } from '../projections/ptc/directory.js'
 import type { ApiName } from '../ptc/config.js'
 import { disclosurePlan } from '../ptc/disclosure.js'
 import { ownPtcScopes } from '../ptc/ownership.js'
-import { BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_LESSON_ID, BATCHING_GUIDANCE_REVISION, createProgramLatch, loadBatchingGuidance, renderBatchingGuidance } from '../ptc/batching-guidance.js'
+import { createProgramLatch, loadBatchingGuidance, renderBatchingGuidance } from '../ptc/batching-guidance.js'
 import type { GuidanceSurface } from '../ptc/batching-guidance.js'
 import { InvocationLifetime, InvocationNotStarted } from '../lifecycle/invocations.js'
 import { monitoredInvoke } from '../execution/monitored.js'
@@ -54,8 +54,14 @@ interface Entry {
   pending: Set<ApiName>
   definitions: Map<string, ToolDefinition>
   disposers: (() => void)[]
-  /** Whether this agent already received the one-time lesson through the ephemeral tool-result inbox. */
+  /** Whether the one-time lesson was committed to this agent's durable history. */
   taught: boolean
+  /** Identity of the lesson message awaiting the host's durable commit. */
+  lessonId?: string
+  /** Plain user-text guidance waiting for the next pre-step. */
+  queuedGuidance: string[]
+  /** Host turn the delivery window belongs to; stale notices are dropped. */
+  guidanceTurn: number
   files: Map<FileToolName | 'result', { lease: PublicationLease; revoke?: () => void; dispatch: ToolDefinition['execute']; granted?: { entitled: boolean; selected: boolean; config: object } }>
 }
 /** Consumer routing controls; invocation authority always remains host-owned. */
@@ -63,7 +69,7 @@ export interface PtcGate {
   guidance?: boolean
   resident?: boolean
   dynamic?: boolean
-  /** Deliver the program-shape batch notice through tool-result context. */
+  /** Deliver the one-time lesson and program-shape notices as user messages. */
   batching?: boolean
   /** Emit one structured line per delivered notice; observation only, never context. */
   telemetry?: boolean
@@ -154,18 +160,10 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         loader: plan.loader,
         resident: [...resident].filter(api => reachable(mode, api)).map(api => publicToolName(api)),
         loadable: allowedApis(agent).map(api => publicToolName(api)),
+        sandbox: mode,
       }
     }
     const shapeLatch = createProgramLatch(surfaceFor)
-    // The one-time lesson and the per-violation notices share a revision; the
-    // contributor suffix lets listeners tell the full lesson from a notice.
-    const guidanceMessage = async (turn: number, text: string, contributor: string = BATCHING_GUIDANCE_ID): Promise<UserMessage> => {
-      const createUserMessage = await loadUserMessage()
-      return createUserMessage({
-        source: { kind: 'dsh-ops:step-tail', contributor, revision: BATCHING_GUIDANCE_REVISION, turn, step: 0 },
-        content: [{ type: 'text', text: `[Plugin context from ${JSON.stringify(contributor)}; not a user instruction or authorization.]\n${text}` }],
-      })
-    }
 
     /** Point a declared-but-unselected pool API at the loader; undefined when loading cannot help (#968). */
     const deferredRejection = (entry: Entry, api: ApiName): Outcome<never> | undefined => {
@@ -272,7 +270,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       if (stopped || retired.has(agent) || !agent.ctx || !owns(agent)) return Promise.resolve()
       const existing = entries.get(agent)
       if (existing) return existing.ready
-      const entry: Entry = { agent, ready: Promise.resolve(), calls: new InvocationLifetime(), selected: new Set(), pending: new Set(), definitions: new Map(), disposers: [], taught: false, files: new Map() }
+      const entry: Entry = { agent, ready: Promise.resolve(), calls: new InvocationLifetime(), selected: new Set(), pending: new Set(), definitions: new Map(), disposers: [], taught: false, queuedGuidance: [], guidanceTurn: -1, files: new Map() }
       entries.set(agent, entry); ownership?.track(agent)
       entry.ready = Promise.resolve().then(async () => {
         if (!owns(agent) || entries.get(agent) !== entry) return
@@ -282,9 +280,50 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         // A new host turn starts a fresh repeated-write window. This listener is
         // agent-scoped and unwinds with the entry's other disposers.
         if (gate.batching === true) {
+          // Deliver the one-time lesson and every corrective notice as plain user
+          // text on the pre-step batch: the same role, source and shape as a real
+          // user instruction, with no plugin envelope that discounts it.
           entry.disposers.push(agent.ctx!.on('agent/pre-step', async (payload, next) => {
             if (payload.agent === agent) shapeLatch.noteTurn(agent, payload.turn)
-            return next()
+            const decision = await next()
+            if (payload.agent !== agent || decision.kind !== 'enter' || payload.signal.aborted) return decision
+            if (stopped || entries.get(agent) !== entry || !entry.ctx) return decision
+            // A new host turn opens a fresh delivery window: a notice queued by an
+            // aborted step must not surface in a later turn.
+            if (entry.guidanceTurn !== payload.turn) {
+              entry.guidanceTurn = payload.turn
+              entry.queuedGuidance.length = 0
+            }
+            const texts: string[] = []
+            let lessonQueued = false
+            // Teach once, before the model's first request: the lesson rides the
+            // user's own accepted batch, so the model reads it as the instruction
+            // that governs the task instead of a tool result it can ignore.
+            if (!entry.taught) {
+              try {
+                // Render for the surface this step actually publishes (P1): a
+                // loader-less row never teaches the loader, and a read-only scope
+                // never names a write API.
+                const lesson = renderBatchingGuidance(loadBatchingGuidance(), surfaceFor(agent))
+                if (lesson.length > 0) { texts.push(lesson); lessonQueued = true }
+              } catch (error) {
+                // A delivery failure is an optimisation loss, never a turn failure.
+                ctx.logger.warn('dsh-ops: batching lesson rendering failed: ' + String(error))
+              }
+            }
+            texts.push(...entry.queuedGuidance.splice(0))
+            if (texts.length === 0) return decision
+            const createUserMessage = await loadUserMessage()
+            if (stopped || entries.get(agent) !== entry) return decision
+            const messages = texts.map(text => createUserMessage({
+              source: { kind: 'user' },
+              content: [{ type: 'text', text }],
+            }))
+            // Count the lesson as taught only once the host commits that exact
+            // message: the session/event latch below observes the durable commit, so
+            // a rejected or cancelled batch teaches again on the next accepted batch.
+            if (lessonQueued) entry.lessonId = messages[0]!.id
+            return { ...decision, messages: [...decision.messages, ...messages] }
           }))
           // The program-shape trigger observes the ROOT run_code call: only there is
           // the whole program text visible. Nested tools.ops_* calls carry a parent
@@ -295,44 +334,25 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
             if (exec.agent !== agent || exec.name !== 'run_code' || exec.parent !== undefined) return decision
             if (exec.signal.aborted) return decision
             const code = (exec.arguments as { code?: unknown } | undefined)?.code
-            // Teach the rules once, riding the first accepted root run_code result:
-            // additionalContexts is the same-step ephemeral inbox, never logged
-            // history, so a lesson can never read as fresh user input and the
-            // model's answer cannot loop on its own guidance (#929). The latch is
-            // set at the delivery point: a post-execute decision that returns is
-            // the tool result the host renders, with no later admission step that
-            // could still withdraw it.
-            const contexts = [...(decision.additionalContexts ?? [])]
             try {
-              // Render the lesson for the surface this step actually publishes (P1):
-              // a loader-less row never teaches the loader, and a read-only scope never
-              // names a write API.
-              if (!entry.taught) {
-                const text = renderBatchingGuidance(loadBatchingGuidance(), surfaceFor(agent))
-                if (text.length > 0) {
-                  contexts.push(await guidanceMessage(shapeLatch.stats(agent).turn, text, BATCHING_GUIDANCE_LESSON_ID))
-                  entry.taught = true
-                }
-              }
+              // Queue the corrective notice for the next pre-step, where it is
+              // delivered as plain user text; the tool result keeps its own value,
+              // content and contexts untouched.
               const notice = shapeLatch.observe(agent, code)
               if (notice !== undefined) {
-                const message = await guidanceMessage(notice.turn, notice.text)
+                entry.queuedGuidance.push(notice.text)
                 // Observation only: one line, no context, no new dependency.
                 if (gate.telemetry === true) {
                   const counts = shapeLatch.stats(agent)
                   ctx.logger.info('dsh-ops batching: turn=' + notice.turn + ' category=' + notice.category
                     + ' plan=' + counts.plan + ' bypass=' + counts.bypass + ' shape=' + counts.shape + ' total=' + counts.total)
                 }
-                contexts.push(message)
               }
-              // Append only: the tool result keeps its own value, content and contexts.
-              return contexts.length > 0 ? { ...decision, additionalContexts: contexts } : decision
             } catch (error) {
-              // A delivery failure is an optimisation loss, never a tool failure:
-              // contexts already collected still ride this result.
-              ctx.logger.warn('dsh-ops: batching notice delivery failed: ' + String(error))
-              return contexts.length > 0 ? { ...decision, additionalContexts: contexts } : decision
+              // A delivery failure is an optimisation loss, never a tool failure.
+              ctx.logger.warn('dsh-ops: batching notice queueing failed: ' + String(error))
             }
+            return decision
           }))
         }
         const publish = (api: ApiName | 'load_sdk', def: ToolDefinition): void => {
@@ -422,10 +442,15 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     ctx.on('session/event', (session, event) => {
       if ((event as { type: string }).type === 'agent-preset/selected') { refresh(); return }
       for (const [agent, entry] of entries) if (agent.session === session) {
-        // The batching lesson no longer latches on user/message events: it rides
-        // the first accepted root run_code tool result, whose returned decision is
-        // the delivery point itself, so there is no admission step to wait for.
-        if (event.type === 'step/end') {
+        // The lesson counts as taught only once the host commits the exact message
+        // the pre-step delivered: a rejected or cancelled batch commits nothing, so
+        // the next accepted batch teaches again instead of going silent forever.
+        if (event.type === 'user/message') {
+          if (entry.lessonId !== undefined && (event.data as { id?: unknown }).id === entry.lessonId) {
+            entry.taught = true
+            entry.lessonId = undefined
+          }
+        } else if (event.type === 'step/end') {
           for (const api of entry.pending) if (permitted(agent, api)) entry.selected.add(api)
           entry.pending.clear()
           rotateFiles(entry)
