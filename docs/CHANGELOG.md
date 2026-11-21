@@ -7,6 +7,26 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- The batch guidance states the scope every PTC program shares: the runtime evaluates each program in a REPL
+  whose context is retained, so a program's top-level `const`, `let`, `class` and `function` outlive it, and a
+  second declaration of that name is a compile-time SyntaxError that discards the whole program before its
+  first line runs, tool calls included. A failed program may already have run calls and keeps its names, so a
+  retry checks the effects and renames first. One short section carries the three rules, and the mistake table
+  gains the two matching rows; the 0.5.6 sandbox section, examples, steps and the four trajectories are
+  unchanged, and a loader-less surface keeps the rule. Measured on one 127-program session, 11 of the 17
+  failed programs were this exact error, two of them retries of a program that had already failed; the section
+  adds 803 B to the lesson (8,169 to 8,972 B) and `bench/probes/probe-scope-guidance.mjs` reports the shipped
+  revision-9 text as five examples, four of them not copyable twice (`load`, `dirs`, `hits`, `rows`). Revision 9;
+  no behaviour changes.
+- 批量引导写明每个 PTC 程序共享的那个作用域：运行时在保留上下文的 REPL 里求值，程序的顶层
+  `const`/`let`/`class`/`function` 会比程序活得久，同名再声明是编译期 SyntaxError，整段程序在跑第一行前
+  就被丢弃，工具调用一并作废。失败的程序可能已经执行过调用，而且同样留下名字，所以重试前要先核对副作用、
+  再改名。新增一小节给出三条规则，错误表补上对应的两行；0.5.6 的沙箱档位小节、示例、步骤与四条轨迹均
+  不变，无 loader 的展示面也保留该规则。一次 127 个程序的会话里，17 个失败程序中有 11 个正是这个错误，
+  其中两个是已失败程序的再次发送；本节给教学增加 803 B（8,169 → 8,972 B），
+  `bench/probes/probe-scope-guidance.mjs` 报告随包发布的修订 9 文本为 5 个示例、其中 4 个不能二次复制
+  （`load`、`dirs`、`hits`、`rows`）。修订号 9；行为不变。
+
 ## [0.5.6] — 2026-11-21 — Patch release
 
 - ops-ptc's batching teacher trajectory now teaches sandbox authority: the lesson states the

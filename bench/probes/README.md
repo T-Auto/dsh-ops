@@ -62,3 +62,21 @@ rendered the SDK declarations seven times; it now takes four at depth three and
 renders them four times, and the final assembly carries
 `harness:identity`, `tools:ptc-only`, `dsh-ops:repository-tooling:mode-ptc` and
 `tools:sdk` with `run_code` as its only tool.
+
+## #982 — one session scope, and examples that are not copyable twice
+
+`probe-scope-guidance.mjs` runs every fenced `ts` example of one guidance file twice
+inside one persistent REPL and reports which ones die on a redeclared top-level name.
+The harness is Node's REPL with a retained context, the shape PTC evaluates in, so the
+second run answers the only question the text controls: is a trajectory safe to copy
+twice.
+
+```console
+node bench/probes/probe-scope-guidance.mjs prompts/batching-guidance.md
+```
+
+On the revision-8 text it reports five examples and four that are not copyable twice
+(`load`, `dirs`, `hits`, `rows`). The fifth, the verified-edit trajectory, uses
+top-level `await`, which this plain REPL harness cannot evaluate, so it is neither
+counted nor exonerated. The number is descriptive — any example with a top-level
+`const` collides on its second run — and is never a gate.

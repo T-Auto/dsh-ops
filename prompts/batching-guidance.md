@@ -34,6 +34,17 @@ the whole program before any line runs.
 - **danger-full-access**: the widest tier. Never send `sandbox_permissions` or
   `justification`: no wider target exists, and any value invents one.
 
+## One session, one scope
+
+While the runtime lives, the session's live scope keeps each program's top-level
+`const`, `let`, `class` and `function`, so a second declaration of that name is a
+compile-time SyntaxError that discards the whole program before its first line runs,
+tool calls included.
+
+- One name, one program: give each program its own top-level names.
+- A failed program may already have run calls: check their effects, then rename before retrying.
+- A top-level name is not storage: re-read a value you still need.
+
 ## Step 0 - the plan line
 
 Declare the intended calls on the first line of every program:
@@ -73,7 +84,8 @@ return { loaded: load.data?.tools, headLines: head.data?.items?.length }
 
 Calling an unloaded name throws "tools.ops_read_files is not a function". That is not a
 reason to fall back to the shell; it is one step spent loading. Loaded names remain
-selected in this live scope, and programs need not share a process or local variables.
+selected in this live scope; a later program must not assume an earlier program's
+values survived, and must not re-declare a name the scope already holds.
 
 ## Trajectory 1 - reconnaissance: independent probes in one program
 
@@ -175,4 +187,6 @@ Advance by nextOffset, never by page count, and stop when the result reports com
 | One failure aborting the batch | Check Outcome status; catch dispatch exceptions and keep e.message |
 | Shell standing in for a file tool | Use the OPS file API for list, search, read and edit |
 | ops_read_files before it is loaded | ops_load_sdk in the previous program |
+| The same top-level name in a second program | Give the program its own names; a used name is spent |
+| Re-sending a failed program with new arguments | Check what it already ran, then rename and retry |
 | Using e.toolName as the error reason | Use e.message |
