@@ -14,7 +14,12 @@ import { assert, test, report, withTempDir } from './lib/harness.mjs'
 // Includes all host text/wire, not just the plugin delta. No tokenizer/cache claims.
 // Pre-slice win32 baseline: minimal=10516, standard=19996, cordis=19996, ptc=29639.
 // Windows is the largest default surface (OPS Bash); POSIX must fit the same bounds.
-const budgets = { minimal: 8100, standard: 13700, cordis: 13700, ptc: 19200 }
+// #753 mounts the ops_status diagnosis on built-in modes. Measured on win32 with the
+// mount on: minimal=8246, standard=12670, cordis=12670, ptc=19200; with the mount
+// disabled: 8045, 12469, 12469, 19026. The 174-201 byte difference is that tool's
+// own schema/guidance, so minimal and ptc carry the added allowance while standard
+// and cordis keep their previous, still-unused headroom.
+const budgets = { minimal: 8300, standard: 13700, cordis: 13700, ptc: 19300 }
 await test('each default preset stays within its resident per-request byte budget', async () => {
   await withTempDir('prompt-budget', async root => {
     const { ctx } = await bootHost()

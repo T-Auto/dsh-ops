@@ -37,11 +37,11 @@ removeSection()
 
 ## 已接纳步骤尾部
 
-`registerStepTailProvider(owner, agent, options)` 包装宿主 `agent/pre-step` waterfall：下游 `next()` 返回 `enter` 后，只有该决定包含非空的已接纳用户消息 batch 时才运行 provider。provider 收到冻结的只读快照、agent、turn、step 与本次 admission signal。结果按 priority 和 id 排序，并作为带插件归属的 `UserMessage` 追加到已接纳 batch 尾部。
+`registerStepTailProvider(owner, agent, options)` 包装宿主 `agent/pre-step` waterfall：下游 `next()` 返回 `enter` 后，只有该决定包含非空的已接纳用户消息 batch 时才运行 provider。provider 收到冻结的只读快照、agent、turn、step 与本次 admission signal。结果按 priority 和 id 排序，并作为带插件归属的 `UserMessage` 追加到已接纳 batch 尾部。正文就是 provider 返回的原文，不插入额外的来源信封；归属只留在消息 `source` 元数据里。
 
-这是会写入 session 日志的历史，不是临时 request overlay、system-role 尾部、伪造的用户授权，也不是保证每次模型请求都运行的 hook。空 batch（包括纯工具续步与 turn-closing 探针）不会调用 provider，也不能借此唤醒 loop。空结果不创建消息。provider 拒绝会沿宿主正常错误路径中止 admission；admission signal 在提交前取消会阻止提交。provider 释放的范围更窄：它会取消等待中的计算，不等待不协作的 promise；已完成的贡献会在本 hook 把 batch 交还给宿主 pre-step 之前进行最后一次 active 检查，并且该检查与返回之间没有异步间隙。这就是快照交接（线性化）边界，不是直到 commit 都可撤回的保证。已安装宿主随后还会运行 `agent/request` 和 `prepareCall()`，才把接纳 batch 追加到 session 日志；这些阶段中的释放不会撤回已经交接的快照，也不会擦除已有历史。模型重试复用同一批已接纳消息，不会重复追加尾部。
+这是会写入 session 日志的历史，不是临时 request overlay、system-role 尾部，也不是保证每次模型请求都运行的 hook。空 batch（包括纯工具续步与 turn-closing 探针）不会调用 provider，也不能借此唤醒 loop。空结果不创建消息。provider 拒绝会沿宿主正常错误路径中止 admission；admission signal 在提交前取消会阻止提交。provider 释放的范围更窄：它会取消等待中的计算，不等待不协作的 promise；已完成的贡献会在本 hook 把 batch 交还给宿主 pre-step 之前进行最后一次 active 检查，并且该检查与返回之间没有异步间隙。这就是快照交接（线性化）边界，不是直到 commit 都可撤回的保证。已安装宿主随后还会运行 `agent/request` 和 `prepareCall()`，才把接纳 batch 追加到 session 日志；这些阶段中的释放不会撤回已经交接的快照，也不会擦除已有历史。模型重试复用同一批已接纳消息，不会重复追加尾部。
 
-source kind 为 `dsh-ops:step-tail`，并携带 contributor、revision、turn、step 元数据以支持归属与回放。
+source kind 为 `dsh-ops:step-tail`，并携带 contributor、revision、turn、step 元数据以支持归属与回放；正文与 provider 返回的原文逐字一致。
 
 ## 条件式任务等待指导
 

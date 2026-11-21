@@ -16,7 +16,7 @@ export function definition(tool: FileToolName | PtcToolName, execute: ToolDefini
   if (!entry || !('parameters' in entry)) throw new Error(`Missing PTC capability: ${tool}`)
   const description = entry.description.replace(/ Failures resolve as .*?they are not thrown\./, '')
   return { name: publicToolName(tool), description: description +
-    ' PTC returns Outcome: completed.data; partial.data, coverage and continuation; failures use error.code/effectState/retry. Check status before reading data; never blindly retry a possible write.',
+    ' PTC returns Outcome: completed.data; partial.data, coverage, continuation and nextAction; failures use error.code/effectState/retry/nextAction. Follow nextAction for the concrete executable call; check status before reading data; never blindly retry a possible write.',
     parameters: entry.parameters, timeoutMs: WORKER_TIMEOUT_MS + 2000,
     ...(entry.concurrencySafe ? { isConcurrencySafe: () => true } : {}),
     output: { schema: outcomeSchema(canonicalOutput(tool)), render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },

@@ -275,7 +275,7 @@ reference pages retains the declared main-body scope independently of stored-row
 
 The internal PDF container parser accepts a restricted PDF 1.0-1.7 subset: one classic
 xref table, an exact final startxref/EOF footer, unique dictionary keys and object
-identities, and directly declared stream lengths. Every active xref offset must point
+identities, and stream lengths declared either directly or through an indirect reference resolved by the classic xref table. Every active xref offset must point
 exactly at its object header. Objects cannot overlap; gaps must contain only whitespace
 or comments. This deliberately rejects incremental updates, encryption, object/xref
 streams, recovery scans and ambiguous duplicate data. `/Encrypt`, `/ObjStm` and `/XRef`

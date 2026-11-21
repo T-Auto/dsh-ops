@@ -33,11 +33,28 @@ rate improvements. Native output fixture reductions are in [Native output](nativ
 - Native standard admits OPS read/glob/grep replacements and omits their official
   counterparts. `edit` and `read_image` remain. Existing replacement tests cover
   readiness, captured steps, restrictions, same-name registrations and unload.
-- Both built-in PTC modes intentionally configure **no file replacement targets**.
-  Their SDK retains official read/glob/grep/edit methods alongside selected OPS
-  methods. The audit executes both official and OPS glob as nested calls; the
-  direct provider request still contains only `run_code`. This is preset policy,
-  not a recurrence of #787's visible-but-rejected Native tool bug.
+- Both built-in PTC modes hide the official `read`/`glob`/`grep` their projection
+  can serve while `hideOfficialTools` is on (the default); `write`/`edit`/
+  `read_image` stay. The decision comes from the publisher's `servable` set
+  (`permitted ∧ (resident ∨ allowedApis)`) and excludes `selected`, so loading the
+  SDK never resurrects an official tool. The decision is per name: a name the
+  projection cannot serve keeps its official tool (an unattached projection,
+  `glob`/`grep` under `dynamicTools: false`, or a name excluded by a narrowed
+  `allowedTools`), while a resident `inspect_local_file` still replaces `read`.
+  The direct provider request still contains only `run_code`.
+- The fallback side of that decision is verified per name and stays usable: a
+  kept official tool is admitted, declared and callable through its SDK binding,
+  withdrawing the row (or an unattached, probe-failing or narrowed projection)
+  restores the official `read`/`glob`/`grep` to the same callable state, and a
+  custom preset keeps every official tool until `replaceOfficial` opts in
+  (default `false`). The kept `write`/`edit`/`read_image` SDK entries are
+  compared through real argument schemas, not empty membership fixtures.
+- Hiding hands those names' workflow to the OPS replacements, whose reviewed
+  differences are documented per tool in the [component reference](component-reference.md):
+  `ops_glob`/`ops_grep` never traverse symlinks, reparse points, hidden files
+  or `.git`, their coverage is paged with explicit completion/truncation
+  fields, and `write`/`edit` stay official precisely because the OPS CAS
+  `expectedRevision` publication contract differs from the host write/edit.
 - Unloading the row restores the original surface. OPS-free PTC receives no OPS
   prompt or SDK. Disabled batching delivers no lesson or reminder, as covered by
   the batching lifecycle suite. Runtime version appears only in explicit diagnostics.

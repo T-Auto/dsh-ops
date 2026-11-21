@@ -50,3 +50,13 @@ OPS 路由已经使用 `publicToolName()`，并按当前步骤实际准入的定
 注册表中存在，而实际 Native 请求只准入 `ops_inspect_local_file`。测试通过真实宿主
 插件复现该不一致，并记录提示词节归属。让宿主回调遵守当前步骤准入仍是 #866 的宿主
 依赖。OPS 不重写第三方提示词、不修改共享注册表，也不增加常驻名称对照提示词。
+
+该不一致的 PTC 一侧已在受支持的装配扩展点收口（#983，
+`src/publication/replacements.ts`）：shadow 在 PTC 呈现下隐藏
+`read`/`glob`/`grep` 时，装配提示词移除宿主的
+`tool:read`/`tool:glob`/`tool:grep` 段，不再教模型调用已隐藏的名字。保留工具的段若
+仍指向已隐藏名字——固定宿主 grep 文案交叉引用 read——该段一并移除，并补一行指名可执行
+的 OPS 替代；不含死指针的保留段原样存活。撤回替代后宿主文案逐字恢复。
+`test/ptc-guidance-cleanup.test.mjs` 用真实 `@deepseek-ai/dsh-tool-fs`/`-fs-search`
+插件钉住该行为，含按段分组的字节差（Linux fixture：SDK −2,011 B、三段指引 −338 B、
+外层 wire 0 B）。#866 对 Native 呈现保持开放：宿主段在那里刻意不动。

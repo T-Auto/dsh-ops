@@ -108,7 +108,7 @@ The `index-ab` command compares the walk with the opt-in `cache_dir` path on one
 
 ## 任务一览
 
-六个任务各自压一种能力，`ops_*` 工具名来自 `publicToolName()`。每个任务的期望值都由夹具生成器现算（`derive*`），判卷在 `bench/lib/verify.mjs`。
+十个任务各自压一种能力，`ops_*` 工具名来自 `publicToolName()`。前六个只判 `answer.txt` 这类最终工件；后四个是 V4 行为任务（#993），除最终工件外还由轨迹判定器验证达成方式（见下节）。每个任务的期望值都由夹具生成器现算（`derive*`），工作区判卷在 `bench/lib/verify.mjs`。
 
 | 任务 | 工作量 | 主要测什么 | 相关工具 |
 | --- | --- | --- | --- |
@@ -118,3 +118,21 @@ The `index-ab` command compares the walk with the opt-in `cache_dir` path on one
 | `csv-sum` | 8000 行 CSV，汇总 EU 区 `amount` 列 | 上下文控制：把聚合交给 shell 而不是把 8000 行读进上下文，`answer.txt` 只写整数和 | `ops_bash` 聚合；`ops_read_files` 只看表头确认列；`ops_write_file` 写答案 |
 | `gate-repair-loop` | 12 个 stage 模块（每个约 70 行）+ `check.js` | 迭代修复循环：门禁停在第一个坏 stage，每个 stage 只错一处绑定常量、契约写在模块自己的注释里，跑→修→再跑直到退 0；`check.js` 字节不变是 invariant | `ops_bash` 跑门禁；`ops_read_files` 读 stage；`ops_edit_file` 按契约修常量；`ops_write_file` 写 `answer.txt` |
 | `noisy-test-triage` | 2400 个测试、恰好一行 `not ok` | 精确提取：跑测试重定向到文件，在日志里只捞那一行失败测试名写入 `failure.txt`（必须精确匹配），且 runner 仍退 1 是 invariant | `ops_bash` 跑并重定向；`ops_grep` 只捞那一行（如 `^not ok`，可配 `outputMode: summary/content`）；必要时 `ops_read_files`；`ops_write_file` 写结果 |
+| `ptc-paged-lookup` | 600 行单文件 `logs/stream.log`，目标行在第 2 页 | 分页游标续读：partial 带 `nextOffset` 后必须在下一程序同路径续读，末页 complete 即停；原样重读、提前收尾都判 FAIL | `ops_inspect_local_file` 续读；`ops_write_file` 写答案 |
+| `ptc-catalog-recover` | grepTree 语料，5 个文件含 `NEEDLE_CATALOG` | 目录错误纠偏：叫错工具名被拒后，下一步必须用当时可用集合里的替代工具，不许再追不存在的名字 | `ops_grep`（或 `ops_glob`/`ops_inspect_local_file`）；`ops_write_file` 写答案 |
+| `ptc-sdk-load-order` | grepTree 语料，3 个文件含 `NEEDLE_SDKLOAD` | 未加载工具：识别需先 `ops_load_sdk`，下一程序才可调；原样重试不加载判 FAIL | `ops_load_sdk` 加载 `grep`；下一程序 `ops_grep`；`ops_write_file` 写答案 |
+| `ptc-wait-dispatch` | configTree 三层配置 + 8 个包级诱饵 | 等待/多派发：层文件并行读取一次派发、编辑要等待读取返回的 revision；锁忙（`bounded-transient`）后的原样重发是合理等待不是无进展重试；正常完成无须重试的反例必须保留 | `ops_inspect_local_file` 并读；`ops_edit_file` 带期望 revision；`ops_write_file` 写答案 |
+
+## 行为轨迹判定 / Behavior tracks
+
+`node bench/cli.mjs tracks`（V4，#993）不调用模型、不派生 worker：它把 `bench/lib/track-corpus.mjs` 里的十段脚本化轨迹（四个 V4 任务各配应过与应败）逐条交给 `bench/lib/tracks.mjs` 的判定器，应过轨迹必须判 PASS、应败轨迹必须判 FAIL，且失败输出指明是哪项事实不符；任何一条判定与声明不符，命令退 1。
+
+恢复率只统计真的出现过纠偏机会（被拒 / 出错 / 冲突 / 带 `nextOffset` 的 partial）的轨迹：全量语料报 `4/9`；选中的轨迹全无纠偏机会时输出「no denominator」而不是 100%（可用 `--track ptc-wait-immediate-pass` 复现）。
+
+复跑：`node bench/cli.mjs tracks`；按任务收窄 `--task <id>`；按轨迹收窄 `--track <id>`。红绿两步如实记录：先写 `test/bench-tracks.test.mjs` 断言并跑红（判定器与语料缺失，`ERR_MODULE_NOT_FOUND`），实现落地后 `node test/run.mjs bench-tracks` 全绿。V5 会用同一套判定器接真实模型的轨迹。
+
+The `tracks` command (V4, #993) sends no model request and spawns no worker: it feeds the ten scripted trajectories in `bench/lib/track-corpus.mjs` (each V4 task carries a should-pass and a should-fail track) to the verifier in `bench/lib/tracks.mjs`; a should-pass track must judge PASS, a should-fail one must judge FAIL naming the fact that did not hold, and any disagreement exits 1.
+
+The recovery rate counts only trajectories that actually had a correction opportunity (a rejection, an error, a conflict, or a partial page carrying `nextOffset`): the full corpus reports `4/9`; a selection with no opportunity at all prints an explicit no-denominator line instead of 100% (reproduce with `--track ptc-wait-immediate-pass`).
+
+Rerun with `node bench/cli.mjs tracks`, narrow with `--task <id>` or `--track <id>`. The red step was recorded honestly first — the suite failed at the import because no verifier existed — and `node test/run.mjs bench-tracks` is green now. V5 feeds real captured trajectories through the same verifiers.

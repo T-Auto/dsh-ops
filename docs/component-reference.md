@@ -19,7 +19,7 @@ The `dsh-ops` row owns built-in and explicitly configured consumer plans. Native
 `dsh-ops/shell`, `dsh-ops/file`, `dsh-ops/ptc` and `dsh-ops/hide-official` modules remain as
 unsupported legacy exports for old profiles and are not part of the bundle.
 
-`ops-ptc` is the merged row's fifth built-in mode: the plugin registers the preset at runtime through the host `agentPresets.register` (definition from the shipped `presets/ops-ptc.patch.yml` fragment parsed by the host's `loadOverlayPatches`), so the plugin manager has no matching preset row; disabling or unloading the plugin row removes the preset together with the tool surface. The default preset is never written automatically: the detail page's button makes `ops-ptc` the default once (`applied`/`no-update`/`unavailable`/`failed`), while apply, remount and unload leave the operator's own choice alone; see [Presets and the default mode](presets.md). It publishes the same surface as `ptc` and adds the YAML-only `batchingGuidance`: the English lesson arrives once in the session's first user-message batch (from `prompts/batching-guidance.md`, into history, never the system prompt), and a **root** `run_code` program that breaks one of the three latched shape categories — `bypass`, `plan` or `shape` — gets one short notice appended to its own result as `additionalContexts`; each category latches once per turn, a compliant program re-arms it, priority is `bypass` → `plan` → `shape`, and the program is never blocked or rewritten. A legacy profile that still names `dsh-ops/mode-ops-ptc` loads that module; under the merged bundle it only warns and stays inert, and its configuration belongs in the merged row's `ops-ptc` section.
+`ops-ptc` is the merged row's fifth built-in mode: the plugin registers the preset at runtime through the host `agentPresets.register` (definition from the shipped `presets/ops-ptc.patch.yml` fragment parsed by the host's `loadOverlayPatches`), so the plugin manager has no matching preset row; disabling or unloading the plugin row removes the preset together with the tool surface. The default preset is never written automatically: the detail page's button makes `ops-ptc` the default once (`applied`/`no-update`/`unavailable`/`failed`), while apply, remount and unload leave the operator's own choice alone; see [Presets and the default mode](presets.md). It publishes the same surface as `ptc` and adds the YAML-only `batchingGuidance`: the English lesson arrives once as a plain user message on the first accepted pre-step batch (from `prompts/batching-guidance.md`; source kind `user`, no plugin envelope, never the system prompt), and a **root** `run_code` program that breaks one of the three latched shape categories — `bypass`, `plan` or `shape` — queues one short notice that the next pre-step appends the same way; each category latches once per turn, a compliant program re-arms it, priority is `bypass` → `plan` → `shape`, and the program is never blocked or rewritten. A legacy profile that still names `dsh-ops/mode-ops-ptc` loads that module; under the merged bundle it only warns and stays inert, and its configuration belongs in the merged row's `ops-ptc` section.
 
 The former `dsh-ops/background` component (FastCtx background jobs: `ops_run`, `ops_run_background`, `ops_job_output`, `ops_job_list`, `ops_job_kill`) has been removed. A profile row that still names it loads as a no-op: it accepts any config, publishes nothing, and logs one warning that the row can be deleted.
 
@@ -247,9 +247,14 @@ The plugin renders routing guidance from what it actually published. The excerpt
 
 Standard and Cordis replace the official `read`, `glob` and `grep` with these reviewed read/search
 workflows; every enabled mode replaces the Windows official shell. Their names, arguments and results
-differ from the host tools; calls are never translated or forwarded under an official name. A
-`run_code` presentation (PTC) is never masked: its transport is not gated, while the replaced
-official names stay refused in that scope. The replacement contract covers native presentation only.
+differ from the host tools; calls are never translated or forwarded under an official name. The
+`run_code` transport itself is never masked or gated. The replacement table covers `read`, `glob` and
+`grep` only — `write`, `edit` and `read_image` are never in it — and the replaced officials are hidden
+only after an explicit opt-in: `hideOfficialTools` for the built-in modes, `replaceOfficial` (default
+`false`) for explicit consumers; by default every official tool stays published. The same opt-in
+covers both presentations: under PTC an official name leaves the surface only while the projection can
+serve the matching `ops_*` API, and an unattached, probe-failing or narrowed projection keeps the
+official tool.
 
 <!-- hide-official-scope:start -->
 | Official tool | OPS alternative | Reviewed purpose |

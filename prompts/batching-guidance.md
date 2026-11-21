@@ -16,7 +16,23 @@ Return enough status and completion facts for the next decision.
    ops_read_files or ops_inspect_local_file, edit with ops_edit_file. The shell starts
    processes and reads environment facts; node:fs and node:child_process bypass path
    policy, the sandbox and the audit trail, so they are never a workaround.
-7. **Load before you call**: an unloaded ops_* name is loaded, never replaced.
+7. **Load only missing APIs**: names already in the current SDK are callable; an
+   unloaded ops_* name is loaded, never replaced.
+8. **Recheck the SDK after a mode change**: a mode or component switch can change
+   the pool; read the current SDK before planning the next call.
+
+## Sandbox permissions
+
+`sandbox_permissions` accepts only `workspace-write` or `danger-full-access`, and
+`justification` must accompany it. Never invent a tier name: an invalid value rejects
+the whole program before any line runs.
+
+- **read-only**: reads and searches only. To write, request `workspace-write` (or
+  `danger-full-access`) with a reason.
+- **workspace-write**: work inside the workspace needs no request. Request
+  `danger-full-access` only to leave the workspace.
+- **danger-full-access**: the widest tier. Never send `sandbox_permissions` or
+  `justification`: no wider target exists, and any value invents one.
 
 ## Step 0 - the plan line
 
@@ -32,7 +48,8 @@ must be the first line of the program, before code or blank lines.
 ## Step 1 - split by dependency
 
 Run independent calls under Promise.all. Await dependencies sequentially in the same
-program. SDK loading requires a separate program before using the new bindings.
+program.
+SDK loading requires a separate program before using the new bindings.
 
 ## Step 2 - reconcile
 
@@ -56,8 +73,7 @@ return { loaded: load.data?.tools, headLines: head.data?.items?.length }
 
 Calling an unloaded name throws "tools.ops_read_files is not a function". That is not a
 reason to fall back to the shell; it is one step spent loading. Loaded names remain
-selected in this live scope; recheck the current SDK after a mode or component change.
-Programs need not share a process or local variables.
+selected in this live scope, and programs need not share a process or local variables.
 
 ## Trajectory 1 - reconnaissance: independent probes in one program
 
@@ -106,10 +122,6 @@ return {
 }
 ```
 
-The search is the dependency, so it is awaited first. The five reads depend on its
-result but not on each other, so they fan out inside the same program instead of
-across five steps.
-
 ## Trajectory 3 - a verified edit: revision first, patch second
 
 ```ts
@@ -128,9 +140,6 @@ const edit = await tools.ops_edit_file({
 return { status: edit.status, error: "error" in edit ? edit.error : undefined,
   context: context.data?.items?.length, changed: edit.data?.changed }
 ```
-
-The revision and the context are independent, so they share one program. The write
-needs the revision, so it is a second await in the same program, not a second step.
 
 ## Trajectory 4 - paging: a loop is still one program
 
@@ -154,27 +163,6 @@ return { lines: rows.length, complete, error, nextOffset: complete ? undefined :
 ```
 
 Advance by nextOffset, never by page count, and stop when the result reports complete.
-A loop of dispatches is batched work, not repeated single steps.
-
-## Anti-pattern, and its rewrite
-
-```ts
-// plan: list the source files            <- one entry, one dispatch, one round trip
-const files = await tools.ops_glob({ pattern: ["src/**/*.ts"], outputMode: "paths" })
-return files.data?.items?.length
-// ... then a second program for the directories, a third for the manifest
-```
-
-```ts
-// plan: source files; directories; manifest head       <- same work, one program
-const [files, dirs, manifest] = await Promise.all([
-  tools.ops_glob({ pattern: ["src/**/*.ts"], outputMode: "paths" }),
-  tools.ops_glob({ pattern: ["*"], kind: "directory", outputMode: "paths", limit: 40 }),
-  tools.ops_read_files({ files: [{ path: "package.json", limit: 30 }] }),
-])
-return { files: files.data?.items?.length, dirs: dirs.data?.items?.length,
-  manifestLines: manifest.data?.items?.[0]?.lineCount }
-```
 
 ## Common mistakes
 

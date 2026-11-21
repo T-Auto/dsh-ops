@@ -72,7 +72,10 @@ const WORKER_TARGET = option('worker-target', undefined)
  */
 const ALLOWED_SKIPS = TARGET === 'win32-x64'
   ? ['file-metadata', 'linux-attributes', 'linux-shell']
-  : ['mount', 'result-storage-cache-prep', 'windows-security', 'niubash-consumer', 'niubash-security-host']
+  : ['mount', 'result-storage-cache-prep', 'windows-security', 'niubash-consumer', 'niubash-security-host',
+    // #870/#409/#581/#771: the Windows Niubash runtime branch. These three suites pin a
+    // Windows-only code path and skip on every other host, exactly like windows-security.
+    'shells-full-access-confinement', 'shells-msys-shared-section', 'shells-niubash-prepared-boundary']
 
 /**
  * Suites that need an *optional external* checkout (`DSH_OPS_TUI_ROOT`, and for the native one also
