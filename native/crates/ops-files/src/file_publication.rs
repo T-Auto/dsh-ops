@@ -163,23 +163,37 @@ pub(super) fn create_sibling(
             .map_err(|error| Failure::new("METADATA_UNSUPPORTED", error))?;
         // CLONE_ACL (0x0004) is an Apple public flag not named by rustix 1.1.
         // Without it clonefile inherits the destination ACL and drops source denies.
-        rustix::fs::fclonefileat(
+        // macOS 12 rejects the flag with EINVAL even on APFS, so fall back to a
+        // plain clone and strip the ACE the destination directory contributes.
+        match rustix::fs::fclonefileat(
             &original,
             parent,
             temporary,
             rustix::fs::CloneFlags::from_bits_retain(0x0004),
-        )
-        .map_err(|error| {
-            Failure::new(
-                "METADATA_UNSUPPORTED",
-                format!("APFS metadata-preserving clone is required; nothing published: {error}"),
+        ) {
+            Ok(()) => {}
+            Err(rustix::io::Errno::INVAL) => rustix::fs::fclonefileat(
+                &original,
+                parent,
+                temporary,
+                rustix::fs::CloneFlags::empty(),
             )
-        })?;
+            .map_err(clone_error)?,
+            Err(error) => return Err(clone_error(error)),
+        }
         let prepared = (|| -> Result<File> {
             let cloned = parent.open_with(
                 temporary,
                 OpenOptions::new().read(true).follow(FollowSymlinks::No),
             )?;
+            let cloned_std = cloned.try_clone()?.into_std();
+            // The source carries no ACL, so the staged clone must carry none
+            // either: clear any ACE inherited from the destination directory and
+            // prove the result before writing into the sibling.
+            dsh_ops_darwin_metadata::clear_extended_acl(&cloned_std)
+                .map_err(|error| Failure::new("METADATA_UNSUPPORTED", error))?;
+            dsh_ops_darwin_metadata::require_no_extended_acl(&cloned_std)
+                .map_err(|error| Failure::new("METADATA_UNSUPPORTED", error))?;
             // Mask inherited grants before writing new bytes. The caller restores
             // the captured original mode after writing, before publication.
             rustix::fs::fchmod(&cloned, rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR)
@@ -215,6 +229,14 @@ pub(super) fn create_sibling(
     {
         Ok(parent.open_with(temporary, &options)?)
     }
+}
+
+#[cfg(target_os = "macos")]
+fn clone_error(error: rustix::io::Errno) -> Failure {
+    Failure::new(
+        "METADATA_UNSUPPORTED",
+        format!("APFS metadata-preserving clone is required; nothing published: {error}"),
+    )
 }
 
 #[cfg(windows)]

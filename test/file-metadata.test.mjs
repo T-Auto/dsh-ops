@@ -299,4 +299,29 @@ await test('Darwin extended ACL copy and replace fail closed before creating sib
   })
 })
 
+await test('Darwin clone fallback removes an ACL inherited from the destination directory', async () => {
+  if (process.platform !== 'darwin') return
+  await withTempDir('file-metadata-darwin-inherit', async workspace => {
+    const destination = path.join(workspace, 'destination')
+    fs.mkdirSync(destination)
+    execFileSync('/bin/chmod', ['+a', 'everyone allow read,file_inherit', destination])
+    const acl = target => execFileSync('/bin/ls', ['-lde', target], { encoding: 'utf8' }).split(String.fromCharCode(10)).slice(1).join(String.fromCharCode(10))
+    const source = seed(path.join(workspace, 'source'), 0o600)
+    const probe = path.join(destination, 'probe')
+    fs.writeFileSync(probe, 'P')
+    assert.match(acl(probe), /inherited allow read/u, 'fixture must make the destination directory inherit an ACE')
+    try {
+      const to = path.join(destination, 'copy')
+      const revision = envelopeOf(await callTool('stat', { path: source }, { root: workspace }), assert).revision
+      const copied = envelopeOf(await callTool('copy', { path: source, to, expectedRevision: revision }, { root: workspace }), assert)
+      assert.equal(copied.status, 'completed', JSON.stringify(copied))
+      assert.equal(modeOf(to), '0600')
+      assert.doesNotMatch(acl(to), /inherited allow read/u, 'the clone must not inherit an ACE the source does not carry')
+    } finally {
+      for (const name of fs.readdirSync(workspace)) execFileSync('/bin/chmod', ['-N', path.join(workspace, name)])
+      for (const name of fs.readdirSync(destination)) execFileSync('/bin/chmod', ['-N', path.join(destination, name)])
+    }
+  })
+})
+
 report('file-metadata')

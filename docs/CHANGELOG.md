@@ -7,6 +7,13 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- macOS 12 rejects `CLONE_ACL` with EINVAL, so every metadata-preserving replace or copy failed
+  with METADATA_UNSUPPORTED even on APFS. The macOS publication path now retries a plain clone,
+  clears the extended ACL inherited from the destination directory and re-verifies the empty ACL
+  before publishing; a source that carries an ACL is still refused before a sibling is created.
+- macOS 12 以 EINVAL 拒绝 `CLONE_ACL`，导致即使在 APFS 上，所有保留元数据的覆盖或复制都会以
+  METADATA_UNSUPPORTED 失败。macOS 发布路径现在回退到普通克隆，清除从目标目录继承的扩展 ACL，
+  并在发布前重新确认 ACL 为空；源文件带 ACL 时仍在创建兄弟文件之前拒绝。
 - A replaced official tool no longer leaves its own `tool:<name>` system-prompt section behind. Section text resolves before the assembly waterfall, so the hidden `read`/`glob`/`grep` guidance still told the model to call a tool the captured step refuses. The section is now dropped together with the mask and returns when the tool does.
 - 被替换的官方工具不再留下自己的 `tool:<name>` 系统提示段落。段落文本在装配瀑布之前解析，于是被隐藏的 `read`/`glob`/`grep` 指引仍让模型去调用该步拒绝的工具。现在它与掩码一起移除，工具恢复时指引也恢复。
 - Niubash no longer refuses to prepare its runtime when a full-access session's workspace contains
