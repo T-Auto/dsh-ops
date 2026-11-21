@@ -3,7 +3,7 @@
 #   node scripts/sync-preset-ops-ptc.mjs
 #
 # Source: @deepseek-ai/dsh-web-app/presets/ptc.patch.yml
-# Source sha256: ce02148b1fd575cc93071744180468cd305bdcd50dbfdd3b9b0605c5281d283d
+# Source sha256: 838665e063dc8bcab4caf24e41ec848373c434df4262feb981306944e1cec7fd
 #
 # The patch below is the upstream preset byte for byte, except that the row
 # id, preset id, name, description and order are the ops-ptc identity.
@@ -100,6 +100,8 @@
             config:
               - id: tool-subagent-control
                 name: '@deepseek-ai/dsh-tool-subagent-control'
+                config:
+                  interrupt: false
               - id: tool-subagent
                 name: '@deepseek-ai/dsh-tool-subagent'
                 config:
@@ -135,6 +137,8 @@
             name: '@deepseek-ai/dsh-tool-executor-ptc'
           - id: present
             name: '@deepseek-ai/dsh-tool-present'
+          - id: tool-office
+            name: '@deepseek-ai/dsh-tool-office'
           - id: tool-plugin-manager
             name: '@deepseek-ai/dsh-plugin-manager/tools'
             disabled: true
