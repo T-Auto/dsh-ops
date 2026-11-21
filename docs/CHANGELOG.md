@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Test fixtures on Windows now read the complete SID column from successful `whoami` CSV output, including Entra `S-1-12-1` identities. Failed commands, malformed records and invalid SIDs remain rejected; fixture ownership still uses the existing checked `icacls /setowner` operation (#1031).
+- Windows 测试夹具现在从成功的 `whoami` CSV 输出中读取完整 SID 列，支持 Entra `S-1-12-1` 身份。命令失败、记录格式错误及无效 SID 仍被拒绝；夹具所有权继续使用原有的 `icacls /setowner` 操作及结果检查（#1031）。
+
 ## [0.5.6] — 2026-11-21 — Patch release
 
 - ops-ptc's batching teacher trajectory now teaches sandbox authority: the lesson states the
