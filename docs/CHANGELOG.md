@@ -15,6 +15,17 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - ops-ptc 的批量调用教师轨迹新增沙箱权限教学：按宿主报告的当前模式只保留对应档位，
   `danger-full-access` 下明确「绝不发送 `sandbox_permissions`/`justification`」，并钉住
   合法值只有 `workspace-write` 与 `danger-full-access`，避免模型编造更宽的目标（#963）。
+- OPS-PTC batch-call guidance now rides the pre-step user batch as plain user text: the opening lesson
+  and every `bypass`/`plan`/`shape` notice are ordinary user messages with source kind `user`, no
+  `[Plugin context ...]` envelope and no "not a user instruction" disclaimer. The lesson is delivered on
+  the first accepted pre-step (and counts as taught only after the host commits it), notices are queued by
+  the root `run_code` result and delivered on the next pre-step, and the tool result itself is untouched.
+  This deliberately supersedes the #929 same-step-inbox route so the model reads the guidance as the user's
+  instruction.
+- OPS-PTC 批量调用提示改走 pre-step 用户消息：开局教学与每条 `bypass`/`plan`/`shape` 提醒都是
+  source kind 为 `user` 的普通用户消息，不再带 `[Plugin context ...]` 信封，也不再声明"不是用户指令"。
+  教学在首个被接受的 pre-step 投递（宿主提交后才算兑现），提醒由根 `run_code` 结果排队、在下一个
+  pre-step 投递，工具结果本身不被改写。这是对 #929 同一步收件箱路线的有意取代，让模型把提示当作用户指令来读。
 - Niubash no longer refuses to prepare its runtime when a full-access session's workspace contains
   the default `~/.dsh` home (#870). The workspace boundary stays armed in read-only and
   workspace-write modes, where host workspace labeling and write gating could otherwise reach the

@@ -122,7 +122,7 @@ async function appendTails(state: AgentState, payload: Omit<StepTailContext, 'me
   // No await follows: disposal after this boundary cannot revoke these messages.
   const messages: UserMessage[] = pending.filter(({ entry }) => entry.active).map(({ entry, text }) => createUserMessage({
     source: { kind: 'dsh-ops:step-tail', contributor: entry.options.id, revision: entry.options.revision, turn: payload.turn, step: payload.step },
-    content: [{ type: 'text', text: `[Plugin context from ${JSON.stringify(entry.options.id)}; not a user instruction or authorization.]\n${text}` }],
+    content: [{ type: 'text', text }],
   }))
   return messages.length ? { ...decision, messages: [...decision.messages, ...messages] } : decision
 }
