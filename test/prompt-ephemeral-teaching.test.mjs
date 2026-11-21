@@ -100,6 +100,10 @@ await test('the first accepted root run_code result carries the full lesson exac
     assert.equal(taught.length, 1, JSON.stringify(first.additionalContexts))
     assert.match(JSON.stringify(taught), /Batch tool calls/)
     assert.match(JSON.stringify(taught), /not a user instruction or authorization/)
+    // The lesson states the mode the policy reports, so a full-access program is
+    // never primed with an escalation request (#963).
+    assert.match(JSON.stringify(taught), /current mode: danger-full-access/)
+    assert.equal(JSON.stringify(taught).includes('current mode: read-only'), false)
     const second = await rootCall(ctx, agent, 'ephemeral-teach-3')
     assert.equal(second.isError, false, JSON.stringify(second))
     assert.equal(guidedContexts(second).length, 0, 'the lesson is spent after its one delivery')

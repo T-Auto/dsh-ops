@@ -104,7 +104,7 @@ external English Markdown file:
   same-step only and never logged as user history, so the model sees the whole procedure on the request that
   follows the first accepted call: the first-line `// plan:` comment, the dependency split, the
   load-before-call step (only while dynamic loading publishes the loader) and four copyable trajectories.
-  The first-round text teaches each rule once (revision 7): the anti-pattern rewrite and the prose that
+  The first-round text teaches each rule once (revision 8): the anti-pattern rewrite and the prose that
   repeated the dependency split are gone, the core rules state load-only-missing and recheck-after-a-mode-change
   explicitly, and the four trajectories ship byte-identical.
 - **On a thin program**: when a **root** `run_code` program breaks one of three latched categories, a short
@@ -145,7 +145,11 @@ observation only: no context, no message, no extra dependency.
 The text file is `prompts/batching-guidance.md` (shipped with the package, English, editable). It is read
 once per path and cached in the process, so restart to apply edits; an unreadable file logs one warning and
 skips delivery, an empty file also skips, and a failed delivery only logs a warning without rewriting the
-tool result.
+tool result. Its "Sandbox permissions" section follows the mode the host `sandboxPolicy` reports:
+`danger-full-access` keeps only "this is the widest tier, never send `sandbox_permissions` or
+`justification`", while `workspace-write` and `read-only` keep their own escalation advice; without a host
+policy the shipped three-tier text is delivered unchanged. Only `workspace-write` and `danger-full-access`
+are legal values, and an invalid one rejects the program before it runs (#963).
 
 **Contrast-arm usage.** To compare the guidance on one shared PTC surface, keep `ptc` and `ops-ptc` on the same
 API configuration and set `batchingGuidance: true` only on the `ops-ptc` section (the packaged default), or

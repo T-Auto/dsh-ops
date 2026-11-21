@@ -7,6 +7,14 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- ops-ptc's batching teacher trajectory now teaches sandbox authority: the lesson states the
+  host-reported mode, keeps only that tier, and at `danger-full-access` says never to send
+  `sandbox_permissions` or `justification`; it also pins the closed vocabulary
+  (`workspace-write`, `danger-full-access`) instead of letting the model invent a wider target
+  (#963).
+- ops-ptc 的批量调用教师轨迹新增沙箱权限教学：按宿主报告的当前模式只保留对应档位，
+  `danger-full-access` 下明确「绝不发送 `sandbox_permissions`/`justification`」，并钉住
+  合法值只有 `workspace-write` 与 `danger-full-access`，避免模型编造更宽的目标（#963）。
 - Niubash no longer refuses to prepare its runtime when a full-access session's workspace contains
   the default `~/.dsh` home (#870). The workspace boundary stays armed in read-only and
   workspace-write modes, where host workspace labeling and write gating could otherwise reach the

@@ -154,6 +154,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         loader: plan.loader,
         resident: [...resident].filter(api => reachable(mode, api)).map(api => publicToolName(api)),
         loadable: allowedApis(agent).map(api => publicToolName(api)),
+        sandbox: mode,
       }
     }
     const shapeLatch = createProgramLatch(surfaceFor)
