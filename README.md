@@ -22,13 +22,13 @@
 
 以提高token效率为目的，提供新增的ops系列工具并隐藏部分官方工具为方案的插件，低改动面，低侵入性，与其他插件广泛兼容。
 
-- Bash 与宿主 Shell 隐藏独立配置；Windows 可用 ops_bash 替代 pwsh，也可保留官方 Shell。
-- Native/PTC 消费者预设发布共享的有界工具面；Bash 由单行开关控制，关闭替换时原版工具保持可用。
-- 第五个内置模式 `ops-ptc` 继承 PTC 工具面，由插件运行时注册（定义来自随包片段 `presets/ops-ptc.patch.yml`，不是插件管理器行），并可开启批量调用上下文提示（`batchingGuidance`）：会话首轮注入一次英文教学（`prompts/batching-guidance.md`，进入历史、不改系统提示词），之后按根 `run_code` 程序形状（`bypass`/`plan`/`shape`，每类每轮一次、合规解锁）以 `additionalContexts` 纠偏、不阻断不改写程序；默认预设不强制：行详情页有一个按钮，点一次就把 `ops-ptc` 设为新会话默认，apply、重挂载与卸载都不会改你自己选的默认，详见[预设与默认模式](docs/预设与默认模式.md)。
-- 启用 DSH 预留的 `tools_addition` 动态工具加载，并提供渐进式纰漏的工具，作为高级功能（如pdf、word读取、超多文件批量修改）的加载平台，大大减少常见特定场景的token消耗量，且不会导致系统提示词膨胀
-- 为 Native 模式提供返回紧凑、带行号和更好错误回馈的工具以遏制报错循环，减少调用轮次
-- 为 PTC 模式提供一些返回结构化 JSON 值的工具以降低 ai 在 ptc 模式下编写 TypeScript 代码的token总量和心智负担
-- PTC SDK 目录包含 18 个 API：15 个文件/文档工具，加批处理、结果引用和加载器。
+- 在windows平台下：
+  - 提供bash工具并隐藏pwsh工具，均可配置。本插件包随插件包提供约100mb的niubash荷载，比300mb的git bash轻量60%，比1G的wsl轻量90%，并有约10%的性能与运行时间收益；同时可选使用本机gitbash或wsl
+- 在windows，linux，mac下：
+  - 提供一系列常驻高级工具，大约增加约1000token的系统提示词，可关闭。高级工具会使用 [Tranquillitatis-Lab/ops-ga](https://github.com/Tranquillitatis-Lab/ops-ga) ，以及其他方案进行持续优化，并跟进最新的模型进展
+  - 提供缓存友好的动态工具加载框架，可以按需加载面向具体场景的高级专项工具，可关闭
+  - 提供一个包含教师模型轨迹的预设，让AI学会单次调用多个工具以减少任务完成需要的轮数
+- 可与 [Tranquillitatis-Lab/dsh-live-compact](https://github.com/Tranquillitatis-Lab/dsh-live-compact) 搭配使用。两个插件都属于独立乘区，和上下文管理/记忆框架/上下文压缩/提示词注入等token节省方案乘算叠加
 
 <p align="center">
   <img src="https://github.com/user-attachments/assets/8238e4cd-61aa-4740-83bf-3aa6dd61291b" height="300" alt="dsh token 效率">
