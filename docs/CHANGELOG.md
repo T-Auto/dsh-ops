@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Presentation probes now carry the inspected agent as well as its scope, so agent-dependent prompt variables such as `model`, `provider` and `cwd` resolve during Native/PTC detection and integration inspection (#954).
+- 展示探测现在同时携带被检查的 agent 及其作用域，使 `model`、`provider`、`cwd` 等依赖 agent 的提示词变量在 Native/PTC 判断与集成检查时正确取值（#954）。
+
 ## [0.5.6] — 2026-11-21 — Patch release
 
 - ops-ptc's batching teacher trajectory now teaches sandbox authority: the lesson states the

@@ -27,6 +27,14 @@ The shared result adapter preserves PTC's existing `j-` batch audit and legacy `
 
 PTC guidance is filled only after the public text waterfall confirms the executor's `tools:ptc-only` section. Shared callable file names do not establish presentation. Enabling the PTC row must leave the complete Native prompt and wire tool list unchanged, while the PTC assembly keeps its admitted SDK.
 
+## Agent variables during presentation inspection (#954)
+
+Presentation inspection passes the inspected agent as both `scope` and `agent`,
+along with the caller's cancellation signal. Agent-dependent prompt variables
+such as `{{model}}`, `{{provider}}` and `{{cwd}}` therefore resolve for the inspected
+session during Native/PTC detection and integration diagnostics. Probe identity
+remains limited to that assembly and is retired even if assembly fails.
+
 ## Source ownership
 
 `src/presets/` owns built-in preset defaults. `src/consumer/` assembles built-in and external
