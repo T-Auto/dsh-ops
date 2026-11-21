@@ -12,7 +12,7 @@ import { BashArgumentError } from './shells/argument-error.js'
 import { MODES } from './permissions.js'
 import { hostBashDefinition } from './shells/host-tool.js'
 import { withToolChange } from './publication/changes.js'
-import { publicationPending, publicationReady, publicationRegistration } from './publication/reentry.js'
+import { publicationLeaseError, publicationLeaseState, publicationReady, publicationRegistration } from './publication/reentry.js'
 import { startSessionBash } from './shells/session-execution.js'
 import { resolveSessionDirectory } from './adapter/dsh/working-directory.js'
 
@@ -240,39 +240,31 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
     admit(entry, dispose, definition, attemptGeneration)
   }
 
-  /**
-   * Mark one registration attempt live, or report and restore on rejection.
-   *
-   * A queued attempt exists only once the host admits it: the entry stays
-   * pending, never published, so a later rejection cannot leave a session
-   * looking served while its layer is gone (#873).
-   * @param entry - the entry the attempt belongs to.
-   * @param dispose - the attempt's queue handle; also its settle identity.
-   * @param definition - the definition the attempt registers.
-   * @param attemptGeneration - the reconcile generation of the attempt.
-   */
+  /** Only the current attempt can publish this entry or latch a failure for its generation. */
   const admit = (entry: Entry, dispose: () => void, definition: HostShellDefinition, attemptGeneration: number) => {
     const live = () => {
+      if (entry.dispose !== dispose) return
+      entry.pending = false
       entry.definition = definition
       entry.published = true
       entry.generation = attemptGeneration
       entry.failed = undefined
     }
-    if (!publicationPending(dispose)) { live(); return }
-    entry.pending = true
-    void publicationReady(dispose).then(() => {
-      // A superseded attempt no longer speaks for this entry.
+    const reject = (error: unknown) => {
       if (entry.dispose !== dispose) return
-      entry.pending = false
-      live()
-    }, error => {
-      if (entry.dispose !== dispose) return
-      entry.pending = false
-      entry.published = undefined
-      entry.generation = undefined
-      if (bashOwners.get(entry.agent)?.entry === entry) bashOwners.delete(entry.agent)
-      reportRejected(entry, attemptGeneration, definition, error)
-    })
+      const failed = publicationLeaseState(dispose) === 'failed'
+      clear(entry)
+      if (failed) reportRejected(entry, attemptGeneration, definition, error)
+      else ctx.logger?.warn?.(`dsh-ops: bash publication cancelled for agent ${entry.agent.id}: ${errorMessage(error)}`)
+    }
+    const state = publicationLeaseState(dispose)
+    if (state === 'settled') { live(); return }
+    if (state === 'pending') {
+      entry.pending = true
+      void publicationReady(dispose).then(live, reject)
+      return
+    }
+    reject(publicationLeaseError(dispose))
   }
 
   /**
@@ -367,6 +359,8 @@ export function mountSessionBash(ctx: Context, config: Pick<ResolvedConfig, 'pub
     entries.set(agent, entry)
     entry.fiber = agent.ctx.plugin(child => {
       child.inject(['tools'], toolsCtx => {
+        // Cordis withdraws the previous injection's layer even when the preset and policy stay the same.
+        if (entry.ctx) clear(entry)
         entry.ctx = toolsCtx
         scheduleReconcile()
       })

@@ -2,7 +2,7 @@
 import type { Agent, Context, ToolActivationContext, ToolDefinition } from '../adapter/dsh/types.js'
 import type {} from '../adapter/dsh/types.js'
 import { onToolChange, withToolChange } from './changes.js'
-import { publicationPending, publicationRegistration } from './reentry.js'
+import { publicationError, publicationLeaseState, publicationOwnerLive, publicationRegistration } from './reentry.js'
 import { publicationAdmission } from './registrar.js'
 import { loadScopes } from '../adapter/dsh/host.js'
 import { RAW_OFFICIAL_REPLACEMENTS } from '../capabilities/replacements.js'
@@ -112,6 +112,26 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
         entry.shadows.clear()
       })
     }
+    const warn = (agent: Agent, error: unknown): void => {
+      ctx.logger.warn(`dsh-ops: ${mode} replacement publication failed for agent ${agent.id}: ${publicationError(error)}`)
+    }
+    const retire = (agent: Agent): void => {
+      inactive.add(agent)
+      const entry = entries.get(agent)
+      entries.delete(agent)
+      try { if (entry) lift(agent, entry) } catch (error) { warn(agent, error) }
+    }
+    const isCurrent = (agent: Agent, entry: Entry): boolean => !stopped && !inactive.has(agent)
+      && entries.get(agent) === entry && publicationOwnerLive(agent.ctx)
+    const refresh = (agent: Agent, action: () => void): void => {
+      try {
+        if (publicationOwnerLive(agent.ctx)) action()
+      } catch (error) {
+        if (publicationOwnerLive(agent.ctx)) warn(agent, error)
+      }
+      // A scoped registry write can synchronously dispose its owner.
+      if (agent.ctx.fiber.uid === null) retire(agent)
+    }
     /** Skip this controller's ancestor shadows and inspect the actual inherited official source. */
     const sourceFor = (agent: Agent, name: string): ToolDefinition | undefined => {
       for (const scope of [...scopeChainOf(agent).slice(1), undefined]) {
@@ -126,19 +146,21 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
     const apply = (agent: Agent, entry: Entry): void => {
       withToolChange([agent], () => {
         for (const [official, counterpart] of targets) {
-          if (inactive.has(agent)) return
+          if (!isCurrent(agent, entry)) return
           const source = sourceFor(agent, official)
           const old = entry.shadows.get(official)
           const current = tools.get(official, agent)
           // A same-scope foreign registration cannot be shadowed; never replace its policy.
           const canShadow = current !== undefined && tools.get(official, entry.probe) !== undefined
             && (sources.has(current) || current === source)
-          if (old && old.source === source && canShadow) continue
+          if (old && old.source === source && canShadow
+            && (current === old.definition || publicationLeaseState(old.dispose) === 'pending')) continue
           if (old) { old.dispose(); entry.shadows.delete(official) }
           if (!source || !canShadow) continue
           const definition = { ...source }
           sources.add(definition)
           const dispose = publicationRegistration(agent.ctx, () => {
+            if (!isCurrent(agent, entry)) return () => {}
             const unregister = agent.ctx.get('tools')!.register(definition, { when: async activation => {
               // Own registrations bypass restrictions in the host view. The empty descendant
               // probe makes our shadow inherited, so even agent-local restrictions still apply.
@@ -180,43 +202,44 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
             }
             return unregister
           })
-          if (inactive.has(agent)) { dispose(); return }
+          const lease = publicationLeaseState(dispose)
+          // Never cache a lease the host never admitted: a cancelled registration
+          // (owner unloading) or a failed one would shadow nothing while the
+          // controller believed the official tool was replaced.
+          if (!isCurrent(agent, entry) || lease === 'cancelled' || lease === 'failed') { dispose(); return }
           entry.shadows.set(official, { source, definition, dispose })
         }
       })
     }
-    const reconcileAgent = (agent: Agent): void => {
-      if (stopped || mutating || inactive.has(agent) || !gate.allows(agent)) return
-      let entry = entries.get(agent)
-      if (!entry) {
-        const probe = {}
-        bindScopeParent(probe, agent)
-        entry = { shadows: new Map(), probe }
-        entries.set(agent, entry)
-      }
+    const reconcileAgent = (agent: Agent, scopes?: readonly object[]): void => {
+      if (stopped || mutating || inactive.has(agent)) return
       mutating = true
-      try { apply(agent, entry) }
-      catch (error) { ctx.logger.warn(`dsh-ops: ${mode} replacement publication failed: ${String(error)}`) }
-      finally { mutating = false }
+      try { refresh(agent, () => {
+        if (scopes?.length && !scopes.some(scope => scopeChainOf(agent).includes(scope))) return
+        if (!gate.allows(agent)) return
+        let entry = entries.get(agent)
+        if (!entry) {
+          const probe = {}
+          bindScopeParent(probe, agent)
+          entry = { shadows: new Map(), probe }
+          entries.set(agent, entry)
+        }
+        apply(agent, entry)
+      }) } finally { mutating = false }
     }
     const reconcile = (scopes?: readonly object[]): void => {
       if (stopped) return
       if (mutating) { defer(); return }
-      for (const agent of ctx.get('agents')?.list?.() ?? []) {
-        if (scopes?.length && !scopes.some(scope => scopeChainOf(agent).includes(scope))) continue
-        reconcileAgent(agent)
-      }
-      for (const [agent, entry] of entries) if (!gate.allows(agent)) {
+      for (const agent of ctx.get('agents')?.list?.() ?? []) reconcileAgent(agent, scopes)
+      for (const [agent, entry] of entries) {
         mutating = true
-        try { lift(agent, entry); entries.delete(agent) } finally { mutating = false }
+        try { refresh(agent, () => {
+          if (!gate.allows(agent)) { entries.delete(agent); lift(agent, entry) }
+        }) } finally { mutating = false }
       }
     }
     ctx.on('agent/created', ({ agent }) => { inactive.delete(agent); reconcileAgent(agent) })
-    ctx.on('agent/disposed', ({ agent }) => {
-      inactive.add(agent)
-      const entry = entries.get(agent)
-      if (entry) { entries.delete(agent); lift(agent, entry) }
-    })
+    ctx.on('agent/disposed', ({ agent }) => retire(agent))
     // Fail open (#962): a counterpart that settled with an unrecoverable runtime failure
     // stops hiding the official tool from the agent's next model step. The latch is per
     // agent: the payload is shared, but each agent's own accepted call is the evidence
@@ -282,13 +305,23 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
       if (mutating) { defer(); return }
       mutating = true
       try {
-        for (const [agent, entry] of entries) {
-          if (scopes?.length && !scopes.some(scope => scopeChainOf(agent).includes(scope))) continue
+        for (const [agent, entry] of entries) refresh(agent, () => {
+          if (scopes?.length && !scopes.some(scope => scopeChainOf(agent).includes(scope))) return
           let changed = false
           withToolChange([agent], () => {
             for (const name of targets.keys()) {
               const shadow = entry.shadows.get(name)
-              if (shadow && publicationPending(shadow.dispose)) continue
+              const lease = shadow === undefined ? undefined : publicationLeaseState(shadow.dispose)
+              // A deferred registration is not visible yet: wait for its own notification.
+              if (lease === 'pending') continue
+              // A cancelled or failed lease never became live: drop the cached ghost
+              // so the apply below registers again instead of trusting it.
+              if (shadow && lease !== 'settled') {
+                shadow.dispose()
+                entry.shadows.delete(name)
+                changed = true
+                continue
+              }
               const source = sourceFor(agent, name)
               if (!shadow) { if (source && tools.get(name, agent) === source) changed = true; continue }
               if (tools.get(name, entry.probe) !== shadow.definition || source !== shadow.source) {
@@ -299,7 +332,7 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
             }
             if (changed) apply(agent, entry)
           })
-        }
+        })
       } finally { mutating = false }
       // Other global layer bursts coalesce; scoped changes only visit their own chains.
       if (scopes?.length) reconcile(scopes)
@@ -308,8 +341,7 @@ export function mountReplacements(root: Context, publication: ReplacementPublica
     ctx.effect(() => () => {
       stopped = true
       if (scheduled !== undefined) clearImmediate(scheduled)
-      for (const [agent, entry] of entries) lift(agent, entry)
-      entries.clear()
+      for (const agent of entries.keys()) retire(agent)
     }, `dsh-ops: ${mode} replacements`)
     reconcile()
   })

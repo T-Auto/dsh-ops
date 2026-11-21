@@ -17,6 +17,10 @@ Late foreign ancestor sources retain their exact definitions, conditions and res
 
 From 0.5.3, consumer replacements select the official fallback and the OPS counterpart mutually exclusively during the host's step resolution. A conditional OPS source and the official fallback share one admission decision; unconditional counterparts use the same fallback mechanism. If the counterpart is unavailable, the official tool remains declared and callable. The scoped fallback preserves the original schema and execution callbacks. Existing restrictions, including restrictions added after a step was resolved, still revoke the fallback; original source changes invalidate its captured definition. Prompt assembly never mutates registrations, and there is no replacement pre-execute refusal. Foreign same-scope or conditional official definitions are left untouched rather than discarding their policy. If the host cannot see the fallback probe's scope linkage, OPS warns once for that agent and leaves the official definitions untouched.
 
+Replacement controllers isolate `tools/change` and reconcile refreshes per agent (#953). A disposed Cordis fiber (`uid = null`) causes cached state to be removed and replacement shadows withdrawn even if `agent/disposed` has not arrived. Synchronous disposal during registration and queued callbacks cannot retain an inactive shadow. Ordinary errors for live agents emit a warning with the mode, agent and safely formatted error; other agents continue refreshing, and the affected agent can recover on a later refresh.
+
+Shared publication also checks disposed and unloading fibers before setup, before queued execution and after registration (#953). Cancelled handles retain rejected readiness and report `pending: false`; ordinary errors still propagate synchronously for rollback. Controllers read the explicit `pending` / `settled` / `cancelled` / `failed` lease verdict rather than treating `pending: false` as landed: a cancelled registration is never cached as a live replacement shadow, bash layer or official-tool restriction. Replacement refresh and hide-official fail open on a cancelled lease (the official tools stay visible and callable) and retry on a later pass; bash admission clears the attempt without the per-generation failure latch, so a restarted inject republishes at the same generation. Registration during the legitimate loading phase remains allowed. Returned undo operations remain owed until withdrawal succeeds. If the root refuses lifetime effects, every caller fiber retains the shared queue so unloading one caller cannot discard a live sibling's withdrawal. Failed lifetime setup removes the cached queue; stopping the last owner cancels new publication while still draining owed withdrawals.
+
 Publication refusals distinguish `PUBLICATION_IDENTITY_MISMATCH` (stale definition or missing step admission) from `PUBLICATION_GRANT_UNAVAILABLE` (missing eligible grants or conflicting dispatch). Capture the exact code alongside the scoped request tools and toolSet when investigating #784; these diagnostics do not establish that report's root cause.
 
 The host can refuse a registry write while publishing a session append. OPS shares one cooldown per host root (25, 100, 400, then 1000 ms), stops at the first refusal, and keeps both pending registration and withdrawal work. Recovery does not require another session event. Deferred tools are unavailable until registered; current execution guards still reject withdrawn authority. Ordinary configuration errors are not retried. Warnings retain suppressed counts and report recovery; unloading a scope cancels its pending registration.
@@ -26,6 +30,16 @@ The retained explicit `hide-official` row remains strict: each selected counterp
 The shared result adapter preserves PTC's existing `j-` batch audit and legacy `r-` snapshot routes only under a verified live `run_code` parent. Worker checks still bind session, root and root identity; audit records cannot be released. Native permits only `ref://` page/release. A live admission ticket is rechecked across directory, confinement and cache preparation, and immediately before worker dispatch. Failed inspection or withdrawn admission refuses pre-dispatch work with no effects. Public prompt-change notices have no scope attribution, so another scope's prompt update can conservatively refuse an in-flight PTC preflight in the same host. No call is replayed.
 
 PTC guidance is filled only after the public text waterfall confirms the executor's `tools:ptc-only` section. Shared callable file names do not establish presentation. Enabling the PTC row must leave the complete Native prompt and wire tool list unchanged, while the PTC assembly keeps its admitted SDK.
+
+## Agent variables during presentation inspection (#954)
+
+Presentation inspection passes the target agent as both `scope` and `agent`, with
+the caller's cancellation signal. During tool activation, the SDK and official
+replacement checks share the probe for that activation's `modelSelection`.
+The host uses this selection to resolve `model` and `provider`. Independent
+diagnostics omit the selection and use the agent defaults. Other variables,
+including `cwd`, require a host variable provider. Probe identity ends when
+assembly completes or throws.
 
 ## Source ownership
 
