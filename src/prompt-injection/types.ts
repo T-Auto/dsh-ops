@@ -12,6 +12,13 @@ export interface SystemSectionOptions extends PromptContribution {
   readonly text: string | ((context: AssembleContext) => string)
 }
 export type ReadonlyValue<T> = T extends object ? { readonly [K in keyof T]: ReadonlyValue<T[K]> } : T
+/** What the model-visible history currently shows for one step-tail contribution. */
+export interface VisibleContribution {
+  /** A step-tail message of this contributor is visible, whatever its revision. */
+  readonly any: boolean
+  /** A visible message of this contributor carries exactly this revision. */
+  readonly current: boolean
+}
 export interface StepTailContext {
   readonly agent: Agent
   readonly turn: number
@@ -20,8 +27,19 @@ export interface StepTailContext {
   readonly signal: AbortSignal
   /** Detached, deeply frozen nonempty accepted batch, without this API's contributions. */
   readonly messages: readonly ReadonlyValue<UserMessage>[]
+  /** Visibility of this contribution in the agent's derived history, read before this batch commits. */
+  readonly visible: VisibleContribution
 }
 export interface StepTailProviderOptions extends PromptContribution {
+  /**
+   * Opt-in restore dedupe: while a step-tail message with this id and revision
+   * is visible in the agent's derived history, the provider is not evaluated and
+   * nothing is appended. A session restored from that history therefore adds 0
+   * messages, while a compaction replace that removes the visible message
+   * re-arms the provider, whose next provide then sees visible.any === false.
+   * Without the option every accepted batch may append, as before.
+   */
+  readonly dedupe?: 'visible'
   /**
    * Called only for accepted nonempty user-message batches, not every model request.
    * The final active check before this hook returns its batch to host pre-step is

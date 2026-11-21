@@ -24,7 +24,8 @@ await test('real bounded ranges keep exact body, shared path base, full revision
   assert.match(text, /more lines; nextOffset=3/); assert.match(text, /\(empty file\)/)
   assert.match(text, /end of file; complete=true/); assert.match(text, /3\/3 requested ranges returned/)
   assert.doesNotMatch(text, /worker-limit|bytes=|lineCount=|matched=/)
-  assert.equal(text.split('\n').filter(line => line.startsWith('[Notice:')).length, 1, 'one aggregate notice covers all fully returned ranges')
+  assert.equal(text.split('\n').filter(line => line.startsWith('[Notice:')).length, 2, 'one escape notice plus one aggregate notice cover all fully returned ranges')
+  assert.match(text, /rendered line\(s\) use reversible escapes/, 'escaped lines state the round-trip contract once')
   assert.equal(JSON.stringify(value), before)
 }))
 await test('different parents retain absolute quoted paths; path control characters cannot inject headers', () => {

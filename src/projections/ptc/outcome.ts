@@ -2,6 +2,8 @@
 import { errorPolicy } from '../../kernel/errors.js'
 import type { CoverageMeta, EffectState, Outcome } from '../../kernel/outcome.js'
 import { continuationFor } from './continuation.js'
+import { CHANGE_FIRST, continueReading, nextStepFor } from './next-step.js'
+import type { NextStepSurface } from './next-step.js'
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 export type CanonicalData = { [key: string]: JsonValue }
@@ -14,10 +16,12 @@ function effect(value: CanonicalData, fallback: EffectState): EffectState {
   return typeof value.effectState === 'string' && effects.has(value.effectState as EffectState)
     ? value.effectState as EffectState : fallback
 }
-function failure(data: CanonicalData | undefined, code: string, message: string, state: EffectState, nextAction?: string): Outcome<CanonicalData> {
+function failure(data: CanonicalData | undefined, code: string, message: string, state: EffectState,
+  nextAction?: string, recommended?: string): Outcome<CanonicalData> {
   const policy = errorPolicy(code, state)
+  const next = recommended ?? nextAction
   return { status: policy.status, error: { code, message, effectState: state, retry: policy.retry,
-    ...(nextAction ? { nextAction } : {}) }, ...(data ? { data } : {}) }
+    ...(next !== undefined ? { nextAction: next } : {}) }, ...(data ? { data } : {}) }
 }
 function coverage(data: CanonicalData, complete: boolean): CoverageMeta {
   const cause = data.truncatedBy === 'time' ? 'time-limit' : data.truncatedBy
@@ -27,13 +31,20 @@ function coverage(data: CanonicalData, complete: boolean): CoverageMeta {
     isComplete: complete, ...(truncatedBy ? { truncatedBy } : {}) }
 }
 /** Incomplete observations without a safe cursor are errors with retained data, never fabricated pages. */
-export function toOutcome(tool: string, args: unknown, value: unknown): Outcome<CanonicalData> {
+export function toOutcome(tool: string, args: unknown, value: unknown, surface?: NextStepSurface): Outcome<CanonicalData> {
   const data = record(value)
   if (!data) return failure(undefined, 'RESULT_UNKNOWN', 'The worker did not return a canonical object.', 'unknown')
   const error = record(data.error)
-  if (error) return failure(data, typeof error.code === 'string' ? error.code : 'RESULT_UNKNOWN',
-    typeof error.message === 'string' ? error.message : 'The operation did not return a settled receipt.', effect(error, 'unknown'),
-    typeof error.nextAction === 'string' ? error.nextAction : undefined)
+  if (error) {
+    const code = typeof error.code === 'string' ? error.code : 'RESULT_UNKNOWN'
+    const message = typeof error.message === 'string' ? error.message : 'The operation did not return a settled receipt.'
+    const state = effect(error, 'unknown')
+    const workerNext = typeof error.nextAction === 'string' ? error.nextAction : undefined
+    const retry = errorPolicy(code, state).retry
+    const recommended = nextStepFor(tool, args, { code, message, retry }, data, surface)
+      ?? (workerNext === undefined && retry === 'after-input-change' ? CHANGE_FIRST : undefined)
+    return failure(data, code, message, state, workerNext, recommended)
+  }
   const action = record(args)?.action
   if (tool === 'result' && action === 'release' && data.status === 'released' && typeof data.id === 'string') {
     return { status: 'completed', data }
@@ -64,13 +75,21 @@ export function toOutcome(tool: string, args: unknown, value: unknown): Outcome<
   }
   // Stored rows are not echoed by put/release; their own successful operation is complete.
   if (tool === 'result' && record(args)?.action !== 'page' && data.status === 'completed') return { status: 'completed', data }
-  if (count(data.failed) > 0) return failure(data, 'RESULT_PARTIAL', 'Some items failed; inspect each retained receipt.',
-    effect(data, count(data.changed) > 0 ? 'partial' : 'none'), next)
+  if (count(data.failed) > 0) {
+    const recommended = nextStepFor(tool, args, { code: 'RESULT_PARTIAL', message: 'Some items failed; inspect each retained receipt.',
+      retry: 'never' }, data, surface)
+    return failure(data, 'RESULT_PARTIAL', 'Some items failed; inspect each retained receipt.',
+      effect(data, count(data.changed) > 0 ? 'partial' : 'none'), next, recommended)
+  }
   const incomplete = data.complete === false || data.truncated === true || data.scanComplete === false
     || data.pageComplete === false || data.status === 'partial' || data.status === 'partial_completion'
   if (incomplete) {
     const continuation = continuationFor(tool, args, data)
-    if (continuation) return { status: 'partial', data, coverage: { ...coverage(data, false), isComplete: false }, continuation }
+    if (continuation) {
+      const recommended = continueReading(continuation)
+      return { status: 'partial', data, coverage: { ...coverage(data, false), isComplete: false }, continuation,
+        ...(recommended !== undefined ? { nextAction: recommended } : {}) }
+    }
     return failure(data, 'RESULT_PARTIAL', 'Observation is incomplete and has no safe continuation; refine the request.',
       effect(data, count(data.changed) > 0 ? 'applied' : 'none'), next)
   }

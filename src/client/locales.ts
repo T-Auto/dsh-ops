@@ -90,6 +90,15 @@ export const en = {
   defaultPresetNoUpdate: 'Nothing to do: new sessions already start in OPS (PTC).',
   defaultPresetUnavailable: 'The OPS (PTC) preset is not registered right now, so the default preset was not changed.',
   defaultPresetFailed: 'The default preset was not changed:',
+  disclosureTitle: 'PTC disclosure tier',
+  disclosureHint: 'One choice for both PTC rows: when the full permitted tool declaration appears in a session. The distinction is the timing, never the permissions.',
+  disclosureOnDemand: 'On-demand (default)',
+  disclosureOnDemandHint: 'The first step publishes resident tools plus the loader; the full declaration appears after the loader call, two steps.',
+  disclosureFull: 'Full',
+  disclosureFullHint: 'The first step publishes the whole permitted tool pool with no loader. Choosing this never widens permissions.',
+  disclosureMixed: 'The saved PTC rows disagree about the tier. Choosing one below unifies them on save.',
+  disclosureSuspended: 'The dynamic-tools bundle switch is off, so the full tier is suspended and both rows run on-demand until it is back on; the saved choice is kept.',
+  disclosureAppliesOnSave: 'The choice applies to new sessions; running sessions keep their current surface.',
 }
 export const zh: Record<keyof typeof en, string> = {
   ptcFilesRequired: '类型化 PTC 必须启用文件能力；用常驻开关控制启动 API。',
@@ -182,6 +191,15 @@ export const zh: Record<keyof typeof en, string> = {
   defaultPresetNoUpdate: '无需更改：新会话本来就默认使用 OPS (PTC)。',
   defaultPresetUnavailable: 'OPS (PTC) 预设当前未注册，默认预设没有改动。',
   defaultPresetFailed: '默认预设没有改动：',
+  disclosureTitle: 'PTC 披露档位',
+  disclosureHint: '两条 PTC 行统一选择：完整获准工具声明在会话中出现的时机。区别只在时机，从不改变权限。',
+  disclosureOnDemand: '按需（默认）',
+  disclosureOnDemandHint: '首步只发布常驻工具与加载入口；完整声明在加载调用之后出现，分两步。',
+  disclosureFull: '全量',
+  disclosureFullHint: '首步直接发布整个获准工具池，且无加载入口。选择全量不会扩大任何权限。',
+  disclosureMixed: '已保存的两条 PTC 行档位不一致。在下面选定一个，保存后会统一。',
+  disclosureSuspended: '动态工具总开关已关闭，全量档暂不生效，两行按需运行；已保存的选择原样保留，开关回开后重新生效。',
+  disclosureAppliesOnSave: '选择对新会话生效；正在运行的会话保持当前工具面。',
 }
 declare module '@deepseek-ai/dsh-client-ui-slots' { interface LocaleNamespaceMap { dshOps: keyof typeof en } }
 export type Translator = TranslateNS<'dshOps'>

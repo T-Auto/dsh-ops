@@ -34,6 +34,7 @@ export const COMMANDS = [
   { name: 'tools', slice: 'P13', target: 'bench/tools/index.mjs', summary: 'model-free deterministic tool-level comparison' },
   { name: 'calls', slice: 'P14', target: 'bench/calls/index.mjs', summary: 'host-level timing over a real corpus: official versus OPS, or two OPS builds' },
   { name: 'index-ab', slice: 'G4 (#614)', target: 'bench/index-ab/index.mjs', summary: 'index versus walk A/B on one corpus with the same worker binary' },
+  { name: 'tracks', slice: 'V4 (#993)', target: 'bench/tracks.mjs', summary: 'judge the scripted OPS-PTC behavior tracks: paging, catalog, load order, wait' },
 ]
 
 const AB_FLAGS_WITH_VALUE = ['--task', '--repeat', '--folder', '--base', '--cand']

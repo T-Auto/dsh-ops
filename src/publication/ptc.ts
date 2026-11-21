@@ -1,5 +1,5 @@
 /** Stable, scoped PTC definitions; DSH resolves selection once per model step. */
-import type { Agent, Context, Fiber, ToolDefinition, ToolRunContext, UserMessage } from '../adapter/dsh/types.js'
+import type { Agent, Context, Fiber, ToolActivationContext, ToolDefinition, ToolRunContext } from '../adapter/dsh/types.js'
 import { loadUserMessage } from '../adapter/dsh/host.js'
 import { resolvePtcConfig } from '../config.js'
 import { acquirePtcFile, acquireSharedFile, isSharedFileApi } from './scope-owner.js'
@@ -10,16 +10,20 @@ import { publicToolName } from '../policy.js'
 import { definition, PTC_SECTION } from '../projections/ptc/contract.js'
 import { requestedApis, sdkDefinition } from '../projections/ptc/loader.js'
 import { renderSdkDirectory } from '../projections/ptc/directory.js'
-import { PTC_RESIDENT_TOOLS } from '../ptc/config.js'
 import type { ApiName } from '../ptc/config.js'
+import { disclosurePlan } from '../ptc/disclosure.js'
 import { ownPtcScopes } from '../ptc/ownership.js'
-import { BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, createProgramLatch, loadBatchingGuidance } from '../ptc/batching-guidance.js'
+import {
+  BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, BATCHING_GUIDANCE_SOURCE_KIND,
+  createProgramLatch, loadBatchingGuidance, renderBatchingGuidance,
+} from '../ptc/batching-guidance.js'
+import type { GuidanceSurface } from '../ptc/batching-guidance.js'
 import { InvocationLifetime, InvocationNotStarted } from '../lifecycle/invocations.js'
 import { monitoredInvoke } from '../execution/monitored.js'
 import { record } from '../execution/boundary.js'
 import { failure, resolveWorker } from '../execution/jobs.js'
+import type { Outcome } from '../kernel/outcome.js'
 import { WORKER_TIMEOUT_MS } from '../execution/protocol.js'
-import { registerStepTailProvider } from '../prompt-injection/index.js'
 import { mountWorkspacePreparation } from '../workspace-preparation.js'
 import { mountResultLifecycle } from '../kernel/result-lifecycle.js'
 import { activationIsPtc, inspectPresentation, isPresentationProbe } from './presentation.js'
@@ -28,6 +32,20 @@ import { publicationRegistration, publicationReady } from './reentry.js'
 import { retired as retiredLegacyRow } from '../settings/legacy.js'
 export { resolvePtcConfig } from '../config.js'
 export const name = 'dsh-ops-ptc'
+
+/**
+ * What the PTC projection can serve for one agent.
+ *
+ * `servable` returns `undefined` until the publisher is attached, and for any
+ * agent this consumer does not own: an unknown answer must keep the official
+ * tools available rather than hide them. The set contains raw API names the
+ * publisher itself would admit for that agent right now.
+ */
+export interface PtcServability {
+  servable(agent: Agent): ReadonlySet<ApiName> | undefined
+  /** The publisher's own per-activation presentation predicate. */
+  isPtc(activation: ToolActivationContext): Promise<boolean>
+}
 
 interface Entry {
   agent: Agent
@@ -39,8 +57,14 @@ interface Entry {
   pending: Set<ApiName>
   definitions: Map<string, ToolDefinition>
   disposers: (() => void)[]
-  /** Whether the teacher trajectory reached session history, not merely the pre-step. */
+  /** Whether the one-time lesson was committed to this agent's durable history. */
   taught: boolean
+  /** Identity of the lesson message awaiting the host's durable commit. */
+  lessonId?: string
+  /** Plain user-text guidance waiting for the next pre-step. */
+  queuedGuidance: string[]
+  /** Host turn the delivery window belongs to; stale notices are dropped. */
+  guidanceTurn: number
   files: Map<FileToolName | 'result', { lease: PublicationLease; revoke?: () => void; dispatch: ToolDefinition['execute']; granted?: { entitled: boolean; selected: boolean; config: object } }>
 }
 /** Consumer routing controls; invocation authority always remains host-owned. */
@@ -48,7 +72,7 @@ export interface PtcGate {
   guidance?: boolean
   resident?: boolean
   dynamic?: boolean
-  /** Deliver the program-shape batch notice through tool-result context. */
+  /** Deliver the one-time lesson and program-shape notices as user messages. */
   batching?: boolean
   /** Emit one structured line per delivered notice; observation only, never context. */
   telemetry?: boolean
@@ -58,12 +82,17 @@ export interface PtcGate {
 export function apply(root: Context, rawConfig: unknown, gate: PtcGate = { allows: () => true }): void {
   if (!retiredLegacyRow(root, 'ptc')) mountPtc(root, rawConfig, gate)
 }
-export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { allows: () => true }): void {
+export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { allows: () => true }): PtcServability {
   const config = resolvePtcConfig(rawConfig)
+  // The accessor is synchronous while attachment is asynchronous; every answer
+  // before the publisher owns the agent is "unknown", which keeps official tools.
+  let servable: ((agent: Agent) => ReadonlySet<ApiName> | undefined) | undefined
+  let presentation: ((activation: ToolActivationContext) => Promise<boolean>) | undefined
   let file: string
   try { file = resolveWorker(config) } catch (error) {
     if (config.required) throw error
-    root.logger.warn(`dsh-ops: ${String(error)}`); return
+    root.logger.warn(`dsh-ops: ${String(error)}`)
+    return { servable: () => undefined, isPtc: async () => false }
   }
   mountWorkspacePreparation(root)
   root.inject(['tools', 'systemPrompt', 'sandboxPolicy', 'subprocess'], async ctx => {
@@ -74,40 +103,80 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     let presentationRevision = 0
     ctx.on('system-prompt/change', () => { ++presentationRevision })
     let ownership: Awaited<ReturnType<typeof ownPtcScopes>> | undefined
-    const resident = new Set<ApiName>(gate.resident === false ? [] : [...PTC_RESIDENT_TOOLS, ...config.alwaysLoaded])
-    // A loader-less scope can never select the allowed pool: registering it only
-    // lets a host that renders registered definitions declare unreachable APIs.
-    const selectable: ApiName[] = gate.dynamic === false ? [] : [...config.allowedTools, 'result' as ApiName]
-    const pool = new Set<ApiName>([...resident, ...selectable])
+    // D3 (#987, #979 §2): an explicit full tier carries the whole permitted
+    // allowedTools pool — plus `result`, the D1 sign-off item 1 decision, so a ref
+    // spilled this step never dead-ends (#979 §3; the unified acceptance rule
+    // also needs it: on-demand can always load `result`) — in the first round,
+    // with no loader. The bundle gate has already pressed an incompatible row
+    // back to on-demand (effectiveMode, sign-off item 2); the row-level
+    // dynamicTools keeps its loader-only meaning, so a full row that also turns
+    // the loader off keeps its explicit tier. D4 (#988) moved this derivation into
+    // src/ptc/disclosure.ts so the diagnostics read the same plan instead of
+    // guessing expected names.
+    const plan = disclosurePlan(config, gate.resident !== false, gate.dynamic !== false)
+    const full = plan.full
+    const resident = new Set<ApiName>(plan.firstRound)
+    const pool = new Set<ApiName>(plan.pool)
     const owns = (agent: Agent): boolean => !stopped && gate.allows(agent) && Boolean(ownership?.owns(agent))
+    // One predicate for "may this agent call it": the guidance surface and the tool
+    // registration must never disagree about a read-only policy.
+    const reachable = (mode: string | undefined, api: ApiName): boolean =>
+      mode !== 'read-only' || !capability(api)?.mutates
     const permitted = (agent: Agent, api: ApiName | 'load_sdk'): boolean => {
       if (!owns(agent) || !ctx.get('ptcRuntime') || !ctx.get('subprocess')) return false
       const policy = ctx.get('sandboxPolicy')?.resolve({ session: agent.session })
       return policy !== undefined && ['read-only', 'workspace-write', 'danger-full-access'].includes(policy.mode)
-        && (api === 'load_sdk' || api === 'result' || !capability(api)?.mutates || policy.mode !== 'read-only')
+        && (api === 'load_sdk' || api === 'result' || reachable(policy.mode, api))
     }
-    const loadable = [...new Set<ApiName>([...config.allowedTools, 'result'])]
+    const loadable = plan.loadable
     const allowedApis = (agent: Agent): ApiName[] => gate.dynamic === false ? [] : loadable.filter(api => permitted(agent, api))
     const selected = (entry: Entry, api: ApiName | 'load_sdk'): boolean => api === 'load_sdk'
-      ? gate.dynamic !== false : resident.has(api) || entry.selected.has(api)
+      ? plan.loader : resident.has(api) || entry.selected.has(api)
     const isPtc = async (agent: Agent, signal?: AbortSignal): Promise<boolean> => {
       const assembly = await inspectPresentation(prompt, agent, signal)
       return assembly.tools.length === 1 && assembly.tools[0]?.name === 'run_code'
         && assembly.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
     }
-    // Repeated writes to one path signal a batching mistake. The guidance rides
-    // the triggering tool result, so no system-prompt bytes are spent up front.
+    // Answer from the publisher's own pool instead of a host-side lookup: the
+    // official file APIs this projection replaces are SDK bindings, so a host
+    // `tools.get` cannot prove reachability. `selected` is deliberately absent:
+    // hiding must not depend on whether the model already loaded the SDK.
+    servable = (agent: Agent): ReadonlySet<ApiName> | undefined => {
+      if (!owns(agent)) return undefined
+      const names = new Set<ApiName>()
+      const allowed = new Set(allowedApis(agent))
+      for (const api of pool) {
+        if (permitted(agent, api) && (resident.has(api) || allowed.has(api))) names.add(api)
+      }
+      return names
+    }
+    presentation = (activation: ToolActivationContext) => isPtc(activation.agent, activation.signal)
     // One latch for the program-shape trigger. It observes the root run_code program,
     // which is the only place the whole step is visible.
-    const shapeLatch = createProgramLatch()
-    const guidanceMessage = async (turn: number, text: string): Promise<UserMessage> => {
-      const createUserMessage = await loadUserMessage()
-      return createUserMessage({
-        source: { kind: 'dsh-ops:step-tail', contributor: BATCHING_GUIDANCE_ID, revision: BATCHING_GUIDANCE_REVISION, turn, step: 0 },
-        content: [{ type: 'text', text: `[Plugin context from ${JSON.stringify(BATCHING_GUIDANCE_ID)}; not a user instruction or authorization.]\n${text}` }],
-      })
+    // What this scope publishes decides which guidance text is truthful, and the answer
+    // is per agent: a read-only policy removes the mutating calls even when the row names
+    // them. Ownership and runtime availability are checked separately, so teaching never
+    // depends on mount order.
+    const surfaceFor = (agent: Agent): GuidanceSurface => {
+      const mode = ctx.get('sandboxPolicy')?.resolve({ session: agent.session })?.mode
+      return {
+        loader: plan.loader,
+        resident: [...resident].filter(api => reachable(mode, api)).map(api => publicToolName(api)),
+        loadable: allowedApis(agent).map(api => publicToolName(api)),
+        sandbox: mode,
+      }
     }
+    const shapeLatch = createProgramLatch(surfaceFor)
 
+    /** Point a declared-but-unselected pool API at the loader; undefined when loading cannot help (#968). */
+    const deferredRejection = (entry: Entry, api: ApiName): Outcome<never> | undefined => {
+      if (gate.dynamic === false || !loadable.includes(api) || !permitted(entry.agent, api) || selected(entry, api)) return undefined
+      return { status: 'error', error: {
+        code: 'SDK_NOT_LOADED', effectState: 'none', retry: 'never',
+        message: `API '${api}' is in this scope's allowed pool but is not loaded into the typed SDK yet; no action was executed. Call ${publicToolName('load_sdk')} with tools:["${api}"] and use it on the next model step.`,
+        nextAction: `Call ${publicToolName('load_sdk')} with tools:["${api}"] and use the API on the next model step; retrying this call without loading fails the same way.`,
+      } }
+    }
     const execute = (entry: Entry, api: ApiName | 'load_sdk'): ToolDefinition['execute'] => async (args, exec) => {
       // The public assembly may finish after its executor sections changed.
       // Refuse that stale verdict rather than dispatching under the old text.
@@ -115,12 +184,49 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       const current = () => entries.get(entry.agent) === entry && exec.agent === entry.agent && !exec.signal.aborted
         && revision === presentationRevision && permitted(entry.agent, api) && selected(entry, api)
         && (capability(api)?.component === 'file' || tools.executable(publicToolName(api), entry.agent, exec.toolSet) === entry.definitions.get(publicToolName(api)))
-      if (!current() || !await isPtc(entry.agent, exec.signal).catch(() => false) || !current()) {
+      // P5 (#997): a refusal is one of four verdicts — usable never lands here;
+      // loadable points at the loader only when one exists; permission-forbidden
+      // never suggests loading; and an admission that existed and was withdrawn
+      // answers as revoked, distinct from all of the above.
+      const refusal = (ptc: boolean): ReturnType<typeof failure> | Outcome<never> => {
+        if (entries.get(entry.agent) !== entry) {
+          return failure('POLICY_DENIED', 'This PTC scope has been withdrawn; the retained admission is revoked. No action executed.')
+        }
+        if (exec.agent !== entry.agent || exec.signal.aborted
+          || (capability(api)?.component !== 'file' && tools.executable(publicToolName(api), entry.agent, exec.toolSet) !== entry.definitions.get(publicToolName(api)))) {
+          return failure('POLICY_DENIED', 'This API must be admitted for the calling PTC scope; no action executed.')
+        }
+        if (!ptc || revision !== presentationRevision) {
+          return failure('POLICY_DENIED', 'The PTC presentation of this scope has been withdrawn; the retained admission is revoked. No action executed.')
+        }
+        if (!permitted(entry.agent, api)) {
+          const wasUsable = api !== 'load_sdk' && (resident.has(api) || entry.selected.has(api))
+          return failure('POLICY_DENIED', wasUsable
+            ? 'This API was admitted for the calling PTC scope, but the sandbox policy has since withdrawn its permission; the admission is revoked. No action executed.'
+            : 'The current sandbox policy does not permit this API for the calling PTC scope; no action executed.')
+        }
+        if (!selected(entry, api)) {
+          // A declared-but-unselected pool API points at the loader with an executable
+          // next step (#968); every other admission failure keeps the P5 refusal text.
+          const deferred = api === 'load_sdk' || full ? undefined : deferredRejection(entry, api)
+          if (deferred !== undefined) return deferred
+          return api !== 'load_sdk' && gate.dynamic !== false && !full
+            ? failure('SDK_NOT_LOADED', `This API (${String(api)}) is not loaded for the current step. Call tools.${publicToolName('load_sdk')} with its raw name; the selection takes effect on the next model step.`)
+            : failure('POLICY_DENIED', 'This API is not admitted for the current step and no loader can select it; no action executed.')
+        }
         return failure('POLICY_DENIED', 'This API must be admitted for the calling PTC scope; no action executed.')
       }
+      const ptc = await isPtc(entry.agent, exec.signal).catch(() => false)
+      if (!current() || !ptc || !current()) return refusal(ptc)
       if (api === 'load_sdk') {
-        const requested = requestedApis(args, allowedApis(entry.agent))
+        // Validate against the configured pool, then split permission refusals from
+        // pool refusals: a mutating API under read-only is inside its pool yet
+        // forbidden, and reloading cannot change that permission (#997).
+        const requested = requestedApis(args, gate.dynamic === false ? [] : loadable)
         if (typeof requested === 'string') return failure('INVALID_ARGUMENT', requested)
+        const forbidden = requested.filter(name => !permitted(entry.agent, name))
+        if (forbidden.length) return failure('POLICY_DENIED',
+          'The current sandbox policy does not permit ' + forbidden.join(', ') + ' for the calling PTC scope; no action executed.')
         for (const name of requested) entry.pending.add(name)
         return { status: 'completed', tools: requested, nextTurn: true }
       }
@@ -147,6 +253,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
           present: activation => activation.agent === entry.agent && permitted(entry.agent, api)
             && selected(entry, api) && activationIsPtc(prompt, activation),
           dispatch: file.dispatch,
+          deferred: () => deferredRejection(entry, api),
         })
         file.granted = { entitled, selected: selection, config }
       }
@@ -166,7 +273,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       if (stopped || retired.has(agent) || !agent.ctx || !owns(agent)) return Promise.resolve()
       const existing = entries.get(agent)
       if (existing) return existing.ready
-      const entry: Entry = { agent, ready: Promise.resolve(), calls: new InvocationLifetime(), selected: new Set(), pending: new Set(), definitions: new Map(), disposers: [], taught: false, files: new Map() }
+      const entry: Entry = { agent, ready: Promise.resolve(), calls: new InvocationLifetime(), selected: new Set(), pending: new Set(), definitions: new Map(), disposers: [], taught: false, queuedGuidance: [], guidanceTurn: -1, files: new Map() }
       entries.set(agent, entry); ownership?.track(agent)
       entry.ready = Promise.resolve().then(async () => {
         if (!owns(agent) || entries.get(agent) !== entry) return
@@ -176,23 +283,58 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         // A new host turn starts a fresh repeated-write window. This listener is
         // agent-scoped and unwinds with the entry's other disposers.
         if (gate.batching === true) {
+          // Deliver the one-time lesson and every corrective notice as user-role
+          // text on the pre-step batch: `role: 'user'` with no plugin envelope, so
+          // the model reads it as the instruction that governs the task. The source
+          // kind is the plugin's own, never `user`, so the client files the injection
+          // under its producer instead of drawing a user bubble.
           entry.disposers.push(agent.ctx!.on('agent/pre-step', async (payload, next) => {
             if (payload.agent === agent) shapeLatch.noteTurn(agent, payload.turn)
-            return next()
-          }))
-          // Teach the rules once, before the model's first request: a step-tail
-          // message rides the first accepted user batch and enters history.
-          // The provider must not latch here. A batch can still be withdrawn before
-          // admission (cancellation, rejection), and latching on the return value
-          // would then skip the lesson for the whole session without a trace.
-          entry.disposers.push(registerStepTailProvider(entry.ctx, agent, {
-            id: BATCHING_GUIDANCE_ID,
-            revision: BATCHING_GUIDANCE_REVISION,
-            provide() {
-              if (entry.taught) return undefined
-              const text = loadBatchingGuidance()
-              return text.length > 0 ? text : undefined
-            },
+            const decision = await next()
+            if (payload.agent !== agent || decision.kind !== 'enter' || payload.signal.aborted) return decision
+            if (stopped || entries.get(agent) !== entry || !entry.ctx) return decision
+            // A new host turn opens a fresh delivery window: a notice queued by an
+            // aborted step must not surface in a later turn.
+            if (entry.guidanceTurn !== payload.turn) {
+              entry.guidanceTurn = payload.turn
+              entry.queuedGuidance.length = 0
+            }
+            const texts: string[] = []
+            let lessonQueued = false
+            // Teach once, before the model's first request: the lesson rides the
+            // user's own accepted batch, so the model reads it as the instruction
+            // that governs the task instead of a tool result it can ignore.
+            if (!entry.taught) {
+              try {
+                // Render for the surface this step actually publishes (P1): a
+                // loader-less row never teaches the loader, and a read-only scope
+                // never names a write API.
+                const lesson = renderBatchingGuidance(loadBatchingGuidance(), surfaceFor(agent))
+                if (lesson.length > 0) { texts.push(lesson); lessonQueued = true }
+              } catch (error) {
+                // A delivery failure is an optimisation loss, never a turn failure.
+                ctx.logger.warn('dsh-ops: batching lesson rendering failed: ' + String(error))
+              }
+            }
+            texts.push(...entry.queuedGuidance.splice(0))
+            if (texts.length === 0) return decision
+            const createUserMessage = await loadUserMessage()
+            if (stopped || entries.get(agent) !== entry) return decision
+            const messages = texts.map(text => createUserMessage({
+              source: {
+                kind: BATCHING_GUIDANCE_SOURCE_KIND,
+                contributor: BATCHING_GUIDANCE_ID,
+                revision: BATCHING_GUIDANCE_REVISION,
+                turn: payload.turn,
+                step: payload.step,
+              },
+              content: [{ type: 'text', text }],
+            }))
+            // Count the lesson as taught only once the host commits that exact
+            // message: the session/event latch below observes the durable commit, so
+            // a rejected or cancelled batch teaches again on the next accepted batch.
+            if (lessonQueued) entry.lessonId = messages[0]!.id
+            return { ...decision, messages: [...decision.messages, ...messages] }
           }))
           // The program-shape trigger observes the ROOT run_code call: only there is
           // the whole program text visible. Nested tools.ops_* calls carry a parent
@@ -203,23 +345,25 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
             if (exec.agent !== agent || exec.name !== 'run_code' || exec.parent !== undefined) return decision
             if (exec.signal.aborted) return decision
             const code = (exec.arguments as { code?: unknown } | undefined)?.code
-            const notice = shapeLatch.observe(agent, code)
-            if (notice === undefined) return decision
             try {
-              const message = await guidanceMessage(notice.turn, notice.text)
-              // Observation only: one line, no context, no new dependency.
-              if (gate.telemetry === true) {
-                const counts = shapeLatch.stats(agent)
-                ctx.logger.info('dsh-ops batching: turn=' + notice.turn + ' category=' + notice.category
-                  + ' plan=' + counts.plan + ' bypass=' + counts.bypass + ' shape=' + counts.shape + ' total=' + counts.total)
+              // Queue the corrective notice for the next pre-step, where it is
+              // delivered as user-role text; the tool result keeps its own value,
+              // content and contexts untouched.
+              const notice = shapeLatch.observe(agent, code)
+              if (notice !== undefined) {
+                entry.queuedGuidance.push(notice.text)
+                // Observation only: one line, no context, no new dependency.
+                if (gate.telemetry === true) {
+                  const counts = shapeLatch.stats(agent)
+                  ctx.logger.info('dsh-ops batching: turn=' + notice.turn + ' category=' + notice.category
+                    + ' plan=' + counts.plan + ' bypass=' + counts.bypass + ' shape=' + counts.shape + ' total=' + counts.total)
+                }
               }
-              // Append only: the tool result keeps its own value, content and contexts.
-              return { ...decision, additionalContexts: [...(decision.additionalContexts ?? []), message] }
             } catch (error) {
               // A delivery failure is an optimisation loss, never a tool failure.
-              ctx.logger.warn('dsh-ops: batching notice delivery failed: ' + String(error))
-              return decision
+              ctx.logger.warn('dsh-ops: batching notice queueing failed: ' + String(error))
             }
+            return decision
           }))
         }
         const publish = (api: ApiName | 'load_sdk', def: ToolDefinition): void => {
@@ -246,7 +390,8 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         }
         if (!owns(agent) || entries.get(agent) !== entry) return
         rotateFiles(entry)
-        if (gate.dynamic !== false) publish('load_sdk', sdkDefinition(loadable, execute(entry, 'load_sdk')))
+        // The full tier is loader-less (#979 §2); the legacy tiers keep the loader gate.
+        if (plan.loader) publish('load_sdk', sdkDefinition(loadable, execute(entry, 'load_sdk')))
         await Promise.all([...entry.disposers.map(publicationReady), ...[...entry.files.values()].map(file => file.lease.ready())])
       }).catch(async error => {
         // Do not await ready here: this is its own rejection path. Preserve the
@@ -286,7 +431,10 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       // Sections are evaluated before the public presentation waterfall. Shared
       // file names are callable in both executors, so they cannot select PTC text.
       const ptc = result.sections.some(section => section.name === 'tools:ptc-only' && Boolean(section.text.trim()))
-      if (!isPresentationProbe(context)) {
+      // A diagnostic assembly carries no step tool set: it reads the registration
+      // surface and is never a model request, so it must not consume pending loads
+      // or cancel work the way a withdrawn request would (#997).
+      if (!isPresentationProbe(context) && context.toolSet) {
         const entry = entries.get(context.scope as Agent)
         if (entry && !ptc) {
           entry.pending.clear(); entry.calls.cancel('PTC presentation withdrawn')
@@ -305,12 +453,14 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     ctx.on('session/event', (session, event) => {
       if ((event as { type: string }).type === 'agent-preset/selected') { refresh(); return }
       for (const [agent, entry] of entries) if (agent.session === session) {
-        // The lesson counts as taught only once it is durable history: the step-tail
-        // snapshot can be withdrawn before admission, and a cancelled request must
-        // leave the next accepted batch free to teach it again.
+        // The lesson counts as taught only once the host commits the exact message
+        // the pre-step delivered: a rejected or cancelled batch commits nothing, so
+        // the next accepted batch teaches again instead of going silent forever.
         if (event.type === 'user/message') {
-          const source = (event as { data?: { source?: { kind?: string; contributor?: string } } }).data?.source
-          if (source?.kind === 'dsh-ops:step-tail' && source.contributor === BATCHING_GUIDANCE_ID) entry.taught = true
+          if (entry.lessonId !== undefined && (event.data as { id?: unknown }).id === entry.lessonId) {
+            entry.taught = true
+            entry.lessonId = undefined
+          }
         } else if (event.type === 'step/end') {
           for (const api of entry.pending) if (permitted(agent, api)) entry.selected.add(api)
           entry.pending.clear()
@@ -343,4 +493,8 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     ownership.refresh()
     await Promise.all((ctx.get('agents')?.list() ?? []).map(attach))
   })
+  return {
+    servable: (agent: Agent) => servable?.(agent),
+    isPtc: (activation: ToolActivationContext) => presentation ? presentation(activation) : Promise.resolve(false),
+  }
 }

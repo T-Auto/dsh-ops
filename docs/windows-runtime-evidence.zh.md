@@ -47,6 +47,11 @@ Get-FileHash -LiteralPath '<实际 msys-2.0.dll 路径>' -Algorithm SHA256
 是否仍存活、stderr、退出值及受限正向对照。只停止自己拥有的任务，不要杀死所有 Bash
 或重写外部对象 ACL 来让测试通过。
 
+先以非受限令牌创建该用户 section 的 MSYS 进程不包含任何受限登录会话 ACE，受限令牌因此
+无法重新打开它；代理只为**新建**对象附加权限。`ops_bash` 现在把这条消息与信号管失败一样
+归类为 `EXECUTOR_UNAVAILABLE`（带 `sandbox.runnerFailed`），不再只呈现裸的非零退出码（#409）；
+它绝不是一次用户授权拒绝。
+
 `3221225794` 与 `-1073741502` 都表示 `0xC0000142`；数字本身不说明哪个 DLL
 失败，也不证明哪个进程已执行命令。不支持用普通令牌手动启动 staged 受限载荷：其 IPC
 代理要求受限 Low 令牌。请通过 OPS 工具测试宿主实际 confinement 路径，保留完整 stderr，

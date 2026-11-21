@@ -58,8 +58,10 @@ structured.
 
 `ops_edit_file` applies 1-100 edits to **one** UTF-8 file, atomically. Supply `path`, the exact
 SHA-256 `expectedRevision` from a read/stat, and `edits: [{oldText,newText}]`. Each nonempty
-`oldText` must occur exactly once in the same original bytes; overlaps, ambiguity or stale
-revision reject all edits before publication. Empty `newText` deletes the match. Preserve
+`oldText` must occur exactly once in the same original bytes. If that raw match fails, one
+fallback decodes the reversible Native rendering of both `oldText` and `newText`; a raw match
+never decodes either field, and a fallback receipt counts `renderedMatches`. Overlaps, ambiguity
+or stale revision reject all edits before publication. Empty `newText` deletes the match. Preserve
 CRLF/BOM explicitly. `dryRun: true` previews the same receipt without writing; read-only policy
 still rejects mutation tools. This is not a cross-file transaction.
 

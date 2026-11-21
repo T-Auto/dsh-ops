@@ -11,8 +11,8 @@ import type { ReactElement } from 'react'
 import type { RuntimeRemote, RuntimeSnapshot } from '../settings/runtime-contract.js'
 import { FormActions, Unavailable, errorText, useEditor } from './forms.js'
 import type { SettingsProps } from './forms.js'
-import { groupsFor, bundleGates, changedFields, executorDiffers, executorOps, flatKey, readExecutor, readRowValues, type FieldSpec } from './row-schema.js'
-import type { ExecutorChoice } from './row-schema.js'
+import { groupsFor, bundleGates, changedFields, disclosureDiffers, disclosureOps, executorDiffers, executorOps, flatKey, readDisclosure, readExecutor, readRowValues, type FieldSpec } from './row-schema.js'
+import type { DisclosureSelection, ExecutorChoice } from './row-schema.js'
 import type { Translator } from './locales.js'
 
 /** The subset of the native Switch this page binds. */
@@ -36,19 +36,24 @@ export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Ins
   const editor = useEditor(form, read, t)
   const [opened, setOpened] = useState<Record<string, boolean>>({})
   const [choice, setChoice] = useState<ExecutorChoice>(() => readExecutor(form?.state.value ?? {}))
+  const [tier, setTier] = useState<DisclosureSelection>(() => readDisclosure(form?.state.value ?? {}))
   const [check, setCheck] = useState<{ ok: boolean; text: string }>()
   const [saving, setSaving] = useState(false)
   // The saved row is the baseline: a Host reload while the page is dirty must not
-  // silently adopt somebody else's executor.
+  // silently adopt somebody else's executor or disclosure tier.
   useEffect(() => {
     if (editor.dirty) return
     setChoice(readExecutor(editor.baseline))
+    setTier(readDisclosure(editor.baseline))
     setCheck(undefined)
   }, [editor.baseline, editor.dirty])
   if (!editor.ready) return <Unavailable {...props} />
   const draft = editor.draft, gates = bundleGates(draft)
   const savedChoice = readExecutor(editor.baseline)
   const executorDirty = executorDiffers(choice, editor.baseline)
+  const savedTier = readDisclosure(editor.baseline)
+  // `mixed` only describes saved state, so it is never a choice to write.
+  const tierDirty = tier !== 'mixed' && disclosureDiffers(tier, editor.baseline)
   const candidates = executor.snapshot?.git ?? []
 
   /** Ask the Host what a path resolves to; nothing is written by this call. */
@@ -83,6 +88,9 @@ export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Ins
       } catch (error) { setCheck({ ok: false, text: errorText(error) }); return }
       finally { setSaving(false) }
     }
+    // The disclosure card writes exactly the reviewed tier, nothing else: an
+    // untouched old profile (key absent) produces no operation at all.
+    if (tierDirty) operations.push(...disclosureOps(editor.baseline, tier))
     await editor.save(operations)
   }
   // The companion linkage locks every host-PowerShell hide switch to off.
@@ -178,8 +186,37 @@ export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Ins
         <p className="ops-field-hint">{t('executorAppliesOnSave')}</p>
       </div>
     </section>
-    <FormActions busy={editor.busy || saving} dirty={editor.dirty || executorDirty} valid
-      reset={() => { editor.reset(); setChoice(savedChoice); setCheck(undefined) }} message={editor.message} t={t} />
+    <section className="ops-group ops-card" key="ptc-disclosure">
+      <div className="ops-group-head"><div className="ops-field-text">
+        <h4 className="ops-group-title">{t('disclosureTitle')}</h4>
+        <p className="ops-field-hint">{t('disclosureHint')}</p>
+      </div></div>
+      <div className="ops-card-body">
+        {savedTier === 'mixed' && <p className="ops-field-hint">{t('disclosureMixed')}</p>}
+        {/* The bundle switch keeps its veto (sign-off item 2): the hint names the
+            suspension instead of hiding the choice, which still applies on save. */}
+        {!gates.dynamicTools && <p className="ops-field-hint">{t('disclosureSuspended')}</p>}
+        <label className="ops-choice">
+          <input type="radio" name="ops-disclosure" checked={tier === 'on-demand'} disabled={editor.busy || saving}
+            onChange={() => { setTier('on-demand') }} />
+          <span className="ops-field-text">
+            <span className="ops-field-label">{t('disclosureOnDemand')}</span>
+            <span className="ops-field-hint">{t('disclosureOnDemandHint')}</span>
+          </span>
+        </label>
+        <label className="ops-choice">
+          <input type="radio" name="ops-disclosure" checked={tier === 'full'} disabled={editor.busy || saving}
+            onChange={() => { setTier('full') }} />
+          <span className="ops-field-text">
+            <span className="ops-field-label">{t('disclosureFull')}</span>
+            <span className="ops-field-hint">{t('disclosureFullHint')}</span>
+          </span>
+        </label>
+        <p className="ops-field-hint">{t('disclosureAppliesOnSave')}</p>
+      </div>
+    </section>
+    <FormActions busy={editor.busy || saving} dirty={editor.dirty || executorDirty || tierDirty} valid
+      reset={() => { editor.reset(); setChoice(savedChoice); setTier(savedTier); setCheck(undefined) }} message={editor.message} t={t} />
   </form>
 }
 

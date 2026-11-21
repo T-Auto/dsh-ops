@@ -42,6 +42,16 @@ const WINUXCMD_SIZE: number = (NIUBASH_PIN.sizes as Readonly<Record<string, numb
 function inspectPreparedNiubash(target: string): string {
   const file = inspectNiubashTree(target)
   for (const name of GENERATED_FACES) expectNiubashFile(target, name, WINUXCMD_SIZE)
+  // A face-list change must retire stale generated faces: an argv0 stub the
+  // current list no longer declares would keep shadowing the system command
+  // with a dispatch entry that cannot run it (#966). Naming it damaged moves
+  // the version aside and rebuilds it from the pinned source.
+  const declared = new Set([...GENERATED_FACES, ...Object.keys(NIUBASH_PIN.files)])
+  for (const entry of fs.readdirSync(path.join(target, 'winuxcmd', 'usr', 'bin'), { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.toLowerCase().endsWith('.exe') && !declared.has(`winuxcmd/usr/bin/${entry.name}`)) {
+      throw Error(`Stale generated Niubash face: winuxcmd/usr/bin/${entry.name}`)
+    }
+  }
   for (const name of NIUBASH_EXECUTION_DIRECTORIES) {
     if (!fs.lstatSync(path.join(target, name), { throwIfNoEntry: false })?.isDirectory()) throw Error(`Incomplete Niubash state directory: ${name}`)
   }
@@ -163,13 +173,16 @@ async function physicalPath(file: string): Promise<string> {
 
 /** Command-time runtime for a selected payload. Host workspace labeling must never reach an
  * executable through the workspace or a junction into it, so the prepared root is checked first.
+ * Full access runs without confinement and keeps the account's own authority over every path
+ * (#870); the refusal guards exactly the confined modes that label and gate the workspace.
  */
 export async function prepareNiubash(selected: string, inheritedPath = process.env.PATH ?? process.env.Path ?? '', signal: AbortSignal,
-  { workspaceRoot, env = process.env }: { workspaceRoot?: string; env?: NodeJS.ProcessEnv } = {}): Promise<NativeShellRuntime> {
+  { workspaceRoot, mode, env = process.env }: { workspaceRoot?: string; mode?: 'read-only' | 'workspace-write' | 'danger-full-access'; env?: NodeJS.ProcessEnv } = {}): Promise<NativeShellRuntime> {
   signal.throwIfAborted()
   if (!path.isAbsolute(selected) || !isNiubashExecutable(selected)) throw unavailable('expected an absolute niu.exe path')
   const source = path.dirname(selected), target = niubashPreparedRoot(env)
-  if (workspaceRoot && (inside(target, path.resolve(workspaceRoot)) || inside(await physicalPath(target), await physicalPath(workspaceRoot)))) {
+  if (workspaceRoot && mode !== 'danger-full-access'
+    && (inside(target, path.resolve(workspaceRoot)) || inside(await physicalPath(target), await physicalPath(workspaceRoot)))) {
     throw unavailable('the prepared payload must be outside the session workspace; move DSH_HOME outside the workspace')
   }
   let file: string
