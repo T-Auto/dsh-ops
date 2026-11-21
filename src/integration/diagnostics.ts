@@ -8,6 +8,7 @@ import { pendingSelection } from '../discovery/observations.js'
 import { providers } from '../discovery/providers.js'
 import { integrationFor } from '../consumer/registry.js'
 import { publicToolName } from '../policy.js'
+import { disclosurePlan } from '../ptc/disclosure.js'
 import { ownScopes } from '../publication/ownership.js'
 import type { PublicationGate } from '../publication/types.js'
 import { presetOf } from '../consumer/identity.js'
@@ -61,9 +62,16 @@ export async function diagnose(ctx: Context, agent: Agent): Promise<Diagnostic> 
       if (config.presentation === 'native' && ptc) issue('PRESENTATION_MISMATCH', 'Native tools are withdrawn in PTC-only presentation. Choose the typed PTC integration or restore Native presentation.')
     } catch { issue('PRESENTATION_UNAVAILABLE', 'The host could not assemble this scope. Check the host presentation/runtime configuration.') }
     if (config) {
+      // D4 (#988): PTC expectations come from the same disclosure plan the
+      // publication derives (mountConsumer passes residentTools/discovery as the
+      // publication gates), so a selectable-but-unselected API — `result` on the
+      // on-demand tier — is never a gap, while a genuinely missing first-round
+      // name still is. Native expectations keep the resolved row contract.
+      const ptc = config.presentation === 'ptc' && config.files
+        ? disclosurePlan(config.ptc, config.residentTools, config.discovery) : undefined
       const expected = [
-        ...(config.files && config.residentTools ? (config.presentation === 'ptc' ? ['inspect_local_file', 'result', ...config.ptc.alwaysLoaded] : config.residentNames) : []),
-        ...(config.presentation === 'ptc' && config.discovery ? ['load_sdk'] : []),
+        ...(config.files && config.residentTools && !ptc ? config.residentNames : []),
+        ...(ptc ? [...ptc.firstRound, ...(ptc.loader ? ['load_sdk' as const] : [])] : []),
         ...(config.shell ? ['bash'] : []),
         ...(config.presentation === 'native' && config.native.enabled ? ['discover_tools'] : []),
         ...(config.presentation === 'native' ? config.native.alwaysLoaded : []),

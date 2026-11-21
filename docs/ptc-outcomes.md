@@ -11,7 +11,7 @@ See [file mutation contracts](file-contracts.md) for exact revision fields, same
 | Status | Required fields | Caller action |
 | --- | --- | --- |
 | `completed` | `data` | Consume the requested operation's result. |
-| `partial` | `data`, incomplete `coverage`, `continuation` | Inspect retained data; explicitly retrieve the remaining range or stored page. |
+| `partial` | `data`, incomplete `coverage`, `continuation`, optional `nextAction` | Follow `nextAction` for the explicit continuation call; a page reporting `complete=true` is the last one. |
 | `rejected`, `conflict`, `error`, `unknown` | `error` and optional retained `data` | Follow `error.code`, `effectState`, `retry` and `nextAction`. |
 
 A successful plan is completed planning, not completed execution. `result.put` is
@@ -43,6 +43,16 @@ progress, an incomplete physical search scan, an oversized descriptor or a range
 that cannot safely resume produces `RESULT_PARTIAL` with retained data and explicit
 guidance, not a fabricated continuation. All retrieval still checks current authority
 and available SDK bindings. No helper automatically executes or retries a tool.
+
+`nextAction` recommendations are executable, not decorative: they name one concrete
+call with literal arguments — the same path at `nextOffset` for a paged read, a hex
+`view` for non-UTF-8 bytes, a registered listing API for a rejected directory path,
+a fresh-revision read for `REVISION_CONFLICT`. Recommendations respect the calling
+step: an API this step did not admit is never named (the text then asks for a
+concrete file path instead), no write-class API is ever recommended, and a
+read-only scope never receives a re-submission suggestion. An `after-input-change`
+failure whose worker guidance is absent says plainly that an identical request
+fails identically; guidance that already names a recovery stays unchanged.
 
 Search scan coverage, captured snapshot completeness and page completeness are
 separate facts. Exhausting a stored page does not prove that the original scan was

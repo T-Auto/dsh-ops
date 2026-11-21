@@ -56,7 +56,29 @@ export async function tryWslRead(subprocess: SubprocessRuntime, file: string, en
     if (remaining() === 0) { controller.abort(); combined.throwIfAborted() }
     if (!sameAuthority()) { authorityLost = true; throw new Error('Host authority changed') }
   }
-  const probe = async (argv: string[]): Promise<string> => {
+  // One fixed /bin/sh -c preparation call (#576): the script text is a constant
+  // and every data value — one drive root per argument, the payload path last —
+  // travels as a positional parameter, so no Windows path can alter the command
+  // shape. The script maps each drive through wslpath, prints win<TAB>linux
+  // pairs, and ends with sha256sum over the mapped payload; a refused mapping
+  // exits 9 and a refused digest 8, so a failed preparation never masquerades
+  // as partial output.
+  const prepareScript = [
+    'i=0',
+    'for a in "$@"',
+    'do',
+    '  i=$((i+1))',
+    '  m=$(/usr/bin/wslpath -u "$a") || exit 9',
+    '  if [ "$i" -eq "$#" ]',
+    '  then',
+    '    /usr/bin/sha256sum -- "$m" || exit 8',
+    '  else',
+    "    printf '%s\\t%s\\n' \"$a\" \"$m\"",
+    '  fi',
+    'done',
+    'exit 0',
+  ].join('\n')
+  const run = async (argv: string[]): Promise<string> => {
     guard()
     const handle = subprocess.spawn({ argv: [...prefix, ...argv], cwd, stdio: { stdin: { data: '' }, stdout: { maxBytes: 8192 }, stderr: { maxBytes: 4096 } }, graceMs: 1000, signal: combined })
     const done = await handle.done, output = handle.collected.stdout?.readFrom(0)
@@ -65,14 +87,21 @@ export async function tryWslRead(subprocess: SubprocessRuntime, file: string, en
   }
   try {
     // Mount mappings are live authority, not a cache keyed only by a drive letter.
+    const driveRoots = [...new Set(paths.map(value => windowsDrive(String(value))).filter((value): value is string => Boolean(value)))]
+    const merged = await run(['/bin/sh', '-c', prepareScript, 'dsh-ops', ...driveRoots.map(drive => `${drive}\\`), payload])
+    const lines = merged.split('\n').filter(line => line.length > 0)
+    if (lines.length !== driveRoots.length + 1) throw new Error('WSL drive mapping unavailable')
     const drives = new Map<string, string>()
-    for (const drive of new Set(paths.map(value => windowsDrive(String(value))).filter((value): value is string => Boolean(value)))) {
-      const mapped = await probe(['/usr/bin/wslpath', '-u', `${drive}\\`])
-      if (!mapped.startsWith('/') || mapped.includes('\n') || mapped.includes('\0')) throw new Error('WSL drive mapping unavailable')
+    for (const line of lines.slice(0, -1)) {
+      const at = line.indexOf('\t')
+      if (at <= 0) throw new Error('WSL drive mapping unavailable')
+      const drive = windowsDrive(line.slice(0, at)), mapped = line.slice(at + 1)
+      if (!drive || !mapped.startsWith('/') || mapped.includes('\n') || mapped.includes('\0')) throw new Error('WSL drive mapping unavailable')
       drives.set(drive, mapped)
     }
+    if (drives.size !== driveRoots.length) throw new Error('WSL drive mapping unavailable')
     const worker = linuxPath(payload, root.distro, drives)
-    if (!worker || !(await probe(['/usr/bin/sha256sum', '--', worker])).startsWith(`${digest} `)) throw new Error('WSL payload mismatch')
+    if (!worker || !lines[lines.length - 1].startsWith(`${digest} `)) throw new Error('WSL payload mismatch')
     const convert = (value: string): string => {
       const mapped = linuxPath(value, root.distro, drives)
       if (!mapped) throw new Error('WSL authority mapping unavailable')

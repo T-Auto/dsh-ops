@@ -65,6 +65,9 @@ resident inspect/glob/grep tools independently of this advanced list; read_files
 `[]`; disabled wins over allowed, and startup names must be allowed and not disabled.
 `extraGuidance` is Native-only and is rejected in PTC, rather than silently ignored.
 PTC also rejects `denyCredentialReads` overrides (its credential boundary remains enforced).
+A PTC-presentation row additionally accepts `disclosurePolicy` (`'on-demand'` default,
+`'full'` explicit first-round tier, Native-presentation rows reject it) — the same key the
+builtin rows parse.
 `bashPath`, `allowSystemShellFallback` and explicit host-shell hiding intent are retained while
 `shell: false`; they become effective only when Shell is re-enabled.
 
@@ -76,6 +79,10 @@ No configuration changes the host's own presentation or permission policy.
 ## Diagnostics and compatibility
 
 The integration adds `ops_status` for current scoped diagnostics; see [diagnostics](diagnostics.md).
+Diagnostics derive their expected PTC first-round names from the same disclosure plan the
+publication uses, so an API that is selectable but not yet loaded (`result` on the
+on-demand tier, any unselected pool member) is never a publication gap; only genuinely
+missing first-round plan names are.
 The bundled discovery row now serves built-in/headless compositions only. Unknown custom presets
 must explicitly opt in; this intentionally removes the previous accidental global discovery entry.
 Existing component exports remain available with their documented legacy semantics; do not use
