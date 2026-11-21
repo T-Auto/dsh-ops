@@ -28,6 +28,7 @@
   - 提供一系列常驻高级工具，大约增加约1000token的系统提示词，可关闭。高级工具会使用 [Tranquillitatis-Lab/ops-ga](https://github.com/Tranquillitatis-Lab/ops-ga) ，以及其他方案进行持续优化，并跟进最新的模型进展
   - 提供缓存友好的动态工具加载框架，可以按需加载面向具体场景的高级专项工具，可关闭
   - 提供一个包含教师模型轨迹的预设，让AI学会单次调用多个工具以减少任务完成需要的轮数
+- PTC SDK 目录包含 18 个 API：15 个文件/文档工具，加批处理、结果引用和加载器。
 - 可与 [Tranquillitatis-Lab/dsh-live-compact](https://github.com/Tranquillitatis-Lab/dsh-live-compact) 搭配使用。两个插件都属于独立乘区，和上下文管理/记忆框架/上下文压缩/提示词注入等token节省方案乘算叠加
 
 <p align="center">
