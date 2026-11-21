@@ -165,8 +165,15 @@ export function run(command, args, options = {}) {
  * @returns {{command: string, args: string[]}} the invocation.
  */
 export function npmInvocation(args) {
-  const cli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
-  return fs.existsSync(cli)
+  // Official Node distributions put npm at <prefix>/lib/node_modules, while the
+  // Windows and some vendor layouts keep it in <dirname(node)>/node_modules.
+  // Probe both so packing and tar parsing use the npm shipped with this Node.
+  const prefix = path.dirname(path.dirname(process.execPath))
+  const cli = [
+    path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    path.join(prefix, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ].find(candidate => fs.existsSync(candidate))
+  return cli
     ? { command: process.execPath, args: [cli, ...args] }
     : { command: 'npm', args }
 }

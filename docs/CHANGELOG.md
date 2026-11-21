@@ -19,6 +19,13 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   control `interrupt: false` setting) instead of a stale snapshot.
 - `ops-ptc` 补丁片段按已安装的 DSH 0.2.2-rc.5 预设重新生成，携带当前上游插件列表
   （office 工具行与 subagent control 的 `interrupt: false` 设置），不再是过期快照。
+- The build scripts locate npm beside the running Node in both the official
+  `<prefix>/lib/node_modules` layout and the Windows `<node dir>/node_modules` layout. Packing
+  and tar parsing now use that same npm even when `npm_execpath` names another package manager,
+  instead of failing with `Cannot find module 'tar'`.
+- 构建脚本现在同时按官方 `<prefix>/lib/node_modules` 与 Windows `<节点目录>/node_modules`
+  布局查找运行中 Node 自带的 npm。打包与 tar 解析始终使用同一个 npm；即使 `npm_execpath`
+  指向其他包管理器，也不会再以 `Cannot find module 'tar'` 失败。
 - A replaced official tool no longer leaves its own `tool:<name>` system-prompt section behind. Section text resolves before the assembly waterfall, so the hidden `read`/`glob`/`grep` guidance still told the model to call a tool the captured step refuses. The section is now dropped together with the mask and returns when the tool does.
 - 被替换的官方工具不再留下自己的 `tool:<name>` 系统提示段落。段落文本在装配瀑布之前解析，于是被隐藏的 `read`/`glob`/`grep` 指引仍让模型去调用该步拒绝的工具。现在它与掩码一起移除，工具恢复时指引也恢复。
 - Niubash no longer refuses to prepare its runtime when a full-access session's workspace contains
