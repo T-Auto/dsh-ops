@@ -41,7 +41,7 @@
 
 ## 安装、更新、卸载
 
-> 本分支候选的 Windows 默认载荷为完整 Niubash 1.5.0，随 `dsh-ops` 主包管理，不再默认下载 Git Bash 可选包。所有 npm、市场和 CLI 更新入口的二进制位置与清理边界见[升级与卸载](docs/升级与卸载.md#二进制位置与更新清理)。`@latest` 仍指已发布版本，不代表此 PR 已发布。
+> 所有 npm、市场和 CLI 更新入口的二进制位置与清理边界见[升级与卸载](docs/升级与卸载.md#二进制位置与更新清理)。
 
 ### 官方插件市场
 
@@ -50,8 +50,6 @@
 当然，如果你确定可以连接 npm 官方源那就选择官方源，如果你不确定那就按教程操作。
 
 ![在插件市场中选择自定义地址并填入华为云 npm 镜像](docs/assets/marketplace-huaweicloud-mirror.png)
-
-
 
 ### npm 一键安装
 
@@ -131,6 +129,19 @@ Windows Bash 自检：`dsh-ops ladder` 分别报告映像/祖先路径完整性�
 当前 `dsh-ops` 源码以 **MIT** 许可分发，见 [LICENSE](LICENSE)。`0.3.2` 之前的版本曾内置以 Apache-2.0 许可的 FastCtx 源码；该源码随后台组件一并移除，当前发行版不再包含任何 FastCtx 代码或二进制。FastCtx 的许可文本与上游声明保留在 `licenses/fastctx/`，历史归属见 [NOTICE](NOTICE)。
 
 Windows 随包 Niubash 及其 WinuxCmd、Git 等组件分别遵循上游许可证；原始许可证、NOTICE 与来源记录随完整载荷保留。Git Bash 仅保留为显式 legacy 后端与源码路径，不再默认下载其可选包。插件 MIT 许可不替代任何第三方许可；见 [NOTICE](NOTICE) 和[升级与卸载](docs/升级与卸载.md)。
+
+
+## 静海实验室
+
+ops团队组织库 [静海实验室](https://github.com/Tranquillitatis-Lab) 致力于做点好玩的事情
+
+| 项目                                                         | 介绍                                             |
+| ------------------------------------------------------------ | ------------------------------------------------ |
+| [ops-ga](https://github.com/Tranquillitatis-Lab/ops-ga) | 尝试使用传统机器学习算法对ops进行优化 |
+| [dsh-live-compact](https://github.com/Tranquillitatis-Lab/dsh-live-compact)                | 使用本地算法对部分输出进行去重，并在大部分benchmark获得了提高通过率和得分率的收益 |
+| [dsh-office-kit](https://github.com/dsh-office-kit)                | 可视化dsh办公套件 |
+| ...                                                          | ...                                              | ...                                    |
+
 
 ## 联动！
 
