@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.5.6] — 2026-11-21 — Patch release
+
 - ops-ptc's batching teacher trajectory now teaches sandbox authority: the lesson states the
   host-reported mode, keeps only that tier, and at `danger-full-access` says never to send
   `sandbox_permissions` or `justification`; it also pins the closed vocabulary
