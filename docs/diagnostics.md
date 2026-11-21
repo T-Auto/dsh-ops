@@ -29,5 +29,7 @@ Important states:
 For `PRESENTATION_MISMATCH`, inspect the actual assembled surface. PTC requires `run_code` plus a
 non-empty `tools:ptc-only` section; a preset name or prompt recommendation is not proof. For
 `PUBLICATION_UNAVAILABLE`, verify the mode row/binding lifetime and registration errors before
-changing user permissions. If an official tool was hidden while its OPS counterpart is absent, the
+changing user permissions. PTC expectations follow the same disclosure plan the publication
+derives: an API that is selectable but not yet loaded (`result` on the on-demand tier) is never a
+gap, while a genuinely missing first-round plan name is. If an official tool was hidden while its OPS counterpart is absent, the
 replacement controller is defective and must be fixed rather than asking the user to retry.

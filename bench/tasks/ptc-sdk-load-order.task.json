@@ -1,0 +1,12 @@
+{
+  "id": "ptc-sdk-load-order",
+  "title": "Locate the three files that mention a token",
+  "prompt": "Exactly three files under src/ contain the token NEEDLE_SDKLOAD and no other file does. Write their repo-relative paths to answer.txt, one per line, in sorted order, nothing else.",
+  "fixture": {
+    "generator": "grepTree",
+    "params": { "seed": 9, "dirs": 5, "filesPerDir": 10, "linesPerFile": 24, "needle": "NEEDLE_SDKLOAD", "needleFiles": 3 }
+  },
+  "verify": [{ "type": "fileLines", "path": "answer.txt", "expect": "matches" }],
+  "repeat": 1,
+  "timeoutMs": 900000
+}

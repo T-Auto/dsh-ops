@@ -4,7 +4,7 @@ import { resolveDiscoveryConfig, type DiscoveryConfig } from '../discovery/confi
 import { NATIVE_RESIDENT_RAW } from '../capabilities/profiles.js'
 import { NATIVE_FILE_TOOLS, type FileToolName } from '../capabilities/registry.js'
 import { migrateRawNames } from '../compat/alias.js'
-import { parsePtcConfig, type PtcConfig } from '../ptc/config.js'
+import { parsePtcConfig, type DisclosurePolicy, type PtcConfig } from '../ptc/config.js'
 
 export type IntegrationProfile = 'native' | 'ptc' | 'discovery' | 'shell'
 export interface IntegrationOptions {
@@ -20,6 +20,7 @@ export interface IntegrationOptions {
   discovery?: boolean
   allowedTools?: string[]
   alwaysLoaded?: string[]
+  disclosurePolicy?: DisclosurePolicy
   replaceOfficial?: boolean
   promptPolicy?: boolean
   extraGuidance?: string
@@ -50,7 +51,7 @@ export interface IntegrationConfig {
   externalDisabled: string[]
   ptc: PtcConfig
 }
-const keys = ['preset', 'enabled', 'profile', 'files', 'residentTools', 'residentNames', 'hidePwsh', 'shell', 'presentation', 'discovery', 'allowedTools', 'alwaysLoaded',
+const keys = ['preset', 'enabled', 'profile', 'files', 'residentTools', 'residentNames', 'hidePwsh', 'shell', 'presentation', 'discovery', 'allowedTools', 'alwaysLoaded', 'disclosurePolicy',
   'replaceOfficial', 'promptPolicy', 'extraGuidance', 'binaryPath', 'required', 'denyCredentialReads', 'bashPath', 'allowSystemShellFallback',
   'externalTools', 'externalAlwaysLoaded', 'externalDisabled']
 const profiles: Record<IntegrationProfile, { files: boolean; shell: boolean; presentation: 'native' | 'ptc'; discovery: boolean }> = {
@@ -90,13 +91,17 @@ export function resolveIntegrationConfig(raw: unknown): IntegrationConfig {
   const replaceOfficial = boolean('replaceOfficial', false)
   const hidePwsh = boolean('hidePwsh', false) && shell
   if (input.residentNames !== undefined && presentation === 'ptc') throw new ConfigError('residentNames applies to Native presentation; use alwaysLoaded for PTC APIs')
+  // D4 (#988): the custom path accepts the same explicit tier key the builtin rows
+  // parse (D2/#986); an omitted key keeps the legacy on-demand default. Native
+  // presentation rows reject it, mirroring the builtin non-PTC rows.
+  if (input.disclosurePolicy !== undefined && presentation !== 'ptc') throw new ConfigError('disclosurePolicy applies to PTC presentation rows only')
   // Replacement intent is retained while both publishers are off; no counterpart means no hide.
   const allowedTools = input.allowedTools ?? (enabled ? undefined : [])
   const alwaysLoaded = input.alwaysLoaded ?? []
   const native = presentation === 'native' ? resolveDiscoveryConfig({
     enabled, allowedTools, alwaysLoaded, binaryPath: core.binaryPath, required: core.required, denyCredentialReads: core.denyCredentialReads,
   }) : resolveDiscoveryConfig({ enabled: false, allowedTools: [], alwaysLoaded: [] })
-  const ptc = parsePtcConfig(presentation === 'ptc' ? { allowedTools, alwaysLoaded, binaryPath: core.binaryPath, required: core.required } : {})
+  const ptc = parsePtcConfig(presentation === 'ptc' ? { allowedTools, alwaysLoaded, binaryPath: core.binaryPath, required: core.required, disclosurePolicy: input.disclosurePolicy } : {})
   if (presentation === 'ptc' && ptc.alwaysLoaded.some(tool => !ptc.allowedTools.includes(tool))) throw new ConfigError('alwaysLoaded must be in allowedTools')
   const externalNames = (key: string): string[] => {
     const value = input[key] ?? []

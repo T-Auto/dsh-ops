@@ -1,0 +1,12 @@
+{
+  "id": "ptc-catalog-recover",
+  "title": "Locate the five files that mention a token",
+  "prompt": "Exactly five files under src/ contain the token NEEDLE_CATALOG and no other file does. Write their repo-relative paths to answer.txt, one per line, in sorted order, nothing else.",
+  "fixture": {
+    "generator": "grepTree",
+    "params": { "seed": 5, "dirs": 6, "filesPerDir": 12, "linesPerFile": 30, "needle": "NEEDLE_CATALOG", "needleFiles": 5 }
+  },
+  "verify": [{ "type": "fileLines", "path": "answer.txt", "expect": "matches" }],
+  "repeat": 1,
+  "timeoutMs": 900000
+}

@@ -1,0 +1,12 @@
+{
+  "id": "ptc-paged-lookup",
+  "title": "Find the marked receipt in a 600-line log",
+  "prompt": "logs/stream.log is a dispatch receipt log with one record per line, formatted LEVEL|STAMP|PAYLOAD. Exactly one line's payload contains the token TARGET-. Find that line and write to answer.txt its 1-based line number, then a single space, then that line's payload text. Nothing else in the file.",
+  "fixture": {
+    "generator": "pagedLog",
+    "params": { "seed": 41, "lines": 600, "markerAt": 350 }
+  },
+  "verify": [{ "type": "fileEquals", "path": "answer.txt", "expect": "answer" }],
+  "repeat": 1,
+  "timeoutMs": 900000
+}

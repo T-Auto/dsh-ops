@@ -1,6 +1,7 @@
 import { assert, test, report } from './lib/harness.mjs'
 import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { Session } from '@deepseek-ai/dsh-session'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { registerSystemSection, registerStepTailProvider, PromptProviderError } from '../lib/prompt-injection/index.js'
 import { promptHost, tailMessages } from './lib/prompt-injection-host.mjs'
 const identity = 'You are an AI agent powered by DeepSeek Harness.\n\n'
@@ -211,4 +212,49 @@ await test('agent teardown releases registrations owned by a longer-lived plugin
     assert.deepEqual(h.errors, [])
   } finally { await h.close() }
 })
+
+
+// ---- provider dedupe and compaction re-arming (#998) ----
+/** Shadow every visible node except the system prompt with one compaction summary. */
+const compactHistory = (agent, text) => {
+  const nodes = [...agent.session.surface.nodes]
+  agent.session.append('user/message',
+    createUserMessage({ source: { kind: 'user' }, content: [{ type: 'text', text }] }),
+    { surfaceOp: { op: 'replace', startSeq: nodes[1], endSeq: nodes[nodes.length - 1] }, sourceEventSeqs: nodes.slice(1) })
+}
+
+await test('dedupe providers are skipped while their same-revision message is visible and re-armed when a compaction removes it', async () => {
+  const h = await promptHost()
+  try {
+    const a = await h.agent()
+    const seen = []
+    let calls = 0
+    const stop = registerStepTailProvider(h.owner(), a, { id: 'lesson', revision: '1', dedupe: 'visible',
+      provide: context => { ++calls; seen.push(context.visible); return 'FULL' } })
+    await h.run(a)
+    assert.equal(calls, 1)
+    assert.deepEqual(seen[0], { any: false, current: false }, 'nothing is visible before the first commit')
+    const id = tailMessages(h.requests[0])[0].id
+    await h.run(a)
+    assert.equal(calls, 1, 'a visible same-revision contribution is a replay, not a new addition')
+    assert.deepEqual(tailMessages(h.requests[1]).map(m => m.id), [id])
+    compactHistory(a, 'Compacted summary.')
+    assert.equal(a.session.deriveMessages().some(m => m.source?.kind === 'dsh-ops:step-tail'), false)
+    await h.run(a)
+    assert.equal(calls, 2, 'the provider is re-armed once the compaction removed its message')
+    assert.deepEqual(seen[1], { any: false, current: false })
+    assert.equal(tailMessages(h.requests[2]).filter(m => m.id !== id).length, 1)
+    await h.run(a)
+    assert.equal(calls, 2, 'the replacement message is visible again, so the provider falls silent')
+    stop()
+    registerStepTailProvider(h.owner(), a, { id: 'lesson', revision: '2', dedupe: 'visible',
+      provide: context => { seen.push(context.visible); return 'FULL2' } })
+    await h.run(a)
+    assert.equal(tailMessages(h.requests[4]).filter(m => m.source.revision === '2').length, 1,
+      'an older revision stays visible evidence, so the replacement revision is delivered')
+    assert.deepEqual(seen[2], { any: true, current: false })
+    assert.deepEqual(h.errors, [])
+  } finally { await h.close() }
+})
+
 report('prompt-injection')

@@ -77,12 +77,18 @@ pub(super) fn run(request: &Request) -> Result<Value> {
         "edit_file" => {
             let args: EditArgs = serde_json::from_value(request.args.clone())?;
             valid_revision(&args.expected_revision, false)?;
-            write_single(
+            // Raw bytes stay the matching contract; when oldText does not occur
+            // in them, exactly one re-interpretation is tried: the reversibly
+            // escaped rendering the Native reader shows (#939). Raw matches keep
+            // precedence, so a literal text is never re-read through the decoder.
+            let rendered_matches = std::cell::Cell::new(0u32);
+            let mut value = write_single(
                 request,
                 &args.path,
                 &args.expected_revision,
                 args.dry_run,
                 |original| {
+                    rendered_matches.set(0);
                     let text = std::str::from_utf8(original.ok_or_else(|| {
                         Failure::new("NOT_FOUND", "Edit requires an existing file")
                     })?)
@@ -98,25 +104,24 @@ pub(super) fn run(request: &Request) -> Result<Value> {
                                 "oldText must not be empty",
                             ));
                         }
-                        // Count overlapping occurrences as well ("aa" in "aaa" is ambiguous).
-                        let at = text.find(&edit.old_text).ok_or_else(|| {
-                            Failure::new(
-                                "EDIT_CONFLICT",
-                                "oldText was not found; inspect the current file",
-                            )
-                        })?;
-                        let next_character = text[at..]
-                            .chars()
-                            .next()
-                            .expect("nonempty match")
-                            .len_utf8();
-                        if text[at + next_character..].contains(&edit.old_text) {
-                            return Err(Failure::new(
-                                "EDIT_CONFLICT",
-                                "oldText is not unique; include more surrounding text",
-                            ));
+                        let decoded = crate::rendered_text::decode_rendered(&edit.old_text);
+                        let (at, length, replacement, rendered) =
+                            match find_unique(text, &edit.old_text) {
+                                Ok(at) => (at, edit.old_text.len(), edit.new_text.clone(), false),
+                                Err(raw) => match find_unique(text, &decoded) {
+                                    Ok(at) => (
+                                        at,
+                                        decoded.len(),
+                                        crate::rendered_text::decode_rendered(&edit.new_text),
+                                        true,
+                                    ),
+                                    Err(_) => return Err(raw),
+                                },
+                            };
+                        if rendered {
+                            rendered_matches.set(rendered_matches.get() + 1);
                         }
-                        spans.push((at, at + edit.old_text.len(), edit.new_text.as_str()));
+                        spans.push((at, at + length, replacement));
                     }
                     spans.sort_by_key(|span| span.0);
                     if spans.windows(2).any(|pair| pair[0].1 > pair[1].0) {
@@ -129,13 +134,21 @@ pub(super) fn run(request: &Request) -> Result<Value> {
                     let mut cursor = 0;
                     for (start, end, replacement) in spans {
                         next.push_str(&text[cursor..start]);
-                        next.push_str(replacement);
+                        next.push_str(&replacement);
                         cursor = end;
                     }
                     next.push_str(&text[cursor..]);
                     Ok(next.into_bytes())
                 },
-            )
+            )?;
+            let rendered = rendered_matches.get();
+            if rendered > 0
+                && let Some(items) = value["items"].as_array_mut()
+                && let Some(item) = items.first_mut()
+            {
+                item["renderedMatches"] = json!(rendered);
+            }
+            Ok(value)
         }
         "copy" | "move" => transfer_file(request),
         "remove" => remove_file(request),
@@ -145,6 +158,31 @@ pub(super) fn run(request: &Request) -> Result<Value> {
         )),
     }
 }
+/// First occurrence with the existing no-ambiguity rule, shared by the raw and
+/// rendered interpretations of oldText.
+fn find_unique(text: &str, needle: &str) -> Result<usize> {
+    let at = text.find(needle).ok_or_else(|| {
+        Failure::new(
+            "EDIT_CONFLICT",
+            "oldText was not found; it matches neither the raw file bytes nor the \
+             decoded form of the rendered read output; inspect the current file",
+        )
+    })?;
+    // Count overlapping occurrences as well ("aa" in "aaa" is ambiguous).
+    let next_character = text[at..]
+        .chars()
+        .next()
+        .expect("nonempty match")
+        .len_utf8();
+    if text[at + next_character..].contains(needle) {
+        return Err(Failure::new(
+            "EDIT_CONFLICT",
+            "oldText is not unique; include more surrounding text",
+        ));
+    }
+    Ok(at)
+}
+
 fn valid_revision(revision: &str, absent: bool) -> Result<()> {
     if (absent && revision == "absent")
         || (revision.len() == 64
@@ -830,5 +868,70 @@ mod tests {
         assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
         drop(checked);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn old_text_copied_from_the_rendered_reader_edits_after_a_raw_miss() {
+        let root = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!("dsh-ops-rendered-edit-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("rendered.txt");
+        // A raw tab and a raw backslash: the Native reader renders them as \t and \\.
+        let raw = "alpha\ttab C:\\path\nbeta\n";
+        std::fs::write(&path, raw).unwrap();
+        let expected_revision = format!("{:x}", Sha256::digest(raw.as_bytes()));
+        // Exactly the text a model copies out of the rendered read output.
+        let rendered = r"alpha\ttab C:\\path";
+        let value = run(&request(
+            &root,
+            "edit_file",
+            json!({
+                "path": path.to_string_lossy(),
+                "expectedRevision": expected_revision,
+                "edits": [{"oldText": rendered, "newText": r"alpha\ttab C:\\renamed"}],
+            }),
+        ))
+        .unwrap();
+        assert_eq!(value["status"], json!("completed"));
+        assert_eq!(value["items"][0]["renderedMatches"], json!(1));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "alpha\ttab C:\\renamed\nbeta\n"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn raw_literals_keep_precedence_over_the_rendered_interpretation() {
+        let root = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!(
+                "dsh-ops-rendered-precedence-{}",
+                uuid::Uuid::new_v4()
+            ));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("precedence.txt");
+        // The file holds BOTH a literal backslash-t pair and a raw tab; an
+        // oldText that occurs raw must never be re-read through the decoder.
+        let raw = "literal\\tab\treal\n";
+        std::fs::write(&path, raw).unwrap();
+        let value = run(&request(
+            &root,
+            "edit_file",
+            json!({
+                "path": path.to_string_lossy(),
+                "expectedRevision": format!("{:x}", Sha256::digest(raw.as_bytes())),
+                "edits": [{"oldText": "literal\\tab", "newText": "literal\\kept"}],
+            }),
+        ))
+        .unwrap();
+        assert_eq!(value["status"], json!("completed"));
+        assert_eq!(value["items"][0]["renderedMatches"], json!(Value::Null));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "literal\\kept\treal\n"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

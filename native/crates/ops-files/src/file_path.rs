@@ -83,7 +83,24 @@ pub fn checked_leaf(raw: &str, allow_missing: bool) -> Result<Target> {
     let mut parent = Dir::open_ambient_dir(&anchor, ambient_authority())?;
     let name = names.pop().unwrap_or_else(|| ".".into());
     for component in names {
-        regular(&parent.symlink_metadata(&component)?, true)?;
+        let metadata = parent.symlink_metadata(&component)?;
+        if regular(&metadata, true).is_err() && metadata.is_file() && asar_archive(&component) {
+            // #836: Electron presents .asar archives as directories only through
+            // its own patched in-process filesystem. The standalone worker sees
+            // a regular file, so a member path can never resolve; name the
+            // archive instead of implying a no-follow bypass.
+            return Err(Failure::new(
+                "ARCHIVE_MEMBER_UNSUPPORTED",
+                format!(
+                    "Path routes inside '{component}': an Electron .asar archive is a \
+                     virtual directory only for its host process; this standalone \
+                     worker cannot read archive members. Inspect the archive file \
+                     itself (hex view) or use an unpacked copy; no other tool here \
+                     can open it either."
+                ),
+            ));
+        }
+        regular(&metadata, true)?;
         parent = parent.open_dir_nofollow(&component)?;
     }
     regular(&parent.dir_metadata()?, true)?;
@@ -115,6 +132,13 @@ pub fn validate_name(name: &str) -> Result<()> {
     ops_protocol::windows_paths::validate_name(name)?;
     Ok(())
 }
+/// Electron's asar archive spelling: a regular file whose name ends in ".asar".
+/// A directory with the same spelling stays an ordinary directory.
+fn asar_archive(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    bytes.len() >= 5 && bytes[bytes.len() - 5..].eq_ignore_ascii_case(b".asar")
+}
+
 pub fn link(metadata: &Metadata) -> bool {
     if metadata.file_type().is_symlink() {
         return true;
