@@ -5,9 +5,9 @@
 The common accounting mistakes for OPS-PTC are structural: counting the
 `tools:sdk` section twice by adding it on top of a system total that already
 contains it, mixing the Native tool schemas into a PTC measurement, or
-misplacing the dsh-ops guidance — the one-time teaching is same-step
-`additionalContexts` on the accepted tool result and is never logged, the shape
-notices are what the guidance account records, and neither is the system prompt.
+misplacing the dsh-ops guidance — the lesson and the shape notices are plain
+user messages on the pre-step batch and enter the history account, and neither
+is the system prompt.
 V1 (#990, `test/lib/ptc-entry.mjs`) already guarantees the measured group truly
 entered OPS-PTC; this suite extends that entry with the byte accounting and never
 lets the four answers blur together.
@@ -24,15 +24,15 @@ Readings below are one run at commit `205cb94`, plugin 0.5.5, host
 0.2.2-rc.1, linux-x64, staged worker sha256 `2b5f988d…`, preset `ops-ptc`,
 resident + dynamic + batching guidance on, official read/glob/grep mounted.
 Absolute bytes are only comparable inside this configuration. The history row records
-the post-#929 composition: the one-time teaching is same-step context, not part of the
-account.
+the current composition: the lesson is a user message on the first request and stays in
+history; its two byte sizes below are measured on the current guidance text.
 
 | Account | First request (resident only) | After the load | Repeat |
 | --- | --- | --- | --- |
 | system (delivered rendered prompt) | 12,782 B | 37,892 B | 37,892 B |
 | — of which `tools:sdk` | 11,739 B | 36,849 B | 36,849 B |
 | wire (outer tool schemas) | 2,500 B | 2,500 B | 2,500 B |
-| history (dsh-ops notice) | — | + notice:plan 284 B | unchanged |
+| history (dsh-ops guidance) | teaching 7,538 B | + notice:plan 200 B | unchanged |
 
 - **system** is the delivered rendered prompt, byte-measured exactly as the
   provider request carries it; the suite asserts the request's system message
@@ -48,12 +48,10 @@ account.
   `run_code` here, byte-identical on every request and equal to the idle
   assembly's wire.
 - **history** is the dsh-ops guidance the suite records from the messages delivered on
-  each request for contributor `batching-guidance`: the plan notice the thin program
-  earns (once, 284 B). The one-time teaching never appears there: it rides the first
-  accepted root `run_code` result as same-step `additionalContexts` (contributor
-  `batching-guidance:lesson`), never logged as user history, so this account carries no
-  teaching bytes; its full text is 8,729 B. The suite asserts neither touches the system
-  account — the post-notice system sha equals the baseline.
+  each request: the opening lesson (7,538 B in the current text) on the first request,
+  then the plan notice the thin program earns (200 B). Both are plain user messages
+  (source kind `user`, no plugin envelope) on the pre-step batch. The suite asserts
+  neither touches the system account — the post-notice system sha equals the baseline.
 
 ## The arithmetic that must hold
 

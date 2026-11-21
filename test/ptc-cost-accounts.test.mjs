@@ -10,9 +10,8 @@
  *   recomputes system from the per-section bytes (the normalization is pinned
  *   by assertion) and proves a one-section change lands in system exactly once;
  * - wire: the outer tool schemas each provider request carries (`run_code`);
- * - history: the dsh-ops program-shape notices that entered session history. The
- *   one-time teaching is not here: it rides the first accepted root `run_code`
- *   result as same-step `additionalContexts` and is never logged (#929).
+ * - history: the dsh-ops lesson and program-shape notices that entered session
+ *   history as plain user messages on the pre-step batch.
  *
  * The official read/glob/grep schemas are mounted for real (the same host
  * plugins the budget suite mounts), because SDK names are only meaningful
@@ -41,9 +40,7 @@ requireWorker('ptc-cost-accounts')
 const HOST_PLUGINS = [[FsTools, {}], [SearchTools, { sampleOverCapGlobResults: false }]]
 /** The official names the shipped row replaces; the ledger compares SDK names against them. */
 const OFFICIAL = ['read', 'glob', 'grep']
-/** The teaching/notice contributor, as the host message source records it. */
-const TEACHING_ID = 'batching-guidance'
-const ENVELOPE = `[Plugin context from ${JSON.stringify(TEACHING_ID)}; not a user instruction or authorization.]\n`
+/** The one-time lesson text, as the pre-step delivers it without any envelope. */
 const TEACHING = loadBatchingGuidance()
 /** A thin single-dispatch program with no plan line: it earns the plan notice. */
 const THIN_PROGRAM = "const row = await tools.ops_inspect_local_file({ path: 'ledger-note' })\nreturn row"
@@ -85,10 +82,10 @@ function officialFacts(ctx, agent) {
 function historyItemsOf(messages) {
   const items = []
   for (const message of messages) {
-    if (message.source?.kind !== 'dsh-ops:step-tail' || message.source.contributor !== TEACHING_ID) continue
+    if (message.source?.kind !== 'user') continue
     const text = textOf(message)
-    const body = text.startsWith(ENVELOPE) ? text.slice(ENVELOPE.length) : text
-    const kind = body === TEACHING ? 'teaching' : body === noticeText('plan', analyzeProgram(THIN_PROGRAM)) ? 'notice:plan' : 'unknown'
+    const kind = text === TEACHING ? 'teaching' : text === noticeText('plan', analyzeProgram(THIN_PROGRAM)) ? 'notice:plan' : undefined
+    if (kind === undefined) continue
     items.push({ kind, bytes: bytes(text), sha: sha(text) })
   }
   return items
@@ -194,10 +191,9 @@ await test('the four accounts of one OPS-PTC group: system, its SDK subset, the 
       'normalization pinned: system = per-section bytes joined by \'\n\n\', exactly renderPrompt')
     assert.ok(snapshot.sdk.bytes > 0 && snapshot.sdk.bytes < snapshot.system.bytes, 'SDK is a strict subset of system')
   }
-  // The notices enter history; the one-time teaching rides the first accepted
-  // root run_code result as same-step ephemeral context (#929), so it adds no
-  // history message. The system account never moves either way.
-  assert.equal(snapshots.steady.system.sha, snapshots.baseline.system.sha, 'the plan notice is history, not a prompt change')
+  // The lesson and the notices are plain user messages on the pre-step batch, so
+  // both enter history; the system account never moves either way.
+  assert.equal(snapshots.steady.system.sha, snapshots.baseline.system.sha, 'the guidance is history, not a prompt change')
   assert.equal(snapshots.steady.sdk.sha, snapshots.baseline.sdk.sha)
   // B: the hand-computed example — loading three APIs changes only tools:sdk, exactly once.
   const nonSdk = snapshot => snapshot.system.items.filter(item => item.name !== 'tools:sdk').map(item => item.sha)
@@ -226,14 +222,14 @@ await test('the four accounts of one OPS-PTC group: system, its SDK subset, the 
   for (const request of requests) assert.deepEqual(request.wireNames, ['run_code'])
   assert.equal(new Set(requests.map(request => request.wireSha)).size, 1, 'wire is byte-identical on every request')
   assert.equal(requests[0].wireSha, snapshots.baseline.wire.sha, 'the idle snapshot wire is the delivered wire')
-  // D: the history account — the lesson never enters it (#929); only the plan notice
-  // is history, once, and nothing is appended thereafter.
+  // D: the history account — the opening lesson is the first guidance the model
+  // reads, then exactly one plan notice, and nothing is appended thereafter.
   const kindsAt = label => requests.find(request => request.label === label).history.map(item => item.kind)
-  assert.deepEqual(kindsAt('first'), [], 'the first request carries no teaching in history')
-  assert.deepEqual(kindsAt('after-notice'), ['notice:plan'], 'the thin program earns exactly one plan notice')
-  assert.deepEqual(kindsAt('before-load'), ['notice:plan'])
-  assert.deepEqual(kindsAt('after-load'), ['notice:plan'], 'a compliant load step earns no new notice')
-  assert.deepEqual(kindsAt('repeat'), ['notice:plan'], 'no re-teaching, no duplicate notice')
+  assert.deepEqual(kindsAt('first'), ['teaching'], 'the first request opens with the lesson in history')
+  assert.deepEqual(kindsAt('after-notice'), ['teaching', 'notice:plan'], 'the thin program earns exactly one plan notice')
+  assert.deepEqual(kindsAt('before-load'), ['teaching', 'notice:plan'])
+  assert.deepEqual(kindsAt('after-load'), ['teaching', 'notice:plan'], 'a compliant load step earns no new notice')
+  assert.deepEqual(kindsAt('repeat'), ['teaching', 'notice:plan'], 'no re-teaching, no duplicate notice')
   // The delivered system message is the idle assembly, and repeats are byte-identical.
   const systemAt = label => requests.find(request => request.label === label).systemSha
   assert.equal(systemAt('first'), snapshots.baseline.system.sha)
