@@ -1,12 +1,13 @@
 /**
- * The batching lesson and the corrective notices ride the pre-step batch as plain
- * user text.
+ * The batching lesson and the corrective notices ride the pre-step batch as
+ * user-role text carrying the plugin source.
  *
  * The lesson is one user-role message on the first accepted batch, before the
  * model's first request; a violation queues one short notice that the next
  * pre-step appends the same way. Neither carries a plugin envelope or a
- * tool-result context, so the model reads them exactly as the user's own
- * instructions.
+ * tool-result context, so the model reads them as the instruction that governs
+ * the task. The source kind is the plugin's own, never `user`, so Chat files
+ * them under their producer instead of drawing a user bubble.
  */
 import { createScope, scopeOf, scopeParentOf } from '@deepseek-ai/dsh-scope'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
@@ -66,8 +67,8 @@ const drivePreStep = async (agent, turn) => {
   }, async () => ({ kind: 'enter', messages: [accepted] }))
   return { accepted, decision }
 }
-/** Guidance appended to the accepted batch as plain user text; never the accepted message itself. */
-const guidanceOf = ({ accepted, decision }) => decision.messages.filter(message => message.id !== accepted.id && message.source?.kind === 'user')
+/** Guidance appended to the accepted batch as user-role text under the plugin source; never the accepted message itself. */
+const guidanceOf = ({ accepted, decision }) => decision.messages.filter(message => message.id !== accepted.id && message.source?.kind === 'dsh-ops:batching-guidance')
 const textsOf = messages => messages.map(message => message.content.map(part => part.text ?? '').join('')).join('\n')
 
 /** A compliant root program: plan line, two dispatches under Promise.all, no bypass. */
@@ -76,14 +77,15 @@ const thinProgram = 'const r = await tools.ops_stat({ path: "x" })\nreturn r.sta
 const rootCall = (ctx, agent, callId, code = compliantProgram) => executeCall(ctx, { agent, toolSet: agent.prepared.toolSet, name: 'run_code',
   arguments: { description: 'Fixture program', code }, callId, signal: new AbortController().signal })
 
-await test('the opening lesson rides the first accepted pre-step as plain user text', () => withTempDir('user-teach-open', async cwd => {
+await test('the opening lesson rides the first accepted pre-step as user-role text', () => withTempDir('user-teach-open', async cwd => {
   const { ctx, agent } = await setup(cwd)
   try {
     await waitFor(() => names(ctx, agent).includes(publicToolName('stat')))
     const first = await drivePreStep(agent, 1)
     const taught = guidanceOf(first)
     assert.equal(taught.length, 1, JSON.stringify(first.decision.messages))
-    assert.equal(taught[0].source.kind, 'user', 'the guidance carries the user source, not a plugin context')
+    assert.equal(taught[0].source.kind, 'dsh-ops:batching-guidance', 'the guidance carries its producer source, never the user source')
+    assert.equal(taught[0].role, 'user', 'the model still receives it as user-role text')
     const text = textsOf(taught)
     assert.match(text, /^# Batch tool calls/, 'the lesson opens the message, with no envelope')
     assert.equal(text.includes('not a user instruction'), false, 'no plugin self-narration')

@@ -49,8 +49,8 @@ history; its two byte sizes below are measured on the current guidance text.
   assembly's wire.
 - **history** is the dsh-ops guidance the suite records from the messages delivered on
   each request: the opening lesson (7,538 B in the current text) on the first request,
-  then the plan notice the thin program earns (200 B). Both are plain user messages
-  (source kind `user`, no plugin envelope) on the pre-step batch. The suite asserts
+  then the plan notice the thin program earns (200 B). Both are user-role messages
+  (source kind `dsh-ops:batching-guidance`, no plugin envelope) on the pre-step batch. The suite asserts
   neither touches the system account — the post-notice system sha equals the baseline.
 
 ## The arithmetic that must hold

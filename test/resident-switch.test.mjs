@@ -180,9 +180,9 @@ async function drivePreStep(agent, turn) {
   }, async () => ({ kind: 'enter', messages: [accepted] }))
   return { accepted, decision }
 }
-/** Guidance appended to the accepted batch as plain user text; never the accepted message itself. */
+/** Guidance appended to the accepted batch as user-role text under the plugin source; never the accepted message itself. */
 function guidanceOf({ accepted, decision }) {
-  return decision.messages.filter(message => message.id !== accepted.id && message.source?.kind === 'user')
+  return decision.messages.filter(message => message.id !== accepted.id && message.source?.kind === 'dsh-ops:batching-guidance')
 }
 /** The one-time full lesson, told from a per-violation notice by its first line. */
 function lessonMessage(message) {
@@ -196,13 +196,14 @@ function commitGuidance(ctx, agent, messages) {
 /** Join the text of a list of messages. */
 const textsOf = messages => messages.map(message => message.content.map(part => part.text ?? '').join('')).join('\n')
 
-await test('ops-ptc batchingGuidance teaches once on the first pre-step as plain user text', () => withTempDir('batching-teach', async cwd => {
+await test('ops-ptc batchingGuidance teaches once on the first pre-step as user-role text', () => withTempDir('batching-teach', async cwd => {
   const { ctx, agent } = await setup(cwd, 'ops-ptc', { residentTools: true, dynamicTools: true,
     batchingGuidance: true, alwaysLoaded: ['stat'], allowedTools: ['stat'] })
   try {
     await waitFor(() => names(ctx, agent).includes(publicToolName('stat')))
-    // The lesson is a plain user message on the first accepted batch: the same
-    // role, source and shape as the user's own instruction, with no envelope.
+    // The lesson is a user-role message on the first accepted batch: the same
+    // role and shape as the user's own instruction, no envelope, and a plugin
+    // source so Chat never draws a user bubble for it.
     const first = await drivePreStep(agent, 1)
     const guided = guidanceOf(first)
     assert.equal(guided.length, 1, JSON.stringify(first.decision.messages))

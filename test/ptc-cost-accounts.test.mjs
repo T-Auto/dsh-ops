@@ -11,7 +11,7 @@
  *   by assertion) and proves a one-section change lands in system exactly once;
  * - wire: the outer tool schemas each provider request carries (`run_code`);
  * - history: the dsh-ops lesson and program-shape notices that entered session
- *   history as plain user messages on the pre-step batch.
+ *   history as user-role messages carrying the plugin source on the pre-step batch.
  *
  * The official read/glob/grep schemas are mounted for real (the same host
  * plugins the budget suite mounts), because SDK names are only meaningful
@@ -80,7 +80,7 @@ function officialFacts(ctx, agent) {
 function historyItemsOf(messages) {
   const items = []
   for (const message of messages) {
-    if (message.source?.kind !== 'user') continue
+    if (message.source?.kind !== 'dsh-ops:batching-guidance') continue
     const text = textOf(message)
     // The lesson is rendered for the reported sandbox mode, so identify it by its
     // opening heading instead of comparing against the shipped file (#963).
@@ -192,7 +192,7 @@ await test('the four accounts of one OPS-PTC group: system, its SDK subset, the 
       'normalization pinned: system = per-section bytes joined by \'\n\n\', exactly renderPrompt')
     assert.ok(snapshot.sdk.bytes > 0 && snapshot.sdk.bytes < snapshot.system.bytes, 'SDK is a strict subset of system')
   }
-  // The lesson and the notices are plain user messages on the pre-step batch, so
+  // The lesson and the notices are user-role messages on the pre-step batch, so
   // both enter history; the system account never moves either way.
   assert.equal(snapshots.steady.system.sha, snapshots.baseline.system.sha, 'the guidance is history, not a prompt change')
   assert.equal(snapshots.steady.sdk.sha, snapshots.baseline.sdk.sha)

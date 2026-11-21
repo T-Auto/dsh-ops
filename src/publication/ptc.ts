@@ -13,7 +13,10 @@ import { renderSdkDirectory } from '../projections/ptc/directory.js'
 import type { ApiName } from '../ptc/config.js'
 import { disclosurePlan } from '../ptc/disclosure.js'
 import { ownPtcScopes } from '../ptc/ownership.js'
-import { createProgramLatch, loadBatchingGuidance, renderBatchingGuidance } from '../ptc/batching-guidance.js'
+import {
+  BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, BATCHING_GUIDANCE_SOURCE_KIND,
+  createProgramLatch, loadBatchingGuidance, renderBatchingGuidance,
+} from '../ptc/batching-guidance.js'
 import type { GuidanceSurface } from '../ptc/batching-guidance.js'
 import { InvocationLifetime, InvocationNotStarted } from '../lifecycle/invocations.js'
 import { monitoredInvoke } from '../execution/monitored.js'
@@ -280,9 +283,11 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         // A new host turn starts a fresh repeated-write window. This listener is
         // agent-scoped and unwinds with the entry's other disposers.
         if (gate.batching === true) {
-          // Deliver the one-time lesson and every corrective notice as plain user
-          // text on the pre-step batch: the same role, source and shape as a real
-          // user instruction, with no plugin envelope that discounts it.
+          // Deliver the one-time lesson and every corrective notice as user-role
+          // text on the pre-step batch: `role: 'user'` with no plugin envelope, so
+          // the model reads it as the instruction that governs the task. The source
+          // kind is the plugin's own, never `user`, so the client files the injection
+          // under its producer instead of drawing a user bubble.
           entry.disposers.push(agent.ctx!.on('agent/pre-step', async (payload, next) => {
             if (payload.agent === agent) shapeLatch.noteTurn(agent, payload.turn)
             const decision = await next()
@@ -316,7 +321,13 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
             const createUserMessage = await loadUserMessage()
             if (stopped || entries.get(agent) !== entry) return decision
             const messages = texts.map(text => createUserMessage({
-              source: { kind: 'user' },
+              source: {
+                kind: BATCHING_GUIDANCE_SOURCE_KIND,
+                contributor: BATCHING_GUIDANCE_ID,
+                revision: BATCHING_GUIDANCE_REVISION,
+                turn: payload.turn,
+                step: payload.step,
+              },
               content: [{ type: 'text', text }],
             }))
             // Count the lesson as taught only once the host commits that exact
@@ -336,7 +347,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
             const code = (exec.arguments as { code?: unknown } | undefined)?.code
             try {
               // Queue the corrective notice for the next pre-step, where it is
-              // delivered as plain user text; the tool result keeps its own value,
+              // delivered as user-role text; the tool result keeps its own value,
               // content and contexts untouched.
               const notice = shapeLatch.observe(agent, code)
               if (notice !== undefined) {
