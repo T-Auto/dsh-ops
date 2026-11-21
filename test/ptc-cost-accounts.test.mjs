@@ -28,7 +28,7 @@ import path from 'node:path'
 import * as FsTools from '@deepseek-ai/dsh-tool-fs'
 import * as SearchTools from '@deepseek-ai/dsh-tool-fs-search'
 import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
-import { analyzeProgram, loadBatchingGuidance, noticeText } from '../lib/ptc/batching-guidance.js'
+import { analyzeProgram, noticeText } from '../lib/ptc/batching-guidance.js'
 import { requireWorker } from './lib/boundary.mjs'
 import { bootEntryGroup, enterPtc } from './lib/ptc-entry.mjs'
 import { prepareStep } from './lib/executor.mjs'
@@ -40,8 +40,6 @@ requireWorker('ptc-cost-accounts')
 const HOST_PLUGINS = [[FsTools, {}], [SearchTools, { sampleOverCapGlobResults: false }]]
 /** The official names the shipped row replaces; the ledger compares SDK names against them. */
 const OFFICIAL = ['read', 'glob', 'grep']
-/** The one-time lesson text, as the pre-step delivers it without any envelope. */
-const TEACHING = loadBatchingGuidance()
 /** A thin single-dispatch program with no plan line: it earns the plan notice. */
 const THIN_PROGRAM = "const row = await tools.ops_inspect_local_file({ path: 'ledger-note' })\nreturn row"
 /** A compliant load step: plan line plus one batched dispatch; it earns no notice. */
@@ -84,7 +82,10 @@ function historyItemsOf(messages) {
   for (const message of messages) {
     if (message.source?.kind !== 'user') continue
     const text = textOf(message)
-    const kind = text === TEACHING ? 'teaching' : text === noticeText('plan', analyzeProgram(THIN_PROGRAM)) ? 'notice:plan' : undefined
+    // The lesson is rendered for the reported sandbox mode, so identify it by its
+    // opening heading instead of comparing against the shipped file (#963).
+    const kind = text.startsWith('# Batch tool calls') ? 'teaching'
+      : text === noticeText('plan', analyzeProgram(THIN_PROGRAM)) ? 'notice:plan' : undefined
     if (kind === undefined) continue
     items.push({ kind, bytes: bytes(text), sha: sha(text) })
   }
