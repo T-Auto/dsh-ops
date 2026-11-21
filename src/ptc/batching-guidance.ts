@@ -16,6 +16,29 @@ import { literalShellFileWork } from './shell-file-work.js'
 export const BATCHING_GUIDANCE_ID = 'batching-guidance'
 /** Revision of the guidance text; bump it when the wording or the file format changes. */
 export const BATCHING_GUIDANCE_REVISION = '8'
+/**
+ * Host source kind for guidance delivered as a user-role message.
+ *
+ * The message keeps `role: 'user'`, so the model still reads it as the
+ * instruction that governs the task. The plugin kind is what tells the client
+ * this injection is not human input: Chat files an unknown kind under its
+ * producer and draws no user bubble for it.
+ */
+export const BATCHING_GUIDANCE_SOURCE_KIND = 'dsh-ops:batching-guidance'
+
+// Merge-extensible host sum type: declare the producer's own kind once, so
+// createUserMessage accepts it without widening the host's known sources.
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'dsh-ops:batching-guidance': {
+      readonly kind: 'dsh-ops:batching-guidance'
+      readonly contributor: string
+      readonly revision: string
+      readonly turn: number
+      readonly step: number
+    }
+  }
+}
 
 /** The shipped guidance file, resolved from this module's own location (src or lib). */
 const DEFAULT_GUIDANCE_FILE = new URL('../../prompts/batching-guidance.md', import.meta.url)

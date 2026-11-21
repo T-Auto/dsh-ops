@@ -75,7 +75,7 @@ the row's status card, which sets it once when pressed. Generation and the manua
 | `hideOfficialTools` | true | Hide the official file tools this mode replaces, including PTC presentation: when the projection can serve the matching `ops_*` API, official `read/glob/grep` leave the tool surface and the SDK declaration. `write`/`edit`/`read_image` stay; a name the projection cannot serve keeps its official tool (an unattached projection, `glob`/`grep` under `dynamicTools: false`, or a name excluded by a narrowed `allowedTools`). Disabled entirely when `global.hideOfficialTools` is false |
 | `dynamicTools` | true | Publish the progressive SDK loader `ops_load_sdk`; effective only while `global.dynamicTools` is also on (AND gate) |
 | `disclosurePolicy` | `on-demand` | YAML-only explicit first-round disclosure tier: `on-demand` keeps the legacy progressive path (resident + loader); `full` publishes the whole `allowedTools` pool plus `result` in the first round with no loader (implemented; see the D3 addendum in docs/design-decisions-20261119.md). Effective only while `global.dynamicTools` is on — the explicit opt-in never overrides the bundle switch; while it is off the row keeps its legacy resident/always-loaded surface and the saved choice is preserved. Rejected on non-PTC rows; illegal values are errors naming the key and the received value or type. No upgrade, settings save or switch flip ever writes this key for you |
-| `batchingGuidance` | true for `ops-ptc`, false otherwise | Teach once, as a plain user message on the first accepted pre-step batch (source kind `user`, no plugin envelope, logged history; system prompt untouched), then correct the shape of root `run_code` programs: `bypass`, `plan` and `shape` each latch once per turn and re-arm when the program complies; the notice is queued by the triggering result and appended to the next pre-step as a plain user message, and never blocks or rewrites the program. Text lives in the editable `prompts/batching-guidance.md`. YAML-only; an omitted `ops-ptc` section in a legacy whole-row profile override retains true; explicit false disables it |
+| `batchingGuidance` | true for `ops-ptc`, false otherwise | Teach once, as a user-role message on the first accepted pre-step batch (source kind `dsh-ops:batching-guidance`, `role: user`, no plugin envelope, logged history; system prompt untouched), then correct the shape of root `run_code` programs: `bypass`, `plan` and `shape` each latch once per turn and re-arm when the program complies; the notice is queued by the triggering result and appended to the next pre-step as a plain user message, and never blocks or rewrites the program. Text lives in the editable `prompts/batching-guidance.md`. YAML-only; an omitted `ops-ptc` section in a legacy whole-row profile override retains true; explicit false disables it |
 | `spillRetentionDays` | 30 | Host subprocess spill retention window; `0` reports only and never deletes |
 | `spillTotalBudgetMiB` | 256 | Total retained spill budget in MiB; `0` disables the budget |
 | `spillSweepEnabled` | true | Run one bounded sweep on activation and every 256 settlements |
@@ -96,17 +96,17 @@ recorded in the same document's D2 addendum, with publication owned by the D3 sl
 
 ### Batch-call guidance (`batchingGuidance`)
 
-Off contributes no extra context. The code default is on for `ops-ptc` only, even when a legacy profile replaces the whole row config without that section; explicit `batchingGuidance: false` still disables it. On, two kinds of guidance ride the pre-step batch as plain user messages, rendered from one
+Off contributes no extra context. The code default is on for `ops-ptc` only, even when a legacy profile replaces the whole row config without that section; explicit `batchingGuidance: false` still disables it. On, two kinds of guidance ride the pre-step batch as user-role messages carrying the plugin source, rendered from one
 external English Markdown file:
 
-- **Once per agent entry**: one plain user message rides the first accepted pre-step batch (source kind `user`, no plugin envelope)
+- **Once per agent entry**: one user-role message rides the first accepted pre-step batch (source kind `dsh-ops:batching-guidance`, no plugin envelope)
   and enters logged history, so the model sees the whole procedure on the first request: the first-line `// plan:` comment, the dependency split, the
   load-before-call step (only while dynamic loading publishes the loader) and four copyable trajectories.
   The first-round text teaches each rule once (revision 8): the anti-pattern rewrite and the prose that
   repeated the dependency split are gone, the core rules state load-only-missing and recheck-after-a-mode-change
   explicitly, and the four trajectories ship byte-identical.
 - **On a thin program**: when a **root** `run_code` program breaks one of three latched categories, a short
-  notice is queued by that call and appended to the next pre-step as a plain user message. The tool result keeps
+  notice is queued by that call and appended to the next pre-step as a user-role message. The tool result keeps
   its value, its content and its existing contexts; the program is never blocked or rewritten.
 - The three categories are `bypass` (file work through the shell or `node:fs`), `plan` (no `// plan:` on the
   first physical line) and `shape` (a single operation in its own round trip). Each is latched once per turn,
