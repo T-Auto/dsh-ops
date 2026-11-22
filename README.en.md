@@ -106,7 +106,8 @@ Direct `git+https` installation and unbuilt source checkouts lack the complete r
 
 #### Update
 
-Host compatibility is declared for DSH **0.2.0-rc.2 and 0.2.1-rc.2**. See
+Host compatibility is declared as the bounded range **`>=0.2.0-rc.2 <0.2.2-0`**, covering
+`0.2.1-rc.5` and the `0.2.1` stable line. See
 [host versions and display metadata](docs/usage.md#host-compatibility-and-display-metadata)
 for component icon exports, profile refresh and config/schema checks.
 
