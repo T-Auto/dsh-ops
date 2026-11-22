@@ -40,8 +40,10 @@ ACL，`chmod 0600` 不会清除它。重试在写入前检查源文件和副本�
 复查失败会删除临时副本；删除失败则返回 `CLEANUP_FAILED`、`effectState=unknown`，如实说明可能
 残留未发布字节，重试前应检查提示中的副本。新文件与只读操作不做 clone，本回退不改变它们的行为。
 
-这是过渡性兼容，手动验证环境为 Intel macOS 12.7.6、Node 22.23.4。此前的宿主验证使用
-DSH 0.2.1-rc.2；宿主仍须属于 `engines.dsh` 声明范围。它不证明依赖 Node 24 的新版宿主可用；
+这是过渡性兼容，手动验证环境为 Intel macOS 12.7.6、Node 22.23.4。宿主验收已推进到
+**DSH 0.2.1-rc.5**（macOS 12 上可运行的最后版本）：把本分支打包装入 `web` profile 后，
+`ops_*` 文件工具在真实会话中可用，`copy` 走过 ACL 回退且前后 SHA-256 一致；更早的完整门禁
+读数来自 DSH 0.2.1-rc.2。宿主仍须属于 `engines.dsh` 声明范围；它不证明依赖 Node 24 的新版宿主可用；
 [Node 24 官方 macOS 二进制要求 macOS 13.5+](https://nodejs.org/en/blog/migrations/v22-to-v24)。
 没有 macOS 12 CI、没有 macOS 12 arm64 验证，也未声称已将 CI 构建的发布二进制拿到 macOS 12
 运行。Mach-O 最低加载版本较低本身不能替代运行验证。
@@ -90,6 +92,10 @@ postinstall 下载器。macOS 的 `ops_bash` 默认开启，按显式 `bashPath`
   套件，147 通过、1 失败、2 跳过（`tui-host` 与 `tui-native` 需要外部检出）。唯一失败是
   `review-snapshot`：Apple Git 2.37.1 不支持 `git merge-tree --write-tree`。构建/暂存、manifest
   （140 项）、打包/解包与运行时收据检查均通过；由于 Git 相关失败，完整门禁仍非全绿。
+- 2026-11-22 在 Intel macOS 12.7.6 / Node 22.23.4 上把本分支安装进 DSH 0.2.1-rc.5 的 `web`
+  profile：`ops_glob`、`ops_stat`、`ops_copy`、`ops_remove` 均正常，`copy` 前后 SHA-256 相同；
+  独立 `fclonefileat` 探针复现 `CLONE_ACL` 返回 `EINVAL(22)`、plain clone 返回 0。这是真实宿主
+  会话，不是发布门禁。
 - [贡献者此前的 PR 事件运行](https://github.com/OldLigant/dsh-ops/actions/runs/39772711519) 通过了
   Intel macOS 15 完整门禁。收据校验通过的 x86_64 Mach-O 最低加载版本为 10.12；macOS 12 是手动
   结果，CI 验证的是 macOS 15。该 CI 没有运行 macOS 13/14。苹果的

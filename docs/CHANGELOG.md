@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Declare the macOS 12 maintenance branch in the READMEs: macOS 12 stops at DSH 0.2.1-rc.5, the last published dsh-ops for it is 0.4.4, and this branch bases itself on a main commit between 0.4.4 and 0.5.0 before adding the APFS clone ACL fallback; record re-verification on DSH 0.2.1-rc.5.
+- 在 README 中声明 macOS 12 维护分支：macOS 12 止于 DSH 0.2.1-rc.5，对应的最后一个已发布 dsh-ops 是 0.4.4；本分支以 0.4.4 与 0.5.0 之间的 main 提交为基线，再叠加 APFS clone ACL 回退；补充 DSH 0.2.1-rc.5 上的重新验收。
 - Accept package-manager hardlinks only in rehashed Niubash source payloads while requiring exclusive execution copies; cover a real offline pnpm hardlink consumer and keep gate orchestration fixtures independent of a host Git Bash installation.
 - Niubash 源载荷逐字节校验后兼容包管理器硬链接，执行副本仍要求独占文件；增加真实离线 pnpm 硬链接消费者验证，并让门禁编排测试不依赖宿主 Git Bash 安装。
 

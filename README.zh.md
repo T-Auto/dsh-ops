@@ -21,13 +21,18 @@
 
 # dsh-ops
 
+> [!IMPORTANT]
+> **本分支（`fix/macos12-clone-acl-rc5`）用于在 macOS 12 上使用 dsh-ops。** macOS 12 能运行的最新 DSH 是
+> **0.2.1-rc.5**（Node 24 官方二进制要求 macOS 13.5+），对应的最后一个已发布 dsh-ops 是 **0.4.4**。
+> 本分支没有停在 0.4.4：它以 **0.4.4 与 0.5.0 之间的 main 提交**为基线（0.4.4 之后合入的缺陷修复一并带上），
+> 并加入 macOS 12 的 APFS clone ACL 回退；`engines.dsh` 只声明 `>=0.2.0-rc.2 <0.2.2-0`。
+> 它不是 `main` 的替代，也不支持需要 Node 24 / macOS 13.5+ 的更高 DSH。`@latest` 安装的是 npm 已发布版本，
+> 不含本分支的修复；请构建并打包本检出后装入 profile。细节见 [macOS](docs/macos.zh.md)。
+
 OPS 为 DSH 增加有界文件与文档工具。Native 模式返回紧凑、带行号的文本；PTC 代码从同一个按调用启动的 Rust worker 获取类型化 Outcome。宿主集成使用严格 TypeScript，编译后保持已有 JavaScript 包路径。
 
 支持：Windows x64、Linux x64，以及 macOS 13+ 的 Apple Silicon 与 Intel（`darwin-arm64`、`darwin-x64`）。
 Intel macOS 12.7.6 的 APFS 回退为手动验证的尽力兼容，另受 ACL、宿主与 Node 版本限制。见 [macOS](docs/macos.zh.md)。
-
-> [!IMPORTANT]
-> 本分支是 **0.5.0 未发布候选**：配置统一为单个 `dsh-ops` 行。下方 `@latest` 命令安装已发布版本；评估候选版本需自行构建本检出目录并打包，变更见[变更日志](docs/CHANGELOG.md)。
 
 - 单行默认启用四个内置消费者：Standard/Cordis 发布 Native 常驻文件工具，PTC 发布类型化 API，Minimal 没有文件常驻基线。Native 发现与 PTC SDK 加载独立配置；高级选择仅在所属 agent 下一次请求激活，不在发现时执行动作。
 - PTC SDK 目录包含 18 个 API：15 个文件/文档工具，加批处理、结果引用和加载器。仅暴露配置为常驻或已选择的 API；Native 与 PTC 分别提供自己的输出形式。

@@ -21,6 +21,16 @@
 
 # dsh-ops
 
+> [!IMPORTANT]
+> **This branch (`fix/macos12-clone-acl-rc5`) is for using dsh-ops on macOS 12.** The newest DSH
+> that runs on macOS 12 is **0.2.1-rc.5** (official Node 24 binaries require macOS 13.5+), and the
+> last published dsh-ops for it is **0.4.4**. This branch does not stop at 0.4.4: it is based on a
+> **main commit between 0.4.4 and 0.5.0** (carrying the defect fixes merged after 0.4.4) and adds the
+> macOS 12 APFS clone-ACL fallback. `engines.dsh` declares only `>=0.2.0-rc.2 <0.2.2-0`. It does not
+> replace `main` and does not support newer DSH versions that require Node 24 / macOS 13.5+.
+> `@latest` installs the published npm package, which does not contain this branch's fix; build and
+> pack this checkout and install it into a profile instead. See [macOS](docs/macos.md).
+
 OPS adds bounded file and document tools to DSH. Native mode returns compact, line-numbered text;
 PTC code receives typed Outcome values from the same one-shot Rust worker. Host integration is
 strict TypeScript, compiled to the existing JavaScript package paths.
@@ -28,11 +38,6 @@ strict TypeScript, compiled to the existing JavaScript package paths.
 Supported: Windows x64, Linux x64, and macOS 13+ on Apple Silicon or Intel
 (`darwin-arm64`, `darwin-x64`). Intel macOS 12.7.6 has a manually tested, best-effort
 APFS fallback with additional ACL restrictions and host/Node version limits. See [macOS](docs/macos.md).
-
-> [!IMPORTANT]
-> This branch is the **0.5.0 candidate**, not a published release: configuration now uses one
-> `dsh-ops` row. Commands using `@latest` below select the published package; build and pack this
-> checkout to evaluate the candidate. See the [changelog](docs/CHANGELOG.md).
 
 - The single row enables the four built-in preset consumers: Standard and Cordis publish resident
   Native file tools, PTC publishes typed APIs, and Minimal has no resident file baseline. Native

@@ -20,6 +20,14 @@
 
 # dsh-ops
 
+> [!IMPORTANT]
+> **本分支（`fix/macos12-clone-acl-rc5`）用于在 macOS 12 上使用 dsh-ops。** macOS 12 能运行的最新 DSH 是
+> **0.2.1-rc.5**（Node 24 官方二进制要求 macOS 13.5+），对应的最后一个已发布 dsh-ops 是 **0.4.4**。
+> 本分支没有停在 0.4.4：它以 **0.4.4 与 0.5.0 之间的 main 提交**为基线（0.4.4 之后合入的缺陷修复一并带上），
+> 并加入 macOS 12 的 APFS clone ACL 回退；`engines.dsh` 只声明 `>=0.2.0-rc.2 <0.2.2-0`。
+> 它不是 `main` 的替代，也不支持需要 Node 24 / macOS 13.5+ 的更高 DSH。`@latest` 安装的是 npm 已发布版本，
+> 不含本分支的修复；请构建并打包本检出后装入 profile。细节见 [macOS](docs/macos.zh.md)。
+
 以提高token效率为目的，提供新增的ops系列工具并隐藏部分官方工具为方案的插件，低改动面，低侵入性，与其他插件广泛兼容。
 
 - Bash 与宿主 Shell 隐藏独立配置；Windows 可用 ops_bash 替代 pwsh，也可保留官方 Shell。

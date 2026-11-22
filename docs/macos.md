@@ -46,7 +46,10 @@ reports that unpublished bytes may remain; inspect the named sibling before retr
 read-only operations do not clone; this fallback does not change their behavior.
 
 This is transitional compatibility, verified manually on Intel macOS 12.7.6 with Node 22.23.4.
-The earlier host check used DSH 0.2.1-rc.2; only the versions declared by `engines.dsh` are eligible.
+Host verification now reaches **DSH 0.2.1-rc.5**, the last host that runs on macOS 12: the branch
+was packed into a `web` profile where the `ops_*` file tools worked in a real session, and `copy`
+took the ACL fallback with identical SHA-256 before and after. Earlier full-gate readings came from
+DSH 0.2.1-rc.2. Only the versions declared by `engines.dsh` are eligible.
 It does not establish compatibility with a newer host requiring Node 24. Official
 [Node 24 macOS binaries require macOS 13.5+](https://nodejs.org/en/blog/migrations/v22-to-v24).
 There is no macOS 12 CI leg, no macOS 12 arm64 verification and no claim that a CI-built release
@@ -104,6 +107,10 @@ tool.
   The failure is `review-snapshot`: Apple Git 2.37.1 lacks `git merge-tree --write-tree`.
   Build/stage, manifest (140 checks), pack/unpack and runtime receipts passed; the full gate
   is not green because of the Git-dependent failure.
+- On 2026-11-22 the branch was installed into DSH 0.2.1-rc.5's `web` profile on Intel macOS 12.7.6
+  with Node 22.23.4: `ops_glob`, `ops_stat`, `ops_copy` and `ops_remove` worked there, and `copy`
+  produced an identical SHA-256. A standalone `fclonefileat` probe returned `EINVAL(22)` with
+  `CLONE_ACL` and 0 without it. This is a real host session, not a release gate.
 - [The earlier contributor PR-event run](https://github.com/OldLigant/dsh-ops/actions/runs/39772711519)
   passed the full Intel macOS 15 gate. Its receipt-verified x86_64 Mach-O has a 10.12 load minimum;
   the macOS 12 result is manual, and CI verifies macOS 15. macOS 13/14 have not been exercised by
