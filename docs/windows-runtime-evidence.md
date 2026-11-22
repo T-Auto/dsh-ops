@@ -59,6 +59,12 @@ payload/root, whether an owned normal-token holder is alive, stderr, exit value,
 and a restricted positive control. Stop only jobs you own; do not kill all Bash
 processes or rewrite foreign ACLs to make a comparison pass.
 
+An unrestricted MSYS process that created the per-user section first omits every
+restricted-logon ACE, so the restricted token cannot reopen it; the proxy only arms
+**new** objects. `ops_bash` classifies this message as `EXECUTOR_UNAVAILABLE` with
+`sandbox.runnerFailed`, like the signal-pipe failure, instead of presenting a bare
+non-zero exit (#409); it is never a user authorization denial.
+
 `3221225794` and `-1073741502` represent `0xC0000142`. The status alone does not
 identify the failing DLL or prove which process reached the command. A manual
 launch of a staged restricted payload under a normal token is unsupported: its

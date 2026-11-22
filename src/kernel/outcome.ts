@@ -18,7 +18,7 @@ export interface CoverageMeta {
 }
 export type Outcome<T> =
   | { status: 'completed', data: T, coverage?: CoverageMeta & { isComplete: true } }
-  | { status: 'partial', data: T, coverage: CoverageMeta & { isComplete: false }, continuation: string }
+  | { status: 'partial', data: T, coverage: CoverageMeta & { isComplete: false }, continuation: string, nextAction?: string }
   | { status: FailureStatus, error: OpsErrorPayload, data?: T }
 
 interface SearchReportBase {

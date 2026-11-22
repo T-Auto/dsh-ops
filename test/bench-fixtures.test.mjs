@@ -21,8 +21,8 @@ import { CPU_PROCESS_TIMEOUT_MS, assert, report, test, withTempDir } from './lib
 import {
   brokenProject, configTree, deepCorpus, deepModule, deriveConfigTree, deriveDeepModule,
   deriveGrepTree, deriveLargeCsv, deriveLogStats, deriveNoisySuite, deriveRenameTree,
-  deriveSymbolTree, gatePipeline, generate, GENERATORS, grepTree, largeCsv, logStats,
-  mulberry32, noisySuite, renameTree, symbolTree,
+  derivePagedLog, deriveSymbolTree, gatePipeline, generate, GENERATORS, grepTree, largeCsv, logStats,
+  mulberry32, noisySuite, pagedLog, renameTree, symbolTree,
 } from '../bench/lib/fixtures/index.mjs'
 
 const LABEL = 'bench-fixtures'
@@ -40,12 +40,13 @@ const SMALL = {
   noisySuite: { seed: 29, tests: 200 },
   symbolTree: { seed: 31, files: 6 },
   gatePipeline: { seed: 53, gates: 4, probes: 3, linesPerGate: 4 },
+  pagedLog: { seed: 41, lines: 120, markerAt: 60 },
 }
 
 /** The complete registry: every family builder, in the order `GENERATORS` lists them. */
 const ALL_GENERATORS = [
   'brokenProject', 'configTree', 'deepCorpus', 'deepModule', 'gatePipeline', 'grepTree',
-  'largeCsv', 'logStats', 'noisySuite', 'renameTree', 'symbolTree',
+  'largeCsv', 'logStats', 'noisySuite', 'pagedLog', 'renameTree', 'symbolTree',
 ]
 
 /** Write one generated file into a workspace, creating its parents. */
@@ -126,6 +127,16 @@ await test('logStats exports the ERROR counts recomputed from its own bytes', ()
   assert.equal(files.length, 4)
   assert.deepEqual(deriveLogStats(files), exports, 'the exported report must match the logs')
   assert.deepEqual(exports.report, [...exports.report].sort(), 'the report must be in file-name order')
+})
+
+await test('pagedLog exports the marked line recomputed from its own bytes', () => {
+  const { files, exports } = pagedLog(SMALL.pagedLog)
+  assert.equal(files.length, 1)
+  assert.equal(files[0].path, 'logs/stream.log')
+  assert.deepEqual(derivePagedLog(files), exports, 'the exported answer must be of the real bytes')
+  assert.ok(files[0].content.split('TARGET-').length === 2, 'the marker must appear exactly once')
+  assert.throws(() => pagedLog({ ...SMALL.pagedLog, markerAt: 0 }), RangeError)
+  assert.throws(() => pagedLog({ ...SMALL.pagedLog, markerAt: SMALL.pagedLog.lines + 1 }), RangeError)
 })
 
 await test('configTree separates the winning layer from every look-alike', () => {
@@ -283,7 +294,7 @@ await test('generate() rejects an unknown generator by name', () => {
   // exists but was never registered (or never re-exported) is unreachable, and a
   // duplicate or a stray extra key has to fail here rather than in a task run.
   assert.deepEqual(Object.keys(GENERATORS).sort(), ALL_GENERATORS)
-  assert.equal(Object.keys(GENERATORS).length, 11)
+  assert.equal(Object.keys(GENERATORS).length, 12)
   assert.deepEqual(Object.keys(SMALL).sort(), ALL_GENERATORS, 'the small-parameter table must cover every registered generator')
   for (const [name, builder] of Object.entries(GENERATORS)) assert.equal(typeof builder, 'function', `${name} must be exported as a builder`)
 })

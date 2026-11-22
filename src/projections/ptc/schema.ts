@@ -16,7 +16,7 @@ export function outcomeSchema(data: JsonSchemaNode): JsonSchemaNode {
   const failureData: JsonSchemaNode = { ...data, required: [], properties: { ...data.properties, error: { type: 'object' } } }
   return { oneOf: [
     object({ status: { type: 'string', const: 'completed' }, data, coverage: coverage(true) }, ['status', 'data']),
-    object({ status: { type: 'string', const: 'partial' }, data, coverage: coverage(false), continuation: string }, ['status', 'data', 'coverage', 'continuation']),
+    object({ status: { type: 'string', const: 'partial' }, data, coverage: coverage(false), continuation: string, nextAction: string }, ['status', 'data', 'coverage', 'continuation']),
     object({ status: { type: 'string', enum: ['rejected', 'conflict', 'error', 'unknown'] }, error: ERROR_SCHEMA, data: failureData }, ['status', 'error']),
   ] }
 }

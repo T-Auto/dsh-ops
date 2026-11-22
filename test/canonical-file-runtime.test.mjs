@@ -50,9 +50,20 @@ await test('real worker Native text and run_code share the canonical file outcom
         assert.equal(result.value.coverage.isComplete, false)
         assert.match(result.value.continuation, /^ops-next-v1:/)
         assert.equal(result.value.data.items.length, 1)
+        assert.match(result.value.nextAction, /ops_glob /, 'the shared runtime renders the continuation as an executable call')
       }
       console.log('       Real worker branch:', name, result.value.status, result.value.error?.code ?? 'continuation')
     }
+    const refused = await executeCall(h.ctx, { agent: child, toolSet: c.toolSet, callId: 'dir-refused',
+      name: h.definition.name, arguments: { path: dir } })
+    assert.equal(refused.value.status, 'error', JSON.stringify(refused))
+    assert.equal(refused.value.error.code, 'INVALID_ARGUMENT')
+    // The path is JSON-quoted inside the recommendation; on Windows its backslashes
+    // are regexp escapes, so the literal prefix must be escaped too.
+    const escapedDir = JSON.stringify(dir).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    assert.match(refused.value.error.nextAction, new RegExp('ops_glob \\{"path":' + escapedDir + ',"pattern":\\["\\*"\\]\\}'),
+      'the step surface resolves, so the recommendation names the registered listing API')
+    assert.match(refused.value.error.nextAction, /concrete file path/)
   } finally {
     try { await h.dispose() } finally { fs.rmSync(dir, { recursive: true, force: true }) }
   }

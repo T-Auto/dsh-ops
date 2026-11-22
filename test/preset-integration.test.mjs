@@ -5,7 +5,9 @@ import path from 'node:path'
 import { createScope, scopeOf } from '@deepseek-ai/dsh-scope'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
-import { integration, resolveIntegrationConfig } from 'dsh-ops/integration'
+import { integration, resolveIntegrationConfig, diagnose } from 'dsh-ops/integration'
+import { PTC_LOADABLE_TOOLS } from '../lib/ptc/config.js'
+import { publicToolName } from '../lib/policy.js'
 import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
 import * as Standard from '../lib/components/mode-standard/index.js'
 import * as DiscoveryModule from '../lib/components/discovery/index.js'
@@ -177,6 +179,102 @@ await test('conditional replacements stay agent bound and explicit ancestor mask
     assert.ok((await names(own)).includes('read'), 'child-own registration bypasses ancestor mask')
     assert.equal((await executeCall(ctx, { agent: own, name: 'read', arguments: {}, callId: 'own', signal: new AbortController().signal })).isError, false)
     parentMask()
+  } finally { await shutdown(ctx) }
+}))
+/** Boot one custom PTC row, lift the PTC executor and return the settled surface. */
+async function bootPtcRow(cwd, options) {
+  const { ctx, mint, names } = await boot()
+  ctx.provide('ptcRuntime', { language: 'typescript' })
+  await ctx.plugin(integration({ ...options, profile: 'ptc' }))
+  const agent = await mint(options.preset, cwd)
+  selectExecutor(agent.ctx, 'ptc')
+  await ctx.get('systemPrompt').assemble({ scope: agent, agent })
+  return { ctx, agent, names }
+}
+await test('custom rows parse the disclosure tier with an on-demand fallback and keep the alwaysLoaded cap contract', () => {
+  // D4 (#988): the custom path accepts the same explicit tier key the builtin rows
+  // parse (D2/#986). An omitted key stays the legacy on-demand default; a Native
+  // presentation row rejects the key the same way non-PTC builtin rows do.
+  assert.equal(resolveIntegrationConfig({ preset: 'x', profile: 'ptc' }).ptc.disclosurePolicy, 'on-demand')
+  assert.equal(resolveIntegrationConfig({ preset: 'x', profile: 'ptc', disclosurePolicy: 'full' }).ptc.disclosurePolicy, 'full')
+  for (const raw of [{ preset: 'x', profile: 'ptc', disclosurePolicy: 'sometimes' },
+    { preset: 'x', profile: 'native', disclosurePolicy: 'full' }]) assert.throws(() => resolveIntegrationConfig(raw), /disclosurePolicy/)
+  // The legacy validation contract is unchanged on both sides: the custom path keeps
+  // rejecting alwaysLoaded outside allowedTools while builtin rows accept it silently
+  // (locked in test/ptc-config-truth.test.mjs), and a saved legal row still resolves.
+  assert.throws(() => resolveIntegrationConfig({ preset: 'x', profile: 'ptc', allowedTools: ['stat'], alwaysLoaded: ['grep'] }), /alwaysLoaded must be in allowedTools/)
+  const saved = resolveIntegrationConfig({ preset: 'x', profile: 'ptc', allowedTools: ['stat'], alwaysLoaded: ['stat'], disclosurePolicy: 'full' })
+  assert.deepEqual(saved.ptc.alwaysLoaded, ['stat'])
+  assert.equal(saved.ptc.disclosurePolicy, 'full')
+})
+await test('legacy custom PTC row with discovery off: empty pool, inspect-only first round, no ops_result false positive', () => withTempDir('preset-ptc-off', async cwd => {
+  const { ctx, agent, names } = await bootPtcRow(cwd, { preset: 'ptc-off', discovery: false })
+  try {
+    const parsed = resolveIntegrationConfig({ preset: 'ptc-off', profile: 'ptc', discovery: false })
+    assert.deepEqual(parsed.ptc.allowedTools, [], 'discovery off parses an empty pool, unlike the builtin default')
+    assert.equal(parsed.ptc.disclosurePolicy, 'on-demand')
+    await waitFor(async () => (await names(agent)).includes('ops_inspect_local_file'))
+    const firstRound = (await names(agent)).filter(name => name.startsWith('ops_'))
+    assert.deepEqual(firstRound, ['ops_inspect_local_file', 'ops_status'])
+    assert.equal(firstRound.includes('ops_load_sdk'), false)
+    const d = await diagnose(ctx, agent)
+    assert.equal(d.state, 'ready', JSON.stringify(d.issues))
+    assert.equal(d.issues.some(row => row.code === 'PUBLICATION_UNAVAILABLE'), false, 'a selectable-but-unloaded API is not a publication gap')
+  } finally { await shutdown(ctx) }
+}))
+await test('custom full tier with an unfilled cap publishes the whole pool in the first round and stays ready', () => withTempDir('preset-ptc-full', async cwd => {
+  const { ctx, agent, names } = await bootPtcRow(cwd, { preset: 'ptc-full', disclosurePolicy: 'full' })
+  try {
+    const parsed = resolveIntegrationConfig({ preset: 'ptc-full', profile: 'ptc', disclosurePolicy: 'full' })
+    assert.deepEqual(parsed.ptc.allowedTools, PTC_LOADABLE_TOOLS)
+    assert.equal(parsed.ptc.disclosurePolicy, 'full')
+    await waitFor(async () => (await names(agent)).includes('ops_batch'))
+    const firstRound = (await names(agent)).filter(name => name.startsWith('ops_'))
+    assert.deepEqual(firstRound, [...PTC_LOADABLE_TOOLS.map(publicToolName), 'ops_inspect_local_file', 'ops_status'].sort())
+    assert.equal(firstRound.includes('ops_load_sdk'), false, 'the full tier is loader-less')
+    const d = await diagnose(ctx, agent)
+    assert.equal(d.state, 'ready', JSON.stringify(d.issues))
+    assert.equal(d.issues.some(row => row.code === 'PUBLICATION_UNAVAILABLE'), false)
+  } finally { await shutdown(ctx) }
+}))
+await test('custom full tier with a narrow cap stays narrow: inspect + stat + result only', () => withTempDir('preset-ptc-narrow', async cwd => {
+  const { ctx, agent, names } = await bootPtcRow(cwd, { preset: 'ptc-narrow', disclosurePolicy: 'full', allowedTools: ['stat'] })
+  try {
+    const parsed = resolveIntegrationConfig({ preset: 'ptc-narrow', profile: 'ptc', disclosurePolicy: 'full', allowedTools: ['stat'] })
+    assert.deepEqual(parsed.ptc.allowedTools, ['stat'], 'an explicit narrow pool must not widen to the default whole pool')
+    await waitFor(async () => (await names(agent)).includes('ops_stat'))
+    const firstRound = (await names(agent)).filter(name => name.startsWith('ops_'))
+    assert.deepEqual(firstRound, ['ops_inspect_local_file', 'ops_result', 'ops_stat', 'ops_status'])
+    for (const absent of ['ops_grep', 'ops_load_sdk']) assert.equal(firstRound.includes(absent), false)
+    const d = await diagnose(ctx, agent)
+    assert.equal(d.state, 'ready', JSON.stringify(d.issues))
+    assert.equal(d.issues.some(row => row.code === 'PUBLICATION_UNAVAILABLE'), false)
+  } finally { await shutdown(ctx) }
+}))
+await test('a genuinely missing expected PTC name is diagnosed while an unselected one is not', () => withTempDir('preset-ptc-missing-worker', async cwd => {
+  // A row whose worker never mounted publishes none of its plan; the diagnostic
+  // must still name the genuinely missing first-round name — and must not pad the
+  // gap with the selectable-but-unselected result API.
+  const { ctx, agent } = await bootPtcRow(cwd, { preset: 'ptc-broken', binaryPath: path.join(cwd, 'missing-worker'), discovery: false })
+  try {
+    const d = await diagnose(ctx, agent)
+    assert.equal(d.state, 'degraded')
+    assert.ok(d.issues.some(row => row.code === 'RUNTIME_UNAVAILABLE'), JSON.stringify(d.issues))
+    assert.ok(d.issues.some(row => row.code === 'PUBLICATION_UNAVAILABLE' && row.message.includes('ops_inspect_local_file')), JSON.stringify(d.issues))
+    assert.equal(d.issues.some(row => row.message.includes('ops_result')), false, 'the on-demand tier keeps ops_result legitimately unselected')
+  } finally { await shutdown(ctx) }
+}))
+await test('native custom preset keeps its exact visible tool snapshot across the diagnostics fix', () => withTempDir('preset-native-snapshot', async cwd => {
+  const { ctx, mint, names } = await boot()
+  try {
+    await ctx.plugin(integration({ preset: 'acme-snapshot', discovery: false }))
+    const own = await mint('acme-snapshot', cwd)
+    await waitFor(async () => (await names(own)).includes('ops_inspect_local_file'))
+    // Snapshot pinned 2026-11-19 (#988): identical before and after the diagnostics
+    // fix, so a PTC-side change cannot quietly re-shape the Native surface.
+    assert.deepEqual(await names(own), ['glob', 'grep', 'ops_glob', 'ops_grep', 'ops_inspect_local_file', 'ops_status', 'read'])
+    const d = await diagnose(ctx, own)
+    assert.equal(d.state, 'ready', JSON.stringify(d.issues))
   } finally { await shutdown(ctx) }
 }))
 report('preset-integration')

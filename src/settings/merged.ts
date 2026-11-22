@@ -232,6 +232,12 @@ export function effectiveMode(state: FeatureState<ModeConfig>, global: GlobalSwi
     hidePwsh: flag(raw, 'hidePwsh', state.config.hidePwsh) && global.hidePwsh && !pwsh7Link,
     hideOfficialTools: flag(raw, 'hideOfficialTools', true) && global.hideOfficialTools,
     dynamicTools: flag(raw, 'dynamicTools', true) && global.dynamicTools,
+    // Sign-off item 2 (docs/design-decisions-20261119.md), taken conservatively
+    // per #979 §4: the explicit full tier is its own opt-in and never overrides
+    // the bundle switch. While the switch is off the effective slice says
+    // on-demand, so the row keeps its legacy resident/alwaysLoaded surface; the
+    // saved choice stays untouched in state.raw and re-applies when switched on.
+    ...(raw.disclosurePolicy === 'full' && !global.dynamicTools ? { disclosurePolicy: 'on-demand' } : {}),
   }
 }
 
@@ -252,6 +258,12 @@ const MODE_SWITCHES: Record<string, Field> = {
 function modeSection(mode: ModeKey): Field {
   return { type: 'object', dict: { enabled: boolean('Apply this mode to its sessions.'),
     ...(mode === 'minimal' ? {} : { residentTools: boolean('Publish baseline file tools independently of dynamic loading.') }),
+    // Only the PTC rows own a disclosure tier; the key is volatile because the
+    // row page's disclosure card writes it, exactly like the executor card
+    // writes bashPath. Absent stays the on-demand default (#989).
+    ...(mode === 'ptc' || mode === 'ops-ptc'
+      ? { disclosurePolicy: editable('string', 'Optional explicit first-round disclosure tier selected on the row page.') }
+      : {}),
     bashPath: editable('string', 'Optional explicit Bash executable selected on the runtime page.'),
     ...MODE_SWITCHES } }
 }

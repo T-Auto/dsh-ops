@@ -13,6 +13,8 @@ export interface PublicationGrant {
   dispatch(args: unknown, exec: ToolRunContext): Promise<unknown>
   /** Presentation may only narrow this captured grant; it never chooses dispatch. */
   present?(activation: ToolActivationContext): boolean | Promise<boolean>
+  /** Outcome for a caller whose grants exist but none is entitled: a deferred-selection pointer, not a silent dead end (#968). */
+  deferred?(): Outcome<never> | undefined
   cancel?(): void
 }
 export interface PublicationLease {
@@ -20,11 +22,13 @@ export interface PublicationLease {
   ready(): Promise<void>
   dispose(): void
 }
-const denied = (code: 'PUBLICATION_IDENTITY_MISMATCH' | 'PUBLICATION_GRANT_UNAVAILABLE'): Outcome<never> => ({
+const denied = (code: 'PUBLICATION_IDENTITY_MISMATCH' | 'PUBLICATION_GRANT_UNAVAILABLE' | 'PUBLICATION_GRANT_REVOKED'): Outcome<never> => ({
   status: 'rejected', error: { code, effectState: 'none', retry: 'never',
     message: code === 'PUBLICATION_IDENTITY_MISMATCH'
       ? 'Publication definition is stale or is not admitted for this agent and tool set.'
-      : 'Publication has no eligible grant or has conflicting dispatch grants for this agent.' },
+      : code === 'PUBLICATION_GRANT_REVOKED'
+        ? 'Publication grants for this agent have been revoked and cannot serve this call; reassembly cannot reinstate them.'
+        : 'Publication has no eligible grant or has conflicting dispatch grants for this agent.' },
 })
 const cancelled = (started: boolean): Outcome<never> => ({ status: started ? 'unknown' : 'rejected', error: {
   code: started ? 'RESULT_UNKNOWN' : 'ABORTED', effectState: started ? 'unknown' : 'none', retry: 'never',
@@ -93,6 +97,10 @@ export async function acquire(ctx: Context, scope: object | undefined, name: str
   const tools = availableTools
   const grants = new Set<PublicationGrant>()
   const owned = new Set<ToolDefinition>()
+  // P5 (#997): an agent that ever held an eligible grant and now matches none
+  // has had its grants pulled — revoked, not never-available. The two verdicts
+  // stay distinct so a withdrawn admission cannot read as a loadable one.
+  const everEntitled = new WeakSet<Agent>()
   // Public toolSet exposes the admitted definition, not which `when` contribution
   // admitted it. Conservatively bind every eligible same-agent grant as a veto:
   // losing any captured grant cancels; no hidden or later grant can sustain work.
@@ -137,7 +145,21 @@ export async function acquire(ctx: Context, scope: object | undefined, name: str
           return denied('PUBLICATION_IDENTITY_MISMATCH')
         }
         const matching = eligible(exec.agent)
-        if (!matching.length || matching.some(grant => grant.dispatch !== matching[0].dispatch)) return denied('PUBLICATION_GRANT_UNAVAILABLE')
+        if (!matching.length) {
+          // Same-agent grants with no entitled member can still explain themselves: a pool
+          // publication points its caller at the loader instead of a retry-never denial (#968).
+          // Consult every same-agent advisor in grant order: one that cannot help — by
+          // answering undefined or by throwing — must not mask later grants that can.
+          for (const advisor of grants) {
+            if (advisor.agent !== exec.agent || typeof advisor.deferred !== 'function') continue
+            try {
+              const outcome = advisor.deferred()
+              if (outcome !== undefined && 'error' in outcome) return outcome
+            } catch { /* an unavailable advisor falls through to the next one */ }
+          }
+          return denied(everEntitled.has(exec.agent) ? 'PUBLICATION_GRANT_REVOKED' : 'PUBLICATION_GRANT_UNAVAILABLE')
+        }
+        if (matching.some(grant => grant.dispatch !== matching[0].dispatch)) return denied('PUBLICATION_GRANT_UNAVAILABLE')
         const controller = new AbortController()
         const caller = exec.signal
         const abort = () => controller.abort(caller?.reason)
@@ -204,6 +226,7 @@ export async function acquire(ctx: Context, scope: object | undefined, name: str
         // Do not retain the caller's mutable object or callback properties.
         const captured = Object.freeze({ ...grant })
         grants.add(captured)
+        if (captured.entitled) everEntitled.add(captured.agent)
         try { refresh(true) } catch (error) {
           grants.delete(captured)
           const errors: unknown[] = [error]
