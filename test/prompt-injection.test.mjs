@@ -55,7 +55,8 @@ await test('real loop appends ordered attributed messages after accepted input, 
     assert.equal(request.messages.find(m => m.source?.kind === 'user').content[0].text, 'Real user task.')
     assert.deepEqual(tailMessages(request).map(m => m.source.contributor), ['a', 'b', 'z'])
     assert.equal(request.messages.at(-1), tailMessages(request).at(-1))
-    for (const m of tailMessages(request)) { assert.equal(m.role, 'user'); assert.match(m.content[0].text, /not a user instruction or authorization/); assert.notEqual(m.source.kind, 'user') }
+    assert.deepEqual(tailMessages(request).map(m => m.content[0].text), ['A', 'B', 'Last {{literal}}'])
+    for (const m of tailMessages(request)) { assert.equal(m.role, 'user'); assert.equal(m.source.kind, 'dsh-ops:step-tail'); assert.equal(m.content[0].text.includes('not a user instruction'), false) }
     assert.match(request.messages.at(-1).content[0].text, /Last \{\{literal\}\}/)
     assert.deepEqual(h.requests[1].messages.map(m => m.id), request.messages.map(m => m.id))
     const committed = h.events.filter(({ session, event }) => session === a.session && event.type === 'user/message').map(({ event }) => event)

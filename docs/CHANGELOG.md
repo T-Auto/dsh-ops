@@ -28,6 +28,31 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   指向其他包管理器，也不会再以 `Cannot find module 'tar'` 失败。
 - A replaced official tool no longer leaves its own `tool:<name>` system-prompt section behind. Section text resolves before the assembly waterfall, so the hidden `read`/`glob`/`grep` guidance still told the model to call a tool the captured step refuses. The section is now dropped together with the mask and returns when the tool does.
 - 被替换的官方工具不再留下自己的 `tool:<name>` 系统提示段落。段落文本在装配瀑布之前解析，于是被隐藏的 `read`/`glob`/`grep` 指引仍让模型去调用该步拒绝的工具。现在它与掩码一起移除，工具恢复时指引也恢复。
+
+## [0.5.6] — 2026-11-21 — Patch release
+
+- ops-ptc's batching teacher trajectory now teaches sandbox authority: the lesson states the
+  host-reported mode, keeps only that tier, and at `danger-full-access` says never to send
+  `sandbox_permissions` or `justification`; it also pins the closed vocabulary
+  (`workspace-write`, `danger-full-access`) instead of letting the model invent a wider target
+  (#963).
+- ops-ptc 的批量调用教师轨迹新增沙箱权限教学：按宿主报告的当前模式只保留对应档位，
+  `danger-full-access` 下明确「绝不发送 `sandbox_permissions`/`justification`」，并钉住
+  合法值只有 `workspace-write` 与 `danger-full-access`，避免模型编造更宽的目标（#963）。
+- OPS-PTC batch-call guidance now rides the pre-step batch as user-role text: the opening lesson and
+  every `bypass`/`plan`/`shape` notice are `role: 'user'` messages carrying the plugin source kind
+  `dsh-ops:batching-guidance`, no `[Plugin context ...]` envelope and no "not a user instruction"
+  disclaimer. The model still reads them as the user's instruction, while Chat files them under their
+  producer instead of drawing a user bubble. The lesson is delivered on the first accepted pre-step (and
+  counts as taught only after the host commits it), notices are queued by the root `run_code` result and
+  delivered on the next pre-step, and the tool result itself is untouched. This deliberately supersedes
+  the #929 same-step-inbox route (#1040).
+- OPS-PTC 批量调用提示改走 pre-step 用户角色消息：开局教学与每条 `bypass`/`plan`/`shape` 提醒都是
+  `role: 'user'`、来源为插件 kind `dsh-ops:batching-guidance` 的消息，不再带 `[Plugin context ...]`
+  信封，也不再声明"不是用户指令"。模型仍把它当用户指令来读，Chat 则按生产者归类、不画用户气泡。
+  教学在首个被接受的 pre-step 投递（宿主提交后才算兑现），提醒由根 `run_code` 结果排队、在下一个
+  pre-step 投递，工具结果本身不被改写。这是对 #929 同一步收件箱路线的有意取代（#1040）。
+
 - Niubash no longer refuses to prepare its runtime when a full-access session's workspace contains
   the default `~/.dsh` home (#870). The workspace boundary stays armed in read-only and
   workspace-write modes, where host workspace labeling and write gating could otherwise reach the
