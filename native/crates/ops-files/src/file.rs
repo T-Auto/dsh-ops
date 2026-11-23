@@ -311,11 +311,14 @@ fn inspect_prepared(
         .take(args.limit)
         .map(|(i, line)| json!({"path":path,"line":i+1,"text":line}))
         .collect();
+    // `offset` is a 1-based line number, but 0 is legacy for "first line".
+    // Both therefore resume at line 1, so the next page must start at 2. Keep
+    // this base identical to the hex path's `end.div_ceil(16) + 1`.
     let value = output::bounded(
         lines,
         text.lines().count(),
         args.offset.saturating_sub(1),
-        args.offset,
+        args.offset.max(1),
         text.lines().count(),
         false,
         facts,
@@ -775,6 +778,40 @@ mod tests {
         assert_eq!(error.code, "INVALID_ARGUMENT");
         assert!(error.message.contains("`encoding`"));
         assert!(!error.next_action.contains("view=hex"));
+    }
+
+    #[test]
+    fn legacy_zero_offset_pages_like_the_first_line() {
+        // #1045 §1: 0 is legacy for "first line", so offset=0 and offset=1 must
+        // both resume at line 2 when limit=1. The base is the skipped line count
+        // plus one, matching the hex path's `end.div_ceil(16) + 1`.
+        let root = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!("dsh-ops-zero-offset-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("lines.txt");
+        std::fs::write(&path, "alpha\nbeta\ngamma\n").unwrap();
+        let display = path.to_str().unwrap().to_string();
+
+        for offset in [0usize, 1] {
+            let value = inspect_args(
+                InspectArgs {
+                    path: display.clone(),
+                    offset,
+                    limit: 1,
+                    encoding: "utf-8".into(),
+                    view: "text".into(),
+                },
+                MAX_OUTPUT_BYTES,
+                false,
+                None,
+            )
+            .unwrap();
+            assert_eq!(value["items"].as_array().unwrap().len(), 1, "offset={offset}");
+            assert_eq!(value["items"][0]["line"], 1, "offset={offset}");
+            assert_eq!(value["nextOffset"], 2, "offset={offset}");
+        }
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
