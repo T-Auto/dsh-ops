@@ -7,6 +7,29 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Text inspection no longer repeats the last line of the previous page when paging a legacy
+  `offset: 0` request. `offset` is a 1-based line number, but `0` is legacy for "first line", so
+  `offset=0` and `offset=1` both start at line 1 and must both resume at line 2; the resumption base
+  was the raw argument, so `offset=0` reported `nextOffset: 1` and returned line 1 again. The base is
+  now the skipped line count plus one, matching the hex path's `end.div_ceil(16) + 1` (#1045).
+- 文本查看在 legacy `offset: 0` 续页时不再重复上一页末行。`offset` 是 1-based 行号，但 `0` 是
+  "从第 1 行开始" 的旧写法，因此 `offset=0` 与 `offset=1` 都从第 1 行开始、也都应续到第 2 行；原
+  实现把原始参数当作续页基准，于是 `offset=0` 返回 `nextOffset: 1` 并再次返回第 1 行。现在基准改为
+  "已跳过的行数 + 1"，与 hex 路径的 `end.div_ceil(16) + 1` 一致（#1045）。
+- `ops_grep` in `outputMode: "definitions"` now honours `lineNumbers: false`. That branch hard-coded
+  `index + 1`, so the declarations kept real line numbers while `content` returned `0`; both modes now
+  answer the same way (#1045).
+- `ops_grep` 的 `outputMode: "definitions"` 现在遵守 `lineNumbers: false`。该分支写死了 `index + 1`，
+  导致声明行仍带真实行号，而 `content` 模式返回 `0`；现在两种模式行为一致（#1045）。
+- The ops-ptc batching lesson is no longer injected into a Native executor. A row mounted under an
+  executor without `run_code` cannot run the root program the lesson teaches, so delivery now checks
+  the same PTC-presentation predicate that gates tool registration. A step with nothing to deliver
+  also skips the presentation probe entirely, and a notice a Native step could not use stays queued
+  instead of being dropped (#1045).
+- ops-ptc 的批量调用教学不再注入 Native executor。挂在没有 `run_code` 的执行器下时，模型无法执行
+  教学所讲的根程序，因此投递改用与工具注册相同的 PTC 呈现判定。无内容可投递的步骤整体跳过呈现探测，
+  Native 步骤用不上的提醒保留在队列中而非被丢弃（#1045）。
+
 ## [0.5.6] — 2026-11-21 — Patch release
 
 - ops-ptc's batching teacher trajectory now teaches sandbox authority: the lesson states the

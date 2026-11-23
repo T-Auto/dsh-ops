@@ -36,7 +36,7 @@ async function scoped(parent, key, parentKey) {
 }
 
 /** The same merged-row fixture resident-switch uses, restricted to the ops-ptc row. */
-async function setup(cwd, { batchingGuidance = true } = {}) {
+async function setup(cwd, { batchingGuidance = true, executor = 'ptc' } = {}) {
   const { ctx } = await bootHost({ withWorkingDirectory: true })
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem); await ctx.plugin(NodePtc)
   ctx.provide('sandboxPolicy', { resolve: ({ session } = {}) => ({ mode: session?.mode ?? 'danger-full-access', workspaceRoot: cwd, sessionId: session?.id }) })
@@ -51,7 +51,7 @@ async function setup(cwd, { batchingGuidance = true } = {}) {
   presets.set(scopeOf(preset), 'ops-ptc')
   const agent = { id, session: { id, mode: 'danger-full-access', header: { cwd }, append() {}, read() { return [] } } }
   agent.ctx = await scoped(preset, agent, scopeOf(preset))
-  await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply: inner => { selectExecutor(inner, 'ptc') } })
+  await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply: inner => { selectExecutor(inner, executor) } })
   agents.push(agent)
   await ctx.serial('agent/created', { agent })
   agent.prepared = await prepareStep(ctx, agent)
@@ -130,6 +130,19 @@ await test('a disabled switch delivers no lesson and no notice', () => withTempD
     assert.equal(guidanceOf(await drivePreStep(agent, 1)).length, 0)
     await rootCall(ctx, agent, 'user-teach-off-thin', thinProgram)
     assert.equal(guidanceOf(await drivePreStep(agent, 1)).length, 0)
+  } finally { await shutdown(ctx) }
+}))
+
+await test('a Native executor publishes no run_code and therefore receives no lesson', () => withTempDir('user-teach-native', async cwd => {
+  // #1045 §3: the ops-ptc row can be mounted under a Native executor. The
+  // lesson teaches the shape of a root `run_code` program, which that step
+  // cannot run, so it must not be injected at all.
+  const { ctx, agent } = await setup(cwd, { executor: 'native' })
+  try {
+    await waitFor(() => names(ctx, agent).length > 0)
+    const first = await drivePreStep(agent, 1)
+    assert.equal(guidanceOf(first).length, 0, JSON.stringify(first.decision.messages))
+    assert.equal(textsOf(first.decision.messages).includes('# Batch tool calls'), false)
   } finally { await shutdown(ctx) }
 }))
 

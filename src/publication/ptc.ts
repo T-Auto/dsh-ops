@@ -299,6 +299,15 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
               entry.guidanceTurn = payload.turn
               entry.queuedGuidance.length = 0
             }
+            // Nothing to say: skip the presentation probe entirely, so a plain
+            // Native step costs no extra assembly.
+            if (entry.taught && entry.queuedGuidance.length === 0) return decision
+            // Teach only the surface this step actually publishes (#1045 §3): a
+            // Native executor has no `run_code`, so a lesson about root programs
+            // would be unactionable, and the queued shape notices inherit that.
+            // Same predicate as tool registration; keep the queue intact so a
+            // later PTC step still receives what this one could not use.
+            if (!(await isPtc(agent, payload.signal).catch(() => false))) return decision
             const texts: string[] = []
             let lessonQueued = false
             // Teach once, before the model's first request: the lesson rides the
