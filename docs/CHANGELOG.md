@@ -7,6 +7,7 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+<<<<<<< HEAD
 - Preserve sealed panel reports when a merge overlaps session close. Concurrent folds share
   viewer updates, invalid workspaces share one warning per activation, and a live fold hashes
   the same bytes it parses (#976).
@@ -32,6 +33,15 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   安装入口（#750）。
 - Recognize Entra user SIDs when setting the owner of a temporary Windows test fixture (#1031).
 - 设置 Windows 临时测试夹具的所有者时支持 Entra 用户 SID（#1031）。
+=======
+- Per-host state is now keyed through `rootOf(ctx)`, which reads the `Symbol.for('cordis.root')` key
+  before the legacy `ctx.root` property. Cordis 4.2 refuses undeclared property reads, so the 21 direct
+  `ctx.root` reads failed activation with `cannot get property "root" without inject`. This changes
+  nothing on Cordis 4.1. The `engines.dsh` range is untouched (#1047).
+- 每主机状态的键改由 `rootOf(ctx)` 取得：先读 `Symbol.for('cordis.root')`，再回退旧的 `ctx.root` 属性。
+  Cordis 4.2 拒绝读取未声明的属性，21 处直接读取 `ctx.root` 会令激活失败并报
+  `cannot get property "root" without inject`。Cordis 4.1 行为不变，`engines.dsh` 范围未改动（#1047）。
+>>>>>>> 125a0fe1 (fix(adapter): read the host root through the Cordis root symbol)
 
 ## [0.5.6] — 2026-11-21 — Patch release
 

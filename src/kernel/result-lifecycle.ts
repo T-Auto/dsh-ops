@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { CallBudgetError } from './call-budget.js'
 import { completeCleanupRoot, recordCleanupFailure, type CleanupReason } from './result-cleanup-registry.js'
 import { runConfiguredResultCacheGc, scheduleStartupResultCacheGc } from './result-cache-gc.js'
+import { rootOf } from '../adapter/dsh/root.js'
 
 export interface ResultSession { id: string; header?: { cwd?: string } }
 export interface LifecycleHost {
@@ -26,7 +27,7 @@ interface LiveSession {
 interface Owner { mounts: number; sessions: Map<ResultSession, LiveSession>; expired: WeakSet<ResultSession> }
 const owners = new WeakMap<object, Owner>()
 function owner(ctx: Pick<LifecycleHost, 'root'>): Owner {
-  const key = ctx.root ?? ctx
+  const key = rootOf(ctx)
   let state = owners.get(key)
   if (!state) { state = { mounts: 0, sessions: new Map(), expired: new WeakSet() }; owners.set(key, state) }
   return state

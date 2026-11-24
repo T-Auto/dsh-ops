@@ -4,6 +4,7 @@ import type { Context } from '../adapter/dsh/types.js'
 import { withToolChange } from './changes.js'
 import { loadScopes } from '../adapter/dsh/host.js'
 import { publicationRegistration, publicationReady, publicationError } from './reentry.js'
+import { rootOf } from '../adapter/dsh/root.js'
 interface Host { root?: object; emit?(name: 'tools/change'): unknown; get(name: 'tools'): { definitions(scope?: object): readonly ToolDefinition[] } | undefined }
 export interface NativeProvider { definition: ToolDefinition; scope: unknown; active: boolean; inheritable: boolean; priority: number }
 interface Provider extends NativeProvider { publish(visible: boolean): void; ready(): Promise<void> }
@@ -12,7 +13,7 @@ const owners = new WeakMap<object, State>()
 const readiness = new WeakMap<() => void, () => Promise<void>>()
 export function nativeProviderReady(dispose: () => void): Promise<void> { return readiness.get(dispose)?.() ?? Promise.resolve() }
 function state(ctx: Host): State {
-  const key = ctx.root ?? ctx
+  const key = rootOf(ctx)
   let entry = owners.get(key)
   if (!entry) { entry = { providers: new Set(), shadows: new Set(), ptc: new Set(), revisions: new WeakMap(), globalRevision: 0, selections: new Set() }; owners.set(key, entry) }
   return entry
@@ -88,7 +89,7 @@ export function registerNativeProviderAtScope(ctx: Context, scope: unknown, defi
     // Metadata-only changes still need notification when every provider is
     // hidden. This is not another registry mutation; share its refusal window
     // and keep teardown observable after the row context begins unloading.
-    notification = publicationRegistration(ctx.root ?? ctx, () => { notify(); return notify })
+    notification = publicationRegistration(rootOf(ctx), () => { notify(); return notify })
   } catch (error) {
     try { stop() } catch (cleanup) { ctx.logger.warn(`dsh-ops: native provider cleanup failed: ${publicationError(cleanup)}`) }
     throw error

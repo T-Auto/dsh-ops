@@ -25,6 +25,7 @@ import { withResultSession } from '../kernel/result-lifecycle.js'
 import { resultStorage } from '../kernel/result-storage.js'
 import { resolveSessionDirectory } from '../adapter/dsh/working-directory.js'
 import { tryWslRead } from './wsl-worker.js'
+import { rootOf } from '../adapter/dsh/root.js'
 
 export { resolveWorker }
 
@@ -84,7 +85,7 @@ export async function invoke(ctx: Context, file: string, tool: string, args: unk
     const session = exec?.agent?.session
     if (!session?.id) return failure('EXECUTOR_UNAVAILABLE', 'An authoritative session identity is required.')
     return await withResultSession(ctx, session, signal, currentSignal =>
-      withCallBudget(ctx.root ?? ctx, String(session.id), currentSignal,
+      withCallBudget(rootOf(ctx), String(session.id), currentSignal,
         async () => {
           const basis = await resolveSessionDirectory(ctx, exec.agent, currentSignal)
           const value = await invokeTrusted(ctx, file, tool, args, exec, currentSignal, basis.cwd, config)
