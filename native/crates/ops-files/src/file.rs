@@ -807,7 +807,11 @@ mod tests {
                 None,
             )
             .unwrap();
-            assert_eq!(value["items"].as_array().unwrap().len(), 1, "offset={offset}");
+            assert_eq!(
+                value["items"].as_array().unwrap().len(),
+                1,
+                "offset={offset}"
+            );
             assert_eq!(value["items"][0]["line"], 1, "offset={offset}");
             assert_eq!(value["nextOffset"], 2, "offset={offset}");
         }
