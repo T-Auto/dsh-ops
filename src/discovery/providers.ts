@@ -1,6 +1,7 @@
 /** Provider-owned Native contracts. Registration alone never expands a session's tools. */
 import type { Context, Agent, ToolDefinition, ToolExecution } from '../adapter/dsh/types.js'
 import { loadScopes } from '../adapter/dsh/host.js'
+import { rootOf } from '../adapter/dsh/root.js'
 export interface NativeCapability {
   definition: ToolDefinition
   search: string
@@ -21,7 +22,7 @@ export interface Provider {
 interface State { providers: Provider[]; listeners: Set<() => void>; sequence: number; chain(scope: object): object[] }
 const roots = new WeakMap<object, State>()
 export function providers(ctx: Context, agent: Agent): Provider[] {
-  const state = roots.get(ctx.root ?? ctx)
+  const state = roots.get(rootOf(ctx))
   if (!state) return []
   const result = new Map<string, Provider>()
   for (const scope of [...state.chain(agent), undefined]) for (const row of state.providers) {
@@ -49,13 +50,13 @@ export function providerDiscoverable(provider: Provider, agent: Agent): boolean 
 }
 
 export function onProvidersChange(ctx: Context, listener: () => void): () => void {
-  const state = roots.get(ctx.root ?? ctx)
+  const state = roots.get(rootOf(ctx))
   if (!state) return () => {}
   state.listeners.add(listener)
   return () => { state.listeners.delete(listener) }
 }
 export async function prepareProviders(ctx: Context): Promise<void> {
-  const key = ctx.root ?? ctx
+  const key = rootOf(ctx)
   if (roots.has(key)) return
   const { scopeChainOf } = await loadScopes()
   if (!roots.has(key)) roots.set(key, { providers: [], listeners: new Set(), sequence: 0, chain: scopeChainOf })
@@ -69,7 +70,7 @@ export async function registerNativeCapability(ctx: Context, capability: NativeC
   if (capability.discoverable !== undefined && typeof capability.discoverable !== 'function') throw new Error('discoverable must be a side-effect-free function')
   if (capability.disclosure !== undefined && !['resident', 'on-demand'].includes(capability.disclosure)) throw new Error('disclosure must be resident or on-demand')
   await prepareProviders(ctx)
-  const { scopeOf } = await loadScopes(), state = roots.get(ctx.root ?? ctx)!, scope = scopeOf(ctx)
+  const { scopeOf } = await loadScopes(), state = roots.get(rootOf(ctx))!, scope = scopeOf(ctx)
   if (state.providers.some(row => row.active && row.scope === scope && row.capability.definition.name === definition.name)) throw new Error(`Native capability ${definition.name} already has a provider in this scope`)
   // Capture a registration's descriptors; changing a provider requires a new lifetime/token.
   const captured: NativeCapability = { ...capability, definition: { ...definition,

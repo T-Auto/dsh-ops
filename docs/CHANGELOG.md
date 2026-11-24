@@ -7,6 +7,14 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Per-host state is now keyed through `rootOf(ctx)`, which reads the `Symbol.for('cordis.root')` key
+  before the legacy `ctx.root` property. Cordis 4.2 refuses undeclared property reads, so the 21 direct
+  `ctx.root` reads failed activation with `cannot get property "root" without inject`. This changes
+  nothing on Cordis 4.1. The `engines.dsh` range is untouched (#1047).
+- 每主机状态的键改由 `rootOf(ctx)` 取得：先读 `Symbol.for('cordis.root')`，再回退旧的 `ctx.root` 属性。
+  Cordis 4.2 拒绝读取未声明的属性，21 处直接读取 `ctx.root` 会令激活失败并报
+  `cannot get property "root" without inject`。Cordis 4.1 行为不变，`engines.dsh` 范围未改动（#1047）。
+
 ## [0.5.6] — 2026-11-21 — Patch release
 
 - ops-ptc's batching teacher trajectory now teaches sandbox authority: the lesson states the

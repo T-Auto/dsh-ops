@@ -13,6 +13,7 @@ import { prepareWorkspace } from '../workspace-preparation.js'
 import { resultSessionNonce, registerResultCleanup } from './result-lifecycle.js'
 import type { ResultSession } from './result-lifecycle.js'
 import { markCleanupRootLive, registerCleanupRoot, releaseCleanupRootLive } from './result-cleanup-registry.js'
+import { rootOf } from '../adapter/dsh/root.js'
 
 interface Subprocess {
   spawn(spec: { argv: string[]; cwd: string; stdio: { stdin: { data: string }; stdout: { maxBytes: number }; stderr: { maxBytes: number } }; graceMs: number; signal: AbortSignal }): {
@@ -115,7 +116,7 @@ export async function resultStorage(ctx: StorageHost, session: ResultSession, sc
   signal?: AbortSignal, confined?: ConfinedArgv, admission?: () => boolean): Promise<WorkerStorage | undefined> {
   if (admission && !admission()) return undefined
   const nonce = resultSessionNonce(ctx, session), key = digest([session.id, policy.workspaceRoot, nonce])
-  const owner = ctx.root ?? ctx
+  const owner = rootOf(ctx)
   let cache = locations.get(owner)
   if (!cache) { cache = new Map(); locations.set(owner, cache) }
   let location = cache.get(key)

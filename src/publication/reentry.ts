@@ -1,5 +1,6 @@
 /** Registry writes share one refusal window across all rows in a host root. */
 import type { Context } from '../adapter/dsh/types.js'
+import { rootOf } from '../adapter/dsh/root.js'
 
 const REFUSAL = 'session append cannot reenter while another append is being published'
 const delays = [25, 100, 400, 1000] as const
@@ -26,7 +27,7 @@ const queues = new WeakMap<object, Queue>()
 const registrations = new WeakMap<() => void, Work>()
 
 function queueFor(ctx: Context): Queue {
-  const root = ctx.root ?? ctx
+  const root = rootOf(ctx)
   const existing = queues.get(root)
   if (existing) return existing
   const pending = new Set<Work>()

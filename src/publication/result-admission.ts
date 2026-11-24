@@ -1,10 +1,11 @@
 /** Public execution events prove a live run_code parent, not merely a truthy token. */
 import type { Context, ToolRunContext, ToolExecution } from '../adapter/dsh/types.js'
 import { inspectPresentation } from './presentation.js'
+import { rootOf } from '../adapter/dsh/root.js'
 interface AdmissionOwner { refs: number; active: Map<symbol, ToolExecution>; revision(): number; bump(): void }
 const owners = new WeakMap<object, AdmissionOwner>()
 export function acquireResultAdmission(ctx: Context): { authorize(exec: ToolRunContext): Promise<(() => boolean) | undefined>; dispose(): void } {
-  const root = ctx.root ?? ctx
+  const root = rootOf(ctx)
   let owner = owners.get(root)
   if (!owner) {
     let revision = 0

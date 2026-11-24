@@ -21,6 +21,7 @@ import { sessionTempDir } from '../session-temp.js'
 import { denied, authorityChanged, executionRestriction, normalizeNativeDenial, credentialDenied } from '../permissions.js'
 import { inside, canonicalAnchor, sameAuthority } from '../authority-paths.js'
 import { prepareWorkspace } from '../workspace-preparation.js'
+import { rootOf } from '../adapter/dsh/root.js'
 export { resolveWorker } from './runtime.js'
 export function failure(code: string, message: string, effectState: EffectState = 'none') {
   return { status: 'error', error: { code, phase: effectState === 'none' ? 'preflight' : 'execute', retryable: false, effectState,
@@ -44,7 +45,7 @@ export async function invoke(ctx: Context, file: string, tool: string, args: unk
     const session = exec?.agent?.session
     if (!session?.id) return failure('EXECUTOR_UNAVAILABLE', 'An authoritative session identity is required.')
     return await withResultSession(ctx, session, signal, currentSignal =>
-      withCallBudget(ctx.root ?? ctx, String(session.id), currentSignal,
+      withCallBudget(rootOf(ctx), String(session.id), currentSignal,
         () => invokeTrusted(ctx, file, tool, args, exec, currentSignal, config, admission)))
   }
   catch (error) {
