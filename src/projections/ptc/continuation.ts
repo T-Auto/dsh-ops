@@ -64,6 +64,16 @@ export function continuationFor(tool: string, rawArgs: unknown, data: CanonicalD
     const next = readMany(args, data)
     return next ? encode('read_files', next) : undefined
   }
+  // A page whose last kept line was cut by the output budget did not consume that
+  // line, so its `nextOffset` equals the resumption base rather than advancing.
+  // Following it would re-read the same cut line: at offset=1 the cursor equals
+  // the request (an in-place resume the caller can recognise), but at legacy
+  // offset=0 the base is 1, so the cursor points somewhere it has not been. Refuse
+  // the cursor in both cases instead of relying on the numeric coincidence, and
+  // let the page's own `nextAction` (view=hex) be the recovery route (#1045).
+  const items = Array.isArray(data.items) ? data.items : []
+  const lastItem = items.length ? object(items[items.length - 1]) : undefined
+  if (lastItem?.truncatedInLine === true) return undefined
   if ((tool === 'inspect_local_file' || tool === 'diff') && integer(data.nextOffset)
     && data.nextOffset > Number(args.offset ?? (tool === 'inspect_local_file' ? 1 : 0))) {
     return encode(tool, { ...args, offset: data.nextOffset })

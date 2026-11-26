@@ -834,7 +834,8 @@ fn grep_with(request: &Request, source: Option<&dyn FsDataSource>) -> Result<Val
                         hits += 1;
                         if page.wants(ordinal) {
                             page.push(
-                                json!({"path":file,"line":index + 1,"text":line.trim_end(),
+                                json!({"path":file,"line":if args.line_numbers {index + 1} else {0},
+                                    "text":line.trim_end(),
                                     "kind":kind.as_str()}),
                                 ordinal,
                             )?;

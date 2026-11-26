@@ -74,4 +74,22 @@ await test('content mode keeps returning every matching line', () => {
   })
 })
 
+await test('definitions honours lineNumbers like content mode', () => {
+  return withTempDir('grep-definitions-linenumbers', async root => {
+    fs.writeFileSync(path.join(root, 'a.ts'), 'function greet() {}\ngreet()\n')
+    // #1045 §2: definitions used to hard-code `index + 1`, so the references
+    // it withheld still carried real line numbers while the caller asked for
+    // none. Both modes must answer the same way.
+    const hidden = await run(root, { outputMode: 'definitions', lineNumbers: false })
+    assert.equal(hidden.items.length, 1, JSON.stringify(hidden))
+    assert.equal(hidden.items[0].line, 0, JSON.stringify(hidden))
+    const shown = await run(root, { outputMode: 'definitions' })
+    assert.equal(shown.items.length, 1, JSON.stringify(shown))
+    assert.equal(shown.items[0].line, 1, JSON.stringify(shown))
+    const content = await run(root, { lineNumbers: false })
+    assert.equal(content.items.length, 2, JSON.stringify(content))
+    for (const item of content.items) assert.equal(item.line, 0, JSON.stringify(content))
+  })
+})
+
 report('grep-definitions')

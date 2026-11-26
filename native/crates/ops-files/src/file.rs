@@ -311,11 +311,14 @@ fn inspect_prepared(
         .take(args.limit)
         .map(|(i, line)| json!({"path":path,"line":i+1,"text":line}))
         .collect();
+    // `offset` is a 1-based line number, but 0 is legacy for "first line".
+    // Both therefore resume at line 1, so the next page must start at 2. Keep
+    // this base identical to the hex path's `end.div_ceil(16) + 1`.
     let value = output::bounded(
         lines,
         text.lines().count(),
         args.offset.saturating_sub(1),
-        args.offset,
+        args.offset.max(1),
         text.lines().count(),
         false,
         facts,
@@ -775,6 +778,95 @@ mod tests {
         assert_eq!(error.code, "INVALID_ARGUMENT");
         assert!(error.message.contains("`encoding`"));
         assert!(!error.next_action.contains("view=hex"));
+    }
+
+    #[test]
+    fn legacy_zero_offset_pages_like_the_first_line() {
+        // #1045 §1: 0 is legacy for "first line", so offset=0 and offset=1 must
+        // both resume at line 2 when limit=1. The base is the skipped line count
+        // plus one, matching the hex path's `end.div_ceil(16) + 1`.
+        let root = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!("dsh-ops-zero-offset-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("lines.txt");
+        std::fs::write(&path, "alpha\nbeta\ngamma\n").unwrap();
+        let display = path.to_str().unwrap().to_string();
+
+        for offset in [0usize, 1] {
+            let value = inspect_args(
+                InspectArgs {
+                    path: display.clone(),
+                    offset,
+                    limit: 1,
+                    encoding: "utf-8".into(),
+                    view: "text".into(),
+                },
+                MAX_OUTPUT_BYTES,
+                false,
+                None,
+            )
+            .unwrap();
+            assert_eq!(
+                value["items"].as_array().unwrap().len(),
+                1,
+                "offset={offset}"
+            );
+            assert_eq!(value["items"][0]["line"], 1, "offset={offset}");
+            assert_eq!(value["nextOffset"], 2, "offset={offset}");
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn truncated_line_resumes_in_place_for_legacy_zero() {
+        // Reviewer follow-up on #1045 section 1: when a line is cut by the output
+        // budget it does not count as consumed, so nextOffset == next_base. At
+        // offset=1 that equals the requested offset (in-place resume), but at
+        // legacy offset=0 the base became 1, so the client is pointed at offset 1
+        // and reads the same cut line once more before the original failure.
+        let root = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!("dsh-ops-trunc-line-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("wide.txt");
+        std::fs::write(&path, "x".repeat(64 * 1024)).unwrap();
+        let display = path.to_str().unwrap().to_string();
+
+        let mut observed = Vec::new();
+        for offset in [0usize, 1] {
+            let value = match inspect_args(
+                InspectArgs {
+                    path: display.clone(),
+                    offset,
+                    limit: 1,
+                    encoding: "utf-8".into(),
+                    view: "text".into(),
+                },
+                2048,
+                false,
+                None,
+            ) {
+                Ok(value) => value,
+                Err(error) => panic!("offset={offset} failed: {}", error.code),
+            };
+            let item = &value["items"][0];
+            observed.push((
+                offset,
+                value["nextOffset"].as_u64().unwrap(),
+                item["truncatedInLine"].as_bool().unwrap_or(false),
+            ));
+        }
+        std::fs::remove_dir_all(&root).ok();
+        println!("observed (offset, nextOffset, truncatedInLine): {observed:?}");
+        let zero = observed[0];
+        let one = observed[1];
+        assert!(
+            zero.2 && one.2,
+            "both pages should cut the line: {observed:?}"
+        );
+        assert_eq!(one.1, 1, "offset=1 resumes in place: {observed:?}");
+        assert_eq!(zero.1, 1, "offset=0 points at offset 1: {observed:?}");
     }
 
     #[test]
