@@ -7,6 +7,8 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.5.7] — 2026-11-27 — Patch release
+
 - Preserve sealed panel reports when a merge overlaps session close. Concurrent folds share
   viewer updates, invalid workspaces share one warning per activation, and a live fold hashes
   the same bytes it parses (#976).
