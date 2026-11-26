@@ -1,11 +1,10 @@
 /**
  * A real host for the plugin.
  *
- * Every layer here is the production one: real Cordis `Context` and fiber
- * lifecycle, the harness's own `@deepseek-ai/dsh-tools` registry and
- * `@deepseek-ai/dsh-system-prompt` assembly, and real registration scopes.
- * Nothing is stubbed, so a passing suite is evidence about the shipped
- * composition rather than about a test double.
+ * Cordis, tools, the system-prompt assembler and registration scopes are real.
+ * The prompt service receives a minimal session-projection handle because most
+ * fixtures test publication rather than committed session-history folding; suites
+ * that test session behavior install the real session/projection providers.
  *
  * @module dsh-ops/test/host
  */
@@ -46,6 +45,11 @@ export async function bootHost({ withTools = true, withSystemPrompt = true, keep
     ctx.logger.level = 0
   }
   if (withSystemPrompt) {
+    // Generic fixtures exercise publication, not session-log folding; satisfy alpha.2's
+    // prompt dependency without subscribing the projection driver to synthetic events.
+    ctx.provide('sessionProjections', {
+      async register() { return { stateOf: () => ({ sections: [], complete: false, needsRebuild: false }), dispose() {} } },
+    })
     const SystemPrompt = (await import('@deepseek-ai/dsh-system-prompt')).default
     await ctx.plugin(SystemPrompt, {})
   }

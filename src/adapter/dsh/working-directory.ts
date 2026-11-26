@@ -1,4 +1,4 @@
-/** Resolve execution directories through the DSH 0.2.2 live directory service. */
+/** Resolve execution directories through the DSH 0.2.2 and 0.2.3-alpha.2 live directory service. */
 import path from 'node:path'
 import type { Agent } from './types.js'
 

@@ -1,7 +1,7 @@
 # Batch tool calls
 
 Group independent calls in one run_code program and keep dependencies explicit.
-Return enough status and completion facts for the next decision.
+Display only the needed summary using the host runtime’s instructed output API: `inspect(...)`, a returned value, or `console.log(...)`. Never call an output API the host does not provide.
 
 ## Core rules
 
@@ -10,8 +10,7 @@ Return enough status and completion facts for the next decision.
 3. **Dependencies, run sequentially**: await the earlier call before using its result.
 4. **Per-call fault tolerance**: check each Outcome status and per-file error; failures
    are values. Catch dispatch exceptions separately so one failure does not abort the rest.
-5. **Return only what is needed**: intermediate results are never shown; return a short
-   summary of the fields the next step needs.
+5. **Expose only what is needed**: use the active runtime’s instructed output API (`inspect(...)`, a returned value, or `console.log(...)`) to show only the summary needed for the next step.
 6. **OPS first for file work**: list with ops_glob, search with ops_grep, read with
    ops_read_files or ops_inspect_local_file, edit with ops_edit_file. The shell starts
    processes and reads environment facts; node:fs and node:child_process bypass path
@@ -68,12 +67,12 @@ const [load, head] = await Promise.all([
   tools.ops_load_sdk({ tools: ["glob", "read_files", "stat"] }),
   tools.ops_inspect_local_file({ path: "package.json", limit: 30 }),
 ])
-return { loaded: load.data?.tools, headLines: head.data?.items?.length }
+__DSH_OUTPUT__({ loaded: load.data?.tools, headLines: head.data?.items?.length });
 ```
 
 Calling an unloaded name throws "tools.ops_read_files is not a function". That is not a
 reason to fall back to the shell; it is one step spent loading. Loaded names remain
-selected in this live scope, and programs need not share a process or local variables.
+selected in this live scope. Some host PTC runtimes retain bindings between calls; follow their instructions.
 
 ## Trajectory 1 - reconnaissance: independent probes in one program
 
@@ -84,12 +83,12 @@ const [dirs, src, manifest] = await Promise.all([
   tools.ops_glob({ pattern: ["src/**/*.ts"], outputMode: "paths", limit: 60 }),
   tools.ops_read_files({ files: [{ path: "package.json", limit: 30 }] }),
 ])
-return {
+__DSH_OUTPUT__({
   status: [dirs.status, src.status, manifest.status],
   dirs: dirs.data?.items ?? [],
   src: (src.data?.items ?? []).slice(0, 20),
   manifestLines: manifest.data?.items?.[0]?.lineCount,
-}
+});
 ```
 
 Three probes, one round trip. Glob paths are `data.items: string[]`; details are
@@ -113,13 +112,13 @@ const reads = await Promise.all(files.map(async file => {
       lines: read.data?.items?.[0]?.lineCount }
   } catch (error) { return { file, ok: false, reason: error instanceof Error ? error.message : String(error) } }
 }))
-return {
+__DSH_OUTPUT__({
   search: { status: hits.status, error: "error" in hits ? hits.error : undefined, complete: hits.data?.complete,
     scanComplete: hits.data?.scanComplete, pageComplete: hits.data?.pageComplete,
     matchedObserved: hits.data?.matchedObserved, matchedTotal: hits.data?.matchedTotal,
     nextOffset: hits.data?.nextOffset, continuation: hits.status === "partial" ? hits.continuation : hits.data?.continuation },
   reads,
-}
+});
 ```
 
 ## Trajectory 3 - a verified edit: revision first, patch second
@@ -130,15 +129,17 @@ const [stat, context] = await Promise.all([
   tools.ops_stat({ path: "src/policy.ts" }),
   tools.ops_inspect_local_file({ path: "src/policy.ts", offset: 1, limit: 20 }),
 ])
-if (stat.status !== "completed" || !stat.data.revision)
-  return { status: stat.status, error: "error" in stat ? stat.error : undefined }
-const edit = await tools.ops_edit_file({
-  path: "src/policy.ts",
-  expectedRevision: stat.data.revision,
-  edits: [{ oldText: "export const VERSION = 1", newText: "export const VERSION = 2" }],
-})
-return { status: edit.status, error: "error" in edit ? edit.error : undefined,
-  context: context.data?.items?.length, changed: edit.data?.changed }
+if (stat.status !== "completed" || !stat.data.revision) {
+  __DSH_OUTPUT__({ status: stat.status, error: "error" in stat ? stat.error : undefined });
+} else {
+  const edit = await tools.ops_edit_file({
+    path: "src/policy.ts",
+    expectedRevision: stat.data.revision,
+    edits: [{ oldText: "export const VERSION = 1", newText: "export const VERSION = 2" }],
+  })
+  __DSH_OUTPUT__({ status: edit.status, error: "error" in edit ? edit.error : undefined,
+    context: context.data?.items?.length, changed: edit.data?.changed });
+}
 ```
 
 ## Trajectory 4 - paging: a loop is still one program
@@ -159,7 +160,7 @@ for (let page = 0; page < 40; page++) {
   if (!next || next <= offset) break
   offset = next
 }
-return { lines: rows.length, complete, error, nextOffset: complete ? undefined : offset }
+__DSH_OUTPUT__({ lines: rows.length, complete, error, nextOffset: complete ? undefined : offset });
 ```
 
 Advance by nextOffset, never by page count, and stop when the result reports complete.

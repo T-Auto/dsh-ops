@@ -1,12 +1,13 @@
 import type { Context, Agent } from '../adapter/dsh/types.js'
 import { loadScopes } from '../adapter/dsh/host.js'
+import { rootOf } from '../adapter/dsh/root.js'
 interface Row { scope?: object; changed(): void; allows(agent: Agent): boolean }
 interface State { rows: Row[]; agents: Set<Agent>; publishing: number; sequence: number }
 const roots = new WeakMap<object, Map<string, State>>()
 /** The nearest plugin row owns the SDK; overlapping rows never double-register one layer. */
 export async function ownScopes(ctx: Context, family: string, changed: () => void, allows: (agent: Agent) => boolean = () => true) {
   const { scopeOf, scopeChainOf } = await loadScopes()
-  const key = ctx.root ?? ctx
+  const key = rootOf(ctx)
   let families = roots.get(key)
   if (!families) { families = new Map(); roots.set(key, families) }
   let state = families.get(family)

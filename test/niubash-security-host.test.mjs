@@ -1,13 +1,20 @@
-import { selectExecutor, executeCall, prepareStep } from './lib/executor.mjs'
+import { selectExecutor, executeCall } from './lib/executor.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
+import { Context } from '@deepseek-ai/cordis'
+import Sessions from '@deepseek-ai/dsh-session'
+import Projections from '@deepseek-ai/dsh-session-projection'
+import Policy, { setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
+import Prompt from '@deepseek-ai/dsh-system-prompt'
+import Tools from '@deepseek-ai/dsh-tools'
+import * as NativeExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
 import FileSystem from '@deepseek-ai/dsh-fs-local'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import { assert, test, report, skipSuite, scenarioDir, waitFor } from './lib/harness.mjs'
-import { bootHost, shutdown } from './lib/host.mjs'
+import { shutdown, workingDirectoryOver } from './lib/host.mjs'
 import { niubashPreparedRoot } from '../lib/niubash/runtime.js'
 import { verifyNiubashTree } from '../lib/cli/niubash-payload.js'
 import { reclaimPreparedNiubash } from '../lib/niubash/prepared-cache.js'
@@ -28,12 +35,16 @@ const bash = consumerRoot ? resolveShells({}, { bundleRoot: consumerRoot }).bash
 assert.equal(bash.available, true, bash.detail)
 // Selection names the payload; the first command prepares this version-keyed copy.
 const preparedFile = path.join(niubashPreparedRoot(), 'niu.exe')
-const { ctx } = await bootHost({ withWorkingDirectory: true })
-const agent = { id: 'niu-security', session: { id: 'niu-security', mode: 'workspace-write', header: { cwd: root }, append() { return Promise.resolve() }, read() { return [] } } }
+const ctx = new Context()
+ctx.logger.level = 0
+ctx.provide('workingDirectory', workingDirectoryOver(root))
+for (const plugin of [Sessions, Projections, Prompt, Tools, NativeExecutor]) await ctx.plugin(plugin, {})
+await ctx.plugin(Policy, { mode: 'workspace-write', workspaceRoot: root })
+const agent = { id: 'niu-security', session: ctx.sessions.create('niu-security', { meta: { cwd: root } }) }
+const setMode = mode => setSandboxMode(agent.session, mode)
 agent.ctx = createScope(ctx, agent).ctx
 await ctx.plugin(Subprocess)
 await ctx.plugin(Sandbox, {})
-await ctx.plugin(inner => inner.provide('sandboxPolicy', { defaultMode: 'workspace-write', resolve: (input) => ({ mode: input?.session?.mode ?? agent.session.mode, workspaceRoot: root, sessionId: input?.session?.id ?? agent.session.id }) }))
 await ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { mountSessionBash(inner, { publishBashTool: true }, { bash }) } })
 await ctx.serial('agent/created', { agent })
 await waitFor(() => ctx.get('tools').get('ops_bash', agent), { what: 'Niubash tool publication' })
@@ -106,12 +117,12 @@ try {
     }
     assert.equal(fs.existsSync(path.join(outside, 'forbidden.txt')), false)
     assert.equal(fs.existsSync(path.join(outside, 'native-forbidden.txt')), false)
-    agent.session.mode = 'read-only'
+    setMode('read-only')
     const denied = await call('printf denied > read-only.txt')
     assert.equal(denied.timedOut, false, JSON.stringify(denied)); assert.notEqual(denied.exitCode, 0, JSON.stringify(denied)); assert.equal(fs.existsSync(path.join(root, 'read-only.txt')), false)
     const native = await call(node("require('fs').writeFileSync('native-read-only.txt','bad')"))
     assert.equal(native.timedOut, false, JSON.stringify(native)); assert.notEqual(native.exitCode, 0, JSON.stringify(native)); assert.equal(fs.existsSync(path.join(root, 'native-read-only.txt')), false)
-    agent.session.mode = 'workspace-write'
+    setMode('workspace-write')
     ok(await call('printf restored > restored.txt'))
   })
   await test('consecutive and concurrent confined calls preserve prepared payload size and mtime', async () => {
@@ -135,12 +146,14 @@ try {
     const sourceBefore = snapshot(path.dirname(file))
     const preparedBefore = snapshot(prepared)
     for (const mode of ['read-only', 'workspace-write']) {
-      agent.session.mode = mode
+      setMode(mode)
       for (let n = 0; n < 2; n++) assert.equal(ok(await call('printf repeated')).stdout.text, 'repeated')
       const parallel = await Promise.all([call('printf parallel-one'), call('printf parallel-two')])
       assert.deepEqual(parallel.map(value => ok(value).stdout.text), ['parallel-one', 'parallel-two'])
       // Session identity must not create an implicit recovery boundary.
-      const siblingAgent = { ...agent, session: { ...agent.session, id: 'niu-sibling' } }
+      const siblingSession = ctx.sessions.create(undefined, { meta: { cwd: root } })
+      setSandboxMode(siblingSession, mode)
+      const siblingAgent = { ...agent, session: siblingSession }
       siblingAgent.ctx = createScope(ctx, siblingAgent).ctx
       await ctx.serial('agent/created', { agent: siblingAgent })
       await waitFor(() => ctx.get('tools').get('ops_bash', siblingAgent), { what: 'sibling Bash publication' })
@@ -151,18 +164,18 @@ try {
       assert.deepEqual(snapshot(prepared), preparedBefore, `${mode}: prepared payload is unchanged`)
       assert.deepEqual(snapshot(path.dirname(file)), sourceBefore, `${mode}: source is unchanged`)
     }
-    agent.session.mode = 'workspace-write'
+    setMode('workspace-write')
   })
   await test('restricted native children cannot modify the source or the prepared payload', async () => {
     for (const mode of ['read-only', 'workspace-write']) {
-      agent.session.mode = mode
+      setMode(mode)
       for (const target of ['source', 'prepared']) {
         const command = node(`const fs=require('fs'),path=require('path');const file=${target === 'source' ? 'JSON_SOURCE' : "path.join(process.env.NIU_ROOT,'usr/bin/cat.exe')"};try{fs.appendFileSync(file,'BAD');process.stdout.write('MUTATED')}catch(e){process.stdout.write('DENIED')}`.replace('JSON_SOURCE', JSON.stringify(path.join(path.dirname(file), 'niu.exe'))))
         assert.equal(ok(await call(command)).stdout.text, 'DENIED', `${mode} ${target}`)
       }
       verifyNiubashTree(path.dirname(file))
     }
-    agent.session.mode = 'workspace-write'
+    setMode('workspace-write')
   })
   await test('external cat and awk resolve inside the reusable prepared payload', async () => {
     const resolved = JSON.parse(ok(await call(node(`const fs=require('fs'),path=require('path');const find=name=>process.env.PATH.split(path.delimiter).map(dir=>path.join(dir,name+'.exe')).find(file=>fs.existsSync(file));process.stdout.write(JSON.stringify({cat:find('cat'),awk:find('awk')}))`))).stdout.text)
@@ -185,7 +198,7 @@ try {
   })
   await test('host timeout and cancellation kill native descendants, not just niu.exe', async () => {
     for (const cancel of [false, true]) {
-      agent.session.mode = cancel ? 'workspace-write' : 'danger-full-access'
+      setMode(cancel ? 'workspace-write' : 'danger-full-access')
       const marker = path.join(root, cancel ? 'cancel-child.txt' : 'timeout-child.txt')
       const ready = path.join(root, cancel ? 'cancel-ready.txt' : 'timeout-ready.txt')
       const controller = new AbortController()
@@ -205,10 +218,10 @@ try {
       await new Promise(resolve => setTimeout(resolve, Math.max(0, markerAt + 200 - Date.now())))
       assert.equal(fs.existsSync(marker), false, 'no live child remains after host Job termination')
     }
-    agent.session.mode = 'workspace-write'
+    setMode('workspace-write')
   })
   await test('sandbox failures and authority changes during confinement fail before host spawn', async () => {
-    agent.session.mode = 'workspace-write'
+    setMode('workspace-write')
     for (const changed of [false, true]) {
       let spawns = 0
       const policy = ctx.get('sandboxPolicy').resolve({ session: agent.session })
@@ -216,7 +229,7 @@ try {
         if (name === 'subprocess') return { spawn() { spawns++; throw new Error('must not spawn') } }
         if (name === 'sandbox') return { async confine(argv) {
           if (!changed) throw new Error('SANDBOX_UNAVAILABLE: test provider failed')
-          agent.session.mode = 'read-only'
+          setMode('read-only')
           return { argv, enforcement: 'partial' }
         } }
         return ctx.get(name)
@@ -227,25 +240,29 @@ try {
       assert.match(value.error, changed ? /AUTHORITY_CHANGED/ : /EXECUTOR_UNAVAILABLE/)
       if (!changed) assert.equal(value.sandbox.runnerFailed, true)
       assert.equal(spawns, 0)
-      agent.session.mode = 'workspace-write'
+      setMode('workspace-write')
     }
   })
   await test('Native and PTC projections use the same live session policy', async () => {
     await ctx.plugin(FileSystem, {})
     await ctx.plugin(NodePtc, {})
     await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, 'ptc') } })
-    const ptc = async (command, workdir = root) => {
+    const runPtc = async code => {
       const result = await executeCall(ctx, { name: 'run_code', callId: 'niu-ptc', agent, signal: new AbortController().signal,
-        arguments: { description: 'Verify Niubash PTC authority', code: `return await tools.ops_bash(${JSON.stringify({ description: 'Verify PTC confinement', command, workdir })});` } })
+        arguments: { description: 'Verify Niubash PTC authority', code } })
       assert.notEqual(result.isError, true, JSON.stringify(result)); return result.value.result
     }
+    const ptc = (command, workdir = root) => runPtc(`return await tools.ops_bash(${JSON.stringify({ description: 'Verify PTC confinement', command, workdir })});`)
     assert.equal(ok(await ptc("printf 'PTC_OK' | cat")).stdout.text, 'PTC_OK')
     const value = await ptc('printf blocked > ptc-outside.txt', outside)
     assert.equal(value.timedOut, false, JSON.stringify(value)); assert.notEqual(value.exitCode, 0, JSON.stringify(value)); assert.equal(fs.existsSync(path.join(outside, 'ptc-outside.txt')), false)
-    agent.session.mode = 'read-only'
+    assert.equal(await runPtc('globalThis.niuFixtureSentinel = 42; return 42'), 42)
+    assert.equal(await runPtc('return globalThis.niuFixtureSentinel ?? null'), 42, 'fixture uses retained PTC state')
+    setMode('read-only')
+    assert.equal(await runPtc('return globalThis.niuFixtureSentinel ?? null'), null, 'mode change discarded retained PTC state')
     const denied = await ptc('printf blocked > ptc-readonly.txt')
     assert.equal(denied.timedOut, false, JSON.stringify(denied)); assert.notEqual(denied.exitCode, 0, JSON.stringify(denied)); assert.equal(fs.existsSync(path.join(root, 'ptc-readonly.txt')), false)
-    agent.session.mode = 'danger-full-access'
+    setMode('danger-full-access')
     ok(await call('printf full > full.txt', { workdir: outside }))
     assert.equal(fs.readFileSync(path.join(outside, 'full.txt'), 'utf8'), 'full')
   })

@@ -6,6 +6,10 @@ These checks separate plugin configuration from host presentation and provider
 transport failures. They do not establish that an unobserved Desktop freeze or
 an old conversation has been repaired.
 
+## DSH 0.2.3-alpha.2 compatibility
+
+Compatibility declares `>=0.2.2-rc.1 <0.2.3-0` plus the tested `0.2.3-alpha.2`; alpha.1 and the 0.2.3 release are excluded. The published DSH 0.2.2-rc.1 and Cordis 4.1.0 host metadata evaluator accepts the declared legacy line under Node 24.22.3. An isolated profile with a linked local build also composed successfully, and headless startup reached the missing-credential check without a reported plugin error. This smoke test did not exercise a model turn. Cordis 4.2 is limited to the published/tested 4.2.0-alpha.1 prerelease. Alpha.2 uses `Symbol.for("cordis.root")` (with a Cordis 4.1 property fallback), requires the scoped PTC REPL form `inspect(...)` rather than top-level `return`, and uses the provider-owned `executionInstructions` for output selection. The working-directory adapter uses the injected live `workingDirectory` service.
+
 ## DSH 0.2.2 publication migration
 
 All file reads/mutations and result share one scope-owned canonical source, not separate Native/PTC shadow definitions. Native retains its renderer and context-read evidence; values are Outcome.data. File operations retain the existing authoritative cwd, credential, CAS and sandbox bridge. PTC-only jobs and load_sdk remain separate.
@@ -127,7 +131,7 @@ use the PTC SDK loader under the host's `run_code` presentation. Check the scope
 assembled tools and presentation, not just a global registry or a prompt section
 name. An empty discovery section alone does not identify the cause.
 
-The 0.5 adapter targets DSH `>=0.2.2-rc.1 <0.2.3-0`; earlier hosts are not supported. Host imports remain centralized in `src/adapter/dsh`, with type-only declarations and lazy runtime loading. The 0.2.2 host owns executor selection and captures a `ResolvedToolSet` before prompt assembly and pre-step. Stable conditional registrations expose committed discovery/PTC selection on the next step; prompt callbacks never publish tools. Request guidance reads the captured set, replacement fallbacks share step-time admission, and registry diagnostics use public `definitions()` without schema cloning. A missing live working-directory service is an infrastructure error, not permission to use the original session header as an execution directory. Runtime evidence must name the tested dependency graph and actual checks; version strings alone do not establish compatibility.
+The 0.5 adapter targets DSH `>=0.2.2-rc.1 <0.2.3-0 || 0.2.3-alpha.2`; this retains the 0.2.2 line and adds only the tested alpha.2 prerelease. Alpha.1 and the eventual 0.2.3 release are not declared supported. Host imports remain centralized in `src/adapter/dsh`, with type-only declarations and lazy runtime loading. The 0.2.2 host owns executor selection and captures a `ResolvedToolSet` before prompt assembly and pre-step. Stable conditional registrations expose committed discovery/PTC selection on the next step; prompt callbacks never publish tools. Request guidance reads the captured set, replacement fallbacks share step-time admission, and registry diagnostics use public `definitions()` without schema cloning. A missing live working-directory service is an infrastructure error, not permission to use the original session header as an execution directory. Runtime evidence must name the tested dependency graph and actual checks; version strings alone do not establish compatibility.
 
 The original #346 report also describes an enabled row and a stalled publication
 chain. The profile checks above do not prove that failure fixed. If the row is

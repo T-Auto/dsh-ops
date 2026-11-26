@@ -15,7 +15,7 @@ export async function profileFixture(label, plugin, config) {
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'fixture', private: true, dsh: { profile: { bundles: [] } } }))
   fs.writeFileSync(baseFile, '[]\n')
   fs.writeFileSync(patchPath, JSON.stringify([{ insert: [{ id: label, name: 'cordis:fixture', config }] }]))
-  const profile = { home, dir, patchPath, overlays: [], installAnchor: path.join(PACKAGE_ROOT, 'package.json') }
+  const profile = { name: 'fixture', home, dir, patchPath, installAnchor: path.join(PACKAGE_ROOT, 'package.json'), cwd: dir, overlayPaths: [], startedBundles: [], telemetryDisabledEnv: undefined }
   await ctx.plugin(Loader, {})
   ctx.loader.builtins.fixture = plugin
   await ctx.plugin(inner => inner.provide('profileContext', profile))

@@ -132,12 +132,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  # `package.json` promises `^22.19 || >=24`, but the legs above only ever run 24, so the lower
-  # bound would never be exercised. The floor is a JavaScript-runtime property, so one host is
-  # enough: the platform-specific behaviour is covered by the four validating legs on 24. Windows
-  # on 22.19 is tracked separately (#774) because `niubash-consumer`, `pwsh-upgrade` and
-  # `release-tar-modes` fail there (ETIMEDOUT / EPERM on npm-pack renames) while the same suites
-  # pass on 24; adding that leg back is a follow-up, not a silent omission.
+  # The plugin still declares Node ^22.19 || >=24, so keep its lower-bound lane.
   node-floor:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -151,6 +146,26 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           node-version: '22.19'
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
+      - name: Functional gate (skips, suite inventory, packed artifact)
+        shell: bash
+        run: node scripts/verify-gate.mjs --skip-install
+
+  # DSH 0.2.3-alpha.2 requires Node ^24.22.3 || >=26.13.1. Keep this as a distinct
+  # blocking lane so the legacy Node floor remains covered independently.
+  alpha2-node-floor:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DSH_OPS_SUITE_TIMEOUT_MS: '300000'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+        with:
+          node-version: '24.22.3'
       - name: Install locked dependencies
         run: npm ci --ignore-scripts --registry=https://registry.npmjs.org
       - name: Functional gate (skips, suite inventory, packed artifact)
@@ -224,7 +239,7 @@ jobs:
   ci-required:
     name: CI required
     if: always()
-    needs: [validate, tools-trial, node-floor, workflow-lint, source-size, rust-lint]
+    needs: [validate, tools-trial, node-floor, alpha2-node-floor, workflow-lint, source-size, rust-lint]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

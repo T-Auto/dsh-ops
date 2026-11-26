@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { parse } from 'yaml'
+import semver from 'semver'
 import { composeBundle } from '../scripts/lib/compose-bundle.mjs'
 import { COMPONENTS, componentEntry } from '../lib/components/defaults.js'
 import { assert, test, report, PACKAGE_ROOT } from './lib/harness.mjs'
@@ -20,12 +21,19 @@ const patch = parse(fs.readFileSync(path.join(PACKAGE_ROOT, 'cordis.patch.yml'),
 await test(`explicit host compatibility is consistent and bounded (${boot.getDshRuntimeVersion()})`, () => {
   assert.equal(typeof pkg.engines.dsh, 'string')
   assert.equal(pkg.engines.dsh, pkg.peerDependencies['@deepseek-ai/dsh'])
+  assert.equal(pkg.peerDependencies['@deepseek-ai/cordis'], '~4.1.0 || 4.2.0-alpha.1')
+  const cordisRange = pkg.peerDependencies['@deepseek-ai/cordis']
+  assert.ok(semver.satisfies('4.1.0', cordisRange))
+  assert.ok(semver.satisfies('4.1.9', cordisRange))
+  assert.ok(semver.satisfies('4.2.0-alpha.1', cordisRange))
+  for (const version of ['4.2.0-alpha.2', '4.2.0-beta.1', '4.2.0-rc.1', '4.2.0', '4.2.1'])
+    assert.equal(semver.satisfies(version, cordisRange), false, `must not claim untested Cordis ${version}`)
   // Exercise each declared range through the actual host evaluator. Older hosts
   // read peers, newer hosts prefer engines, so test both independently.
   for (const range of [pkg.engines.dsh, pkg.peerDependencies['@deepseek-ai/dsh']]) {
     const candidate = { name: pkg.name, version: pkg.version, engines: { dsh: range }, peerDependencies: { '@deepseek-ai/dsh': range } }
-    for (const version of ['0.2.2-rc.1', '0.2.2-rc.2', '0.2.2']) assert.equal(boot.evaluatePluginCompatibility(candidate, {}, version), undefined)
-    for (const version of ['0.2.0-rc.2', '0.2.1-rc.5', '0.2.1', '0.2.2-alpha.2', '0.2.2-rc.0', '0.2.3-0', '0.3.0']) assert.ok(boot.evaluatePluginCompatibility(candidate, {}, version), `must not claim ${version}`)
+    for (const version of ['0.2.2-rc.1', '0.2.2-rc.2', '0.2.2', '0.2.3-alpha.2']) assert.equal(boot.evaluatePluginCompatibility(candidate, {}, version), undefined)
+    for (const version of ['0.2.0-rc.2', '0.2.1-rc.5', '0.2.1', '0.2.2-alpha.2', '0.2.2-rc.0', '0.2.3-0', '0.2.3-alpha.1', '0.2.3-alpha.3', '0.2.3', '0.3.0']) assert.ok(boot.evaluatePluginCompatibility(candidate, {}, version), `must not claim ${version}`)
   }
 })
 

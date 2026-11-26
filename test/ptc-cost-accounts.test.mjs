@@ -40,12 +40,12 @@ requireWorker('ptc-cost-accounts')
 const HOST_PLUGINS = [[FsTools, {}], [SearchTools, { sampleOverCapGlobResults: false }]]
 /** The official names the shipped row replaces; the ledger compares SDK names against them. */
 const OFFICIAL = ['read', 'glob', 'grep']
-/** A thin single-dispatch program with no plan line: it earns the plan notice. */
-const THIN_PROGRAM = "const row = await tools.ops_inspect_local_file({ path: 'ledger-note' })\nreturn row"
+/** A thin single-dispatch program with no plan line: it earns one plan notice. */
+const THIN_PROGRAM = "const row = await tools.ops_inspect_local_file({ path: 'ledger-note' })\ninspect(row)"
 /** A compliant load step: plan line plus one batched dispatch; it earns no notice. */
 const LOAD_PROGRAM = '// plan: load the on-demand search APIs\n'
   + "const [loaded] = await Promise.all([tools.ops_load_sdk({ tools: ['glob', 'grep', 'read_files'] })])\n"
-  + 'return { loaded }'
+  + 'inspect({ loaded })'
 const LEDGER_NOTE = 'ledger-note'
 
 const bytes = value => Buffer.byteLength(String(value), 'utf8')
@@ -76,18 +76,35 @@ function officialFacts(ctx, agent) {
   }
 }
 
+/** Alpha.2 delivers named system sections as indexed blocks and appends deltas. */
+function deliveredSystem(messages) {
+  const sections = new Map()
+  for (const message of messages) {
+    if (message.role !== 'system') continue
+    if (message.source.reset) sections.clear()
+    for (const section of message.source.sections) {
+      if (section.state === 'retired') sections.delete(section.name)
+      else {
+        const block = message.content[section.contentIndex]
+        assert.equal(block?.type, 'text', 'active system section must reference a delivered text block')
+        sections.set(section.name, { order: section.order, text: block.text })
+      }
+    }
+  }
+  return [...sections.values()].sort((a, b) => a.order - b.order).map(section => section.text).filter(Boolean).join('\n\n')
+}
+
 /** The dsh-ops guidance messages in one delivered request, classified and byte-counted. */
 function historyItemsOf(messages) {
   const items = []
   for (const message of messages) {
     if (message.source?.kind !== 'dsh-ops:batching-guidance') continue
     const text = textOf(message)
-    // The lesson is rendered for the reported sandbox mode, so identify it by its
-    // opening heading instead of comparing against the shipped file (#963).
     const kind = text.startsWith('# Batch tool calls') ? 'teaching'
-      : text === noticeText('plan', analyzeProgram(THIN_PROGRAM)) ? 'notice:plan' : undefined
-    if (kind === undefined) continue
-    items.push({ kind, bytes: bytes(text), sha: sha(text) })
+      : text === noticeText('plan', analyzeProgram(THIN_PROGRAM)) ? 'notice:plan'
+        : text === noticeText('shape', analyzeProgram(THIN_PROGRAM), { loader: true, resident: [], loadable: [] }) ? 'notice:shape'
+          : text === noticeText('bypass', analyzeProgram(THIN_PROGRAM), { loader: true, resident: [], loadable: [] }) ? 'notice:bypass' : 'unknown'
+    items.push({ role: message.role, kind, bytes: bytes(text), sha: sha(text) })
   }
   return items
 }
@@ -126,13 +143,13 @@ async function runScenario(root, { hostPlugins = [] } = {}) {
         }
       } finally { step.dispose() }
     }
-    const requests = []
+    const requests = [], executions = []
     const stepWith = (label, code) => request => {
       requests.push({
         label,
         wireNames: request.tools.map(tool => tool.name).sort(),
         wireSha: sha(JSON.stringify(request.tools)),
-        systemSha: sha(textOf(request.messages.find(message => message.role === 'system'))),
+        systemSha: sha(deliveredSystem(request.messages)),
         history: historyItemsOf(request.messages),
         delivered: { messages: request.messages.length, bytes: bytes(request.messages.map(textOf).join('\n')) },
       })
@@ -140,13 +157,15 @@ async function runScenario(root, { hostPlugins = [] } = {}) {
     }
     const snapshots = {}
     snapshots.baseline = await snapshot('baseline')
-    await group.host.run(agent, [stepWith('first', THIN_PROGRAM), stepWith('after-notice')])
+    const firstBatch = await group.host.run(agent, [stepWith('first', THIN_PROGRAM), stepWith('after-notice')])
+    executions.push({ label: 'first', isError: firstBatch.results[0]?.result.isError, result: firstBatch.results[0]?.result.value?.result })
     snapshots.steady = await snapshot('steady')
-    await group.host.run(agent, [stepWith('before-load', LOAD_PROGRAM), stepWith('after-load')])
+    const loadBatch = await group.host.run(agent, [stepWith('before-load', LOAD_PROGRAM), stepWith('after-load')])
+    executions.push({ label: 'before-load', isError: loadBatch.results[0]?.result.isError, result: loadBatch.results[0]?.result.value?.result })
     snapshots.loaded = await snapshot('loaded')
     await group.host.run(agent, [stepWith('repeat')])
     snapshots.repeat = await snapshot('repeat')
-    return { environment: group.environment, official, snapshots, requests }
+    return { environment: group.environment, official, snapshots, requests, executions }
   } finally { await group.close() }
 }
 
@@ -223,13 +242,22 @@ await test('the four accounts of one OPS-PTC group: system, its SDK subset, the 
   for (const request of requests) assert.deepEqual(request.wireNames, ['run_code'])
   assert.equal(new Set(requests.map(request => request.wireSha)).size, 1, 'wire is byte-identical on every request')
   assert.equal(requests[0].wireSha, snapshots.baseline.wire.sha, 'the idle snapshot wire is the delivered wire')
+  for (const request of requests.filter(request => ['first', 'before-load'].includes(request.label))) {
+    const execution = first.executions.find(item => item.label === request.label)
+    assert.equal(execution?.isError, false, request.label + ' must execute successfully on alpha.2')
+  }
   // D: the history account — the opening lesson is the first guidance the model
   // reads, then exactly one plan notice, and nothing is appended thereafter.
-  const kindsAt = label => requests.find(request => request.label === label).history.map(item => item.kind)
+  const historyAt = label => requests.find(request => request.label === label).history
+  const kindsAt = label => historyAt(label).map(item => item.kind)
+  for (const request of requests) for (const item of request.history) {
+    assert.equal(item.role, 'user', 'guidance history is delivered as a user-role message')
+    assert.notEqual(item.kind, 'unknown', 'all owned guidance is accounted for')
+  }
   assert.deepEqual(kindsAt('first'), ['teaching'], 'the first request opens with the lesson in history')
   assert.deepEqual(kindsAt('after-notice'), ['teaching', 'notice:plan'], 'the thin program earns exactly one plan notice')
   assert.deepEqual(kindsAt('before-load'), ['teaching', 'notice:plan'])
-  assert.deepEqual(kindsAt('after-load'), ['teaching', 'notice:plan'], 'a compliant load step earns no new notice')
+  assert.deepEqual(kindsAt('after-load'), ['teaching', 'notice:plan'], 'a compliant load earns no new notices')
   assert.deepEqual(kindsAt('repeat'), ['teaching', 'notice:plan'], 'no re-teaching, no duplicate notice')
   // The delivered system message is the idle assembly, and repeats are byte-identical.
   const systemAt = label => requests.find(request => request.label === label).systemSha

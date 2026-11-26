@@ -21,7 +21,7 @@ export function componentProfile(label, bundleText, patches = []) {
   const patchPath = path.join(dir, 'cordis.patch.yml'), baseFile = path.join(dir, 'cordis.yml')
   fs.writeFileSync(patchPath, JSON.stringify(patches)); fs.writeFileSync(baseFile, '[]\n')
   const installAnchor = path.join(install, 'package.json'); fs.writeFileSync(installAnchor, '{"name":"fixture-installation"}')
-  const profile = { home, dir, patchPath, installAnchor, overlays: [], startedBundles: ['dsh-ops'] }
+  const profile = { name: 'fixture', home, dir, patchPath, installAnchor, cwd: dir, overlayPaths: [], startedBundles: ['dsh-ops'], telemetryDisabledEnv: undefined }
   return { profile, bundlePath, baseFile, async boot(platform = process.platform) {
     const { ctx } = await bootHost()
     // A public Context value lets the real Loader evaluate the platform expression

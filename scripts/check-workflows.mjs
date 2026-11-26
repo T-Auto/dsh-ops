@@ -24,6 +24,7 @@ const EXPECTED_BLOCKING = [
   'validate',
   'tools-trial',
   'node-floor',
+  'alpha2-node-floor',
   'workflow-lint',
   'source-size',
   'rust-lint',
@@ -144,7 +145,16 @@ if (!ci) {
   check(triggers?.pull_request?.paths === undefined && triggers?.pull_request?.['paths-ignore'] === undefined,
     'ci.yml: pull_request has no path filter')
   const jobs = ci.doc.jobs ?? {}
-  checkPluginBuild('ci.yml', jobs, ['validate', 'node-floor', 'tools-trial'])
+  checkPluginBuild('ci.yml', jobs, ['validate', 'node-floor', 'alpha2-node-floor', 'tools-trial'])
+  check(jobs['node-floor']?.steps?.find(step => step.uses === './.github/actions/setup')?.with?.['node-version'] === '22.19',
+    'ci.yml: node-floor validates the declared Node 22.19 minimum')
+  check(jobs['alpha2-node-floor']?.steps?.find(step => step.uses === './.github/actions/setup')?.with?.['node-version'] === '24.22.3',
+    'ci.yml: alpha2-node-floor validates the DSH alpha2 Node 24.22.3 minimum')
+  for (const id of ['node-floor', 'alpha2-node-floor']) {
+    const runs = jobs[id]?.steps?.map(step => step.run).filter(Boolean) ?? []
+    check(runs.some(run => run.includes('npm ci')), `ci.yml: ${id} installs locked dependencies`)
+    check(runs.some(run => run.includes('verify-gate.mjs --skip-install')), `ci.yml: ${id} runs the full functional gate`)
+  }
   // Dropping a leg from the matrix would silently shrink what "green" means, so the shipped
   // targets are pinned here. Each leg also hands its own name to the gate, which refuses a runner
   // of another platform (the old standalone identity step).

@@ -1,4 +1,7 @@
 /** hideOfficialTools removes the official file tools a PTC projection replaces. */
+import { createHash } from 'node:crypto'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
 import FileSystem from '@deepseek-ai/dsh-fs-local'
@@ -49,8 +52,13 @@ const REAL_PARAMETERS = {
   read_image: { type: 'object', additionalProperties: false, required: ['file_path'], properties: {
     file_path: { type: 'string', description: 'Path to the image file' } } },
 }
+const pixel = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jf5sAAAAASUVORK5CYII=', 'base64')
+const imageRef = { attachmentId: createHash('sha256').update(pixel).digest('hex'),
+  mediaType: 'image/png', bytes: pixel.length, width: 1, height: 1 }
 const realDefinition = name => ({ name, description: `fixture ${name}`, parameters: REAL_PARAMETERS[name],
-  output: { schema: { type: 'object' }, render: () => [] }, execute: async () => ({ official: name }) })
+  output: { schema: { type: 'object' }, render: () => name === 'read_image'
+    ? [{ type: 'image', attachment: imageRef }]
+    : [] }, execute: async () => ({ official: name }) })
 /** One named entry of the tools:sdk declaration, or '' when the name is absent. */
 const sdkBlock = (sdk, name) => {
   const match = new RegExp('(?:^|\\n)\\s*' + name + ':\\s*\\{([\\s\\S]*?)\\n\\s*\\};', 'u').exec(sdk)
@@ -340,6 +348,9 @@ await test('an unattached projection keeps the official file tools callable', ()
 }))
 
 await test('kept official write, edit and read_image keep their real schemas and stay callable', () => withTempDir('hide-real-schema', async cwd => fixture(cwd, 'ops-ptc', {}, async ({ ctx, agent }) => {
+  const imagePath = join(cwd, 'pixel.png')
+  writeFileSync(imagePath, pixel)
+  ctx.provide('attachments', { imageHostPath: ref => ref.attachmentId === imageRef.attachmentId ? imagePath : undefined })
   const owner = await agent()
   await waitPublish(ctx, owner, REPLACED)
   const c = await capture(ctx, owner)
@@ -362,10 +373,14 @@ await test('kept official write, edit and read_image keep their real schemas and
   const step = await prepareStep(ctx, owner)
   try {
     const run = await executeCall(ctx, { agent: owner, toolSet: step.toolSet, name: 'run_code', callId: 'hide-real-schema',
-      arguments: { description: 'Call the kept official tools', code: 'return { write: await tools.write({ file_path: \'a.txt\', content: \'x\' }), edit: await tools.edit({ file_path: \'a.txt\', old_string: \'x\', new_string: \'y\' }), image: await tools.read_image({ file_path: \'a.txt\' }) }' },
+      arguments: { description: 'Call the kept official tools', code: `
+const written = await tools.write({ file_path: 'a.txt', content: 'x' });
+const edited = await tools.edit({ file_path: 'a.txt', old_string: 'x', new_string: 'y' });
+const picture = await tools.read_image({ file_path: 'pixel.png' });
+return [written.official, edited.official, picture.attachmentId, picture.width, picture.height];` },
       signal: new AbortController().signal })
     assert.equal(run.isError, false, JSON.stringify(run))
-    assert.deepEqual(run.value.result, { write: { official: 'write' }, edit: { official: 'edit' }, image: { official: 'read_image' } })
+    assert.deepEqual(run.value.result, ['write', 'edit', imageRef.attachmentId, 1, 1])
   } finally { step.dispose() }
 }, realDefinition)))
 

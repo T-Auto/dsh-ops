@@ -113,7 +113,7 @@ Direct `git+https` installation and unbuilt source checkouts lack the complete r
 
 #### Update
 
-The 0.5 series supports DSH **from 0.2.2-rc.1**, not 0.2.0/0.2.1 or earlier 0.2.2 previews. The DSH adapter remains; integration uses the native 0.2.2 tool-admission and executor APIs. See
+The 0.5 series supports DSH **0.2.2-rc.1 and later 0.2.2 releases**, and is adapted to **0.2.3-alpha.2** (not alpha.1 or the eventual 0.2.3 release). This includes Cordis 4.2 root access and the PTC scoped-REPL output syntax. See
 [host versions and display metadata](docs/usage.md#host-compatibility-and-display-metadata)
 for component icon exports, profile refresh and config/schema checks.
 

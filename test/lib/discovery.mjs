@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import Sandbox from '@deepseek-ai/dsh-sandbox-local'
+import Sessions from '@deepseek-ai/dsh-session'
 import Subprocess from '@deepseek-ai/dsh-subprocess-local'
 import * as discovery from '../../lib/components/discovery/index.js'
 import { definition } from '../../lib/file/contract.js'
@@ -17,6 +18,7 @@ import { legacyComponent } from './legacy-component.mjs'
 const DISCOVER = publicToolName(DISCOVERY_TOOL_NAME)
 async function boot(config = {}) {
   const { ctx } = await bootHost()
+  await ctx.plugin(Sessions)
   await ctx.plugin(Subprocess)
   await ctx.plugin(Sandbox, {})
   await ctx.plugin(inner => inner.provide('sandboxPolicy', {
@@ -27,7 +29,9 @@ async function boot(config = {}) {
   return { ctx, fiber }
 }
 async function mint(ctx, id, cwd, parent, mode = 'danger-full-access') {
-  const agent = { id, session: { id, mode, header: { cwd } } }
+  const session = ctx.get('sessions').create(id, { meta: { cwd } })
+  session.mode = mode
+  const agent = { id, session }
   await (parent?.ctx ?? ctx).plugin({ inject: ['tools', 'systemPrompt'], apply(inner) {
     agent.ctx = createScope(inner, agent, parent ? { parent } : undefined).ctx
   } })
@@ -36,7 +40,7 @@ async function mint(ctx, id, cwd, parent, mode = 'danger-full-access') {
 }
 const assemble = async (ctx, agent) => { const step = await prepareStep(ctx, agent); try { return step.assembly } finally { step.dispose() } }
 const admittedNames = async (ctx, agent) => { const step = await prepareStep(ctx, agent); try { return ctx.get('tools').schemas(agent, step.toolSet).map(t => t.name) } finally { step.dispose() } }
-const nextStep = (ctx, agent) => ctx.serial('session/event', agent.session, { type: 'step/end' })
+const nextStep = (_ctx, agent) => agent.session.append('step/end', { turn: 1, step: (agent.session.seq ?? 0) + 1 })
 const call = (ctx, agent, name, args = {}) => executeCall(ctx, { agent, name: publicToolName(name), arguments: args, callId: 'discovery-test', signal: new AbortController().signal })
 
 export async function discoveryMountChecks() {

@@ -1,5 +1,6 @@
 /** Unselected discovered tools must name the selector and its select: query (#764). */
 import { createScope } from '@deepseek-ai/dsh-scope'
+import SessionStore from '@deepseek-ai/dsh-session'
 import { mountDiscovery } from '../lib/discovery/controller.js'
 import { registerNativeCapability } from '../lib/discovery/providers.js'
 import { assert, test, report, waitFor } from './lib/harness.mjs'
@@ -16,6 +17,7 @@ const soloView = definition => ({ view: () => new Map([[definition.name, definit
 
 async function setup() {
   const { ctx, tools } = await bootHost()
+  await ctx.plugin(SessionStore)
   const agents = []
   ctx.provide('agents', { list: () => agents })
   // Publication-only worker fixture: never invoked; no Rust runtime is needed by this suite.
@@ -34,7 +36,9 @@ async function setup() {
   })
   const mint = async (mode = 'danger-full-access') => {
     const id = 'discovery-deferred-' + mode
-    const agent = { id, session: { id, mode, header: { cwd: process.cwd() } } }
+    const session = ctx.get('sessions').create(id, { meta: { cwd: process.cwd() } })
+    session.mode = mode
+    const agent = { id, session }
     agent.ctx = createScope(ctx, agent).ctx
     agents.push(agent)
     await ctx.serial('agent/created', { agent })
@@ -83,7 +87,7 @@ await test('a discovered selection stops answering with the deferred rejection',
     const select = await executeCall(ctx, { agent, name: DISCOVER, arguments: { query: 'select:ops_stat' }, callId: 'select-stat' })
     assert.equal(select.isError, false, JSON.stringify(select))
     assert.deepEqual(select.value.activated, ['ops_stat'])
-    ctx.emit('session/event', agent.session, { type: 'step/end', turn: 1, step: 1 })
+    agent.session.append('step/end', { turn: 1, step: 1 })
     const result = await dispatch(ctx, agent, 'ops_stat')
     assert.notEqual(result.error?.code, 'CAPABILITY_NOT_SELECTED')
   } finally { await shutdown(ctx) }

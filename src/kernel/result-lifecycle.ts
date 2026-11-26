@@ -2,10 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { CallBudgetError } from './call-budget.js'
 import { completeCleanupRoot, recordCleanupFailure, type CleanupReason } from './result-cleanup-registry.js'
 import { runConfiguredResultCacheGc, scheduleStartupResultCacheGc } from './result-cache-gc.js'
+import { rootOf } from '../adapter/dsh/root.js'
 
 export interface ResultSession { id: string; header?: { cwd?: string } }
 export interface LifecycleHost {
-  root?: object
   on(name: 'session/disposed', callback: (session: ResultSession) => void): unknown
   on(name: 'session/event', callback: (session: ResultSession, event: { type: string }) => void): unknown
   effect(callback: () => (() => Promise<void>), label: string): unknown
@@ -25,13 +25,13 @@ interface LiveSession {
 }
 interface Owner { mounts: number; sessions: Map<ResultSession, LiveSession>; expired: WeakSet<ResultSession> }
 const owners = new WeakMap<object, Owner>()
-function owner(ctx: Pick<LifecycleHost, 'root'>): Owner {
-  const key = ctx.root ?? ctx
+function owner(ctx: object): Owner {
+  const key = rootOf(ctx)
   let state = owners.get(key)
   if (!state) { state = { mounts: 0, sessions: new Map(), expired: new WeakSet() }; owners.set(key, state) }
   return state
 }
-function live(ctx: Pick<LifecycleHost, 'root'>, session: ResultSession): LiveSession {
+function live(ctx: object, session: ResultSession): LiveSession {
   const state = owner(ctx)
   if (state.expired.has(session)) throw new Error('Result session has expired')
   // The pinned SessionStore emits its exact stored Session object throughout one lifetime.
@@ -47,7 +47,7 @@ function live(ctx: Pick<LifecycleHost, 'root'>, session: ResultSession): LiveSes
   return entry
 }
 /** A reopened persisted session receives a fresh authority binding, even with the same id. */
-export function resultSessionNonce(ctx: Pick<LifecycleHost, 'root'>, session: ResultSession): string {
+export function resultSessionNonce(ctx: object, session: ResultSession): string {
   return live(ctx, session).nonce
 }
 /**
@@ -58,11 +58,11 @@ export function resultSessionNonce(ctx: Pick<LifecycleHost, 'root'>, session: Re
  * @param cleanup - the purge; it must throw when physical cleanup did not complete.
  * @param root - the absolute cache root, recorded when cleanup is deferred.
  */
-export function registerResultCleanup(ctx: Pick<LifecycleHost, 'root'>, session: ResultSession, key: string,
+export function registerResultCleanup(ctx: object, session: ResultSession, key: string,
   cleanup: () => Promise<void>, root?: string): void {
   live(ctx, session).cleanup.set(key, { run: cleanup, root })
 }
-export async function withResultSession<T>(ctx: Pick<LifecycleHost, 'root'>, session: ResultSession,
+export async function withResultSession<T>(ctx: object, session: ResultSession,
   signal: AbortSignal | undefined, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
   const entry = live(ctx, session), controller = new AbortController()
   const abort = () => controller.abort(signal?.reason)
@@ -116,7 +116,7 @@ function reportDeferred(ctx: Pick<LifecycleHost, 'logger'>, message: string): vo
  * @param now - current time; tests pass a later value instead of sleeping.
  * @returns how many were attempted, how many completed and how many remain.
  */
-export async function retryDeferredResultCleanup(ctx: Pick<LifecycleHost, 'root' | 'logger'>,
+export async function retryDeferredResultCleanup(ctx: object & Pick<LifecycleHost, 'logger'>,
   now = Date.now()): Promise<{ attempted: number; completed: number; pending: number }> {
   let attempted = 0, completed = 0
   for (const [root, entry] of [...deferred]) {
@@ -139,7 +139,7 @@ export async function retryDeferredResultCleanup(ctx: Pick<LifecycleHost, 'root'
   }
   return { attempted, completed, pending: deferred.size }
 }
-export function expireResultSession(ctx: Pick<LifecycleHost, 'root' | 'logger'>, session: ResultSession, disposed = true): Promise<void> {
+export function expireResultSession(ctx: object & Pick<LifecycleHost, 'logger'>, session: ResultSession, disposed = true): Promise<void> {
   const state = owner(ctx), entry = state.sessions.get(session)
   if (disposed) state.expired.add(session)
   if (!entry) return Promise.resolve()
