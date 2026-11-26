@@ -89,6 +89,21 @@ await test('bounded continuation decoding never admits mutation or result-releas
   const cycle = {}; cycle.self = cycle
   assert.equal(continuationFor('diff', cycle, { nextOffset: 2 }), undefined)
 })
+await test('a page whose last kept line was cut offers no cursor', () => {
+  // #1045 follow-up: an incomplete line is not consumed, so nextOffset equals the
+  // resumption base. Offering it would re-read the same cut line for legacy
+  // offset 0 (base 1 > requested 0). The page's own nextAction is the recovery.
+  const cut = { items: [{ line: 1, text: 'abc', truncatedInLine: true }], nextOffset: 1, total: 5 }
+  assert.equal(continuationFor('inspect_local_file', { path: 'a.txt', offset: 0, limit: 1 }, cut), undefined)
+  assert.equal(continuationFor('inspect_local_file', { path: 'a.txt', offset: 1, limit: 1 }, cut), undefined)
+  // A whole line that did advance still gets its cursor.
+  const whole = { items: [{ line: 1, text: 'abc' }], nextOffset: 2, total: 5 }
+  assert.notEqual(continuationFor('inspect_local_file', { path: 'a.txt', offset: 0, limit: 1 }, whole), undefined)
+  // Only the LAST item decides: a cut earlier in the page does not stop advancement.
+  const mixed = { items: [{ line: 1, truncatedInLine: true }, { line: 2, text: 'ok' }], nextOffset: 3, total: 5 }
+  assert.notEqual(continuationFor('inspect_local_file', { path: 'a.txt', offset: 0, limit: 2 }, mixed), undefined)
+})
+
 await test('host schema validation and generated SDK enforce the discriminated envelope', () => {
   const schema = outcomeSchema({ type: 'object', properties: { value: { type: 'integer' } }, required: ['value'], additionalProperties: false })
   assertSupportedJsonSchema(schema)
