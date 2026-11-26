@@ -3,12 +3,11 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { gzipSync, gunzipSync } from 'node:zlib'
-import { npm, npmInvocation } from './util.js'
+import { bundledNpmCli, npm } from './util.js'
 
 // Reuse the tar implementation shipped with the npm that performs our pack.
 // Fail closed if a nonstandard npm installation does not expose its dependency.
-const invocation = npmInvocation([])
-const npmCli = invocation.args[0] ?? process.env.npm_execpath
+const npmCli = bundledNpmCli()
   ?? path.join(npm(['root', '--global']).stdout.trim(), 'npm', 'bin', 'npm-cli.js')
 if (!path.isAbsolute(npmCli) || !fs.existsSync(npmCli)) throw new Error('Cannot locate npm bundled tar library')
 export const tar = createRequire(npmCli)('tar')

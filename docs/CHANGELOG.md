@@ -7,7 +7,6 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-<<<<<<< HEAD
 - Preserve sealed panel reports when a merge overlaps session close. Concurrent folds share
   viewer updates, invalid workspaces share one warning per activation, and a live fold hashes
   the same bytes it parses (#976).
@@ -33,15 +32,15 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   安装入口（#750）。
 - Recognize Entra user SIDs when setting the owner of a temporary Windows test fixture (#1031).
 - 设置 Windows 临时测试夹具的所有者时支持 Entra 用户 SID（#1031）。
-=======
 - Per-host state is now keyed through `rootOf(ctx)`, which reads the `Symbol.for('cordis.root')` key
   before the legacy `ctx.root` property. Cordis 4.2 refuses undeclared property reads, so the 21 direct
-  `ctx.root` reads failed activation with `cannot get property "root" without inject`. This changes
-  nothing on Cordis 4.1. The `engines.dsh` range is untouched (#1047).
+  `ctx.root` reads failed activation with `cannot get property "root" without inject`. Cordis 4.1 remains supported. (#1047)
 - 每主机状态的键改由 `rootOf(ctx)` 取得：先读 `Symbol.for('cordis.root')`，再回退旧的 `ctx.root` 属性。
   Cordis 4.2 拒绝读取未声明的属性，21 处直接读取 `ctx.root` 会令激活失败并报
-  `cannot get property "root" without inject`。Cordis 4.1 行为不变，`engines.dsh` 范围未改动（#1047）。
->>>>>>> 125a0fe1 (fix(adapter): read the host root through the Cordis root symbol)
+  `cannot get property "root" without inject`。Cordis 4.1 行为不变。（#1047）
+
+- Admit DSH `0.2.3-alpha.2` alongside the existing `0.2.2` range and adapt PTC guidance and output detection to the scoped Node REPL. Update working-directory and result lifecycle integration for the new host. (#1059)
+- 在原有 `0.2.2` 范围之外接受 DSH `0.2.3-alpha.2`。适配 Node scoped REPL 的 PTC 提示与输出识别，并更新工作目录和结果生命周期的宿主接入。（#1059）
 
 ## [0.5.6] — 2026-11-21 — Patch release
 

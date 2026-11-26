@@ -4,11 +4,26 @@ import { gzipSync, gunzipSync } from 'node:zlib'
 import { assert, test, report, withTempDir } from './lib/harness.mjs'
 import { tar, UNIX_WORKERS, fixUnixWorkerModes, checkUnixWorkerModes } from '../scripts/lib/build/tar-modes.js'
 import { packDirectory, writeReleaseRecords } from '../scripts/lib/build/pack.js'
-import { sha256File } from '../scripts/lib/build/util.js'
+import { bundledNpmCli, sha256File } from '../scripts/lib/build/util.js'
 import { stepCheck } from '../scripts/lib/build/check.js'
 import { copyFixtureModules, stageFixtureNiubash } from './lib/niubash-distribution-fixture.mjs'
 import { NIUBASH_PACKAGE_PATH } from '../lib/cli/niubash-payload.js'
 import { pathToFileURL } from 'node:url'
+
+await test('npm CLI resolver finds the bundled npm under the Node distribution lib tree', () => withTempDir('npm-resolver', root => {
+  const node = path.join(root, 'bin', 'node')
+  const unix = path.join(root, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js')
+  const adjacent = path.join(root, 'bin', 'node_modules', 'npm', 'bin', 'npm-cli.js')
+  const lifecycle = path.join(root, 'custom', 'npm-cli.js')
+  const make = file => { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, '') }
+  assert.equal(bundledNpmCli(node, ''), undefined)
+  make(lifecycle)
+  assert.equal(bundledNpmCli(node, lifecycle), lifecycle)
+  make(unix)
+  assert.equal(bundledNpmCli(node, lifecycle), unix)
+  make(adjacent)
+  assert.equal(bundledNpmCli(node, lifecycle), adjacent)
+}))
 
 const names = [...UNIX_WORKERS, 'package/runtime/win32-x64/dsh-ops-worker.exe', 'package/docs/中文.txt']
 function archive(file, entries = names.map(name => ({ path: name }))) {

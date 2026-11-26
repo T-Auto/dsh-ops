@@ -60,6 +60,7 @@ await test('Native and real run_code preserve mutation effects, CAS and read-onl
       assert.equal(fs.readFileSync(moved, 'utf8'), 'gamma')
       const revision = createHash('sha256').update('gamma').digest('hex')
       assert.equal((await call('remove', { path: moved, expectedRevision: revision })).status, 'completed')
+      if (presentation === 'ptc') await ctx.get('ptcRuntime').release(agent)
       mode = 'read-only'
       if (presentation === 'native') {
         assert.equal((await call('write_file', { path: copy, content: 'unsafe', expectedRevision: revision })).error.code, 'POLICY_DENIED')

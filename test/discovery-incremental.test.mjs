@@ -69,7 +69,7 @@ await test('live cwd and policy refresh on resolve, and revoked held authority c
     fs.writeFileSync(path.join(changed, 'sample'), 'different')
     const held = await capture(owner)
     try {
-      owner.session.header.cwd = changed; owner.session.mode = 'read-only'
+      owner.session.header = { ...owner.session.header, cwd: changed }; owner.session.mode = 'read-only'
       assert.equal((await names(owner)).includes('ops_write_file'), false)
       assert.equal((await names(other)).includes('ops_write_file'), true)
       assert.equal((await call(owner, 'ops_stat', { path: 'sample' })).value.data.bytes, 9)

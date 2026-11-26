@@ -15,7 +15,7 @@ import { disclosurePlan } from '../ptc/disclosure.js'
 import { ownPtcScopes } from '../ptc/ownership.js'
 import {
   BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, BATCHING_GUIDANCE_SOURCE_KIND,
-  createProgramLatch, loadBatchingGuidance, renderBatchingGuidance,
+  createProgramLatch, loadBatchingGuidance, outputModeFromInstructions, renderBatchingGuidance,
 } from '../ptc/batching-guidance.js'
 import type { GuidanceSurface } from '../ptc/batching-guidance.js'
 import { InvocationLifetime, InvocationNotStarted } from '../lifecycle/invocations.js'
@@ -164,6 +164,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         resident: [...resident].filter(api => reachable(mode, api)).map(api => publicToolName(api)),
         loadable: allowedApis(agent).map(api => publicToolName(api)),
         sandbox: mode,
+        outputMode: outputModeFromInstructions(ctx.get('ptcRuntime')?.executionInstructions ?? ''),
       }
     }
     const shapeLatch = createProgramLatch(surfaceFor)
@@ -478,7 +479,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       const callable = new Set(visibleNames(tools, agent, toolSet))
       const active = [...entry.definitions.keys()].some(name => callable.has(name))
       if (!active) return ''
-      const guidance = 'OPS APIs return typed Outcome values. Inspect status before data; preserve partial coverage and continuation. Process results locally in run_code and return only needed summaries. References do not grant authority.'
+      const guidance = 'OPS APIs return typed Outcome values. Inspect status before data; preserve partial coverage and continuation. Process results locally in run_code and expose only needed summaries with the active PTC runtime output API. References do not grant authority.'
       const directory = callable.has(publicToolName('load_sdk')) ? renderSdkDirectory(allowedApis(agent), callable) : ''
       return guidance + (directory ? '\n\n' + directory : '')
     }

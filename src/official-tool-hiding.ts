@@ -2,8 +2,7 @@
  * Only explicit reviewed selections are masked. Missing selected counterparts
  * block the affected scope and restore its official tools until readiness returns.
  */
-import type { Context } from './adapter/dsh/types.js'
-import type { ToolGuard } from './adapter/dsh/types.js'
+import type { Context, ToolGuard } from './adapter/dsh/types.js'
 import type { OfficialReplacement } from './official-tool-catalog.js'
 import { nativeProviders } from './publication/providers.js'
 import { isPresentationProbe } from './publication/presentation.js'

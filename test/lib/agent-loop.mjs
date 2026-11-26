@@ -20,12 +20,13 @@ import { assert } from './harness.mjs'
 import { WORKER } from './boundary.mjs'
 import { legacyComponent } from './legacy-component.mjs'
 import { workingDirectoryOver } from './host.mjs'
+import { adaptPtcCode, capturePtcReturn } from './ptc-compat.mjs'
 let identity = 0
 export async function bootLoop(root, { ptcMode = false, discoveryConfig = {}, preset = 'fixture', row, hostPlugins = [] } = {}) {
   const ctx = new Context(); ctx.logger.level = 0
   // rc.5 asks the host for the directory a run_code call executes in.
   ctx.provide('workingDirectory', workingDirectoryOver(root))
-  const queues = new Map(), requests = [], results = [], errors = []
+  const queues = new Map(), adaptedCalls = new Set(), requests = [], results = [], errors = []
   for (const plugin of [Agents, Sessions, Projections, Prompt]) await ctx.plugin(plugin, {})
   await ctx.plugin(Tools, {})
   await ctx.plugin(Policy, { mode: 'workspace-write', workspaceRoot: root })
@@ -46,11 +47,23 @@ export async function bootLoop(root, { ptcMode = false, discoveryConfig = {}, pr
       assert.ok(queue?.length, 'unscripted provider request is forbidden')
       const script = queue.shift(), calls = typeof script === 'function' ? await script(request) : script
       requests.push({ sessionId: request.sessionId, tools: request.tools, messages: request.messages, toolCalls: calls.length })
-      for (const [index, call] of calls.entries()) yield { type: 'tool-call-delta', index, id: 'loop-call-' + ++identity, name: call.name, argumentsDelta: JSON.stringify(call.args) }
+      for (const [index, call] of calls.entries()) {
+        const adapted = ptcMode && call.name === 'run_code' && typeof call.args?.code === 'string'
+          ? adaptPtcCode(call.args.code) : undefined
+        const id = 'loop-call-' + ++identity
+        if (adapted?.capturesReturn) adaptedCalls.add(id)
+        const args = adapted?.capturesReturn ? { ...call.args, code: adapted.code } : call.args
+        yield { type: 'tool-call-delta', index, id, name: call.name, argumentsDelta: JSON.stringify(args) }
+      }
       if (!calls.length) yield { type: 'text-delta', index: 0, text: 'Fixture complete.' }
       yield { type: 'finish', reason: { kind: 'stop' } }
     } } } })
-    inner.on('tools/execute', async (exec, next) => { const result = await next(); results.push({ exec, result }); return result })
+    inner.on('tools/execute', async (exec, next) => {
+      const result = await next()
+      const capturesReturn = adaptedCalls.delete(exec.callId)
+      results.push({ exec, result: capturePtcReturn(result, capturesReturn) })
+      return result
+    })
     inner.on('agent/error', ({ error }) => errors.push(String(error?.stack ?? error)))
   })
   // Without a row the composition is the custom-preset integration fixture; with

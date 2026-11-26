@@ -220,6 +220,9 @@ try {
       }) }) }
   } }
   try {
+    ctx.provide('sessionProjections', {
+      async register() { return { stateOf: () => ({ sections: [], complete: false, needsRebuild: false }), dispose() {} } },
+    })
     await ctx.plugin(SystemPrompt, {}); await ctx.plugin(ToolRuntime, {})
   await ctx.plugin(await import('@deepseek-ai/dsh-tool-executor-native'), {})
     let sandboxAvailable = true
@@ -434,6 +437,9 @@ try {
   const nonTemp = fs.mkdtempSync(path.join(os.homedir(),'ops-outside-'))
   const externalNonTemp = path.join(nonTemp,'protected.txt'); fs.writeFileSync(externalNonTemp,'keep')
   try {
+    real.provide('sessionProjections', {
+      async register() { return { stateOf: () => ({ sections: [], complete: false, needsRebuild: false }), dispose() {} } },
+    })
     await real.plugin(SystemPrompt, {}); await real.plugin(ToolRuntime, {})
     await real.plugin(await import('@deepseek-ai/dsh-tool-executor-native'), {})
     await real.plugin(Subprocess)
@@ -443,7 +449,9 @@ try {
     agent.ctx = createScope(real, agent).ctx
     await real.plugin(inner => { inner.provide('sandboxPolicy',{resolve:({session} = {})=>({mode:session?.mode ?? agent.session.mode,workspaceRoot:dir,sessionId:session?.id ?? agent.session.id})}) })
     write('real-source','native')
-    await real.plugin(NodePtc, {})
+    // This suite changes the session sandbox policy mid-run; alpha.2 persistent REPLs
+    // correctly refuse that transition, so exercise this policy-specific fixture per-call.
+    await real.plugin(NodePtc, { executionMode: 'per-call' })
     await agent.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { selectExecutor(inner, 'ptc') } })
     real.provide('agents', { list: () => [agent] })
     const sdkComponent = await real.plugin(ptc, { binaryPath: file, required: true, alwaysLoaded: ['batch', 'result'] })

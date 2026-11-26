@@ -157,6 +157,14 @@ export function run(command, args, options = {}) {
   return { status: result.status, stdout, stderr }
 }
 
+/** Locate the npm CLI in Windows and Unix Node distributions. */
+export function bundledNpmCli(execPath = process.execPath, npmExecPath = process.env.npm_execpath) {
+  const bin = path.dirname(execPath)
+  const cli = ['node_modules', 'npm', 'bin', 'npm-cli.js']
+  return [path.join(bin, ...cli), path.join(bin, '..', 'lib', ...cli), npmExecPath]
+    .find(candidate => candidate && path.isAbsolute(candidate) && path.basename(candidate) === 'npm-cli.js' && fs.existsSync(candidate))
+}
+
 /**
  * How to run npm: through this Node's own npm CLI when it is next to the
  * interpreter, so no shell quoting is involved (spawning `npm.cmd` needs a
@@ -165,8 +173,8 @@ export function run(command, args, options = {}) {
  * @returns {{command: string, args: string[]}} the invocation.
  */
 export function npmInvocation(args) {
-  const cli = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
-  return fs.existsSync(cli)
+  const cli = bundledNpmCli()
+  return cli
     ? { command: process.execPath, args: [cli, ...args] }
     : { command: 'npm', args }
 }

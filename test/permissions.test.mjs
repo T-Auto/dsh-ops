@@ -426,6 +426,7 @@ await test('owned Modify-only workspace starts real DSH sandbox; three modes and
       assert.equal(completion.denied.restriction.code,'EXECUTION_RESTRICTED')
       assert.ok(!fs.existsSync(path.join(outside,'ptc-outside.txt')))
       assert.doesNotMatch(ptcText,/3221225794|EXECUTOR_UNAVAILABLE|fatal error/)
+      await ctx.get('ptcRuntime').release(agent)
       agent.session.mode='read-only'
       const downgrade=await executeCall(ctx, {...request,callId:'ptc-bash-downgrade',arguments:{description:'Verify PTC permission downgrade',code:`return await tools.ops_bash({description:"Check programmatic Bash permissions",command:"printf blocked > ptc-readonly.txt",workdir:${JSON.stringify(root)},timeoutMs:10000});`}})
       assert.notEqual(downgrade.isError,true,JSON.stringify(downgrade))

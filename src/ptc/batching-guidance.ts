@@ -15,7 +15,7 @@ import { literalShellFileWork } from './shell-file-work.js'
 /** Identity of the guidance in the host message source. */
 export const BATCHING_GUIDANCE_ID = 'batching-guidance'
 /** Revision of the guidance text; bump it when the wording or the file format changes. */
-export const BATCHING_GUIDANCE_REVISION = '8'
+export const BATCHING_GUIDANCE_REVISION = '9'
 /**
  * Host source kind for guidance delivered as a user-role message.
  *
@@ -93,6 +93,17 @@ export function loadBatchingGuidance(filePath?: string | URL): string {
  * on, so the same text must not reach a scope that has none: it would spend a round
  * trip in that scope on a call that cannot succeed.
  */
+export type OutputMode = 'inspect' | 'return' | 'console' | 'neutral'
+
+/** Selects the output API from the host's explicit PTC instructions. */
+export function outputModeFromInstructions(instructions: string): OutputMode {
+  if (instructions.includes('Use inspect(...values) to display output.')) return 'inspect'
+  if (instructions.includes('Top-level await and return are supported.')) return 'return'
+  if (instructions.includes('Use console.log or a final expression.')) return 'console'
+  if (instructions.includes('Use console.log(...) to display output.')) return 'console'
+  return 'neutral'
+}
+
 export interface GuidanceSurface {
   /** Whether the scope publishes `ops_load_sdk`. */
   readonly loader: boolean
@@ -107,6 +118,8 @@ export interface GuidanceSurface {
    * absent, the shipped three-tier lesson is delivered unchanged.
    */
   readonly sandbox?: SandboxMode
+  /** Host instruction for displaying execution output. */
+  readonly outputMode: OutputMode
 }
 
 /** The file-work APIs the guidance names, in the order it names them. */
@@ -442,9 +455,17 @@ function replaceLoaderLesson(text: string, surface: GuidanceSurface): string {
 export function renderBatchingGuidance(text: string, surface: GuidanceSurface): string {
   if (text === '') return text
   const withSandbox = surface.sandbox === undefined ? text : replaceSandboxLesson(text, surface.sandbox)
-  return surface.loader ? withSandbox : replaceLoaderLesson(withSandbox, surface)
+  const withExecution = renderOutputLesson(withSandbox, surface.outputMode)
+  return surface.loader ? withExecution : replaceLoaderLesson(withExecution, surface)
 }
 
+function renderOutputLesson(text: string, outputMode: OutputMode): string {
+  if (outputMode === 'neutral') return text
+  const output = outputMode === 'inspect' ? 'inspect('
+    : outputMode === 'console' ? 'console.log(' : 'return ('
+  return text.replace(/^```ts\r?\n[\s\S]*?^```$/gmu, block =>
+    block.replace(/^(\s*)__DSH_OUTPUT__\(/gmu, (_match, indent: string) => indent + output))
+}
 // ---- program shape: what one run_code program says about its step ----
 
 /** A program shorter than this is treated as single-step unless it is structured. */

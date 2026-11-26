@@ -7,10 +7,16 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { assert, test, report, PACKAGE_ROOT } from './lib/harness.mjs'
-import { BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, LOAD_PROSE_ANCHOR, LOAD_SECTION_HEADING, LOAD_TABLE_ROW_PREFIX, SANDBOX_SECTION_HEADING, loadBatchingGuidance, renderBatchingGuidance } from '../lib/ptc/batching-guidance.js'
+import NodePtc from '@deepseek-ai/dsh-ptc-runtime-node'
+import { Context } from '@deepseek-ai/cordis'
+import Subprocess from '@deepseek-ai/dsh-subprocess-local'
+import Sandbox from '@deepseek-ai/dsh-sandbox-local'
+import FileSystem from '@deepseek-ai/dsh-fs-local'
+import { BATCHING_GUIDANCE_ID, BATCHING_GUIDANCE_REVISION, LOAD_PROSE_ANCHOR, LOAD_SECTION_HEADING, LOAD_TABLE_ROW_PREFIX, SANDBOX_SECTION_HEADING, loadBatchingGuidance, outputModeFromInstructions, renderBatchingGuidance as renderWithOutputMode } from '../lib/ptc/batching-guidance.js'
 
 /** The editable guidance file shipped at the package root, outside the build output. */
 const GUIDANCE_FILE = path.join(PACKAGE_ROOT, 'prompts', 'batching-guidance.md')
+const renderBatchingGuidance = (text, surface) => renderWithOutputMode(text, { outputMode: 'return', ...surface })
 
 await test('the shipped guidance is English Markdown with its host-source identity', () => {
   // The wording is editable data, so pin its structure and the rules delivery relies on.
@@ -20,7 +26,7 @@ await test('the shipped guidance is English Markdown with its host-source identi
   }
   assert.equal(BATCHING_GUIDANCE_ID, 'batching-guidance')
   // A wording or format change is a product change and must bump the revision.
-  assert.equal(BATCHING_GUIDANCE_REVISION, '8')
+  assert.equal(BATCHING_GUIDANCE_REVISION, '9')
 })
 
 await test('the guidance loader returns exactly the shipped Markdown file', () => {
@@ -130,15 +136,77 @@ await test('the trimmed lesson keeps the four trajectories and restores the two 
 await test('the shipped lesson measures its declared trimmed size', () => {
   // The trim record in the PR declares this size; a wording edit must bump the
   // revision and this number together. The 84 B delivery prefix is counted separately.
-  assert.equal(Buffer.byteLength(loadBatchingGuidance(), 'utf8'), 8169)
+  assert.equal(Buffer.byteLength(loadBatchingGuidance(), 'utf8'), 8464)
 })
 
-await test('a scope with the loader receives the shipped file unchanged', () => {
-  // The default path must not pay for a branch it never needs: byte identity is the contract.
+await test('a loader scope adapts output markers to its declared host contract', () => {
   const text = loadBatchingGuidance()
-  assert.equal(renderBatchingGuidance(text, { loader: true, resident: [] }), text)
-  // An unreadable file stays empty, so delivery is skipped instead of failing a tool result.
-  assert.equal(renderBatchingGuidance('', { loader: false, resident: ['ops_glob'], loadable: [] }), '')
+  const rendered = renderBatchingGuidance(text, { loader: true, resident: [], outputMode: 'return' })
+  assert.notEqual(rendered, text)
+  assert.match(rendered, /return \(\{ loaded:/)
+  assert.equal(renderBatchingGuidance('', { loader: false, resident: ['ops_glob'], loadable: [], outputMode: 'inspect' }), '')
+})
+
+await test('runtime instruction fixtures select alpha2 and legacy output APIs', () => {
+  const cases = [
+    ['alpha2 function body', 'Top-level await and return are supported. Use inspect(...values) to display output. Do not use console.', 'inspect'],
+    ['alpha2 scoped REPL', 'Top-level return is not supported. Use inspect(...values) to display output. Do not use console.', 'inspect'],
+    ['legacy function body', 'Top-level await and return are supported. Use console.log or return JSON.', 'return'],
+    ['legacy REPL', 'Top-level return is not supported. Use console.log or a final expression.', 'console'],
+    ['legacy script', 'TypeScript script statements. Use console.log or a final expression.', 'console'],
+    ['unknown runtime', '', 'neutral'],
+  ]
+  for (const [name, instructions, expected] of cases) assert.equal(outputModeFromInstructions(instructions), expected, name)
+})
+
+await test('the installed default Node PTC runtime selects inspect guidance', async () => {
+  const context = new Context()
+  try {
+    for (const plugin of [Subprocess, Sandbox, FileSystem]) await context.plugin(plugin)
+    context.provide('sandboxPolicy', {})
+    await context.plugin(NodePtc, {})
+    const runtime = context.get('ptcRuntime')
+    assert.equal(runtime.retainsState, true)
+    assert.equal(runtime.programFormat, 'scoped-repl')
+    assert.match(runtime.executionInstructions, /top-level return is not supported/iu)
+    assert.match(runtime.executionInstructions, /Use inspect\(\.\.\.values\) to display output/u)
+    assert.equal(outputModeFromInstructions(runtime.executionInstructions), 'inspect')
+  } finally { await context.fiber.dispose() }
+})
+
+await test('Node PTC per-call execution supports function-body top-level return', async () => {
+  const context = new Context()
+  try {
+    for (const plugin of [Subprocess, Sandbox, FileSystem]) await context.plugin(plugin)
+    context.provide('sandboxPolicy', {})
+    await context.plugin(NodePtc, { executionMode: 'per-call' })
+    const runtime = context.get('ptcRuntime')
+    assert.equal(runtime.retainsState, false)
+    assert.match(runtime.executionInstructions, /Top-level await and return are supported/u)
+    assert.match(runtime.executionInstructions, /Use inspect\(\.\.\.values\) to display output/u)
+    assert.equal(outputModeFromInstructions(runtime.executionInstructions), 'inspect')
+  } finally { await context.fiber.dispose() }
+})
+
+await test('shared output markers render only for known host contracts', () => {
+  const text = loadBatchingGuidance()
+  const surface = { loader: true, resident: [], loadable: [] }
+  const inspect = renderBatchingGuidance(text, { ...surface, outputMode: 'inspect' })
+  const legacyReturn = renderBatchingGuidance(text, { ...surface, outputMode: 'return' })
+  const legacyConsole = renderBatchingGuidance(text, { ...surface, outputMode: 'console' })
+  const neutral = renderBatchingGuidance(text, { ...surface, outputMode: 'neutral' })
+  assert.match(inspect, /inspect\(\{ loaded:/, 'inspect mode uses host output API')
+  assert.doesNotMatch(inspect, /__DSH_OUTPUT__|\bshow\(/, 'reserved output marker is removed')
+  assert.match(legacyReturn, /return \(\{ loaded:/, 'function body returns the result')
+  assert.match(legacyConsole, /console\.log\(\{ loaded:/, 'legacy script logs the result')
+  assert.match(neutral, /__DSH_OUTPUT__\(\{ loaded:/, 'unknown host contract keeps the neutral placeholder')
+  assert.match(inspect, /return \{ file, status: read.status/, 'callback returns remain untouched')
+  const custom = renderBatchingGuidance('```ts\nconst note = \"show(\"; // show(\ntools.show({ value: note });\n__DSH_OUTPUT__({ value: 1 });\n```', { ...surface, outputMode: 'inspect' })
+  assert.ok(custom.includes('const note = "show("; // show('), 'strings and comments stay verbatim')
+  assert.ok(custom.includes('tools.show('), 'custom tools.show calls stay verbatim')
+  assert.ok(custom.includes('inspect({ value: 1 })'), 'the exact placeholder call is rendered')
+  const unknown = renderBatchingGuidance('```ts\n__DSH_OUTPUT__({ value: 1 })\n```', { ...surface, outputMode: 'neutral' })
+  assert.ok(unknown.includes('__DSH_OUTPUT__({ value: 1 })'), 'unknown contracts do not guess a host output API')
 })
 
 await test('the sandbox lesson names both legal values and the full-access prohibition', () => {
@@ -153,15 +221,15 @@ await test('the sandbox lesson names both legal values and the full-access prohi
 
 await test('a reported sandbox mode keeps only its own tier', () => {
   const text = loadBatchingGuidance()
-  const full = renderBatchingGuidance(text, { loader: true, resident: [], sandbox: 'danger-full-access' })
+  const full = renderBatchingGuidance(text, { loader: true, resident: [], sandbox: 'danger-full-access', outputMode: 'return' })
   assert.match(full, /## Sandbox permissions - current mode: danger-full-access/)
   assert.match(full, /widest tier: never send `sandbox_permissions` or/)
   assert.equal(full.includes('**read-only**'), false, 'inactive tiers are not primed')
-  const readOnly = renderBatchingGuidance(text, { loader: true, resident: [], sandbox: 'read-only' })
+  const readOnly = renderBatchingGuidance(text, { loader: true, resident: [], sandbox: 'read-only', outputMode: 'return' })
   assert.match(readOnly, /## Sandbox permissions - current mode: read-only/)
   assert.match(readOnly, /To write, send/)
   assert.equal(readOnly.includes('**danger-full-access**'), false, 'inactive tiers are gone here too')
-  const workspace = renderBatchingGuidance(text, { loader: true, resident: [], sandbox: 'workspace-write' })
+  const workspace = renderBatchingGuidance(text, { loader: true, resident: [], sandbox: 'workspace-write', outputMode: 'return' })
   assert.match(workspace, /## Sandbox permissions - current mode: workspace-write/)
   assert.match(workspace, /leave the workspace/)
   assert.equal(workspace.includes('**read-only**'), false)
@@ -174,7 +242,7 @@ await test('a reported sandbox mode keeps only its own tier', () => {
 })
 
 await test('a loader-less scope keeps the sandbox tier and drops the load step together', () => {
-  const rendered = renderBatchingGuidance(loadBatchingGuidance(), { loader: false, resident: ['ops_glob'], loadable: [], sandbox: 'read-only' })
+  const rendered = renderBatchingGuidance(loadBatchingGuidance(), { loader: false, resident: ['ops_glob'], loadable: [], sandbox: 'read-only', outputMode: 'return' })
   assert.match(rendered, /## Sandbox permissions - current mode: read-only/)
   assert.equal(rendered.includes('ops_load_sdk'), false, 'the load step is still gone')
   assert.ok(rendered.includes('ops_glob'), 'the published surface is still listed')
@@ -182,14 +250,14 @@ await test('a loader-less scope keeps the sandbox tier and drops the load step t
 
 await test('a drifted sandbox anchor inserts the tier instead of silently dropping it', () => {
   const drifted = '# Batch tool calls\n\nintro\n## Step 0 - the plan line\nbody\n'
-  const out = renderBatchingGuidance(drifted, { loader: true, resident: [], sandbox: 'danger-full-access' })
+  const out = renderBatchingGuidance(drifted, { loader: true, resident: [], sandbox: 'danger-full-access', outputMode: 'return' })
   assert.match(out, /## Sandbox permissions - current mode: danger-full-access/)
   assert.ok(out.includes('## Step 0 - the plan line'), 'the following section survives')
   assert.ok(out.startsWith('# Batch tool calls'), 'the H1 stays first')
 })
 
 await test('a loader-less scope is never taught to load', () => {
-  const rendered = renderBatchingGuidance(loadBatchingGuidance(), { loader: false, resident: ['ops_glob', 'ops_grep'], loadable: [] })
+  const rendered = renderBatchingGuidance(loadBatchingGuidance(), { loader: false, resident: ['ops_glob', 'ops_grep'], loadable: [], outputMode: 'return' })
   // The defect this guards: the lesson named a call that cannot succeed in this scope.
   assert.equal(rendered.includes('ops_load_sdk'), false, 'the unreachable loader is gone')
   assert.equal(rendered.includes(LOAD_SECTION_HEADING), false, 'the load section is replaced')
@@ -207,7 +275,7 @@ await test('a loader-less scope is never taught to load', () => {
 })
 
 await test('a scope that publishes nothing says so', () => {
-  const rendered = renderBatchingGuidance(loadBatchingGuidance(), { loader: false, resident: [] })
+  const rendered = renderBatchingGuidance(loadBatchingGuidance(), { loader: false, resident: [], outputMode: 'return' })
   assert.equal(rendered.includes('ops_load_sdk'), false)
   assert.ok(rendered.includes('publishes no OPS API and no loader'), 'the empty surface is stated')
   assert.equal(rendered.includes('## Step 3 - call what is published'), false, 'no resident list is invented')
@@ -215,13 +283,13 @@ await test('a scope that publishes nothing says so', () => {
 
 await test('the replacement survives a resident list that names the loader', () => {
   // The list is generated after the filter, so the filter can never eat it.
-  const rendered = renderBatchingGuidance(loadBatchingGuidance(), { loader: false, resident: ['ops_load_sdk', 'ops_glob'], loadable: [] })
+  const rendered = renderBatchingGuidance(loadBatchingGuidance(), { loader: false, resident: ['ops_load_sdk', 'ops_glob'], loadable: [], outputMode: 'return' })
   assert.ok(rendered.includes('ops_load_sdk') && rendered.includes('ops_glob'), 'the list is rendered whole')
 })
 
 await test('a drifted file keeps its structure when the anchor is gone', () => {
   const drifted = '# Batch tool calls\n\nintro\n## Step 1 - split by dependency\nbody mentions ops_load_sdk once\n'
-  const out = renderBatchingGuidance(drifted, { loader: false, resident: ['ops_glob'], loadable: [] })
+  const out = renderBatchingGuidance(drifted, { loader: false, resident: ['ops_glob'], loadable: [], outputMode: 'return' })
   assert.ok(out.startsWith('# Batch tool calls'), 'the H1 stays first')
   assert.ok(out.indexOf('call what is published') < out.indexOf('## Step 1'), 'the step precedes the first section')
   assert.equal(out.includes('ops_load_sdk'), false, 'no unreachable mention survives')
@@ -231,7 +299,7 @@ await test('a renamed load section does not survive beside its replacement', () 
   // A drifted file keeps the old lesson under a different heading; two contradicting
   // Step 3 sections would teach both loading and direct calls.
   const drifted = '# Batch tool calls\n\nintro\n## Step 3 - loading tools\nload prose here\n## Step 1 - split\nbody\n'
-  const out = renderBatchingGuidance(drifted, { loader: false, resident: ['ops_glob'], loadable: [] })
+  const out = renderBatchingGuidance(drifted, { loader: false, resident: ['ops_glob'], loadable: [], outputMode: 'return' })
   assert.equal((out.match(/## Step 3/g) ?? []).length, 1, 'exactly one Step 3 remains')
   assert.equal(out.includes('load prose here'), false, 'the old load section is dropped')
   assert.ok(out.startsWith('# Batch tool calls'), 'the H1 stays first')
@@ -241,7 +309,7 @@ await test('a fenced example that teaches loading is dropped whole', () => {
   // Deleting one line inside a fence would leave a half example that calls a name the
   // scope cannot reach, so the whole block goes with it.
   const drifted = '# Batch tool calls\n\nintro\n```js\nconst sdk = await tools.ops_load_sdk({ tools: ["edit_file"] })\nawait sdk.ops_edit_file({ path: "a" })\n```\n## Step 1 - split\nbody\n'
-  const out = renderBatchingGuidance(drifted, { loader: false, resident: ['ops_glob'], loadable: [] })
+  const out = renderBatchingGuidance(drifted, { loader: false, resident: ['ops_glob'], loadable: [], outputMode: 'return' })
   assert.equal(out.includes('sdk.ops_edit_file'), false, 'the dangling call does not survive')
   assert.equal(out.includes('ops_load_sdk'), false, 'the load call does not survive')
   assert.equal((out.match(/```/g) ?? []).length, 0, 'no half-open fence is left behind')
@@ -250,7 +318,7 @@ await test('a fenced example that teaches loading is dropped whole', () => {
 await test('only a heading that means loading loses its section', () => {
   // A substring match would swallow "Payload" and drop a valid section with it.
   const drifted = '# Batch tool calls\n## Payload budget\nkeep me\n## Step 3 - loading tools\nload prose\n'
-  const out = renderBatchingGuidance(drifted, { loader: false, resident: ['ops_glob'], loadable: [] })
+  const out = renderBatchingGuidance(drifted, { loader: false, resident: ['ops_glob'], loadable: [], outputMode: 'return' })
   assert.ok(out.includes('## Payload budget'), 'the ordinary section survives')
   assert.ok(out.includes('keep me'), 'its body survives too')
   assert.equal(out.includes('load prose'), false, 'the load section still goes')
@@ -259,7 +327,7 @@ await test('only a heading that means loading loses its section', () => {
 await test('a heading inside a fence is example text, not a boundary', () => {
   // The fenced line must not cut the load section short, or half of it survives.
   const drifted = '# Batch tool calls\n## Step 3 - load before you call\nprose one\n```\n## not a heading\n```\nprose two\n## Trajectory 1 - next\nbody\n'
-  const out = renderBatchingGuidance(drifted, { loader: false, resident: ['ops_glob'], loadable: [] })
+  const out = renderBatchingGuidance(drifted, { loader: false, resident: ['ops_glob'], loadable: [], outputMode: 'return' })
   assert.equal(out.includes('prose two'), false, 'the whole section is replaced')
   assert.ok(out.includes('## Trajectory 1 - next'), 'the next real section is kept')
 })
@@ -267,7 +335,7 @@ await test('a heading inside a fence is example text, not a boundary', () => {
 await test('a fenced copy of the heading is not the anchor', () => {
   // Taking the quoted line for the anchor would slice the document inside the fence.
   const drifted = '# Batch tool calls\n```\n## Step 3 - load before you call\n```\nreal prose\n'
-  const out = renderBatchingGuidance(drifted, { loader: false, resident: ['ops_glob'], loadable: [] })
+  const out = renderBatchingGuidance(drifted, { loader: false, resident: ['ops_glob'], loadable: [], outputMode: 'return' })
   assert.ok(out.includes('real prose'), 'the real body survives the fallback')
   assert.ok(out.startsWith('# Batch tool calls'), 'the H1 stays first')
 })
@@ -287,7 +355,7 @@ await test('a loader-less scope whose only file API is inspect states the paths 
   // The acceptance case: with no loader, no listing and no search, a directory cannot be
   // probed, so the lesson must say where the paths come from instead of letting the model
   // spend a round trip on a call that cannot succeed.
-  const rendered = renderBatchingGuidance(loadBatchingGuidance(), { loader: false, resident: ['ops_inspect_local_file', 'ops_stat'], loadable: [] })
+  const rendered = renderBatchingGuidance(loadBatchingGuidance(), { loader: false, resident: ['ops_inspect_local_file', 'ops_stat'], loadable: [], outputMode: 'return' })
   assert.ok(rendered.includes('ops_inspect_local_file'), 'the resident reader is listed')
   assert.match(rendered, /rejects directories/, 'the directory rejection is stated')
   assert.match(rendered, /concrete file paths/, 'the exact-path requirement is stated')
@@ -296,7 +364,7 @@ await test('a loader-less scope whose only file API is inspect states the paths 
 
 await test('the path statement stays silent while a listing or search API is published', () => {
   // A scope that can list or search discovers paths itself; the caveat would read as noise.
-  const rendered = renderBatchingGuidance(loadBatchingGuidance(), { loader: false, resident: ['ops_glob', 'ops_inspect_local_file'], loadable: [] })
+  const rendered = renderBatchingGuidance(loadBatchingGuidance(), { loader: false, resident: ['ops_glob', 'ops_inspect_local_file'], loadable: [], outputMode: 'return' })
   assert.doesNotMatch(rendered, /rejects directories/, 'a scope that can list needs no caveat')
   assert.ok(rendered.includes('ops_glob') && rendered.includes('ops_inspect_local_file'), 'the published pair is listed')
 })

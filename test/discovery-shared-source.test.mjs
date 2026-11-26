@@ -20,7 +20,8 @@ await test('discovery commits stat/grep next step and withdraws without stopping
   const { ctx, tools } = await bootHost(), steps = [], agents = []
   let mode = 'workspace-write'
   try {
-    for (const plugin of [Subprocess, Sandbox, FileSystem, NodePtc]) await ctx.plugin(plugin)
+    for (const plugin of [Subprocess, Sandbox, FileSystem]) await ctx.plugin(plugin)
+    await ctx.plugin(NodePtc, {})
     ctx.provide('sandboxPolicy', { resolve: () => ({ mode, workspaceRoot: root }) })
     ctx.provide('agents', { list: () => agents })
     const discovery = ctx.plugin({ apply(inner) { mountDiscovery(inner, {
@@ -78,16 +79,16 @@ await test('discovery commits stat/grep next step and withdraws without stopping
     const canonical = tools.executable('ops_stat', agent, step.toolSet)
     assert.ok(canonical.output.schema)
     for (const [api, args] of Object.entries(queries)) {
-      const result = await call(step, 'run_code', { description: api, code: `return await tools.ops_${api}(${JSON.stringify(args)});` })
+      const result = await call(step, 'run_code', { description: api, code: `const result = await tools.ops_${api}(${JSON.stringify(args)}); inspect(JSON.stringify(result));` })
       assert.equal(result.isError, false, JSON.stringify(result))
-      assert.equal(result.value.result.status, 'completed', JSON.stringify(result))
+      assert.equal(result.value.logs.some(line => line.includes('"status":"completed"')), true, JSON.stringify(result))
     }
     await discovery.dispose()
     assert.equal(tools.executable('ops_stat', agent, step.toolSet), undefined, 'withdrawal invalidates captured identity')
     step = await prepare()
-    const after = await call(step, 'run_code', { description: 'Still live', code: "return await tools.ops_stat({path:'note'});" })
+    const after = await call(step, 'run_code', { description: 'Still live', code: "inspect(JSON.stringify(await tools.ops_stat({path:'note'})));" })
     assert.equal(after.isError, false, JSON.stringify(after))
-    assert.equal(after.value.result.data.exists, true)
+    assert.equal(after.value.logs.some(line => line.includes('\"exists\":true')), true)
     await ptc.dispose()
   } finally { steps.forEach(step => step.dispose()); await shutdown(ctx) }
 }))

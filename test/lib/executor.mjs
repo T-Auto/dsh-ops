@@ -1,6 +1,7 @@
 /** Real DSH 0.2.2 executor and model-step preparation helpers. */
 import * as native from '@deepseek-ai/dsh-tool-executor-native'
 import * as ptc from '@deepseek-ai/dsh-tool-executor-ptc'
+import { adaptPtcCode, capturePtcReturn } from './ptc-compat.mjs'
 
 /** Register a host executor in the caller's scope; its returned effect is disposable. */
 export function selectExecutor(ctx, mode) {
@@ -21,11 +22,13 @@ export async function prepareStep(ctx, agent, signal = new AbortController().sig
 
 /** Execute one model call as a real batch, preserving an explicitly captured step set. */
 export async function executeCall(ctx, request) {
-  const { name, callId, arguments: args, agent, signal = new AbortController().signal, toolSet } = request
+  const { name, callId, arguments: originalArgs, agent, signal = new AbortController().signal, toolSet } = request
+  const adapted = name === 'run_code' && typeof originalArgs?.code === 'string' ? adaptPtcCode(originalArgs.code) : undefined
+  const args = adapted?.capturesReturn ? { ...originalArgs, code: adapted.code } : originalArgs
   const step = toolSet ? undefined : await prepareStep(ctx, agent, signal)
   try {
     const batch = await ctx.get('tools').execute({ agent, signal, toolSet: toolSet ?? step.toolSet,
       calls: [{ type: 'tool-call', id: callId ?? 'fixture-call', name, arguments: JSON.stringify(args) }] })
-    return batch.results[0].result
+    return capturePtcReturn(batch.results[0].result, adapted?.capturesReturn === true)
   } finally { step?.dispose() }
 }
