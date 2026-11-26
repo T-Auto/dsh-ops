@@ -25,6 +25,7 @@ function callerContext(root) {
   const effects = []
   return {
     root,
+    fiber: { uid: 1, state: 2 },
     listeners,
     effects,
     on(name, listener, options) {

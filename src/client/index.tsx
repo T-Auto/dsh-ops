@@ -1,5 +1,6 @@
 import type { Context, PluginDetailProps } from '../adapter/dsh/types.js'
 import type {} from '../adapter/dsh/types.js'
+import { useSyncExternalStore } from 'react'
 import { RUNTIME_REMOTE } from '../settings/runtime-contract.js'
 import type { BashSource, RuntimeAction, RuntimeRemote } from '../settings/runtime-contract.js'
 import { en, zh } from './locales.js'
@@ -45,16 +46,32 @@ export async function apply(ctx: Context): Promise<void> {
     : ''
   const miss = async (): Promise<never> => { throw new Error(reason) }
   const api: RuntimeRemote = mounted ?? { snapshot: miss, plan: miss, select: miss, execute: miss, applyDefaultPreset: miss }
-  // The host's own installer; a slot render may not read it, so resolve it here.
-  const plugins = (ctx.get('remote.pluginManager') ?? undefined) as PluginInstaller | undefined
-  let pwsh7Installed: boolean | undefined
-  try {
-    const list = await plugins?.listPlugins()
-    const rows = Array.isArray(list) ? list : (list as { value?: unknown } | undefined)?.value
-    if (Array.isArray(rows)) pwsh7Installed = rows.some(row => typeof row === 'object' && row !== null
-      && ['entryId', 'moduleName', 'patchId'].some(key => typeof (row as Record<string, unknown>)[key] === 'string'
-        && ((row as Record<string, string>)[key]).includes('dsh-win-pwsh7')))
-  } catch { pwsh7Installed = undefined }
+  // This namespace mounts separately from the gateway. Its lifetime only
+  // controls the companion controls, so the row and its draft can stay mounted.
+  let plugins: PluginInstaller | undefined
+  const listeners = new Set<() => void>()
+  const subscribe = (listener: () => void) => {
+    listeners.add(listener)
+    return () => { listeners.delete(listener) }
+  }
+  const snapshot = () => plugins
+  const publish = (installer: PluginInstaller | undefined) => {
+    plugins = installer
+    for (const listener of listeners) listener()
+  }
+  void ctx.inject(['remote.pluginManager'], inner => {
+    const installer = inner.get('remote.pluginManager') as PluginInstaller
+    inner.effect(() => {
+      publish(installer)
+      return () => { if (plugins === installer) publish(undefined) }
+    }, 'dsh-ops: companion installer')
+  })
+  function Configuration(props: SettingsProps) {
+    return <RowSettings {...props} plugins={useSyncExternalStore(subscribe, snapshot, snapshot)} api={api} />
+  }
+  function Diagnostics(props: PluginDetailProps & { t: Translator }) {
+    return <DiagnosticsSection {...props} plugins={useSyncExternalStore(subscribe, snapshot, snapshot)} api={api} />
+  }
   ctx.effect(() => {
     const style = document.createElement('style')
     style.dataset.dshOpsSettings = 'true'; style.textContent = SETTINGS_CSS; document.head.append(style)
@@ -66,7 +83,7 @@ export async function apply(ctx: Context): Promise<void> {
     yield ctx.slots.register({ name: 'plugins.row.config', key: `${ROW_ID}#${ROW_ID}`, locale: 'dshOps' },
       (props: SettingsProps) => props.view === 'summary'
         ? <>{props.t('rowSummary')}</>
-        : <RowSettings {...props} pwsh7Installed={pwsh7Installed} plugins={plugins} api={api} />)
+        : <Configuration {...props} />)
   })
   // The status card reports the Host runtime; a row without runtime facts renders
   // nothing, and a disabled bundle or row renders nothing either. Configuration
@@ -74,6 +91,6 @@ export async function apply(ctx: Context): Promise<void> {
   // writable form for this row; the bundle page only carries this card.
   ctx.slots.inject('plugins.detail.section', function* () {
     yield ctx.slots.register({ name: 'plugins.detail.section', id: 'dsh-ops.diagnostics', order: 50, locale: 'dshOps' },
-      (props: PluginDetailProps & { t: Translator }) => <DiagnosticsSection {...props} api={api} plugins={plugins} />)
+      Diagnostics)
   })
 }

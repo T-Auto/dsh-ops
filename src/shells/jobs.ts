@@ -24,7 +24,10 @@ export function startBashJob(jobs: ShellJobs, args: { description?: string; comm
   }))
   let id: string
   try { id = jobs.start({ kind: 'bash', label,
-    ...(exec.agent ? { owner: exec.agent.id } : {}), output,
+    ...(exec.agent ? { owner: exec.agent.id } : {}),
+    ...(typeof exec.callId === 'string' && exec.callId.length > 0 && typeof exec.rootCallId === 'string' && exec.rootCallId.length > 0
+      ? { toolCall: { callId: exec.callId, rootCallId: exec.rootCallId } } : {}),
+    output,
     run: () => {
       runInvoked = true
       const done = Promise.resolve().then(async () => {

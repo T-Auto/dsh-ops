@@ -302,8 +302,12 @@ export async function officialToolHidingMountChecks() {
       assert.equal((await execute(ctx, b, 'foreign')).isError, true)
       assert.ok(scopedToolNames(ctx, b).includes('read'), 'failed root has no partial mask')
       assert.equal(scopedToolNames(ctx, a).includes('read'), false)
+      let registryChanges = 0
+      const unsubscribe = ctx.on('tools/change', () => { ++registryChanges })
       await assemble(ctx, a)
       assert.equal((await execute(ctx, a, 'foreign')).isError, false)
+      unsubscribe()
+      assert.equal(registryChanges, 0, 'an unchanged blocked sibling must not republish healthy restrictions')
       lift()
       await assemble(ctx, b)
       assert.equal(scopedToolNames(ctx, b).includes('read'), false)

@@ -7,11 +7,14 @@ export interface TextField { text?: string | null; chars?: number | null; trunca
 export type CoreBucket = 'inputTokens' | 'outputTokens' | 'cacheReadTokens' | 'cacheWriteTokens'
 export type UsageBucket = CoreBucket | 'reasoningTokens' | 'totalTokens'
 export type Usage = Partial<Record<UsageBucket, number>>
+export interface SurfaceReplacement { op: 'replace'; startSeq: number; endSeq: number }
 export interface CaptureEvent {
   seq: number; time: number; type: string; role?: string; source?: unknown; turn?: unknown; step?: unknown
   callId?: string; name?: string; reason?: string; errorCode?: string; interrupted?: unknown; isError?: unknown
+  rootCallId?: string; parentCallId?: string; surfaceOp?: SurfaceReplacement; sourceEventSeqs?: number[]
   payload?: TextField | null; reasoning?: TextField | null; arguments?: TextField | null
   toolCalls?: unknown[]; usage?: Usage | null; usageReported?: unknown; usageBuckets?: string[]
+  jobId?: string; kind?: string; status?: string; target?: string; start?: number; insertedCount?: number; removedCount?: number
 }
 export interface ArchiveMember { path: string; bytes: number; sha256: string; role: string }
 export interface EventFile { path: string; events: number; sha256: string }
@@ -35,6 +38,7 @@ export const object = (value: unknown): value is Row => value !== null && typeof
 export const field = (value: unknown, key: string): unknown => object(value) ? value[key] : undefined
 export const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
 const optionalString = (value: unknown): boolean => value === undefined || typeof value === 'string'
+const position = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 function textField(value: unknown): value is TextField | null | undefined {
   if (value == null) return true
   if (!object(value) || Array.isArray(value)) return false
@@ -45,7 +49,14 @@ function textField(value: unknown): value is TextField | null | undefined {
 export function foldEvent(value: Row): value is Row & CaptureEvent {
   if (typeof value.type !== 'string' || !value.type || typeof value.seq !== 'number' || !Number.isSafeInteger(value.seq) || value.seq < 0
     || !finite(value.time) || value.time < 0 || value.time > 8_640_000_000_000_000) return false
-  if (!['role', 'callId', 'name', 'reason', 'errorCode'].every(key => optionalString(value[key]))) return false
+  if (!['role', 'callId', 'rootCallId', 'parentCallId', 'name', 'reason', 'errorCode', 'jobId', 'kind', 'status', 'target']
+    .every(key => optionalString(value[key]))) return false
+  if (!['start', 'insertedCount', 'removedCount'].every(key => value[key] === undefined || position(value[key]))) return false
+  const op = value.surfaceOp
+  if (op !== undefined && (!object(op) || Array.isArray(op) || op.op !== 'replace'
+    || !position(op.startSeq) || !position(op.endSeq) || op.startSeq > op.endSeq)) return false
+  const sources = value.sourceEventSeqs
+  if (sources !== undefined && (!Array.isArray(sources) || !sources.every(position))) return false
   if (![value.payload, value.reasoning, value.arguments].every(textField)) return false
   if (value.toolCalls !== undefined && !Array.isArray(value.toolCalls)) return false
   if (value.usageBuckets !== undefined && (!Array.isArray(value.usageBuckets) || !value.usageBuckets.every(item => typeof item === 'string'))) return false

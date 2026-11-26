@@ -31,24 +31,34 @@ export interface ExecutorSurface {
 /** Configuration page of the row; `row-settings.tsx` binds the native Switch. */
 export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Installed?: boolean; executor: ExecutorSurface }) {
   const { form, t, Switch, pwsh7Installed, executor } = props
-  // A stable reader: a fresh closure would re-run the editor's effect every render.
-  const read = useMemo(() => (value: Record<string, unknown>) => readRowValues(value, { pwsh7Installed }), [pwsh7Installed])
+  const read = useMemo(() => (value: Record<string, unknown>) => ({
+    switches: readRowValues(value, { pwsh7Installed }),
+    choice: readExecutor(value),
+    tier: readDisclosure(value),
+    pwsh7Installed,
+  }), [pwsh7Installed])
   const editor = useEditor(form, read, t)
   const [opened, setOpened] = useState<Record<string, boolean>>({})
-  const [choice, setChoice] = useState<ExecutorChoice>(() => readExecutor(form?.state.value ?? {}))
-  const [tier, setTier] = useState<DisclosureSelection>(() => readDisclosure(form?.state.value ?? {}))
+  const { switches: draft, choice, tier } = editor.draft
+  // Compare against the detection state the draft was read with. A late
+  // installer response must not turn an untouched companion switch into a write.
+  const readOptions = { pwsh7Installed: editor.draft.pwsh7Installed }
+  const edit = (next: typeof editor.draft): void => {
+    const changed = executorDiffers(next.choice, editor.baseline)
+      || disclosureDiffers(next.tier, editor.baseline)
+      || changedFields(next.switches, editor.baseline, readOptions).length > 0
+    editor.edit(next, changed)
+  }
+  const setChoice = (value: ExecutorChoice) => edit({ ...editor.draft, choice: value })
+  const setTier = (value: DisclosureSelection) => edit({ ...editor.draft, tier: value })
   const [check, setCheck] = useState<{ ok: boolean; text: string }>()
   const [saving, setSaving] = useState(false)
-  // The saved row is the baseline: a Host reload while the page is dirty must not
-  // silently adopt somebody else's executor or disclosure tier.
+  const busy = editor.busy || saving
   useEffect(() => {
-    if (editor.dirty) return
-    setChoice(readExecutor(editor.baseline))
-    setTier(readDisclosure(editor.baseline))
-    setCheck(undefined)
+    if (!editor.dirty) setCheck(undefined)
   }, [editor.baseline, editor.dirty])
   if (!editor.ready) return <Unavailable {...props} />
-  const draft = editor.draft, gates = bundleGates(draft)
+  const gates = bundleGates(draft)
   const savedChoice = readExecutor(editor.baseline)
   const executorDirty = executorDiffers(choice, editor.baseline)
   const savedTier = readDisclosure(editor.baseline)
@@ -68,11 +78,11 @@ export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Ins
     } catch (error) { setCheck({ ok: false, text: errorText(error) }) }
   }
 
-  /** Save switches and the executor in one revision-checked write. */
+  /** Save the switches, executor and disclosure tier against the reviewed revision. */
   async function submit(event: { preventDefault(): void }): Promise<void> {
     event.preventDefault()
-    if (editor.busy || saving) return
-    const operations = changedFields(draft, editor.baseline, { pwsh7Installed })
+    if (busy) return
+    const operations = changedFields(draft, editor.baseline, readOptions)
     if (executorDirty) {
       setSaving(true)
       try {
@@ -96,8 +106,8 @@ export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Ins
   // The companion linkage locks every host-PowerShell hide switch to off.
   const pwsh7Link = draft['other.pwsh7Link'] === true
   // Detection would turn this on; an explicit off is worth naming so it is not read as a bug.
-  const explicitOff = pwsh7Installed === true && draft['other.pwsh7Link'] === false
-  const set = (flat: string, value: boolean) => editor.edit({ ...draft, [flat]: value })
+  const explicitOff = readOptions.pwsh7Installed === true && draft['other.pwsh7Link'] === false
+  const set = (flat: string, value: boolean) => edit({ ...editor.draft, switches: { ...draft, [flat]: value } })
   return <form className="ops-settings" onSubmit={event => { void submit(event) }}>
     {groupsFor(editor.baseline).map(group => {
       const enabled = group.toggle ? draft[`${group.id}.enabled`] !== false : true
@@ -118,7 +128,7 @@ export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Ins
             <Chevron open={expanded} />
             <span className="ops-field-text">{head}</span>
           </button> : <div className="ops-field-text">{head}</div>}
-          {group.toggle && <Switch checked={enabled} label={group.labelText ?? t(group.label)} disabled={editor.busy}
+          {group.toggle && <Switch checked={enabled} label={group.labelText ?? t(group.label)} disabled={busy}
             onChange={(checked: boolean) => set(flatKey(group.togglePath ?? [group.id, 'enabled']), checked)} />}
         </div>
         {group.id === 'other' && explicitOff && <p className="ops-field-hint">{t('pwsh7ExplicitOffHint')}</p>}
@@ -129,7 +139,7 @@ export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Ins
             return <SwitchRow key={flatKey(spec.path)} spec={spec}
               checked={locked ? false : draft[flatKey(spec.path)] !== false}
               gate={!spec.disabled && !locked && (spec.gatedBy === undefined || gates[spec.gatedBy]) && enabled}
-              busy={editor.busy} t={t} Switch={Switch} onChange={checked => set(flatKey(spec.path), checked)} />
+              busy={busy} t={t} Switch={Switch} onChange={checked => set(flatKey(spec.path), checked)} />
           })}
         </div>}
       </section>
@@ -142,7 +152,7 @@ export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Ins
       <div className="ops-card-body">
         {savedChoice.engine === 'mixed' && <p className="ops-field-hint">{t('executorMixed')}</p>}
         <label className="ops-choice">
-          <input type="radio" name="ops-executor" checked={choice.engine === 'niubash'} disabled={editor.busy || saving}
+          <input type="radio" name="ops-executor" checked={choice.engine === 'niubash'} disabled={busy}
             onChange={() => { setChoice({ engine: 'niubash', path: '' }); setCheck(undefined) }} />
           <span className="ops-field-text">
             <span className="ops-field-label">{t('executorNiubash')}</span>
@@ -150,7 +160,7 @@ export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Ins
           </span>
         </label>
         <label className="ops-choice">
-          <input type="radio" name="ops-executor" checked={choice.engine === 'git'} disabled={editor.busy || saving}
+          <input type="radio" name="ops-executor" checked={choice.engine === 'git'} disabled={busy}
             onChange={() => setChoice({ engine: 'git', path: savedChoice.engine === 'git' ? savedChoice.path : '' })} />
           <span className="ops-field-text">
             <span className="ops-field-label">{t('executorGit')}</span>
@@ -163,21 +173,21 @@ export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Ins
             {candidates.length === 0
               ? <p className="ops-field-hint">{t('executorNoCandidates')}</p>
               : <div className="ops-actions">{candidates.map(file => <button type="button" key={file}
-                className="ops-text-button ops-candidate" title={file} disabled={editor.busy || saving}
+                className="ops-text-button ops-candidate" title={file} disabled={busy}
                 onClick={() => { setChoice({ engine: 'git', path: file }); void inspectPath(file) }}>{file}</button>)}</div>}
             <div className="ops-actions">
-              <button type="button" className="ops-text-button" disabled={editor.busy || saving || executor.busy}
+              <button type="button" className="ops-text-button" disabled={busy || executor.busy}
                 onClick={() => executor.refresh()}>{t('executorScan')}</button>
             </div>
           </div>
           <label className="ops-field">
             <span className="ops-field-label">{t('executorPath')}</span>
             <input className="ops-input" type="text" value={choice.path} placeholder={t('executorPathPlaceholder')}
-              disabled={editor.busy || saving} aria-invalid={check?.ok === false}
+              disabled={busy} aria-invalid={check?.ok === false}
               onChange={event => setChoice({ engine: 'git', path: event.target.value })}
               onBlur={() => void inspectPath(choice.path)} />
             <div className="ops-actions">
-              <button type="button" className="ops-text-button" disabled={editor.busy || saving || choice.path.trim() === ''}
+              <button type="button" className="ops-text-button" disabled={busy || choice.path.trim() === ''}
                 onClick={() => void inspectPath(choice.path)}>{t('executorCheck')}</button>
             </div>
             {check !== undefined && <p className={check.ok ? 'ops-field-hint' : 'ops-field-error'} role="status">{check.text}</p>}
@@ -197,7 +207,7 @@ export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Ins
             suspension instead of hiding the choice, which still applies on save. */}
         {!gates.dynamicTools && <p className="ops-field-hint">{t('disclosureSuspended')}</p>}
         <label className="ops-choice">
-          <input type="radio" name="ops-disclosure" checked={tier === 'on-demand'} disabled={editor.busy || saving}
+          <input type="radio" name="ops-disclosure" checked={tier === 'on-demand'} disabled={busy}
             onChange={() => { setTier('on-demand') }} />
           <span className="ops-field-text">
             <span className="ops-field-label">{t('disclosureOnDemand')}</span>
@@ -205,7 +215,7 @@ export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Ins
           </span>
         </label>
         <label className="ops-choice">
-          <input type="radio" name="ops-disclosure" checked={tier === 'full'} disabled={editor.busy || saving}
+          <input type="radio" name="ops-disclosure" checked={tier === 'full'} disabled={busy}
             onChange={() => { setTier('full') }} />
           <span className="ops-field-text">
             <span className="ops-field-label">{t('disclosureFull')}</span>
@@ -215,8 +225,8 @@ export function RowForm(props: SettingsProps & { Switch: SwitchBinding; pwsh7Ins
         <p className="ops-field-hint">{t('disclosureAppliesOnSave')}</p>
       </div>
     </section>
-    <FormActions busy={editor.busy || saving} dirty={editor.dirty || executorDirty || tierDirty} valid
-      reset={() => { editor.reset(); setChoice(savedChoice); setTier(savedTier); setCheck(undefined) }} message={editor.message} t={t} />
+    <FormActions busy={busy} dirty={editor.dirty} valid
+      reset={() => { editor.reset(); setCheck(undefined) }} message={editor.message} t={t} />
   </form>
 }
 

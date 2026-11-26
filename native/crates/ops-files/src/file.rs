@@ -861,7 +861,10 @@ mod tests {
         println!("observed (offset, nextOffset, truncatedInLine): {observed:?}");
         let zero = observed[0];
         let one = observed[1];
-        assert!(zero.2 && one.2, "both pages should cut the line: {observed:?}");
+        assert!(
+            zero.2 && one.2,
+            "both pages should cut the line: {observed:?}"
+        );
         assert_eq!(one.1, 1, "offset=1 resumes in place: {observed:?}");
         assert_eq!(zero.1, 1, "offset=0 points at offset 1: {observed:?}");
     }

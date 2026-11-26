@@ -150,7 +150,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       }
       return names
     }
-    presentation = (activation: ToolActivationContext) => isPtc(activation.agent, activation.signal)
+    presentation = activation => activationIsPtc(prompt, activation)
     // One latch for the program-shape trigger. It observes the root run_code program,
     // which is the only place the whole step is visible.
     // What this scope publishes decides which guidance text is truthful, and the answer

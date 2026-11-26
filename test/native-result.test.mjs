@@ -351,12 +351,12 @@ for (const mode of ['changed', 'failed', 'cwd-changed', 'confine-changed']) awai
     })
     const work = executeCall(ctx, { name: 'run_code', callId: 'put-presentation-' + mode, agent: owner, toolSet: step.toolSet,
       arguments: { description: 'Attempt storage across a presentation change', code: `return await tools.${publicToolName('result')}({action:'put',items:[{unsafe:true}]});` } })
-    let timer
-    try { await Promise.race([entered,
+    // Synchronize on the actual preflight. The suite runner already bounds a
+    // stalled process, including cold startup of the host's PTC runtime.
+    await Promise.race([
+      entered,
       work.then(result => { throw new Error('result operation settled before its controlled preflight: ' + JSON.stringify(result)) }),
-      new Promise((_resolve, reject) => { timer = setTimeout(() => reject(new Error(`result admission inspection was not reached (admissionSeen=${admissionSeen}, armed=${armed}, workerCalls=${workerCalls})`)), 5000) }),
-    ]) }
-    finally { clearTimeout(timer) }
+    ])
     if (mode !== 'failed') {
       owner.liftPresentation()
       await owner.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { owner.liftPresentation = selectExecutor(inner, 'native') } })

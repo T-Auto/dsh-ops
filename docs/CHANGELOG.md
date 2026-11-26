@@ -29,6 +29,40 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - ops-ptc 的批量调用教学不再注入 Native executor。挂在没有 `run_code` 的执行器下时，模型无法执行
   教学所讲的根程序，因此投递改用与工具注册相同的 PTC 呈现判定。无内容可投递的步骤整体跳过呈现探测，
   Native 步骤用不上的提醒保留在队列中而非被丢弃（#1045）。
+- A page whose last kept line was cut by the output budget offers no continuation cursor.
+  That line is not consumed, so `nextOffset` equals the resumption base; for a legacy `offset: 0`
+  request the base is 1, so the cursor pointed at a different offset and re-read the same cut line.
+  Both offsets now refuse the cursor and leave the page's own `nextAction` (view=hex) as the
+  recovery route, instead of relying on the numeric coincidence (#1045).
+- 最后一行被输出预算截断的一页不再提供续页游标。该行未计入已消费，`nextOffset` 等于续页基准；
+  对 legacy `offset: 0` 请求而言基准是 1，于是游标指向了另一个 offset 并重读同一截断行。现在两种
+  offset 都拒绝该游标，改由该页自身的 `nextAction`（view=hex）作为恢复途径，不再依赖数值巧合
+  （#1045）。
+- Preserve sealed panel reports when a merge overlaps session close. Concurrent folds share
+  viewer updates, invalid workspaces share one warning per activation, and a live fold hashes
+  the same bytes it parses (#976).
+- 面板折叠与会话关闭重叠时保留已封存的报告。并发折叠共享查看器更新，无效工作区每次启用
+  只告警一次，实时折叠从同一份日志字节生成内容和哈希（#976）。
+- Track registry admission per agent, preserve the original failure on cleanup, and restore Bash
+  and official-tool replacements when the tools service restarts at the same configuration (#953).
+- 按 agent 跟踪注册结果，清理时保留原始失败原因；工具服务按原配置重启后恢复 Bash 和官方工具替换（#953）。
+- Pass the agent and selected model into presentation probes so persona variables resolve
+  during Native and PTC detection (#954).
+- 展示探测带上 agent 和已选模型，让 Native 与 PTC 模式判断时正常解析人设变量（#954）。
+- Capture PTC dispatches, job lifecycle, inbox splices and todo writes in the panel. Bash jobs
+  pass their host call identities, and a pruned result stays visible when it replaces a row
+  in a full view (#698, #909).
+- 面板记录 PTC 派发、作业生命周期、收件箱改写和待办写入。Bash 作业传递宿主调用 ID，
+  视图满额时保留裁剪后的工具结果（#698、#909）。
+- Keep executor edits and other settings in one revision-checked draft, and retranslate save
+  notices when the display language changes (#1028).
+- 执行器与其他设置共用带修订号的草稿，保存提示随界面语言更新（#1028）。
+- Refresh the Windows companion detection as soon as the plugin manager mounts. Show
+  installation only after a successful inventory confirms the companion is absent (#750).
+- 插件管理服务就绪后刷新 Windows 伴侣插件检测。仅在成功的清单查询确认未安装时显示
+  安装入口（#750）。
+- Recognize Entra user SIDs when setting the owner of a temporary Windows test fixture (#1031).
+- 设置 Windows 临时测试夹具的所有者时支持 Entra 用户 SID（#1031）。
 
 ## [0.5.6] — 2026-11-21 — Patch release
 

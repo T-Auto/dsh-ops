@@ -13,10 +13,14 @@ import { OFFICIAL_REPLACEMENTS } from './official-tool-catalog.js'
 import { surfaceOf, visibleNames } from './publication/surface.js'
 import { safeDispose } from './teardown.js'
 import { retired as retiredLegacyRow } from './settings/legacy.js'
-import { publicationRegistration, publicationPending } from './publication/reentry.js'
+import { publicationLeaseError, publicationLeaseState, publicationRegistration } from './publication/reentry.js'
 import { ownsPublication } from './publication/registrar.js'
 
 interface Entry { context: Context; lifts: (() => void)[]; cleanupError?: string; error?: string; reported?: string
+  /** Set only when this scope's restrictions were registered and verified this pass. */
+  masked?: boolean
+  /** Last fail-open reason warned about, so a retrying pass does not storm the log. */
+  warned?: string
   /** Set from the assembled surface: this scope presents one program entry, so its
    * selected official names are not native duplicates and must stay dispatchable. */
   collapsed?: boolean }
@@ -107,34 +111,58 @@ export function apply(root: Context, raw?: unknown): void {
       if (stopped || mutating) return
       // A deferred restriction emits tools/change before its returned undo can
       // be stored. Do not revoke that in-flight mask from its own notification.
-      if ([...entries.values()].some(entry => entry.lifts.some(publicationPending))) return
+      if ([...entries.values()].some(entry => entry.lifts.some(lift => publicationLeaseState(lift) === 'pending'))) return
       try { if (snapshot() === lastSurface) return } catch { /* reported by per-agent verification below */ }
       mutating = true
+      // Missing counterparts are part of the snapshot. A lease or cleanup still
+      // in doubt must be retried even if the registry looks identical.
+      let retry = false
       try {
         // Clear all masks first: inherited restrictions must not conceal a
         // parent's missing capability while checking a child.
-        for (const entry of entries.values()) clear(entry)
+        for (const entry of entries.values()) if (!clear(entry)) retry = true
         const plans: [object, Entry, Plan][] = []
         for (const [agent, entry] of entries) {
           let plan: Plan
           try { plan = prepare(agent, entry) }
-          catch (error) { plan = { deny: [], failure: blocked(message(error)) } }
+          catch (error) { retry = true; plan = { deny: [], failure: blocked(message(error)) } }
           plans.push([agent, entry, plan])
         }
         // Each scope owns its readiness and mask. A failed child is blocked at
         // assembly/dispatch; it does not make a healthy ancestor or root fail.
         for (const [agent, entry, plan] of plans) {
-          if (plan.failure) { clear(entry); entry.error = plan.failure; continue }
+          if (plan.failure) { clear(entry); entry.masked = false; entry.warned = undefined; entry.error = plan.failure; continue }
           try {
             // One restriction per complete plan; never partially hide when a
             // single required replacement is absent.
-            if (plan.deny.length) entry.lifts.push(publicationRegistration(entry.context, () => entry.context.tools.restrict({ deny: plan.deny })))
-            if (entry.lifts.some(publicationPending)) continue
+            if (plan.deny.length) {
+              const lift = publicationRegistration(entry.context, () => entry.context.tools.restrict({ deny: plan.deny }))
+              entry.lifts.push(lift)
+              const lease = publicationLeaseState(lift)
+              // A deferred mask is verified once it settles; its own tools/change
+              // re-runs this pass, so never claim the scope is masked yet.
+              if (lease === 'pending') { entry.masked = false; entry.error = undefined; retry = true; continue }
+              // A cancelled or failed lease never registered its restriction. Fail
+              // open: keep the official tools visible and callable, and retry on a
+              // later pass instead of hiding them behind an unregistered lift.
+              if (lease !== 'settled') {
+                entry.lifts.splice(entry.lifts.indexOf(lift), 1)
+                lift()
+                entry.masked = false
+                entry.error = undefined
+                retry = true
+                const note = `dsh-ops: hide-official restriction for agent ${String((agent as { id?: unknown }).id ?? '<unknown>')} was not published: ${message(publicationLeaseError(lift))}; keeping official tools available`
+                if (entry.warned !== note) { entry.warned = note; ctx.logger?.warn?.(note) }
+                continue
+              }
+            }
             const masks = maskable(agent)
             const leaked = visibleNames(tools, agent).filter(name => masks.has(name))
             if (leaked.length) throw new Error(`host scoped restriction cannot hide own-scope tools: ${leaked.join(', ')}`)
+            entry.masked = true
+            entry.warned = undefined
             entry.error = undefined
-          } catch (error) { clear(entry); entry.error = blocked(message(error)) }
+          } catch (error) { clear(entry); entry.masked = false; entry.warned = undefined; entry.error = blocked(message(error)); retry = true }
         }
         for (const entry of entries.values()) {
           if (entry.error !== entry.reported) {
@@ -142,7 +170,7 @@ export function apply(root: Context, raw?: unknown): void {
             entry.reported = entry.error
           }
         }
-        try { lastSurface = snapshot() } catch { lastSurface = undefined }
+        try { lastSurface = retry ? undefined : snapshot() } catch { lastSurface = undefined }
       } finally { mutating = false }
     }
     const block = (agent: object, detail: string): Error => {
@@ -160,7 +188,7 @@ export function apply(root: Context, raw?: unknown): void {
       entries.set(agent, { context: agent.ctx as Context, lifts: [], error: blocked('surface verification pending') })
       reconcile()
     }
-    const refusal: ToolGuard = exec => {
+    const refusal = (exec: Parameters<ToolGuard>[0]): string | undefined => {
       if (stopped) return blocked('component disposed')
       if (!exec?.agent?.ctx) return blocked('calling agent scope unavailable')
       attach(exec.agent)
@@ -172,7 +200,9 @@ export function apply(root: Context, raw?: unknown): void {
       const transport = entry?.collapsed === true && exec.name === RUN_CODE
       if (entry?.error && !transport) return entry.error
       if (!transport && !readiness(exec.agent, exec.toolSet).every(Boolean)) return blocked('selected OPS counterparts are not admitted for the captured step')
-      return hideable(exec.name)
+      // Denying a selected official name is only consistent once this scope's
+      // restriction is registered and verified; a fail-open entry keeps it callable.
+      return entry?.masked === true && hideable(exec.name)
         ? blocked(`official tool ${exec.name} is selected for replacement`) : undefined
     }
     ctx.on('tools/pre-execute', async (exec, next) => {
@@ -196,14 +226,18 @@ export function apply(root: Context, raw?: unknown): void {
       if (entry) entry.collapsed = collapsed
       if (entry?.error) {
         if (!collapsed) throw new Error(entry.error)
-        clear(entry); entry.error = undefined
+        // Only this collapsed assembly bypasses the native readiness verdict.
+        clear(entry)
       }
       if (!collapsed && !readiness(context.scope, context.toolSet).every(Boolean)) {
         throw block(context.scope, 'selected OPS counterparts are not admitted for the captured step')
       }
       // Restrictions affect future admission; inspect this step's captured set.
+      // A fail-open entry has no registered mask, so its official tools are meant
+      // to stay visible; the leak check applies only to a verified mask.
       const masks = maskable(context.scope)
-      const leaked = collapsed ? [] : tools.definitions(context.scope, context.toolSet).map(tool => tool.name).filter(name => masks.has(name))
+      const leaked = collapsed || entry?.masked !== true ? []
+        : tools.definitions(context.scope, context.toolSet).map(tool => tool.name).filter(name => masks.has(name))
       if (leaked.length) throw block(context.scope, `assembled surface still contains hidden official tools: ${leaked.join(', ')}`)
       return result
     })

@@ -8,37 +8,31 @@
 import { useEffect, useState } from 'react'
 import { Switch } from '../adapter/dsh/browser.js'
 import type { SettingsProps } from './forms.js'
+import { companionStatus } from './detail.js'
 import type { PluginInstaller } from './detail.js'
 import type { RuntimeRemote } from '../settings/runtime-contract.js'
 import { useRuntime } from './runtime.js'
 import { RowForm } from './row-form.js'
 
-export function RowSettings(props: SettingsProps & { pwsh7Installed?: boolean; plugins?: PluginInstaller; api: RuntimeRemote }) {
-  const { plugins, pwsh7Installed, api, ...rest } = props
+export function RowSettings(props: SettingsProps & { plugins?: PluginInstaller; api: RuntimeRemote }) {
+  const { plugins, api, ...rest } = props
   // The executor card offers the Host's detected installations, so this page reads
   // the same snapshot the status card does instead of guessing from the config.
   const runtime = useRuntime(api)
   // Installed state changes while the host runs (the status card can install it), so the
   // page resolves it on open instead of trusting the value captured at boot.
-  const [installed, setInstalled] = useState<boolean | undefined>(pwsh7Installed)
-  const [checked, setChecked] = useState(plugins === undefined)
+  const [installed, setInstalled] = useState<boolean>()
   useEffect(() => {
+    setInstalled(undefined)
     if (plugins === undefined) return
     let current = true
-    void plugins.listPlugins().then(list => {
+    void Promise.resolve().then(() => plugins.listPlugins()).then(list => {
       if (!current) return
-      const rows = Array.isArray(list) ? list : (list as { value?: unknown } | undefined)?.value
-      if (Array.isArray(rows)) setInstalled(rows.some(row => typeof row === 'object' && row !== null
-        && ['entryId', 'moduleName', 'patchId'].some(key => typeof (row as Record<string, unknown>)[key] === 'string'
-          && ((row as Record<string, string>)[key]).includes('dsh-win-pwsh7'))))
-      setChecked(true)
-    }).catch(() => { if (current) setChecked(true) })
+      const { state } = companionStatus(list)
+      setInstalled(state === 'unknown' ? undefined : state === 'present')
+    }).catch(() => { if (current) setInstalled(undefined) })
     return () => { current = false }
   }, [plugins])
-  // The draft is read once when the form mounts; wait for the real answer so the
-  // detection-driven default is not baked in as "absent".
-  // A visible, honest state instead of an empty slot while the host answers.
-  if (!checked) return <p className="ops-note" role="status">{rest.t('loading')}</p>
   return <RowForm {...rest} pwsh7Installed={installed} Switch={Switch}
     executor={{ api, snapshot: runtime.snapshot, busy: runtime.busy, refresh: () => void runtime.refresh() }} />
 }
