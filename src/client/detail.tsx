@@ -11,6 +11,7 @@ import type { DefaultPresetResult, RuntimeRemote, RuntimeSnapshot } from '../set
 import { useEffect, useState } from 'react'
 import { useRuntime } from './runtime.js'
 import { PLAN_KEYS } from './locales.js'
+import { ROW_ID } from './row-schema.js'
 import type { LocaleKey } from './row-schema.js'
 import type { Translator } from './locales.js'
 
@@ -27,7 +28,24 @@ export interface PluginInstaller {
   /** Optional: resolve the spec first, so the preview can name the version. */
   inspect?(spec: string): Promise<unknown>
 }
-import { ROW_ID } from './row-schema.js'
+
+type CompanionStatus = { state: 'unknown' | 'absent' } | { state: 'present'; version?: string }
+
+/** Read the Host's listPlugins response used by both settings views. */
+export function companionStatus(result: unknown): CompanionStatus {
+  const reply = result as { ok?: boolean; value?: unknown } | null | undefined
+  const rows = Array.isArray(result) ? result : reply?.ok === true ? reply.value : undefined
+  if (!Array.isArray(rows)) return { state: 'unknown' }
+  let complete = true
+  for (const row of rows) {
+    // The Loader imports moduleName. Profile authors choose their own entry and patch IDs.
+    if (typeof row?.moduleName !== 'string' || row.moduleName === '') { complete = false; continue }
+    if (row.moduleName === PWSH7 || row.moduleName.startsWith(PWSH7 + '/')) {
+      return { state: 'present', version: typeof row.version === 'string' ? row.version : undefined }
+    }
+  }
+  return { state: complete ? 'absent' : 'unknown' }
+}
 
 /** One labelled fact of the status card. */
 export interface StatusFact { readonly label: string; readonly value: string }
@@ -212,19 +230,13 @@ function RuntimeStatus({ api, t, plugins }: { api: RuntimeRemote; t: Translator;
     } catch { setPwshPlan({ reason: t('pwsh7PlanUnknown') }) }
   }
   // The companion plugin's own state: the host's plugin list is the only source.
-  const [companion, setCompanion] = useState<{ state: 'unknown' | 'absent' | 'present'; version?: string }>({ state: 'unknown' })
+  const [companion, setCompanion] = useState<CompanionStatus>({ state: 'unknown' })
   useEffect(() => {
+    setCompanion({ state: 'unknown' })
     if (plugins === undefined) return
     let current = true
-    void plugins.listPlugins().then(result => {
-      if (!current) return
-      const list = Array.isArray(result) ? result
-        : Array.isArray((result as { value?: unknown })?.value) ? (result as { value: unknown[] }).value : undefined
-      // A plugin row carries entryId/moduleName/patchId, not a package `name`.
-      const entry = list?.find(row => typeof row === 'object' && row !== null
-        && ['entryId', 'moduleName', 'patchId'].some(key => typeof (row as Record<string, unknown>)[key] === 'string'
-          && ((row as Record<string, string>)[key]).includes(PWSH7))) as { version?: string } | undefined
-      setCompanion(list === undefined ? { state: 'unknown' } : entry === undefined ? { state: 'absent' } : { state: 'present', version: entry.version })
+    void Promise.resolve().then(() => plugins.listPlugins()).then(result => {
+      if (current) setCompanion(companionStatus(result))
     }).catch(() => { if (current) setCompanion({ state: 'unknown' }) })
     return () => { current = false }
   }, [plugins])
@@ -275,7 +287,8 @@ function RuntimeStatus({ api, t, plugins }: { api: RuntimeRemote; t: Translator;
                   onClick={() => void runtime.preview('remove-bash')}>{t('removeAction')}</button>}</>}</dd></div>}
               <div><dt>{t('pwsh7Plugin')}</dt><dd>{companion.state === 'present'
                 ? `${t('pwsh7Present')}${(companion.version ?? runtime.snapshot?.companion) === undefined ? '' : `（${companion.version ?? runtime.snapshot?.companion}）`}`
-                : <>{t('statusNone')}{plugins !== undefined && <button type="button" className="ops-link ops-row-action"
+                : companion.state === 'unknown' ? t('pwsh7Unknown')
+                : <>{t('pwsh7Absent')}{plugins !== undefined && <button type="button" className="ops-link ops-row-action"
                   aria-label={t('installPwsh7')} onClick={() => void openPwshPlan()}>{t('installAction')}</button>}</>}</dd></div></dl>
             <p className="ops-status-note">{view.note}</p>
           </div>

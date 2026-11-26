@@ -11,6 +11,8 @@ const CONVERSATION_LIMIT = 20_000
 const TOOL_NAME_LIMIT = 64
 /** Characters of a tool name line kept in a trace preview. */
 const PREVIEW_CHARS = 120
+/** Recent call ids that job records can resolve to a named tool. */
+const CALL_NAME_LIMIT = 2_048
 /** The four core usage buckets in `bench/run.schema.json` order, and the optional ones. */
 const USAGE_BUCKETS: readonly CoreBucket[] = Object.freeze(['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens'])
 const OPTIONAL_BUCKETS: readonly UsageBucket[] = Object.freeze(['reasoningTokens', 'totalTokens'])
@@ -53,6 +55,25 @@ function traceRow(record: CaptureEvent, lane: string, kind: string, extra: Row =
   return { seq: record.seq, time: record.time, at: new Date(record.time).toISOString(), lane, kind, ...extra }
 }
 
+function replacedSeq(record: CaptureEvent): number | undefined {
+  const op = record.surfaceOp
+  if (!op || op.startSeq !== op.endSeq || op.startSeq >= record.seq) return undefined
+  if (record.sourceEventSeqs !== undefined && !record.sourceEventSeqs.includes(op.startSeq)) return undefined
+  return op.startSeq
+}
+
+/** Retain details only for results named by a later replacement, even outside the visible views. */
+function replacementTargets(records: readonly unknown[]): Set<number> {
+  const targets = new Set<number>()
+  for (const record of records) {
+    if (!object(record) || Array.isArray(record) || record.record !== 'event'
+      || record.type !== 'tool/result' || record.surfaceOp === undefined || !foldEvent(record)) continue
+    const target = replacedSeq(record)
+    if (target !== undefined) targets.add(target)
+  }
+  return targets
+}
+
 /**
  * Fold one session's records into the document `panel.html` reads.
  * @param {object[]} records - parsed append-log records, in order.
@@ -62,9 +83,13 @@ function traceRow(record: CaptureEvent, lane: string, kind: string, extra: Row =
 export function foldRecords(records: readonly unknown[], context: FoldContext = {}) {
   const config = context.config ?? PANEL_DEFAULTS
   const supplied = { ...(context.meta ?? {}) }
-  const conversation: Row[] = []
-  const trace: Row[] = []
+  const conversation = new Set<Row>()
+  const trace = new Set<Row>()
   const pending = new Map<string, { name: string; startedAt: number }>()
+  const callNames = new Map<string, string>()
+  const targets = replacementTargets(records)
+  const replacedResults = new Map<number, { trace: Row; conversation: Row; name?: string; durationMs?: number; failed: boolean; dropped: number }>()
+  let pruneReplacements = 0
   const usage = emptyUsage()
   const bucketNames = new Set<string>()
   const eventTypes: Record<string, number> = {}
@@ -90,15 +115,20 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
     if (endedAt === undefined || ms > endedAt) endedAt = ms
   }
   const pushConversation = (row: Row) => {
-    if (conversation.length >= CONVERSATION_LIMIT) conversationTruncated = true
-    else conversation.push(row)
+    if (conversation.size >= CONVERSATION_LIMIT) conversationTruncated = true
+    else conversation.add(row)
   }
   const pushTrace = (row: Row) => {
-    if (trace.length >= TRACE_LIMIT) traceTruncated = true
-    else trace.push(row)
+    if (trace.size >= TRACE_LIMIT) traceTruncated = true
+    else trace.add(row)
   }
   const preview = (value: unknown) => String(value ?? '').replace(/\s+/gu, ' ').slice(0, PREVIEW_CHARS)
-  const dropped = (field: TextField | null | undefined) => { if (field?.truncated === true) droppedChars += field.droppedChars ?? 0 }
+  const dropped = (field: TextField | null | undefined) => field?.truncated === true ? field.droppedChars ?? 0 : 0
+  const rememberCall = (callId: string, name: string) => {
+    callNames.set(callId, name)
+    const oldest = callNames.keys().next()
+    if (callNames.size > CALL_NAME_LIMIT && oldest.done !== true) callNames.delete(oldest.value)
+  }
 
   for (const record of records) {
     if (!object(record) || Array.isArray(record)) continue
@@ -115,9 +145,8 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
     eventTypes[record.type] = (eventTypes[record.type] ?? 0) + 1
     mark(time)
     const payload = record.payload ?? {}
-    dropped(payload)
-    dropped(record.reasoning)
-    dropped(record.arguments)
+    const eventDropped = dropped(payload) + dropped(record.reasoning) + dropped(record.arguments)
+    droppedChars += eventDropped
     switch (record.type) {
       case 'user/message':
         pushConversation({ ...messageRow(record, 'user'), source: record.source })
@@ -144,7 +173,10 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
         const name = record.name ?? '(unnamed)'
         const key = Object.hasOwn(toolCallsByName, name) || Object.keys(toolCallsByName).length < TOOL_NAME_LIMIT ? name : '(other)'
         toolCallsByName[key] = (toolCallsByName[key] ?? 0) + 1
-        if (record.callId !== undefined) pending.set(record.callId, { name, startedAt: time })
+        if (record.callId !== undefined) {
+          pending.set(record.callId, { name, startedAt: time })
+          rememberCall(record.callId, name)
+        }
         pushTrace(traceRow(record, 'tool_call', 'tool_call', {
           name, callId: record.callId, step: record.step, text: preview(record.arguments?.text),
         }))
@@ -154,15 +186,64 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
         const call = record.callId === undefined ? undefined : pending.get(record.callId)
         if (record.callId !== undefined) pending.delete(record.callId)
         const failed = record.isError === true
+        const supersedes = replacedSeq(record)
+        const original = supersedes === undefined ? undefined : replacedResults.get(supersedes)
+        if (original !== undefined && supersedes !== undefined) {
+          // Free each view's slot before admitting the replacement at capacity.
+          conversation.delete(original.conversation)
+          trace.delete(original.trace)
+          replacedResults.delete(supersedes)
+          pruneReplacements += 1
+          if (original.failed) counters.toolErrors -= 1
+          droppedChars -= original.dropped
+        }
         if (failed) counters.toolErrors += 1
-        pushConversation({ ...messageRow(record, 'tool'), isError: failed })
-        pushTrace(traceRow(record, 'tool_result', failed ? 'tool_error' : 'tool_result', {
-          name: call?.name, callId: record.callId, isError: failed, errorCode: record.errorCode, step: record.step,
-          durationMs: call === undefined ? undefined : Math.max(0, time - call.startedAt),
-          text: failed ? `${call?.name ?? 'tool'} failed${record.errorCode ? ` (${record.errorCode})` : ''}` : preview(payload.text),
+        const name = original?.name ?? call?.name
+        const durationMs = original?.durationMs ?? (call === undefined ? undefined : Math.max(0, time - call.startedAt))
+        const isReplacement = original !== undefined
+        const conversationRow = { ...messageRow(record, 'tool'), isError: failed }
+        const row = traceRow(record, 'tool_result', failed ? 'tool_error' : 'tool_result', {
+          name, callId: record.callId, isError: failed, errorCode: record.errorCode, step: record.step, durationMs,
+          ...(isReplacement ? { supersedes, pruned: true } : {}),
+          text: failed ? `${name ?? 'tool'} failed${record.errorCode ? ` (${record.errorCode})` : ''}`
+            : preview(payload.text) + (isReplacement ? ` · 已裁剪（替换 #${supersedes}）` : ''),
+        })
+        pushConversation(conversationRow)
+        pushTrace(row)
+        if (targets.has(record.seq)) {
+          replacedResults.set(record.seq, { trace: row, conversation: conversationRow, name, durationMs, failed, dropped: eventDropped })
+        }
+        break
+      }
+      case 'tool/ptc-dispatch-start': case 'tool/ptc-dispatch': {
+        const settled = record.type === 'tool/ptc-dispatch', failed = settled && record.isError === true
+        if (record.callId !== undefined && record.name !== undefined && record.name !== '(unnamed)') rememberCall(record.callId, record.name)
+        pushTrace(traceRow(record, failed ? 'error' : 'tool_result', failed ? 'ptc_dispatch_error' : settled ? 'ptc_dispatch' : 'ptc_dispatch_start', {
+          name: record.name, callId: record.callId, rootCallId: record.rootCallId, parentCallId: record.parentCallId,
+          isError: failed, errorCode: record.errorCode, arguments: record.arguments?.text, payload: record.payload?.text,
+          text: failed ? `${record.name ?? 'tool'} failed${record.errorCode ? ` (${record.errorCode})` : ''}`
+            : preview(record.payload?.text ?? record.arguments?.text),
         }))
         break
       }
+      case 'job/registered': case 'job/settled': {
+        const name = record.callId === undefined ? undefined : callNames.get(record.callId)
+        pushTrace(traceRow(record, record.status === 'failed' || record.status === 'killed' ? 'error' : 'milestone',
+          record.type === 'job/settled' ? 'job_settled' : 'job_registered', {
+            jobId: record.jobId, name: name ?? record.kind, jobKind: record.kind, callId: record.callId, rootCallId: record.rootCallId,
+            status: record.status, text: preview(payload.text), payload: payload.text,
+          }))
+        break
+      }
+      case 'agent/inbox/spliced':
+        pushTrace(traceRow(record, 'milestone', 'inbox_spliced', {
+          target: record.target, start: record.start, inserted: record.insertedCount ?? 0, removed: record.removedCount ?? 0,
+          text: preview(payload.text), payload: payload.text,
+        }))
+        break
+      case 'todo/write':
+        pushTrace(traceRow(record, 'milestone', 'todo_write', { text: preview(payload.text), payload: payload.text }))
+        break
       case 'step/start': case 'step/end':
         if (record.type === 'step/start') counters.steps += 1
         pushTrace(traceRow(record, 'milestone', record.type === 'step/start' ? 'step_start' : 'step_end', {
@@ -206,12 +287,13 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
       ...counters, toolCallsByName, usage, usageBucketsSeen: [...bucketNames].sort(),
       turnEndReason, malformed: (context.malformed ?? 0) + malformedRecords,
     },
-    conversation,
-    trace,
+    conversation: [...conversation],
+    trace: [...trace],
     verify: {
       checks: 0, passed: 0, failed: 0,
       degraded: capped || conversationTruncated || traceTruncated || events.malformed > 0,
       notes: [
+        ...(pruneReplacements > 0 ? ['宿主裁剪的工具结果显示替换行。事件计数保留原始事件数。'] : []),
         '实时采集没有 verifier:「判卷」标签页只反映采集自身的完整性,不代表任何任务的通过情况。',
         '只有挂载之后产生的事件会被采集;挂载之前的历史与已恢复的会话前缀不回放。',
       ],
@@ -219,6 +301,7 @@ export function foldRecords(records: readonly unknown[], context: FoldContext = 
     events,
     archive,
     limits: {
+      ...(pruneReplacements > 0 ? { pruneReplacements } : {}),
       textLimit: config.textLimit ?? PANEL_DEFAULTS.textLimit, maxSessionBytes: config.maxSessionBytes ?? PANEL_DEFAULTS.maxSessionBytes,
       truncated: capped, droppedEvents: context.droppedEvents ?? 0, droppedChars,
       traceTruncated, conversationTruncated, trimmed: false, trimmedRows: 0,

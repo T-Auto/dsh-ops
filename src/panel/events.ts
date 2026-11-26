@@ -13,10 +13,30 @@ function clamp(value: unknown, limit: number) {
   return { text: full.slice(0, limit), chars: full.length, truncated: true, droppedChars: full.length - limit }
 }
 
+/** A PTC dispatch carries detached JSON arguments. Strings retain their original text. */
+function argumentText(value: unknown): string {
+  if (typeof value === 'string') return value
+  try { return JSON.stringify(value) ?? '' } catch { return '' }
+}
+
 /** Non-negative safe integer, or undefined. */
 const integer = (value: unknown) => (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined)
 /** Non-empty string, or undefined. */
 const string = (value: unknown) => (typeof value === 'string' && value !== '' ? value : undefined)
+
+/** The host's tool result pruner replaces one earlier surface node. */
+function replacement(event: Row, seq: number): Pick<CaptureEvent, 'surfaceOp' | 'sourceEventSeqs'> {
+  const op = event.surfaceOp
+  if (!object(op) || op.op !== 'replace') return {}
+  const startSeq = integer(op.startSeq)
+  if (startSeq === undefined || startSeq !== op.endSeq || startSeq >= seq) return {}
+  const sources = event.sourceEventSeqs
+  if (sources !== undefined && (!Array.isArray(sources) || !sources.includes(startSeq))) return {}
+  return {
+    surfaceOp: { op: 'replace', startSeq, endSeq: startSeq },
+    ...(sources === undefined ? {} : { sourceEventSeqs: [startSeq] }),
+  }
+}
 
 /** Message content blocks of one type, in order; anything unrecognised is skipped. */
 function blocks(message: unknown, type: string): Row[] {
@@ -81,12 +101,41 @@ export function projectEvent(event: unknown, config: PanelConfig = PANEL_DEFAULT
         ...base, callId: string(field(field(data.message, 'source'), 'callId')) ?? string(field(data.message, 'toolCallId')),
         isError: field(data.message, 'isError') === true, errorCode: string(field(data.error, 'code')), turn: integer(data.turn), step: integer(data.step),
         payload: clamp(joined(data.message, 'text'), config.textLimit),
+        ...replacement(event, seq),
       }
     case 'turn/start': case 'turn/end': case 'step/start': case 'step/end':
       return {
         ...base, turn: integer(data.turn), step: integer(data.step),
         reason: string(field(data.reason, 'kind')) ?? string(field(data.reason, 'message')),
       }
+    case 'tool/ptc-dispatch-start': case 'tool/ptc-dispatch':
+      return {
+        ...base, callId: string(data.subCallId), parentCallId: string(data.parentCallId), rootCallId: string(data.rootCallId),
+        name: string(data.name) ?? '(unnamed)', arguments: clamp(argumentText(data.arguments), config.textLimit),
+        ...(type === 'tool/ptc-dispatch' ? {
+          isError: data.isError === true, errorCode: string(field(data.error, 'code')),
+          payload: clamp(typeof data.content === 'string' ? data.content : joined(data, 'text'), config.textLimit),
+        } : {}),
+      }
+    case 'job/registered': case 'job/settled':
+      return {
+        ...base, jobId: string(data.jobId), kind: string(data.kind), status: string(data.status),
+        callId: string(field(data.toolCall, 'callId')), rootCallId: string(field(data.toolCall, 'rootCallId')),
+        payload: clamp([string(data.label), string(data.detail)].filter(Boolean).join(' — '), config.textLimit),
+      }
+    case 'agent/inbox/spliced': {
+      const inserted = Array.isArray(data.inserted) ? data.inserted : []
+      return {
+        ...base, target: string(data.target), start: integer(data.start),
+        insertedCount: inserted.length, removedCount: integer(data.removedCount) ?? 0,
+        payload: clamp(inserted.map((message: unknown) => joined(message, 'text')).filter(Boolean).join('\n'), config.textLimit),
+      }
+    }
+    case 'todo/write': {
+      const todos = Array.isArray(data.todos) ? data.todos : []
+      const lines = todos.map((todo: unknown) => `${string(field(todo, 'status')) ?? 'unknown'}: ${string(field(todo, 'content')) ?? ''}`)
+      return { ...base, payload: clamp(lines.join('\n'), config.textLimit) }
+    }
     default:
       return base
   }
