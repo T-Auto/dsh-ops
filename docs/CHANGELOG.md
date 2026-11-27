@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Document the verified GitHub Release archive route for DSH alpha.2, separate npm 0.5.5 compatibility from GitHub publication, and clarify Desktop/Web/TUI installation and safe upgrades (#1071).
+- 为 DSH alpha.2 补齐已验证的 GitHub Release 归档安装入口，区分 npm 0.5.5 兼容性与 GitHub 发布，并明确 Desktop/Web/TUI 安装及安全升级步骤（#1071）。
+
 ## [0.5.7] — 2026-11-27 — Patch release
 
 - Preserve sealed panel reports when a merge overlaps session close. Concurrent folds share
