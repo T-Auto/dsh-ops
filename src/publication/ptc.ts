@@ -9,6 +9,9 @@ import { capability } from '../capabilities/registry.js'
 import { publicToolName } from '../policy.js'
 import { definition, PTC_SECTION } from '../projections/ptc/contract.js'
 import { requestedApis, sdkDefinition } from '../projections/ptc/loader.js'
+import { discoveryDefinition, requestedIndexQuery } from '../projections/ptc/discovery.js'
+import { loadToolIndex, searchToolIndex } from '../ptc/tool-index.js'
+import type { IndexedTool } from '../ptc/tool-index.js'
 import { renderSdkDirectory } from '../projections/ptc/directory.js'
 import type { ApiName } from '../ptc/config.js'
 import { disclosurePlan } from '../ptc/disclosure.js'
@@ -21,7 +24,7 @@ import type { GuidanceSurface } from '../ptc/batching-guidance.js'
 import { InvocationLifetime, InvocationNotStarted } from '../lifecycle/invocations.js'
 import { monitoredInvoke } from '../execution/monitored.js'
 import { record } from '../execution/boundary.js'
-import { failure, resolveWorker } from '../execution/jobs.js'
+import { failure, invokeDiscovery, resolveWorker } from '../execution/jobs.js'
 import type { Outcome } from '../kernel/outcome.js'
 import { WORKER_TIMEOUT_MS } from '../execution/protocol.js'
 import { mountWorkspacePreparation } from '../workspace-preparation.js'
@@ -66,12 +69,18 @@ interface Entry {
   /** Host turn the delivery window belongs to; stale notices are dropped. */
   guidanceTurn: number
   files: Map<FileToolName | 'result', { lease: PublicationLease; revoke?: () => void; dispatch: ToolDefinition['execute']; granted?: { entitled: boolean; selected: boolean; config: object } }>
+  index?: readonly IndexedTool[]
+  pendingIndex: Set<string>
+  selectedIndex: Set<string>
+  indexDisposers: Map<string, () => void>
 }
 /** Consumer routing controls; invocation authority always remains host-owned. */
 export interface PtcGate {
   guidance?: boolean
   resident?: boolean
   dynamic?: boolean
+  /** Replace the loader with exact-name typed discovery. */
+  typedDiscovery?: boolean
   /** Deliver the one-time lesson and program-shape notices as user messages. */
   batching?: boolean
   /** Emit one structured line per delivered notice; observation only, never context. */
@@ -114,24 +123,43 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     // src/ptc/disclosure.ts so the diagnostics read the same plan instead of
     // guessing expected names.
     const plan = disclosurePlan(config, gate.resident !== false, gate.dynamic !== false)
+    const lean = gate.typedDiscovery === true
     const full = plan.full
-    const resident = new Set<ApiName>(plan.firstRound)
-    const pool = new Set<ApiName>(plan.pool)
+    const resident = new Set<ApiName>(lean ? [] : plan.firstRound)
+    const pool = new Set<ApiName>(lean ? [...config.allowedTools, 'result'] : plan.pool)
+    const toolIndex = lean ? loadToolIndex({ userFile: config.toolIndexFile }) : undefined
     const owns = (agent: Agent): boolean => !stopped && gate.allows(agent) && Boolean(ownership?.owns(agent))
     // One predicate for "may this agent call it": the guidance surface and the tool
     // registration must never disagree about a read-only policy.
     const reachable = (mode: string | undefined, api: ApiName): boolean =>
       mode !== 'read-only' || !capability(api)?.mutates
-    const permitted = (agent: Agent, api: ApiName | 'load_sdk'): boolean => {
+    const permitted = (agent: Agent, api: ApiName | 'load_sdk' | 'discover_tool'): boolean => {
       if (!owns(agent) || !ctx.get('ptcRuntime') || !ctx.get('subprocess')) return false
       const policy = ctx.get('sandboxPolicy')?.resolve({ session: agent.session })
       return policy !== undefined && ['read-only', 'workspace-write', 'danger-full-access'].includes(policy.mode)
-        && (api === 'load_sdk' || api === 'result' || reachable(policy.mode, api))
+        && (api === 'load_sdk' || api === 'discover_tool' || api === 'result' || reachable(policy.mode, api))
     }
-    const loadable = plan.loadable
+    const loadable = lean ? [...pool] : plan.loadable
     const allowedApis = (agent: Agent): ApiName[] => gate.dynamic === false ? [] : loadable.filter(api => permitted(agent, api))
-    const selected = (entry: Entry, api: ApiName | 'load_sdk'): boolean => api === 'load_sdk'
-      ? plan.loader : resident.has(api) || entry.selected.has(api)
+    const selected = (entry: Entry, api: ApiName | 'load_sdk' | 'discover_tool'): boolean => api === 'discover_tool'
+      ? lean && gate.dynamic !== false : api === 'load_sdk' ? plan.loader && !lean : resident.has(api) || entry.selected.has(api)
+    const indexSelected = (entry: Entry, id: string): boolean => entry.selectedIndex.has(id)
+    const mountIndexEntry = (entry: Entry, id: string): void => {
+      const item = entry.index?.find(candidate => candidate.id === id)
+      const executor = item && entry.definitions.get(publicToolName(item.executor))
+      if (!item || !executor || !entry.ctx || !owns(entry.agent) || !permitted(entry.agent, item.executor as ApiName)) return
+      entry.selected.add(item.executor as ApiName)
+      entry.indexDisposers.set(item.id, () => {
+        entry.selected.delete(item.executor as ApiName)
+        entry.selectedIndex.delete(item.id)
+        rotateFiles(entry)
+      })
+      rotateFiles(entry)
+    }
+    const syncIndexTools = (entry: Entry): void => {
+      for (const [id, dispose] of entry.indexDisposers) if (!entry.selectedIndex.has(id)) { dispose(); entry.indexDisposers.delete(id) }
+      for (const id of entry.selectedIndex) if (!entry.indexDisposers.has(id)) mountIndexEntry(entry, id)
+    }
     const isPtc = async (agent: Agent, signal?: AbortSignal): Promise<boolean> => {
       const assembly = await inspectPresentation(prompt, agent, signal)
       return assembly.tools.length === 1 && assembly.tools[0]?.name === 'run_code'
@@ -160,9 +188,9 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     const surfaceFor = (agent: Agent): GuidanceSurface => {
       const mode = ctx.get('sandboxPolicy')?.resolve({ session: agent.session })?.mode
       return {
-        loader: plan.loader,
-        resident: [...resident].filter(api => reachable(mode, api)).map(api => publicToolName(api)),
-        loadable: allowedApis(agent).map(api => publicToolName(api)),
+        loader: plan.loader && !lean,
+        resident: lean ? [publicToolName('discover_tool')] : [...resident].filter(api => reachable(mode, api)).map(api => publicToolName(api)),
+        loadable: lean ? [] : allowedApis(agent).map(api => publicToolName(api)),
         sandbox: mode,
         outputMode: outputModeFromInstructions(ctx.get('ptcRuntime')?.executionInstructions ?? ''),
       }
@@ -178,7 +206,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         nextAction: `Call ${publicToolName('load_sdk')} with tools:["${api}"] and use the API on the next model step; retrying this call without loading fails the same way.`,
       } }
     }
-    const execute = (entry: Entry, api: ApiName | 'load_sdk'): ToolDefinition['execute'] => async (args, exec) => {
+    const execute = (entry: Entry, api: ApiName | 'load_sdk' | 'discover_tool'): ToolDefinition['execute'] => async (args, exec) => {
       // The public assembly may finish after its executor sections changed.
       // Refuse that stale verdict rather than dispatching under the old text.
       const revision = presentationRevision
@@ -201,7 +229,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
           return failure('POLICY_DENIED', 'The PTC presentation of this scope has been withdrawn; the retained admission is revoked. No action executed.')
         }
         if (!permitted(entry.agent, api)) {
-          const wasUsable = api !== 'load_sdk' && (resident.has(api) || entry.selected.has(api))
+          const wasUsable = api !== 'load_sdk' && api !== 'discover_tool' && (resident.has(api) || entry.selected.has(api))
           return failure('POLICY_DENIED', wasUsable
             ? 'This API was admitted for the calling PTC scope, but the sandbox policy has since withdrawn its permission; the admission is revoked. No action executed.'
             : 'The current sandbox policy does not permit this API for the calling PTC scope; no action executed.')
@@ -209,9 +237,9 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         if (!selected(entry, api)) {
           // A declared-but-unselected pool API points at the loader with an executable
           // next step (#968); every other admission failure keeps the P5 refusal text.
-          const deferred = api === 'load_sdk' || full ? undefined : deferredRejection(entry, api)
+          const deferred = api === 'load_sdk' || api === 'discover_tool' || full || lean ? undefined : deferredRejection(entry, api)
           if (deferred !== undefined) return deferred
-          return api !== 'load_sdk' && gate.dynamic !== false && !full
+          return api !== 'load_sdk' && api !== 'discover_tool' && gate.dynamic !== false && !full && !lean
             ? failure('SDK_NOT_LOADED', `This API (${String(api)}) is not loaded for the current step. Call tools.${publicToolName('load_sdk')} with its raw name; the selection takes effect on the next model step.`)
             : failure('POLICY_DENIED', 'This API is not admitted for the current step and no loader can select it; no action executed.')
         }
@@ -219,6 +247,24 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       }
       const ptc = await isPtc(entry.agent, exec.signal).catch(() => false)
       if (!current() || !ptc || !current()) return refusal(ptc)
+      if (api === 'discover_tool') {
+        if (!lean || !entry.index) return failure('EXECUTOR_UNAVAILABLE', 'The PTC tool index is unavailable.')
+        const query = requestedIndexQuery(args)
+        if (!query) return failure('INVALID_ARGUMENT', 'Provide search terms or an exact indexed tool id.')
+        const id = query.query.startsWith('id:') ? query.query.slice(3) : undefined
+        if (!id) {
+          const matches = searchToolIndex({ entries: entry.index, sourceCount: 1 }, query.query, query.limit)
+          return { status: 'completed', matches: matches.filter(item => pool.has(item.executor as ApiName) && permitted(entry.agent, item.executor as ApiName)) }
+        }
+        const item = entry.index.find(candidate => candidate.id === id)
+        if (!item || !pool.has(item.executor as ApiName) || !permitted(entry.agent, item.executor as ApiName)) {
+          return failure('POLICY_DENIED', 'That indexed tool is not available in this scope or current policy; no tool was mounted.')
+        }
+        if (!entry.definitions.has(publicToolName(item.executor))) return failure('EXECUTOR_UNAVAILABLE', 'The trusted OPS executor is not mounted.')
+        if (entry.selectedIndex.has(item.id)) return failure('POLICY_DENIED', 'That indexed entry is already selected.')
+        entry.pendingIndex.add(item.id)
+        return { status: 'completed', id: item.id, tool: publicToolName(item.executor), nextTurn: true }
+      }
       if (api === 'load_sdk') {
         // Validate against the configured pool, then split permission refusals from
         // pool refusals: a mutating API under read-only is inside its pool yet
@@ -254,7 +300,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
           present: activation => activation.agent === entry.agent && permitted(entry.agent, api)
             && selected(entry, api) && activationIsPtc(prompt, activation),
           dispatch: file.dispatch,
-          deferred: () => deferredRejection(entry, api),
+          deferred: () => lean ? undefined : deferredRejection(entry, api),
         })
         file.granted = { entitled, selected: selection, config }
       }
@@ -262,8 +308,10 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
     const clear = (entry: Entry): void => {
       const errors: unknown[] = []
       const attempt = (action: () => void) => { try { action() } catch (error) { errors.push(error) } }
-      entry.pending.clear(); entry.selected.clear()
+      entry.pending.clear(); entry.selected.clear(); entry.pendingIndex.clear(); entry.selectedIndex.clear()
       attempt(() => entry.calls.cancel('PTC ownership withdrawn'))
+      for (const dispose of entry.indexDisposers.values()) attempt(dispose)
+      entry.indexDisposers.clear()
       for (const dispose of entry.disposers.splice(0)) attempt(dispose)
       for (const file of entry.files.values()) attempt(() => file.lease.dispose())
       entry.files.clear()
@@ -274,7 +322,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       if (stopped || retired.has(agent) || !agent.ctx || !owns(agent)) return Promise.resolve()
       const existing = entries.get(agent)
       if (existing) return existing.ready
-      const entry: Entry = { agent, ready: Promise.resolve(), calls: new InvocationLifetime(), selected: new Set(), pending: new Set(), definitions: new Map(), disposers: [], taught: false, queuedGuidance: [], guidanceTurn: -1, files: new Map() }
+      const entry: Entry = { agent, ready: Promise.resolve(), calls: new InvocationLifetime(), selected: new Set(), pending: new Set(), pendingIndex: new Set(), selectedIndex: new Set(), indexDisposers: new Map(), index: toolIndex?.entries, definitions: new Map(), disposers: [], taught: false, queuedGuidance: [], guidanceTurn: -1, files: new Map() }
       entries.set(agent, entry); ownership?.track(agent)
       entry.ready = Promise.resolve().then(async () => {
         if (!owns(agent) || entries.get(agent) !== entry) return
@@ -367,14 +415,16 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
             return decision
           }))
         }
-        const publish = (api: ApiName | 'load_sdk', def: ToolDefinition): void => {
+        const publish = (api: ApiName | 'load_sdk' | 'discover_tool', def: ToolDefinition): void => {
           entry.definitions.set(def.name, def)
           entry.disposers.push(publicationRegistration(entry.ctx!, () => entry.ctx!.tools.register(def, { when: async activation =>
             activation.agent === agent && permitted(agent, api) && selected(entry, api)
               && await activationIsPtc(prompt, activation) })))
         }
+        if (lean && gate.dynamic !== false) publish('discover_tool', discoveryDefinition(execute(entry, 'discover_tool')))
         for (const api of pool) {
           const def = definition(api, execute(entry, api))
+          entry.definitions.set(def.name, def)
           if (isSharedFileApi(api) || capability(api)?.component === 'file') {
             const lease = isSharedFileApi(api)
               ? await acquireSharedFile(agent, api, { workerPath: file, required: true })
@@ -382,7 +432,6 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
             // Ownership may change while the source starts. Never continue into
             // non-file publication using a superseded entry's disposed context.
             if (!owns(agent) || entries.get(agent) !== entry) { lease.dispose(); return }
-            entry.definitions.set(def.name, def)
             entry.files.set(api as FileToolName | 'result', { lease, dispatch: def.execute })
           } else {
             if (!owns(agent) || entries.get(agent) !== entry) return
@@ -392,7 +441,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         if (!owns(agent) || entries.get(agent) !== entry) return
         rotateFiles(entry)
         // The full tier is loader-less (#979 §2); the legacy tiers keep the loader gate.
-        if (plan.loader) publish('load_sdk', sdkDefinition(loadable, execute(entry, 'load_sdk')))
+        if (plan.loader && !lean) publish('load_sdk', sdkDefinition(loadable, execute(entry, 'load_sdk')))
         await Promise.all([...entry.disposers.map(publicationReady), ...[...entry.files.values()].map(file => file.lease.ready())])
       }).catch(async error => {
         // Do not await ready here: this is its own rejection path. Preserve the
@@ -465,9 +514,16 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
         } else if (event.type === 'step/end') {
           for (const api of entry.pending) if (permitted(agent, api)) entry.selected.add(api)
           entry.pending.clear()
+          for (const id of entry.pendingIndex) entry.selectedIndex.add(id)
+          entry.pendingIndex.clear()
+          syncIndexTools(entry)
           rotateFiles(entry)
         } else if (event.type === 'sandbox/mode') {
-          entry.pending.clear(); entry.calls.cancel('Sandbox authority changed')
+          entry.pending.clear(); entry.pendingIndex.clear(); entry.calls.cancel('Sandbox authority changed')
+          for (const [id] of entry.indexDisposers) {
+            const item = entry.index?.find(candidate => candidate.id === id)
+            if (!item || !permitted(agent, item.executor as ApiName)) { entry.indexDisposers.get(id)?.(); entry.indexDisposers.delete(id); entry.selectedIndex.delete(id) }
+          }
           rotateFiles(entry)
         }
       }
@@ -479,6 +535,7 @@ export function mountPtc(root: Context, rawConfig: unknown, gate: PtcGate = { al
       const callable = new Set(visibleNames(tools, agent, toolSet))
       const active = [...entry.definitions.keys()].some(name => callable.has(name))
       if (!active) return ''
+      if (lean) return 'Call tools only inside run_code using await tools.name(args). Use Promise.all for independent reads (at most 128 at once), catch failures per item, await dependent calls and writes in order, and return only needed summaries. Check Outcome status before reading data.'
       const guidance = 'OPS APIs return typed Outcome values. Inspect status before data; preserve partial coverage and continuation. Process results locally in run_code and expose only needed summaries with the active PTC runtime output API. References do not grant authority.'
       const directory = callable.has(publicToolName('load_sdk')) ? renderSdkDirectory(allowedApis(agent), callable) : ''
       return guidance + (directory ? '\n\n' + directory : '')

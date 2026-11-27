@@ -21,7 +21,25 @@ PTC 行配置由统一配置入口验证：
 
 先检查 Outcome.status 再使用 data。部分结果保留覆盖信息及 continuation；失败保留错误代码、影响状态和重试策略。加载器不执行文件操作，也不授予文件系统权限。本页不声称 token 基准或 IO 提速。
 
-## 返回形状与宿主边界
+## Lean PTC JSON 工具索引
+
+
+`lean-ptc` 初始只向 run_code 暴露 `ops_discover_tool`，不把完整目录或 SDK 写入提示词。先用 `{ query: "workspace search" }` 搜索目录，再用 `{ query: "my-search" }` 精确选择条目。step 提交后，下一个 model step 才会看到条目映射的原始 OPS 工具及其原生 schema。
+
+OPS 默认只读目录随发布包提供。用户可在 DSH home 下另建 JSON 文件，并在 `lean-ptc` 配置 `toolIndexFile: catalogs/tools.json`。用户目录独立追加，不能覆盖 OPS ID。格式：
+
+```json
+{
+  "version": 1,
+  "tools": [
+    { "id": "my-search", "name": "Search project", "description": "Search workspace files", "executor": "grep" }
+  ]
+}
+```
+
+JSON 只能引用已实现、配置允许且 sandbox 授权的 OPS executor；不能增加参数、修改 schema、提供 shell 命令或执行代码。挂载使用原工具名、schema、权限和 runtime。文件最大 256 KiB、最多 256 条；坏 JSON、重复 ID 或未知 executor 会令初始化失败。路径不能逃逸 DSH home。该功能只用于 `lean-ptc`，不改变 `ptc` 和 `ops-ptc`。
+
+English: [Progressive PTC SDK loading](./ptc-sdk-loading.md).
 
 Glob 的 `paths` 返回字符串；`details` 返回 `{path, bytes, modified, kind?}`。Grep 的
 `files_with_matches` 返回 `{path}`，`count` 返回 `{path, count}`，`content` 返回

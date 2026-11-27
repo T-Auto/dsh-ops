@@ -8,7 +8,7 @@ import type { EffectState } from '../kernel/outcome.js'
 import type { WorkerInvokeConfig } from './boundary.js'
 import { record, errorText } from './boundary.js'
 import { exchange } from './transport.js'
-import { indexCacheRequest, workerEnvelope } from './protocol.js'
+import { indexCacheRequest, workerEnvelope, WORKER_TIMEOUT_MS } from './protocol.js'
 import { withCallBudget, CallBudgetError } from '../kernel/call-budget.js'
 import { InvocationDeadlineError } from '../lifecycle/invocations.js'
 import { withResultSession } from '../kernel/result-lifecycle.js'
@@ -39,6 +39,44 @@ function rejectedBeforeAudit(value: Record<string, unknown>): boolean {
     && typeof error.code === 'string' && BEFORE_AUDIT_ERRORS.has(error.code)
 }
 const publicationDenied = () => failure('PUBLICATION_DENIED', 'PTC admission changed during preparation; no worker was started.')
+export async function invokeDiscovery(ctx: Context, file: string, name: string, exec: ToolRunContext, signal?: AbortSignal): Promise<unknown> {
+  try {
+    const session = exec?.agent?.session
+    if (!session?.id) return failure('EXECUTOR_UNAVAILABLE', 'An authoritative session identity is required.')
+    return await withCallBudget(rootOf(ctx), String(session.id), signal, () => invokeDiscoveryTrusted(ctx, file, name, exec, signal))
+  } catch (error) {
+    if (error instanceof CallBudgetError) return failure(error.code, error.message)
+    return failure('EXECUTOR_UNAVAILABLE', 'DSH authority or execution services are unavailable.')
+  }
+}
+
+async function invokeDiscoveryTrusted(ctx: Context, file: string, name: string, exec: ToolRunContext, signal: AbortSignal | undefined): Promise<unknown> {
+  const session = exec?.agent?.session
+  const policyService: SandboxPolicyService | undefined = ctx.get('sandboxPolicy')
+  const subprocess: SubprocessRuntime | undefined = ctx.get('subprocess')
+  if (!session?.id || !policyService?.resolve || !subprocess?.spawn) return failure('EXECUTOR_UNAVAILABLE', 'DSH policy and subprocess services are required.')
+  const policy = policyService.resolve({ session })
+  if (!['read-only', 'workspace-write', 'danger-full-access'].includes(policy.mode) || typeof policy.workspaceRoot !== 'string') return failure('EXECUTOR_UNAVAILABLE', 'Invalid authoritative DSH policy.')
+  const operationRoot = policy.workspaceRoot
+  const envelope = workerEnvelope('ptc', { root: operationRoot, scope: String(session.id), tool: 'discover_tool', args: { name }, read_only: true, deny_roots: [], deny_credential_names: true }, WORKER_TIMEOUT_MS)
+  let argv = [file]
+  if (policy.mode !== 'danger-full-access') {
+    const sandbox = ctx.get('sandbox')
+    if (!sandbox?.confine) return failure('EXECUTOR_UNAVAILABLE', 'No DSH process confinement provider; refusing unconfined discovery.')
+    const confined = await sandbox.confine(argv, { ...policy, mode: policy.mode }, signal)
+    if (!['full', 'partial'].includes(confined?.enforcement) || !Array.isArray(confined.argv) || !confined.argv.length) {
+      return failure('EXECUTOR_UNAVAILABLE', 'Invalid DSH confinement result; refusing unconfined discovery.')
+    }
+    argv = confined.argv
+  }
+  signal?.throwIfAborted?.()
+  const current = policyService.resolve({ session })
+  if (!sameAuthority(current, policy)) return failure('POLICY_DENIED', 'DSH authority changed during discovery preparation; no tool was selected.')
+  const result = await exchange(subprocess, { argv, cwd: policy.workspaceRoot, stdio: { stdin: { data: JSON.stringify(envelope) }, stdout: { maxBytes: envelope.budget.maxBytes }, stderr: { maxBytes: 16 * 1024 } }, graceMs: 1000, signal })
+  if (result.interrupted || result.exitCode !== 0 || !result.value) return failure('EXECUTOR_UNAVAILABLE', 'Discovery worker did not return a settled result.')
+  return result.value
+}
+
 export async function invoke(ctx: Context, file: string, tool: string, args: unknown, exec: ToolRunContext, signal?: AbortSignal, config?: WorkerInvokeConfig, admission?: () => boolean): Promise<unknown> {
   try {
     if (admission && !admission()) return publicationDenied()

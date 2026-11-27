@@ -25,6 +25,8 @@ export interface ModePlan {
   ptc: boolean
   /** Progressive discovery population for matching Agents. */
   discovery: 'none' | 'advanced' | 'all'
+  /** Use the exact-name typed PTC discovery entry instead of the legacy loader. */
+  typedDiscovery?: boolean
   /** The mode's routing section suffix; null publishes no routing text. */
   section: string | null
 }
@@ -41,6 +43,7 @@ export const MODE_PLANS: Readonly<Record<ModeId, ModePlan>> = Object.freeze({
   // OPS PTC keeps the PTC surface and adds batching guidance to tool results;
   // it publishes no native routing text and no resident file tools.
   'ops-ptc': Object.freeze({ nativeFiles: false, replacements: [], shell: true, ptc: true, discovery: 'none', section: 'ops-ptc' }),
+  'lean-ptc': Object.freeze({ nativeFiles: false, replacements: [], shell: false, ptc: true, discovery: 'none', typedDiscovery: true, section: 'lean-ptc' }),
   cordis: Object.freeze({ nativeFiles: true, replacements: NATIVE_REPLACEMENTS, shell: true, ptc: false, discovery: 'advanced', section: 'cordis' }),
 })
 

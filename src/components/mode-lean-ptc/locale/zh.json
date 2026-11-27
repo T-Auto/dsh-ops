@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Lean PTC 预设",
+    "description": "使用类型化 OPS 发现入口，不使用原生发现入口，也不独立发布 Bash 工具。"
+  }
+}

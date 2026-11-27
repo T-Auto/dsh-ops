@@ -62,7 +62,7 @@ await test('modes without a PTC surface reject the key with a readable diagnosti
   // precedent for cross-surface keys).
   for (const mode of ['minimal', 'standard', 'cordis']) {
     assert.throws(() => resolveModeConfig({ disclosurePolicy: 'full' }, mode),
-      /disclosurePolicy applies to the ptc and ops-ptc rows only/, mode)
+      /disclosurePolicy applies to PTC rows only \(ptc, ops-ptc, lean-ptc\)/, mode)
     assert.throws(() => resolveModeConfig({ disclosurePolicy: 'full' }, mode), /disclosurePolicy/, mode)
   }
 })

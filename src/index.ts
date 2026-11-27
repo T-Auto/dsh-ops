@@ -14,7 +14,7 @@ import * as panelModule from './components/panel/index.js'
 import * as tuiModule from './components/tui/index.js'
 import * as downloadGuardModule from './components/download-guard/index.js'
 import { configureResultCacheGc } from './kernel/result-cache-gc.js'
-import { registerOpsPtcPreset } from './presets/ops-ptc/register.js'
+import { registerLeanPtcPreset, registerOpsPtcPreset } from './presets/ops-ptc/register.js'
 import { assertHostFloor } from './adapter/dsh/host-floor.js'
 export { Config } from './settings/merged.js'
 export { applyComponent } from './legacy/host.js'
@@ -55,6 +55,7 @@ export async function apply(root: Context, rawConfig: unknown): Promise<void> {
   // The ops-ptc preset is a runtime contribution, not a bundle row: registering it
   // through the host registry means disabling this row can never leave a profile's
   // selected preset dangling. It never blocks the rest of apply.
+  registerLeanPtcPreset(root)
   const preset = registerOpsPtcPreset(root)
   beginMergedRow()
   try {
@@ -71,7 +72,7 @@ export async function apply(root: Context, rawConfig: unknown): Promise<void> {
           dynamic: dynamicForMode(state, config.global) })
         // Built-in modes answer ops_status too (#753): the named diagnosis used
         // to exist only behind an external preset row.
-        await mountModeDiagnostics(ctx, mode)
+        if (mode !== 'lean-ptc') await mountModeDiagnostics(ctx, mode)
       } })
     }
     for (const row of Object.values(config.presets)) {

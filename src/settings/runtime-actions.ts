@@ -3,6 +3,7 @@ import { randomUUID, createHash } from 'node:crypto'
 import path from 'node:path'
 import type { TypertGatewayBinding } from '../adapter/dsh/types.js'
 import { NIUBASH_HOME_PATH, NIUBASH_PIN } from '../cli/niubash-payload.js'
+import { MODE_PLANS } from '../presets/defaults.js'
 import { MODE_IDS } from '../presets/types.js'
 import { resolveModeConfig } from '../presets/config.js'
 import { PACKAGE_ROOT, dshHome } from '../paths.js'
@@ -62,16 +63,16 @@ export class RuntimeActions {
         ...(hostPwshVersion(this.options) === undefined ? {} : { version: hostPwshVersion(this.options) }) } }
   }
   /**
-   * Every mode's own resolution, resolved from the same row config the fiber mounted.
+   * Every Bash-publishing mode's own resolution, resolved from the same row config the fiber mounted.
    * A mode that cannot be resolved reports why instead of borrowing another's answer.
-   * @returns one view per built-in mode, in page order.
+   * @returns one view per Bash-publishing built-in mode, in page order.
    */
   private modeViews(): ModeBashView[] {
     let merged
     try { merged = resolveMergedConfig(this.options.config?.()) } catch { merged = resolveMergedConfig({}) }
     const linked = typeof merged.other.raw?.pwsh7Link === 'boolean' ? merged.other.raw.pwsh7Link
       : companionVersion({ sweep: false }) !== undefined
-    return MODE_IDS.map(id => {
+    return MODE_IDS.filter(id => MODE_PLANS[id].shell).map(id => {
       const state = merged[id]
       try {
         const effective = resolveModeConfig(effectiveMode(state, merged.global, linked), id)
