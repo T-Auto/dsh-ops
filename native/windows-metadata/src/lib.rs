@@ -321,6 +321,7 @@ pub struct Metadata {
     basic: FILE_BASIC_INFO,
     eas: ea::CapturedEas,
     warnings: Vec<String>,
+    preserve_timestamps: bool,
 }
 impl Metadata {
     pub fn capture(file: &File) -> io::Result<Self> {
@@ -394,7 +395,15 @@ impl Metadata {
             basic,
             eas,
             warnings,
+            preserve_timestamps: true,
         })
+    }
+    /// Controls whether `LastWriteTime`, `LastAccessTime`, and `ChangeTime`
+    /// are restored from the source handle instead of keeping the staged file's
+    /// new write timestamp. `CreationTime` and `FileAttributes` stay preserved.
+    pub fn with_timestamp_preservation(mut self, preserve: bool) -> Self {
+        self.preserve_timestamps = preserve;
+        self
     }
     pub fn warnings(&self) -> &[String] {
         &self.warnings
@@ -438,12 +447,20 @@ impl Metadata {
                 return Err(io::Error::last_os_error());
             }
         }
+        let mut basic = self.basic;
+        if !self.preserve_timestamps {
+            // Zero tells SetFileInformationByHandle to leave the staged write/create
+            // timestamps intact while still restoring CreationTime and FileAttributes.
+            basic.LastAccessTime = 0;
+            basic.LastWriteTime = 0;
+            basic.ChangeTime = 0;
+        }
         // SAFETY: FILE_BASIC_INFO is fully initialized and borrowed for the call.
         if unsafe {
             SetFileInformationByHandle(
                 file.as_raw_handle(),
                 FileBasicInfo,
-                &self.basic as *const _ as *const _,
+                &basic as *const _ as *const _,
                 size_of::<FILE_BASIC_INFO>() as u32,
             )
         } == 0
@@ -482,7 +499,7 @@ impl Metadata {
         }
         if basic.FileAttributes != self.basic.FileAttributes
             || basic.CreationTime != self.basic.CreationTime
-            || basic.LastWriteTime != self.basic.LastWriteTime
+            || (self.preserve_timestamps && basic.LastWriteTime != self.basic.LastWriteTime)
         {
             return Err(unsupported("Windows basic metadata verification failed"));
         }
@@ -796,6 +813,97 @@ mod tests {
             std::fs::read(root.join("kernel-staged")).unwrap(),
             b"payload"
         );
+        drop(parent);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn read_basic_info(file: &File) -> FILE_BASIC_INFO {
+        let mut basic: FILE_BASIC_INFO = unsafe { zeroed() };
+        let ok = unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle(),
+                FileBasicInfo,
+                addr_of_mut!(basic).cast(),
+                size_of::<FILE_BASIC_INFO>() as u32,
+            )
+        };
+        assert_ne!(ok, 0);
+        basic
+    }
+
+    #[test]
+    fn replacing_mode_keeps_creation_attributes_and_ea_while_advancing_write_time() {
+        let root = std::env::temp_dir().join(format!(
+            "dsh-metadata-mtime-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("target.txt");
+        std::fs::write(&path, b"AAAA").unwrap();
+        let has_ea = set_ea(&path, b"dsh-ops.mtime", b"kept").is_ok();
+        let writable = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let mut seeded = read_basic_info(&writable);
+        seeded.LastWriteTime -= 86_400 * 10_000_000;
+        seeded.FileAttributes |= 0x2; // FILE_ATTRIBUTE_HIDDEN
+        let ok = unsafe {
+            SetFileInformationByHandle(
+                writable.as_raw_handle(),
+                FileBasicInfo,
+                &seeded as *const _ as *const _,
+                size_of::<FILE_BASIC_INFO>() as u32,
+            )
+        };
+        assert_ne!(ok, 0);
+        drop(writable);
+
+        let file = File::open(&path).unwrap();
+        let before = read_basic_info(&file);
+        let copy_meta = Metadata::capture(&file).unwrap();
+        let replace_meta = Metadata::capture(&file)
+            .unwrap()
+            .with_timestamp_preservation(false);
+        let parent = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(0x02000000)
+            .open(&root)
+            .unwrap();
+
+        for (name, bytes) in [("nonempty", b"BBBB" as &[u8]), ("empty", b"")] {
+            let mut staged = create_private(&parent, name).unwrap();
+            if !bytes.is_empty() {
+                staged.write_all(bytes).unwrap();
+            }
+            replace_meta.restore(&staged).unwrap();
+            let after = read_basic_info(&staged);
+            assert_eq!(after.CreationTime, before.CreationTime);
+            assert_eq!(after.FileAttributes, before.FileAttributes);
+            assert!(
+                after.LastWriteTime > before.LastWriteTime,
+                "{name} must keep the new write timestamp instead of restoring stale mtime"
+            );
+            drop(staged);
+            if has_ea {
+                let eas = ea::capture(&File::open(root.join(name)).unwrap()).unwrap();
+                assert_eq!(eas.entries[0].value, b"kept");
+            }
+        }
+
+        let mut copied = create_private(&parent, "copied").unwrap();
+        copied.write_all(b"AAAA").unwrap();
+        copy_meta.restore(&copied).unwrap();
+        let copied_basic = read_basic_info(&copied);
+        assert_eq!(copied_basic.CreationTime, before.CreationTime);
+        assert_eq!(copied_basic.LastWriteTime, before.LastWriteTime);
+        drop(copied);
+        drop(file);
         drop(parent);
         std::fs::remove_dir_all(&root).unwrap();
     }

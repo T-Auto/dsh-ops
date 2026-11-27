@@ -7,6 +7,9 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Advance `LastWriteTime` (`mtime`) on Windows in-place file writes (`write_file` overwrite, `edit_file`, `replace`) while still preserving owner, group, DACL, `CreationTime`, attributes, and user EAs; `copy` continues to retain source timestamps (#1070, #1072).
+- 修复 Windows 原地写/改操作（`write_file` 覆写、`edit_file`、`replace`）写回旧 `LastWriteTime` 的问题，保留属主、组、DACL、`CreationTime`、文件属性与扩展属性的同时正常推进 `mtime`；`copy` 仍按预期保留原文件时间戳（#1070、#1072）。
+
 ## [0.5.7] — 2026-11-27 — Patch release
 
 - Preserve sealed panel reports when a merge overlaps session close. Concurrent folds share

@@ -5,7 +5,7 @@
 | 历史项 | 当前断言 |
 | --- | --- |
 | W1a/b 显式、继承、deny DACL | 现有 file-operations 对写入、编辑、replace、copy 比较完整 SDDL，包含 protected/deny 夹具；不重复移植较弱的用户名/子串断言。 |
-| W1c 同用户 owner/group、时间 | 现有 file-metadata 比较完整 SDDL 和 mtime；不同所有者、双账户验收仍需手工。 |
+| W1c 同用户 owner/group、时间 | 现有 file-metadata 校验 overwrite/edit/replace/copy 的完整 SDDL 与 CreationTime；copy 保留原 mtime，overwrite/edit/replace 将 mtime 推进为最新写入时间（与 POSIX 一致）。不同所有者、双账户验收仍需手工。 |
 | W1d READONLY replace | windows-security 精确断言 ACCESS_DENIED、结构化 phase/effectState/retry 指引、原字节、READONLY 属性、完整 owner/group/DACL SDDL 均不变且目录无残留；仅清理时重置只读位。 |
 | W1e FileShare.None | 子进程仅在获取独占句柄后输出 READY；replace 必须返回结构化 IO_ERROR 且无残留。正常释放并等待子进程退出后检查原字节。另一个允许读取但不共享 DELETE 的句柄用例必须到达原子发布失败：断言 ACCESS_DENIED 和发布阶段消息，释放句柄前后均检查原字节、SDDL 不变且无 staging 残片。 |
 | W1g 无争用/争用更新 | 预先持有准确 sidecar 的字节范围锁，确定性强制 REVISION_CONFLICT；释放后真实 replace 只更改一项并删除 sidecar。现有 replace-concurrency/lock-sidecar 和 Rust 单测覆盖协作写者。 |

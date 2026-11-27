@@ -229,8 +229,9 @@ pub(super) struct Preserved(dsh_ops_windows_metadata::Metadata);
 impl Preserved {
     pub fn capture(source: &crate::file_path::Target, replacing: bool) -> Result<Self> {
         let file = crate::file_path::read_file(source)?.into_std();
-        let metadata =
-            dsh_ops_windows_metadata::Metadata::capture(&file).map_err(metadata_error)?;
+        let metadata = dsh_ops_windows_metadata::Metadata::capture(&file)
+            .map_err(metadata_error)?
+            .with_timestamp_preservation(!replacing);
         if replacing && metadata.readonly() {
             return Err(Failure::new(
                 "ACCESS_DENIED",
