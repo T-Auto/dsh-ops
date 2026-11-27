@@ -102,9 +102,12 @@ external English Markdown file:
 - **Once per agent entry**: one user-role message rides the first accepted pre-step batch (source kind `dsh-ops:batching-guidance`, no plugin envelope)
   and enters logged history, so the model sees the whole procedure on the first request: the first-line `// plan:` comment, the dependency split, the
   load-before-call step (only while dynamic loading publishes the loader) and four copyable trajectories.
-  The first-round text teaches each rule once (revision 8): the anti-pattern rewrite and the prose that
-  repeated the dependency split are gone, the core rules state load-only-missing and recheck-after-a-mode-change
-  explicitly, and the four trajectories ship byte-identical.
+  The first-round text teaches each rule once (revision 10): the anti-pattern rewrite and the prose that
+  repeated the dependency split are gone, the core rules state load-only-missing, recheck-after-a-mode-change
+  and the one output API the scope is told to use (a program that reports nothing shows nothing), the four
+  trajectories differ only in that rendered output call, and one short section states the shared session
+  scope — a top-level name outlives its program, a failed program may already have run calls, and a name is
+  not storage.
 - **On a thin program**: when a **root** `run_code` program breaks one of three latched categories, a short
   notice is queued by that call and appended to the next pre-step as a user-role message. The tool result keeps
   its value, its content and its existing contexts; the program is never blocked or rewritten.

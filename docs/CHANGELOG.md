@@ -7,6 +7,34 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- PTC guidance revision 10 states the scope every PTC program shares: the runtime evaluates each
+  program in a REPL whose context is retained, so a program's top-level `const`, `let`, `class` and
+  `function` outlive it, and a second declaration of that name is a compile-time SyntaxError that
+  discards the whole program before its first line runs, tool calls included. A program that throws
+  keeps its names, so re-sending a failed program verbatim dies on a name rather than on its
+  arguments, and a name is not storage, so a value a later program needs is read again. One short
+  section carries those three rules, core rule 5 states that a program reports only through the
+  output call its runtime instructs, and the mistake table gains the two matching rows. Every shipped example now writes that report as `__DSH_OUTPUT__(...)`, which the renderer
+  rewrites to `inspect(...)`, `return (...)` or `console.log(...)` for the contract the scope
+  declares, so the lesson no longer teaches a top-level `return` where it is a SyntaxError. Examples,
+  steps and the four trajectories are otherwise unchanged, the 0.5.6 sandbox-tier section is
+  untouched, and a loader-less surface keeps both rules. The text is 9,238 characters against the
+  0.5.6 ceiling of 9,000: the section and its two rows cost ~600, the output clause ~150, and the
+  bound moves to 9,300 rather than staying silent about it. Measured on one 127-program session, 11
+  of the 17 failed programs were this exact error, two of them retries of a program that had already
+  failed.
+- PTC 指南修订 10 写明每个 PTC 程序共享的那个作用域：运行时在保留上下文的 REPL 里求值，程序的顶层
+  `const`/`let`/`class`/`function` 会比程序活得久，同名再声明是编译期 SyntaxError，整段程序在跑第一行前
+  就被丢弃，工具调用一并作废。抛错的程序同样留下名字，所以原样重发失败程序会死在名字上而不是参数上；
+  名字也不是存储，后续程序要用的值必须重新读。新增一小节给出这三条规则，核心规则第 5 条写明程序只经
+  运行时指定的输出调用汇报，错误表补上对应的两行。
+  所有随包示例把该汇报写成 `__DSH_OUTPUT__(...)`，由渲染层按展示面声明的契约改写为 `inspect(...)`、
+  `return (...)` 或 `console.log(...)`，因此不再在任何顶层 `return` 非法的宿主上教它。示例、步骤与四条
+  轨迹的其余内容不变，0.5.6 的沙箱档位小节原样保留，无 loader 的展示面同样保留这两条规则。全文 9,238
+  字符，0.5.6 的上界是 9,000：该小节与两行表格约占 600，输出条款约占 150，上界因此改为 9,300 并写明，
+  而不是悄悄放宽。一次 127 个程序的会话里，17 个失败程序中有 11 个正是这个错误，其中两个是已失败程序的
+  再次发送。
+
 ## [0.5.7] — 2026-11-27 — Patch release
 
 - Preserve sealed panel reports when a merge overlaps session close. Concurrent folds share

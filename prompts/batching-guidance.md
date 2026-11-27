@@ -1,7 +1,6 @@
 # Batch tool calls
 
 Group independent calls in one run_code program and keep dependencies explicit.
-Display only the needed summary using the host runtime’s instructed output API: `inspect(...)`, a returned value, or `console.log(...)`. Never call an output API the host does not provide.
 
 ## Core rules
 
@@ -10,7 +9,10 @@ Display only the needed summary using the host runtime’s instructed output API
 3. **Dependencies, run sequentially**: await the earlier call before using its result.
 4. **Per-call fault tolerance**: check each Outcome status and per-file error; failures
    are values. Catch dispatch exceptions separately so one failure does not abort the rest.
-5. **Expose only what is needed**: use the active runtime’s instructed output API (`inspect(...)`, a returned value, or `console.log(...)`) to show only the summary needed for the next step.
+5. **Expose only what is needed**: report through the output API the runtime instructs
+   (`inspect(...)`, a returned value, or `console.log(...)`), showing only the summary the next
+   step reads. Never call an output API the host does not provide; a program that reports
+   nothing shows nothing, and a top-level `return` is a SyntaxError.
 6. **OPS first for file work**: list with ops_glob, search with ops_grep, read with
    ops_read_files or ops_inspect_local_file, edit with ops_edit_file. The shell starts
    processes and reads environment facts; node:fs and node:child_process bypass path
@@ -32,6 +34,16 @@ the whole program before any line runs.
   `danger-full-access` only to leave the workspace.
 - **danger-full-access**: the widest tier. Never send `sandbox_permissions` or
   `justification`: no wider target exists, and any value invents one.
+
+## One session, one scope
+
+While the runtime lives, the session's live scope keeps each program's top-level `const`,
+`let`, `class` and `function`. A second declaration of that name is a compile-time SyntaxError
+that discards the whole program before its first line runs, tool calls included.
+
+- One name, one program: give each program its own top-level names.
+- A failed program may already have run calls: check their effects, then rename before retrying.
+- A top-level name is not storage: re-read a value you still need.
 
 ## Step 0 - the plan line
 
@@ -70,9 +82,10 @@ const [load, head] = await Promise.all([
 __DSH_OUTPUT__({ loaded: load.data?.tools, headLines: head.data?.items?.length });
 ```
 
-Calling an unloaded name throws "tools.ops_read_files is not a function". That is not a
-reason to fall back to the shell; it is one step spent loading. Loaded names remain
-selected in this live scope. Some host PTC runtimes retain bindings between calls; follow their instructions.
+An unloaded name throws "tools.ops_read_files is not a function": one step spent loading,
+not a reason to fall back to the shell. Loaded names remain selected in this live scope, and
+some host runtimes retain bindings between calls: a later program must not assume an earlier
+program's values survived, and must not re-declare a name the scope already holds.
 
 ## Trajectory 1 - reconnaissance: independent probes in one program
 
@@ -172,8 +185,10 @@ Advance by nextOffset, never by page count, and stop when the result reports com
 | No plan line, or one that is not the first line | Open every program with it |
 | Dependent calls inside Promise.all | await the dependency first, then fan out |
 | More than 128 dispatches in one program | slice(0, 128) before mapping, continue in the next program |
-| Returning the whole payload | Return only the fields the next step needs |
+| Finishing with the whole payload | End with only the fields the next step needs |
 | One failure aborting the batch | Check Outcome status; catch dispatch exceptions and keep e.message |
 | Shell standing in for a file tool | Use the OPS file API for list, search, read and edit |
 | ops_read_files before it is loaded | ops_load_sdk in the previous program |
+| The same top-level name in a second program | Give the program its own names; a used name is spent |
+| Re-sending a failed program with new arguments | Check what it already ran, then rename and retry |
 | Using e.toolName as the error reason | Use e.message |
