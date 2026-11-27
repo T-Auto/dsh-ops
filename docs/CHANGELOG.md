@@ -7,6 +7,14 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Honor bili's compaction takeover in the `ops-ptc` preset: when the `biliBasicCompactionPolicy`
+  service is present, disable the preset's `@deepseek-ai/dsh-compaction-basic` and
+  `@deepseek-ai/dsh-command-compact` rows at registration so bili owns compaction; without the
+  service the rows stay enabled (#1076).
+- `ops-ptc` 预设尊重 bili 的压缩接管：`biliBasicCompactionPolicy` 服务存在时，注册前禁用该预设的
+  `@deepseek-ai/dsh-compaction-basic` 与 `@deepseek-ai/dsh-command-compact` 行，交由 bili 接管压缩；
+  无该服务时这些行保持启用（#1076）。
+
 ## [0.5.7] — 2026-11-27 — Patch release
 
 - Preserve sealed panel reports when a merge overlaps session close. Concurrent folds share

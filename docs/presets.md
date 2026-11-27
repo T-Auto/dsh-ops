@@ -26,6 +26,12 @@ the sync script, how to make it the default, and the ordering required before di
   the registration and removes both. A missing or malformed fragment, a host without the preset registry, or a
   rejected registration only warns once and leaves the preset unavailable; it never takes down the plugin row
   or its tools.
+- **bili compaction takeover**: when the bili gate publishes its `biliBasicCompactionPolicy` service,
+  `respectBiliCompactionPolicy` disables the preset's `@deepseek-ai/dsh-compaction-basic` and
+  `@deepseek-ai/dsh-command-compact` rows in the definition before it is registered, so bili owns
+  compaction for `ops-ptc` the same way it does for the loader-declared presets. Without the service -
+  a deployment without bili - the rows stay enabled and `ops-ptc` runs DSH's own compaction. bili's
+  loader overlay cannot reach a runtime registration, so the definition is rewritten here instead.
 
 ## The fragment and the sync script
 
