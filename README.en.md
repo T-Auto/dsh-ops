@@ -73,7 +73,30 @@ The name “ops” means general operations, not an operations/SRE product.
 
 ## Install, update and uninstall
 
-### Official plugin marketplace
+### GitHub Release installation (DSH 0.2.3-alpha.2)
+
+> Checked on 2026-11-27: GitHub provides **0.5.7**, while npm `latest` is still **0.5.5**, which is incompatible with DSH `0.2.3-alpha.2`. Entering a package name, selecting an npm mirror or running `npx dsh-ops@latest` does not select the GitHub Release. For alpha.2 use the archive below; do not bypass host compatibility checks.
+
+1. Download `dsh-ops-0.5.7.tgz` and `SHA256SUMS` from the [v0.5.7 Release](https://github.com/T-Auto/dsh-ops/releases/tag/v0.5.7) into the same directory. This is the installable archive with the compiled plugin and four runtime targets, not the automatically generated Source code archive.
+2. Before installation, compare the archive SHA-256 with its entry in `SHA256SUMS`. In Windows PowerShell use `Get-FileHash "C:\Downloads\dsh-ops-0.5.7.tgz" -Algorithm SHA256`; on Linux run `sha256sum -c SHA256SUMS` from the download directory, or `shasum -a 256 -c SHA256SUMS` on macOS. Do not install if the digest differs.
+3. Initialize the target application, then install through **that application’s official CLI**. Replace the absolute paths and choose one command. For Windows Desktop, run in PowerShell:
+
+```powershell
+& "<desktop installation>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "C:\Downloads\dsh-ops-0.5.7.tgz"
+```
+
+For Web or dsh-TUI use the respective application CLI (replace the archive path with a Windows absolute path on Windows):
+
+```console
+dsh plugin --profile web add "/absolute/path/dsh-ops-0.5.7.tgz"
+dsh plugin --profile dsh-tui add "/absolute/path/dsh-ops-0.5.7.tgz"
+```
+
+Keep the application’s existing `DSH_HOME`; a regular global DSH CLI is not a substitute for Desktop’s bundled entry point. Before upgrading an existing installation, save work, stop jobs and exit the affected application, then use an external terminal; see [safe upgrades](docs/upgrading.md#stop-the-affected-profile-before-replacing-packages). Restart after successful installation and check **0.5.7**, the enabled state and running components in the plugin page. GitHub and npm publication are separate channels. Future archive upgrades use a verified new Release and `add <absolute archive path>` in the same profile; `@latest` does not mean the latest GitHub Release.
+
+### Official plugin marketplace (registry version)
+
+Use this route only when the selected registry version supports your host. Its current npm 0.5.5 is not for alpha.2; use the Release archive above.
 
 In the target DSH application's plugin marketplace, enter the npm package name **`dsh-ops`**, choose a custom registry and enter `https://mirrors.huaweicloud.com/repository/npm/`, install, then enable it. Installing through npmmirror is currently not recommended — it has bugs.
 
@@ -81,7 +104,9 @@ Of course, if you are sure you can reach the official npm registry, pick the off
 
 ![Choose a custom registry in the plugin marketplace and enter the Huawei Cloud npm mirror](docs/assets/marketplace-huaweicloud-mirror.png)
 
-### One-command npm installation
+### One-command npm installation (registry version)
+
+Here `@latest` refers only to the npm dist-tag, currently 0.5.5: use it only with its declared compatible 0.2.2 hosts, not alpha.2.
 
 #### Installation
 
@@ -117,7 +142,7 @@ The 0.5 series supports DSH **0.2.2-rc.1 and later 0.2.2 releases**, and is adap
 [host versions and display metadata](docs/usage.md#host-compatibility-and-display-metadata)
 for component icon exports, profile refresh and config/schema checks.
 
-Re-run the same `npx --yes dsh-ops@latest install --profile ...`, or use the official CLI `add dsh-ops@latest`. Reload when the app asks; restart the app when replacing code that is already loaded.
+For GitHub archive installations follow the Release steps above. Only when the registry version supports your host, re-run the same `npx --yes dsh-ops@latest install --profile ...`, or use the official CLI `add dsh-ops@latest`. Reload when the app asks; restart the app when replacing code that is already loaded.
 
 #### Uninstall and status
 

@@ -4,7 +4,7 @@
 
 ## Binary locations and update cleanup
 
-This candidate embeds complete Niubash 1.5.0; `@latest` remains the published release until publication. These locations apply equally to marketplace installs, `npx dsh-ops install --profile ...`, official `plugin ... add`, local tarballs, and direct npm/pnpm installs:
+The 0.5.7 GitHub archive embeds complete Niubash 1.5.0. GitHub publication does not update npm `@latest`: checked on 2026-11-27, npm still provides 0.5.5, which is incompatible with DSH 0.2.3-alpha.2. Use the [README Release archive route](../README.en.md#github-release-installation-dsh-023-alpha2) for that host. These locations apply equally to marketplace installs, `npx dsh-ops install --profile ...`, official `plugin ... add`, local tarballs, and direct npm/pnpm installs:
 
 | Ownership | Binary location | Update/removal behavior |
 | --- | --- | --- |
@@ -43,7 +43,9 @@ Change the path for a custom installation. Choose one operation:
 
 ```powershell
 $desktopCli = Join-Path $env:LOCALAPPDATA 'Programs/DeepSeek Harness/resources/runtime/cli/bin/dsh.cmd'
-# Update to the version you have reviewed:
+# Install/update the verified GitHub Release archive (alpha.2):
+& $desktopCli plugin --profile desktop add 'C:\Downloads\dsh-ops-0.5.7.tgz'
+# Or use a reviewed registry version only if it supports your host:
 & $desktopCli plugin --profile desktop add 'dsh-ops@<version>' --registry=https://registry.npmjs.org
 # Or remove the plugin:
 & $desktopCli plugin --profile desktop remove dsh-ops --registry=https://registry.npmjs.org
@@ -138,8 +140,8 @@ nothing matching `(pre|post)?(prepare|install)` — `prepare`, `preprepare`,
 `postprepare`, `install`, `preinstall` and `postinstall` — and
 `scripts/validate-manifest.mjs` fails on any of them, including a hook unrelated to
 the build, because the gate cannot tell an innocent hook from one that tries to
-repair the unsupported channel. Install the published registry target
-(`add dsh-ops`), or build and `npm pack` a checkout yourself; see
+repair the unsupported channel. Install a verified GitHub Release archive through `add <absolute archive path>`,
+a compatible published registry target (`add dsh-ops`), or build and `npm pack` a checkout yourself; see
 [contributing](CONTRIBUTING.md#building-the-plugin-and-installing-from-source).
 
 ## Moving from 0.4.x to 0.5.x

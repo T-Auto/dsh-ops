@@ -44,7 +44,30 @@
 
 > 所有 npm、市场和 CLI 更新入口的二进制位置与清理边界见[升级与卸载](docs/升级与卸载.md#二进制位置与更新清理)。
 
-### 官方插件市场
+### GitHub Release 安装（DSH 0.2.3-alpha.2）
+
+> 2026-11-27 核对：GitHub 已发布 **0.5.7**，npm `latest` 仍为 **0.5.5**；后者不兼容 DSH `0.2.3-alpha.2`。输入包名、使用 npm 镜像或运行 `npx dsh-ops@latest` 不会自动获得 GitHub Release。alpha.2 请使用以下归档入口，不要跳过宿主版本检查。
+
+1. 从 [v0.5.7 Release](https://github.com/T-Auto/dsh-ops/releases/tag/v0.5.7) 下载 `dsh-ops-0.5.7.tgz` 和 `SHA256SUMS` 到同一目录。这是含编译插件与四平台 runtime 的正式安装包，不是页面自动生成的 Source code 归档。
+2. 安装前比较归档 SHA-256 与 `SHA256SUMS` 中的对应值。Windows PowerShell 使用 `Get-FileHash "C:\Downloads\dsh-ops-0.5.7.tgz" -Algorithm SHA256`；Linux 在下载目录执行 `sha256sum -c SHA256SUMS`，macOS 使用 `shasum -a 256 -c SHA256SUMS`。不匹配时不要安装。
+3. 初始化目标应用后，使用**该应用的官方 CLI**安装；替换下面的绝对路径，选择一条命令。Windows 桌面端从 PowerShell 执行：
+
+```powershell
+& "<桌面安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add "C:\Downloads\dsh-ops-0.5.7.tgz"
+```
+
+Web 或 dsh-TUI 从各自应用的 CLI 执行（Windows 把归档路径换成 Windows 绝对路径）：
+
+```console
+dsh plugin --profile web add "/absolute/path/dsh-ops-0.5.7.tgz"
+dsh plugin --profile dsh-tui add "/absolute/path/dsh-ops-0.5.7.tgz"
+```
+
+保持目标应用原有 `DSH_HOME`；普通全局 DSH CLI 不能替代桌面端自带入口。已有安装应先保存工作、停止任务并退出受影响的应用，再从外部终端升级；见[安全升级](docs/升级与卸载.md#替换依赖包前先停止受影响的-profile)。安装成功后重启应用，在插件页核对 **0.5.7**、启用状态与运行组件。GitHub 发布与 npm 发布是独立渠道；后续升级也应下载已验证的新 Release 归档并用同一 profile 的 `add <绝对归档路径>` 替换，不能把 `@latest` 当作 GitHub 最新版。
+
+### 官方插件市场（registry 版本）
+
+仅当所选 registry 的版本兼容宿主时使用以下入口；目前它提供的 npm 0.5.5 不适用于 alpha.2，请用上面的 Release 归档。
 
 在目标 DSH 应用的插件市场中输入 npm 包名 **`dsh-ops`**，选择自定义地址，输入 `https://mirrors.huaweicloud.com/repository/npm/`，安装后选择启用。目前不推荐用npmmirror安装，有bug。
 
@@ -52,7 +75,9 @@
 
 ![在插件市场中选择自定义地址并填入华为云 npm 镜像](docs/assets/marketplace-huaweicloud-mirror.png)
 
-### npm 一键安装
+### npm 一键安装（registry 版本）
+
+以下 `@latest` 只指 npm dist-tag；目前为 0.5.5，仅用于其声明兼容的 0.2.2 宿主，不适用于 alpha.2。
 
 #### 安装方法
 
@@ -87,7 +112,7 @@ dsh plugin --profile dsh-tui add dsh-ops
 组件图标导出、profile 刷新及配置/schema 检查见
 [宿主兼容范围与展示元数据](docs/使用指南.md#宿主兼容范围与展示元数据)。
 
-重新运行相同的 `npx --yes dsh-ops@latest install --profile ...`，或用官方 CLI `add dsh-ops@latest`。按应用提示重载；替换已加载代码时重启应用。
+GitHub 归档安装请按上面的 Release 步骤更新；仅当 registry 版本兼容宿主时，重新运行相同的 `npx --yes dsh-ops@latest install --profile ...`，或用官方 CLI `add dsh-ops@latest`。按应用提示重载；替换已加载代码时重启应用。
 
 #### 卸载与查看状态
 
