@@ -129,11 +129,12 @@ function stubSettings(registry, fail) {
  * A context double that plays both the row root and the injected child.
  * @param {object} registry - the service the injected context exposes as `agentPresets`.
  * @param {object|null} [settings] - the service exposed as `settings`; defaults to a recording writer.
+ * @param {object} [extra] - additional services the injected context exposes.
  * @returns {object} the stub root plus its recorded calls.
  */
-function stubRoot(registry, settings) {
+function stubRoot(registry, settings, extra) {
   const events = { inject: [], effects: [] }
-  const services = { agentPresets: registry, settings: settings === undefined ? stubSettings(registry) : settings }
+  const services = { agentPresets: registry, settings: settings === undefined ? stubSettings(registry) : settings, ...extra }
   const root = {
     logger: { warn: () => {} },
     inject(deps, callback) {
@@ -174,6 +175,36 @@ await test('a root registers the full ops-ptc definition through the host preset
   // The host dialect survives parsing: platform expressions stay unevaluated data.
   const bash = definition.plugins.find(plugin => plugin.id === 'tool-bash')
   assert.ok(bash !== undefined && typeof bash.disabled === 'object' && bash.disabled !== null, 'the !!js expression is preserved for the loader')
+})
+
+/** Flatten the preset's group rows so the compaction children are addressable by name. */
+function childRows(definition) {
+  return definition.plugins.flatMap(plugin => plugin.group === true && Array.isArray(plugin.config) ? plugin.config : [plugin])
+}
+
+await test('bili compaction takeover disables the preset own compaction rows', async () => {
+  const registry = stubRegistry()
+  const { root } = stubRoot(registry, undefined, { biliBasicCompactionPolicy: Object.freeze({ owner: 'billion-context', issue: '#3354' }) })
+  registerOpsPtcPreset(root)
+  await waitFor(() => registry.state.definitions.length === 1, { what: 'the ops-ptc registration' })
+  const rows = childRows(registry.state.definitions[0])
+  const basic = rows.find(plugin => plugin.name === '@deepseek-ai/dsh-compaction-basic')
+  const compact = rows.find(plugin => plugin.name === '@deepseek-ai/dsh-command-compact')
+  assert.ok(basic !== undefined, 'the compaction-basic row is still declared')
+  assert.ok(compact !== undefined, 'the command-compact row is still declared')
+  assert.equal(basic.disabled, true, 'bili owns compaction, so the basic row is disabled')
+  assert.equal(compact.disabled, true, 'bili owns compaction, so the compact command is disabled')
+  const executor = rows.find(plugin => plugin.name === '@deepseek-ai/dsh-tool-executor-ptc')
+  assert.ok(executor !== undefined && executor.disabled !== true, 'unrelated rows are left enabled')
+})
+
+await test('without bili the preset keeps its own compaction rows enabled', async () => {
+  const registry = stubRegistry()
+  const { root } = stubRoot(registry)
+  registerOpsPtcPreset(root)
+  await waitFor(() => registry.state.definitions.length === 1, { what: 'the ops-ptc registration' })
+  const basic = childRows(registry.state.definitions[0]).find(plugin => plugin.name === '@deepseek-ai/dsh-compaction-basic')
+  assert.ok(basic !== undefined && basic.disabled !== true, 'without bili the preset runs DSH own compaction')
 })
 
 await test('the preset fragment is parsed by the host loader, not by this plugin', async () => {

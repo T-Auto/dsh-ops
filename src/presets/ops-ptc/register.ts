@@ -502,6 +502,67 @@ export function registerOpsPtcPreset(root: Context, options: RegistrationOptions
   return { applyDefault: () => applyDefaultPreset(live, options) }
 }
 
+/** The service bili's compaction takeover publishes; its presence means "let bili own compaction". */
+export const BILI_COMPACTION_POLICY_SERVICE = 'biliBasicCompactionPolicy'
+
+/** The preset rows that run DSH's own compaction, which bili's takeover replaces. */
+export const COMPACTION_PLUGIN_NAMES: readonly string[] = Object.freeze([
+  '@deepseek-ai/dsh-compaction-basic',
+  '@deepseek-ai/dsh-command-compact',
+])
+
+/** One child-list rewrite: the rows to register, and whether any row changed. */
+interface CompactionRewrite {
+  readonly rows: readonly PresetPlugin[]
+  readonly changed: boolean
+}
+
+/**
+ * Disable DSH's own compaction rows in one child list, recursing into groups.
+ *
+ * bili's takeover disables these rows on every loader-declared preset through
+ * an `internal/config` overlay. This preset is a runtime registration that
+ * overlay cannot see, so the same rows are disabled here, in the definition
+ * handed to the registry.
+ * @param rows - the child plugin rows of one preset or group.
+ * @returns the rewritten rows and whether anything changed.
+ */
+function disableCompactionRows(rows: readonly PresetPlugin[]): CompactionRewrite {
+  let changed = false
+  const next = rows.map(row => {
+    if (COMPACTION_PLUGIN_NAMES.includes(row.name)) {
+      if (row.disabled === true) return row
+      changed = true
+      return { ...row, disabled: true }
+    }
+    if (row.group === true && Array.isArray(row.config)) {
+      const children = disableCompactionRows(row.config as readonly PresetPlugin[])
+      if (!children.changed) return row
+      changed = true
+      return { ...row, config: children.rows }
+    }
+    return row
+  })
+  return { rows: changed ? next : rows, changed }
+}
+
+/**
+ * Apply bili's compaction takeover to one preset definition, when present.
+ *
+ * The bili gate publishes {@link BILI_COMPACTION_POLICY_SERVICE} as a sentinel;
+ * only its presence matters. When it is absent the definition is returned
+ * unchanged, so a deployment without bili keeps DSH's own compaction.
+ * @param ctx - the injected context that may expose the sentinel.
+ * @param definition - the parsed preset definition.
+ * @returns the definition to register, with bili-covered compaction rows off.
+ */
+export function respectBiliCompactionPolicy(ctx: Pick<Context, 'get'>, definition: PresetDefinition): PresetDefinition {
+  if (service<unknown>(ctx, BILI_COMPACTION_POLICY_SERVICE) === undefined) return definition
+  const rewrite = disableCompactionRows(definition.plugins)
+  if (!rewrite.changed) return definition
+  return { ...definition, plugins: rewrite.rows }
+}
+
 /**
  * Read and register the definition inside one injected context.
  * @param ctx - the context the registry service is injected into.
@@ -515,9 +576,12 @@ export function registerOpsPtcPreset(root: Context, options: RegistrationOptions
 async function activate(ctx: Context, registry: PresetRegistry, slot: Slot, options: RegistrationOptions, live: LiveRegistration, served: LiveRegistration): Promise<void> {
   const definition = await readOpsPtcDefinition(options, ctx)
   if (definition === undefined || slot.disposed) return
+  // bili's compaction takeover cannot reach this runtime registration through
+  // its loader overlay, so the definition it covers is rewritten here.
+  const effective = respectBiliCompactionPolicy(ctx, definition)
   // A failed registration leaves the default preset exactly as it was: this row
   // never points new sessions at a preset it could not register.
-  const release = await registry.register(definition)
+  const release = await registry.register(effective)
   if (slot.disposed) {
     await release()
     return
