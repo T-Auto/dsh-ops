@@ -13,7 +13,8 @@ fn may_mutate(request: &Request) -> bool {
     !request.read_only
         && !matches!(
             request.tool.as_str(),
-            "inspect_local_file"
+            "discover_tool"
+                | "inspect_local_file"
                 | "read_files"
                 | "read_table"
                 | "read_docx"

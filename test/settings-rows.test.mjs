@@ -15,7 +15,7 @@ const SWITCHES = ['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools']
 const GLOBAL_SWITCHES = [...SWITCHES]
 
 await test('the page matches the host descriptor, and the opt-in switches share one card', () => {
-  assert.deepEqual(Object.keys(Config.dict), ['presets', 'global', 'minimal', 'standard', 'ptc', 'ops-ptc', 'cordis', 'panel', 'tui', 'other'])
+  assert.deepEqual(Object.keys(Config.dict), ['presets', 'global', 'minimal', 'standard', 'ptc', 'ops-ptc', 'lean-ptc', 'cordis', 'panel', 'tui', 'other'])
   const global = GROUPS.find(group => group.id === 'global')
   // The bundle section mirrors the presets' four switches. The default preset is
   // a one-shot action on the detail page, so it contributes no field here.
@@ -32,6 +32,12 @@ await test('the page matches the host descriptor, and the opt-in switches share 
     assert.equal(Config.dict[section].dict.bashPath.meta.volatile, true)
     if (section === 'ptc' || section === 'ops-ptc') assert.equal(Config.dict[section].dict.disclosurePolicy.meta.volatile, true)
   }
+  const lean = GROUPS.find(group => group.id === 'lean-ptc')
+  assert.deepEqual(lean.fields.map(spec => spec.path[1]), ['hideOfficialTools', 'residentTools', 'dynamicTools'])
+  assert.equal(resolveMergedConfig({})['lean-ptc'].enabled, true)
+  assert.equal(readRowValues({})['lean-ptc.enabled'], true)
+  assert.deepEqual(changedFields({ ...readRowValues({}), 'lean-ptc.enabled': false }, {}),
+    [{ op: 'set', path: ['lean-ptc', 'enabled'], value: false }])
   // compat/panel/tui used to be three single-switch cards; they are one card now.
   const other = GROUPS.find(group => group.id === 'other')
   assert.deepEqual(other.fields.map(spec => flatKey(spec.path)), ['panel.enabled', 'tui.enabled', 'other.pwsh7Link'])
@@ -146,7 +152,7 @@ await test('the disclosure card reads the saved rows and writes exactly one tier
   assert.equal(readDisclosure({ ptc: { disclosurePolicy: 'on-demand' } }), 'on-demand')
   assert.equal(readDisclosure({ ptc: { disclosurePolicy: 'full' }, 'ops-ptc': { disclosurePolicy: 'full' } }), 'full')
   assert.equal(readDisclosure({ 'ops-ptc': { disclosurePolicy: 'full' } }), 'mixed', 'a row that disagrees is named, never reduced to a favourite')
-  // Full writes both PTC rows; on-demand returns them to the absent default.
+  // Full writes all PTC rows; on-demand returns them to the absent default.
   assert.deepEqual(disclosureOps({}, 'full'), [
     { op: 'set', path: ['ptc', 'disclosurePolicy'], value: 'full' },
     { op: 'set', path: ['ops-ptc', 'disclosurePolicy'], value: 'full' },

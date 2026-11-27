@@ -141,7 +141,7 @@ await test('an invalid typed path blocks the save and names the host reason', as
   } finally { await view.close() }
 })
 
-await test('the disclosure card picks the tier, cancels edits, and never writes an untouched old profile', async () => {
+await test('the existing PTC disclosure card picks the tier without changing Lean', async () => {
   const writes = []
   const form = { state: ready({}), mutate: async ops => { writes.push(ops); return true } }
   const view = await mount(RowForm, { form, Switch: TestSwitch })
@@ -163,7 +163,7 @@ await test('the disclosure card picks the tier, cancels edits, and never writes 
     await click(button(view.container, en.reset))
     assert.equal(card.querySelectorAll('input[type=radio]')[0].checked, true, 'reset restores the saved tier')
     assert.deepEqual(writes, [], 'a cancelled edit is never written')
-    // Saving the full tier writes both PTC rows once.
+    // Saving the full tier writes all PTC rows once.
     await click(card.querySelectorAll('input[type=radio]')[1])
     await click(button(view.container, en.save))
     assert.deepEqual(writes[0], [

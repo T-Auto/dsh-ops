@@ -503,14 +503,38 @@ export function registerOpsPtcPreset(root: Context, options: RegistrationOptions
 }
 
 /**
- * Read and register the definition inside one injected context.
- * @param ctx - the context the registry service is injected into.
+ * Register the standalone minimal-tool preset. The reused upstream fragment is filtered
+ * to standard agent identity, instruction and PTC runtime plugins only.
+ */
+export function registerLeanPtcPreset(root: Context, options: RegistrationOptions = {}): void {
+  root.inject(['agentPresets'], ctx => {
+    const registry = service<PresetRegistry>(ctx, 'agentPresets')
+    if (typeof registry?.register !== 'function') return
+    let disposed = false
+    let release: (() => Promise<void>) | undefined
+    ctx.effect(() => async () => { disposed = true; await release?.() }, 'dsh-ops: lean-ptc preset')
+    void (async () => {
+      const base = await readOpsPtcDefinition(options, ctx)
+      if (!base || disposed) return
+      const keep = new Set(['persona', 'agent-instructions', 'time-context', 'tool-executor-ptc'])
+      const plugins = base.plugins.filter(plugin => keep.has(plugin.id ?? ''))
+      if (!plugins.some(plugin => plugin.id === 'tool-executor-ptc')) throw new Error('PTC executor is missing')
+      const unregister = await registry.register({ id: 'lean-ptc', name: 'Lean (PTC)', order: 7,
+        description: 'PTC with exact-name OPS tool selection.', plugins })
+      if (disposed) await unregister()
+      else release = unregister
+    })().catch(error => warn(options, ctx, 'dsh-ops: cannot register lean-ptc: ' + errorText(error)))
+  })
+}
+
+/**
+ * Read and register the full ops-ptc definition in the injected scope.
+ * @param ctx - scope containing the preset registry.
  * @param registry - the host preset registry.
- * @param slot - release holder the fiber cleanup reads.
+ * @param slot - release holder owned by the injection lifetime.
  * @param options - test seams; production passes none.
- * @param live - the holder the operator action reads; the child clears it on teardown.
- * @param served - the holder the unload lease reads; it survives the child teardown.
- * @returns resolves once the registration is owned by {@link slot}.
+ * @param live - holder used by the operator action.
+ * @param served - holder used by the unload lease.
  */
 async function activate(ctx: Context, registry: PresetRegistry, slot: Slot, options: RegistrationOptions, live: LiveRegistration, served: LiveRegistration): Promise<void> {
   const definition = await readOpsPtcDefinition(options, ctx)

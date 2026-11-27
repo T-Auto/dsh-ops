@@ -14,6 +14,7 @@ import type { ModeId } from './types.js'
 /** One mode row's resolved configuration. */
 export interface ModeConfig extends ResolvedConfig {
   allowedTools: PtcConfig['allowedTools']
+  toolIndexFile: PtcConfig['toolIndexFile']
   alwaysLoaded: PtcConfig['alwaysLoaded']
   /** Explicit first-round disclosure tier; the default 'on-demand' is the legacy path (#986). */
   disclosurePolicy: DisclosurePolicy
@@ -39,14 +40,14 @@ export const MODE_CONFIG_KEYS: readonly string[] = Object.freeze([
   'binaryPath', 'required', 'denyCredentialReads', 'promptPolicy', 'extraGuidance',
   'bashPath', 'publishBashTool', 'allowSystemShellFallback', 'configUpdateVersion',
   'spillRetentionDays', 'spillTotalBudgetMiB', 'spillSweepEnabled',
-  'allowedTools', 'alwaysLoaded', 'disclosurePolicy',
+  'allowedTools', 'alwaysLoaded', 'disclosurePolicy', 'toolIndexFile',
   'bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools', 'residentTools',
   'batchingGuidance', 'batchingTelemetry',
 ])
 
-const PTC_KEYS = new Set(['allowedTools', 'alwaysLoaded', 'disclosurePolicy'])
+const PTC_KEYS = new Set(['allowedTools', 'alwaysLoaded', 'disclosurePolicy', 'toolIndexFile'])
 /** The mode rows that own a PTC publication surface, hence the disclosure policy. */
-const PTC_POLICY_MODES: readonly ModeId[] = ['ptc', 'ops-ptc']
+export const PTC_POLICY_MODES: readonly ModeId[] = Object.freeze(['ptc', 'ops-ptc', 'lean-ptc'])
 /** Boolean switches and gates, each supplying its own default below. */
 const SWITCH_KEYS = new Set(['bash', 'hidePwsh', 'hideOfficialTools', 'dynamicTools', 'residentTools', 'batchingGuidance', 'batchingTelemetry'])
 
@@ -67,10 +68,11 @@ export function resolveModeConfig(rawConfig?: unknown, mode?: ModeId): ModeConfi
       throw new Error(`unknown key(s) ${JSON.stringify(key)}; accepted keys are ${MODE_CONFIG_KEYS.map(entry => JSON.stringify(entry)).join(', ')}`)
     }
   }
+  if (Object.hasOwn(raw, 'toolIndexFile') && mode !== undefined && mode !== 'lean-ptc') throw new Error('toolIndexFile applies to the lean-ptc row only')
   // The disclosure policy names a PTC publication tier: a row without a PTC
   // surface must fail loud instead of silently carrying the key.
   if (Object.hasOwn(raw, 'disclosurePolicy') && mode !== undefined && !PTC_POLICY_MODES.includes(mode)) {
-    throw new Error('disclosurePolicy applies to the ptc and ops-ptc rows only')
+    throw new Error('disclosurePolicy applies to PTC rows only (ptc, ops-ptc, lean-ptc)')
   }
   const core = Object.fromEntries(Object.entries(raw).filter(([key]) => !PTC_KEYS.has(key) && !SWITCH_KEYS.has(key)))
   const ptc = Object.fromEntries(Object.entries(raw).filter(([key]) => PTC_KEYS.has(key)))
@@ -85,7 +87,7 @@ export function resolveModeConfig(rawConfig?: unknown, mode?: ModeId): ModeConfi
   const resolved = resolveConfig({ ...core, publishBashTool: bash })
   const api = parsePtcConfig(ptc)
   return { ...resolved, allowedTools: api.allowedTools, alwaysLoaded: api.alwaysLoaded,
-    disclosurePolicy: api.disclosurePolicy ?? 'on-demand',
+    disclosurePolicy: api.disclosurePolicy ?? 'on-demand', toolIndexFile: api.toolIndexFile,
     bash, hidePwsh: sw('hidePwsh', true),
     hideOfficialTools: sw('hideOfficialTools', true), dynamicTools: sw('dynamicTools', true),
     residentTools: mode !== 'minimal' && sw('residentTools', true),
@@ -102,8 +104,10 @@ export function modeFields(mode: ModeId): Record<string, Field> {
   // Other accepted keys stay YAML-only to keep the settings page small.
   return {
     ...(mode === 'minimal' ? {} : { residentTools: editable('boolean', 'Publish baseline file tools independently of dynamic loading.') }),
-    bash: editable('boolean', 'Publish Bash for authorized sessions.'),
-    hidePwsh: editable('boolean', 'Hide the official Windows shell while Bash is available; enabled by default.'),
+    ...(mode === 'lean-ptc' ? {} : {
+      bash: editable('boolean', 'Publish Bash for authorized sessions.'),
+      hidePwsh: editable('boolean', 'Hide the official Windows shell while Bash is available; enabled by default.'),
+    }),
     hideOfficialTools: editable('boolean', 'Hide the official file tools this mode replaces.'),
     dynamicTools: editable('boolean', 'Publish the discovery entry to this mode.'),
   }

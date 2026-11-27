@@ -126,6 +126,12 @@
     "./mode-ops-ptc/package.json": "./lib/components/mode-ops-ptc/package.json",
     "./mode-ops-ptc/locale/*.json": "./lib/components/mode-ops-ptc/locale/*.json",
     "./mode-ops-ptc/icon": "./lib/components/mode-ops-ptc/icon.png",
+    "./mode-lean-ptc": {
+      "default": "./lib/components/mode-lean-ptc/index.js"
+    },
+    "./mode-lean-ptc/package.json": "./lib/components/mode-lean-ptc/package.json",
+    "./mode-lean-ptc/locale/*.json": "./lib/components/mode-lean-ptc/locale/*.json",
+    "./mode-lean-ptc/icon": "./lib/components/mode-lean-ptc/icon.png",
     "./mode-cordis": {
       "default": "./lib/components/mode-cordis/index.js"
     },

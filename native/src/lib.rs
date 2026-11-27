@@ -14,6 +14,9 @@ pub fn dispatch(request: Request) -> Result<Value> {
             "An absolute workspace root and a bounded scope identity are required",
         ));
     }
+    if request.tool == "discover_tool" {
+        return discover_tool(&request);
+    }
     let root = std::fs::canonicalize(&request.root)?;
     let mut request = Request {
         root: root
@@ -32,6 +35,43 @@ pub fn dispatch(request: Request) -> Result<Value> {
     let value = execute(&dir, &request)?;
     Ok(ops_results::spill::finish(&request, value))
 }
+/// Resolve exactly one model-requested capability. This deliberately has no
+/// filesystem or result-store access: discovery must never perturb cached data.
+fn discover_tool(request: &Request) -> Result<Value> {
+    let name = request
+        .args
+        .as_object()
+        .filter(|args| args.len() == 1)
+        .and_then(|args| args.get("name"))
+        .and_then(Value::as_str)
+        .filter(|name| name.len() <= 64)
+        .ok_or_else(|| Failure::new("INVALID_ARGUMENT", "Provide one exact tool name"))?;
+    const ALLOWED: &[&str] = &[
+        "inspect_local_file",
+        "read_files",
+        "read_table",
+        "read_docx",
+        "read_pdf",
+        "glob",
+        "grep",
+        "replace",
+        "write_file",
+        "edit_file",
+        "diff",
+        "stat",
+        "copy",
+        "move",
+        "remove",
+        "result",
+        "batch",
+    ];
+    let raw = name.strip_prefix("ops_").unwrap_or(name);
+    if raw.is_empty() || !ALLOWED.contains(&raw) {
+        return Ok(serde_json::json!({"status":"not_found","name":name}));
+    }
+    Ok(serde_json::json!({"status":"selected","name":raw}))
+}
+
 fn execute(dir: &Dir, request: &Request) -> Result<Value> {
     if matches!(
         request.tool.as_str(),

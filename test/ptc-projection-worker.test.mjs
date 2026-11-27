@@ -167,4 +167,15 @@ await test('every worker API was validated and unexpected callback rejection bec
     assert.doesNotMatch(JSON.stringify(out), /private transport detail/)
   }
 })
+await test('exact-name discovery is read-only and recognizes only one bounded OPS API', async () => {
+  const callRaw = async args => callWorker(JSON.stringify(workerEnvelope('ptc', request('discover_tool', args, { root: process.cwd(), scope: 'discovery-test', readOnly: true }))))
+  const known = await callRaw({ name: 'stat' })
+  assert.equal(known.exitCode, 0); assert.deepEqual(known.body, { status: 'selected', name: 'stat' })
+  const prefixed = await callRaw({ name: 'ops_stat' })
+  assert.equal(prefixed.exitCode, 0); assert.deepEqual(prefixed.body, { status: 'selected', name: 'stat' })
+  const unknown = await callRaw({ name: 'no_such_tool' })
+  assert.equal(unknown.body.status, 'not_found')
+  const extra = await callRaw({ name: 'stat', args: {} })
+  assert.equal(extra.exitCode, 0); assert.equal(extra.body.status, 'error'); assert.equal(extra.body.error.code, 'INVALID_ARGUMENT')
+})
 report('ptc-projection-worker')

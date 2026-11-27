@@ -65,6 +65,6 @@ export function mountConsumer(ctx: Context, plan: ConsumerPlan): void {
       { ...plan.native, enabled: plan.discovery }, { ...gate, guidance: core.promptPolicy, extraGuidance: core.extraGuidance,
         extraGuidanceOwner: agent => shellOwnsGuidance(agent) || nativeOwnsGuidance(agent),
         residentTools: () => residents.map(publicToolName), external: plan.external })
-  } else if (plan.files) ptc = mountPtc(ctx, plan.ptc, { ...gate, guidance: core.promptPolicy, resident: plan.residentTools, dynamic: plan.discovery })
-  if (plan.replaceOfficial) mountReplacements(ctx, { id: plan.id, targets: plan.replacementTargets, gate, keepOfficial: () => bashUnavailable, ptc })
+  } else if (plan.files) ptc = mountPtc(ctx, plan.ptc, { ...gate, guidance: core.promptPolicy, resident: gate.typedDiscovery ? false : plan.residentTools, dynamic: plan.discovery })
+  if (plan.replaceOfficial && !gate.typedDiscovery) mountReplacements(ctx, { id: plan.id, targets: plan.replacementTargets, gate, keepOfficial: () => bashUnavailable, ptc })
 }

@@ -44,6 +44,9 @@
           spillRetentionDays: 30
           spillTotalBudgetMiB: 256
           spillSweepEnabled: true
+        lean-ptc:
+          enabled: true
+          residentTools: false
         cordis:
           enabled: true
           residentTools: true

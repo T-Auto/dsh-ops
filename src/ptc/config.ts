@@ -6,15 +6,17 @@ export type ApiName = FileToolName | PtcToolName
 export const PTC_LOADABLE_TOOLS: readonly ApiName[] = [...FILE_TOOLS, ...PTC_TOOLS].filter(tool => !PTC_RESIDENT_TOOLS.includes(tool))
 /** The explicit first-round disclosure tier of a PTC row (#986/#979). */
 export type DisclosurePolicy = 'on-demand' | 'full'
-export interface PtcConfig { binaryPath?: string; required: boolean; allowedTools: ApiName[]; alwaysLoaded: ApiName[]; disclosurePolicy?: DisclosurePolicy }
+export interface PtcConfig { binaryPath?: string; required: boolean; allowedTools: ApiName[]; alwaysLoaded: ApiName[]; disclosurePolicy?: DisclosurePolicy; toolIndexFile?: string }
 // parsePtcConfig always fills disclosurePolicy; a slice that omits the key keeps
 // the legacy on-demand default. The builtin plan carries the parsed value since
 // D3; the custom integration path passes the key through since D4 (#988).
 export function parsePtcConfig(raw: unknown = {}): PtcConfig {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('PTC config must be an object')
   const input = raw as Record<string, unknown>
-  for (const key of Object.keys(input)) if (!['binaryPath', 'required', 'allowedTools', 'alwaysLoaded', 'disclosurePolicy'].includes(key)) throw new Error('Unknown PTC config key: ' + key)
+  for (const key of Object.keys(input)) if (!['binaryPath', 'required', 'allowedTools', 'alwaysLoaded', 'disclosurePolicy', 'toolIndexFile'].includes(key)) throw new Error('Unknown PTC config key: ' + key)
   if (input.binaryPath !== undefined && typeof input.binaryPath !== 'string') throw new Error('binaryPath must be a string')
+  if (input.toolIndexFile !== undefined && (typeof input.toolIndexFile !== 'string' || input.toolIndexFile.trim() !== input.toolIndexFile || !input.toolIndexFile)) throw new Error('toolIndexFile must be a non-empty relative path under the DSH home')
+  if (typeof input.toolIndexFile === 'string' && (input.toolIndexFile.startsWith('/') || input.toolIndexFile.split(/[\\/]/).includes('..'))) throw new Error('toolIndexFile must stay under the DSH home')
   if (input.required !== undefined && typeof input.required !== 'boolean') throw new Error('required must be boolean')
   // The default 'on-demand' is the legacy path; 'full' is a distinct explicit
   // opt-in (#979 §4) — no upgrade, save or switch may pick it for the user.
@@ -31,5 +33,5 @@ export function parsePtcConfig(raw: unknown = {}): PtcConfig {
   }
   return { binaryPath: input.binaryPath, required: input.required ?? false,
     allowedTools: names('allowedTools', PTC_LOADABLE_TOOLS), alwaysLoaded: names('alwaysLoaded', []),
-    disclosurePolicy: policy === 'full' ? 'full' : 'on-demand' }
+    disclosurePolicy: policy === 'full' ? 'full' : 'on-demand', toolIndexFile: typeof input.toolIndexFile === 'string' ? input.toolIndexFile : undefined }
 }

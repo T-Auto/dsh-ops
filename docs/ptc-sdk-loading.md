@@ -21,9 +21,26 @@ Selections belong to the exact live agent and persist until its component or age
 
 Read Outcome status before data. A partial result retains coverage and a continuation; failures retain code, effect state and retry policy. The loader performs no file work and grants no filesystem permission. No token benchmark or IO speedup is claimed here.
 
-## Result shapes and host boundaries
+## Lean PTC JSON tool index
 
-Glob `paths` returns strings; `details` returns `{path, bytes, modified, kind?}`. Grep
+`lean-ptc` initially exposes only `ops_discover_tool` in `run_code`, keeping the full directory out of the prompt. Search with `{ query: "workspace search" }`, then select one exact entry with `{ query: "my-search" }`. The frozen current SDK does not gain a new binding; after the step commits, the next model step exposes the mapped original OPS tool and its original schema.
+
+The bundled OPS catalog is read-only. A user may create a separate JSON file under DSH home and set `toolIndexFile: catalogs/tools.json` on the `lean-ptc` row. User entries append to OPS entries and cannot shadow OPS IDs. Format:
+
+```json
+{
+  "version": 1,
+  "tools": [
+    { "id": "my-search", "name": "Search project", "description": "Search workspace files", "executor": "grep" }
+  ]
+}
+```
+
+JSON may only reference an implemented OPS executor admitted by config and current sandbox authority. It cannot add arguments, alter the native schema, provide shell commands or execute code. Mounting uses the original tool name, schema, permission checks and runtime. Files are limited to 256 KiB and 256 entries; malformed JSON, duplicate IDs and unknown executors fail index initialization. User paths cannot escape DSH home. This applies only to `lean-ptc`; existing `ptc` and `ops-ptc` behavior is unchanged.
+
+English: [PTC SDK loading](./ptc-sdk-loading.md).
+
+Glob `details` returns `{path, bytes, modified, kind?}`. Grep
 `files_with_matches` returns `{path}`, `count` returns `{path, count}`, `content` returns
 `{path, line, text}`, and `definitions` adds `kind`; `summary` returns no rows and puts
 totals in `files` and `matches`. Text rows can also carry clipping facts. `read_files`

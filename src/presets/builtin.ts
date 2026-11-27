@@ -28,12 +28,13 @@ export function applyMode(root: Context, rawConfig: unknown, mode: ModeId): void
  * @param batching - whether the PTC publication delivers batching guidance.
  * @returns a consumer gate that also carries the batching switch.
  */
-export function modeGate(root: Context, mode: ModeId, batching: boolean, telemetry = false): ConsumerGate & { batching: boolean; telemetry: boolean } {
+export function modeGate(root: Context, mode: ModeId, batching: boolean, telemetry = false, typedDiscovery = false): ConsumerGate & { batching: boolean; telemetry: boolean; typedDiscovery: boolean } {
   return {
     allows: (agent: Agent) => integrationFor(root, agent) === undefined && modeOf(root, agent) === mode,
     watch: (notify: () => void) => onModesChange(root, notify),
     batching,
     telemetry,
+    typedDiscovery,
   }
 }
 export interface BuiltinConsumerOptions { discovery?: DiscoveryConfig; enabled?: boolean; dynamic?: boolean }
@@ -44,7 +45,7 @@ export function applyResolvedMode(root: Context, config: ModeConfig, mode: ModeI
     const leave = joinMode(root, mode, config)
     root.effect(() => leave, `dsh-ops: ${mode} consumer`)
   }
-  const gate = modeGate(root, mode, config.batchingGuidance, config.batchingTelemetry)
+  const gate = modeGate(root, mode, config.batchingGuidance, config.batchingTelemetry, plan.typedDiscovery === true)
   // Standalone legacy mode rows leave discovery to their explicit discovery row.
   const discovery = options.discovery ?? resolveDiscoveryConfig({ enabled: false, allowedTools: [] })
   mountConsumer(root, {
@@ -52,7 +53,7 @@ export function applyResolvedMode(root: Context, config: ModeConfig, mode: ModeI
     shell: enabled && plan.shell && config.bash && process.platform === 'win32',
     presentation: plan.ptc ? 'ptc' : 'native', residentTools: enabled && config.residentTools,
     discovery: plan.ptc ? config.dynamicTools : options.discovery !== undefined && options.dynamic !== false && discovery.enabled,
-    native: discovery, ptc: { binaryPath: config.binaryPath, required: config.required, allowedTools: config.allowedTools, alwaysLoaded: config.alwaysLoaded, disclosurePolicy: config.disclosurePolicy },
+    native: discovery, ptc: { binaryPath: config.binaryPath, required: config.required, allowedTools: config.allowedTools, alwaysLoaded: config.alwaysLoaded, disclosurePolicy: config.disclosurePolicy, toolIndexFile: config.toolIndexFile },
     replaceOfficial: enabled && (config.hideOfficialTools || config.hidePwsh),
     replacementTargets: consumerTargets(config.hideOfficialTools && (plan.nativeFiles || plan.ptc), config.hidePwsh && config.bash && plan.shell),
     section: plan.section === null ? null : `mode-${plan.section}`,

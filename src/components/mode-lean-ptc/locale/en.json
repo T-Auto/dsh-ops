@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Lean PTC preset",
+    "description": "Uses typed OPS discovery instead of native discovery and does not publish a separate Bash tool."
+  }
+}

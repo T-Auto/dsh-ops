@@ -7,6 +7,11 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Add the `lean-ptc` mode with a startup-cached JSON tool index, typed search, and next-step admission of trusted OPS executors. User catalogs remain separate and cannot define executable code or shadow OPS entries (#1079).
+- 新增 `lean-ptc` 模式，启动时缓存 JSON 工具索引，支持类型化搜索，并在下一步按需启用受信任的 OPS 执行器。用户目录与 OPS 索引分离，不能定义可执行代码或覆盖 OPS 条目（#1079）。
+- Document the verified GitHub Release archive route for DSH alpha.2, separate npm 0.5.5 compatibility from GitHub publication, and clarify Desktop/Web/TUI installation and safe upgrades (#1071).
+- 为 DSH alpha.2 补齐已验证的 GitHub Release 归档安装入口，区分 npm 0.5.5 兼容性与 GitHub 发布，并明确 Desktop/Web/TUI 安装及安全升级步骤（#1071）。
+
 ## [0.5.7] — 2026-11-27 — Patch release
 
 - Preserve sealed panel reports when a merge overlaps session close. Concurrent folds share

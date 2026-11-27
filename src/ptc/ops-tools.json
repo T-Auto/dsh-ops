@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "id": "inspect",
+      "name": "Inspect workspace files",
+      "description": "Inspect bounded UTF-8 text, hex, file metadata, or lexical matches in the workspace.",
+      "executor": "inspect_local_file"
+    },
+    {
+      "id": "search",
+      "name": "Search workspace",
+      "description": "Search files by glob or regular expression with bounded results.",
+      "executor": "grep"
+    },
+    {
+      "id": "list",
+      "name": "List workspace files",
+      "description": "Find paths using a bounded glob pattern.",
+      "executor": "glob"
+    },
+    {
+      "id": "read",
+      "name": "Read files",
+      "description": "Read one or more workspace files as bounded text.",
+      "executor": "read_files"
+    },
+    {
+      "id": "write",
+      "name": "Write workspace file",
+      "description": "Write UTF-8 content to a workspace file.",
+      "executor": "write_file"
+    },
+    {
+      "id": "edit",
+      "name": "Edit workspace file",
+      "description": "Apply a literal text edit to a workspace file.",
+      "executor": "edit_file"
+    },
+    {
+      "id": "stat",
+      "name": "Inspect file metadata",
+      "description": "Read file type, size, and timestamps.",
+      "executor": "stat"
+    },
+    {
+      "id": "batch",
+      "name": "Run a bounded tool batch",
+      "description": "Plan or run validated OPS operations.",
+      "executor": "batch"
+    }
+  ]
+}

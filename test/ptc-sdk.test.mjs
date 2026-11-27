@@ -12,6 +12,7 @@ import { assert, test, report, withTempDir, wait, waitFor } from './lib/harness.
 import { bootHost, shutdown } from './lib/host.mjs'
 import { WORKER, requireWorker } from './lib/boundary.mjs'
 import * as ptcModule from '../lib/ptc/index.js'
+import { mountPtc } from '../lib/publication/ptc.js'
 import { withToolChange } from '../lib/tool-changes.js'
 import { isPresentationProbe } from '../lib/presentation.js'
 import { mountNativeCatalogue } from './lib/native-catalogue.mjs'
@@ -19,6 +20,7 @@ import { resolvePtcConfig } from '../lib/config.js'
 import { sdkDefinition, requestedApis } from '../lib/ptc/sdk.js'
 import { legacyComponent } from './lib/legacy-component.mjs'
 const ptc = legacyComponent(ptcModule)
+const leanModule = await import('../lib/components/mode-lean-ptc/index.js')
 requireWorker('ptc-sdk')
 let serial = 0
 const tick = () => new Promise(resolve => setImmediate(resolve))
@@ -27,7 +29,7 @@ async function visible(ctx, agent) {
   try { return ctx.get('tools').schemas(agent, captured.toolSet).map(tool => tool.name).filter(name => name.startsWith('ops_')).sort() }
   finally { captured.dispose() }
 }
-async function setup(root, { native = false, config = {}, real = false } = {}) {
+async function setup(root, { native = false, config = {}, real = false, lean = false } = {}) {
   const { ctx } = await bootHost({ withWorkingDirectory: true })
   const agents = []; ctx.provide('agents', { list: () => agents })
   await ctx.plugin(Subprocess); await ctx.plugin(Sandbox); await ctx.plugin(FileSystem)
@@ -38,7 +40,9 @@ async function setup(root, { native = false, config = {}, real = false } = {}) {
   if (real) await ctx.plugin(NodePtc, {})
   const mountFile = target => mountNativeCatalogue(target, { binaryPath: WORKER, required: true })
   if (native) await mountFile(ctx)
-  const component = await ctx.plugin(ptc, { binaryPath: WORKER, required: true, ...config })
+  const component = await ctx.plugin(lean ? { apply(inner) {
+    mountPtc(inner, { binaryPath: WORKER, required: true, ...config }, { typedDiscovery: true, allows: () => true })
+  } } : ptc, { binaryPath: WORKER, required: true, ...config })
   async function agent(mode = 'ptc', parent) {
     const id = 'sdk-' + ++serial
     const value = { id, session: { id, mode: 'workspace-write', header: { cwd: root }, append() {}, read() { return [] } } }
@@ -46,7 +50,7 @@ async function setup(root, { native = false, config = {}, real = false } = {}) {
     await value.ctx.plugin({ inject: ['tools', 'systemPrompt'], apply(inner) { value.lift = selectExecutor(inner, mode) } })
     agents.push(value)
     await ctx.serial('agent/created', { agent: value })
-    await waitFor(() => ctx.tools.get('ops_load_sdk', value) !== undefined, { what: 'the PTC row has attached stable scoped definitions' })
+    await waitFor(() => ctx.tools.get(lean ? 'ops_discover_tool' : 'ops_load_sdk', value) !== undefined, { what: 'the PTC row has attached stable scoped definitions' })
     return value
   }
   return { ctx, component, agent, mountFile }
@@ -318,6 +322,40 @@ await test('registry and prompt notifications never spend an admission probe wit
       for (let i = 0; i < 4; i++) await tick()
       console.log(`  after a prompt change and a registration: probes=${probes.get(owner) ?? 0}`)
       assert.equal(probes.get(owner) ?? 0, 1, 'only the explicit resolve above probes; background registry/prompt notifications do not assemble')
+    } finally { await shutdown(ctx) }
+  })
+})
+
+await test('lean PTC advertises only discovery and admits one exact tool on the next step', async () => {
+  await withTempDir('lean-ptc', async root => {
+    const { ctx, agent } = await setup(root, { real: true, lean: true })
+    try {
+      fs.writeFileSync(path.join(root, 'note.txt'), 'test')
+      const owner = await agent(), sibling = await agent()
+      assert.deepEqual(await visible(ctx, owner), ['ops_discover_tool'])
+      const initial = await assembleFor(ctx, owner)
+      assert.deepEqual(initial.tools.map(tool => tool.name), ['run_code'])
+      const ptcText = initial.sections.filter(section => section.name.startsWith('tools:')).map(section => section.text).join(' ')
+      assert.ok(ptcText.includes('ops_discover_tool'), 'the SDK declaration exposes the discovery entry')
+      const promptText = initial.sections.filter(section => section.name.startsWith('tools:')).map(section => section.text).join(' ')
+      assert.ok(!promptText.includes('ops_stat') && !promptText.includes('ops_load_sdk') && !promptText.includes('load_sdk'))
+      const receipt = await code(ctx, owner, `const matches = await tools.ops_discover_tool({query:'inspect file'});
+        const selected = await tools.ops_discover_tool({query:'id:stat'});
+        return {matches, selected, mounted: Object.hasOwn(tools, 'ops_stat')};`)
+      assert.ok(receipt.matches.data.matches.some(item => item.id === 'stat'))
+      assert.ok(receipt.matches.data.matches.some(item => item.id === 'search'))
+      assert.equal(receipt.selected.status, 'completed', JSON.stringify(receipt.selected))
+      assert.equal(receipt.selected.data?.tool, 'ops_stat', JSON.stringify(receipt.selected))
+      assert.equal(receipt.mounted, false)
+      assert.deepEqual(await visible(ctx, owner), ['ops_discover_tool'])
+      await step(ctx, owner)
+      assert.deepEqual(await visible(ctx, owner), ['ops_discover_tool', 'ops_stat'])
+      assert.deepEqual(await visible(ctx, sibling), ['ops_discover_tool'])
+      assert.equal((await code(ctx, owner, `return await tools.ops_stat({path:'note.txt'});`)).data.exists, true)
+      sibling.session.mode = 'read-only'
+      const blocked = await direct(ctx, sibling, 'ops_discover_tool', { query: 'id:write' })
+      assert.equal(blocked.status, 'rejected')
+      assert.equal(blocked.error.code, 'POLICY_DENIED')
     } finally { await shutdown(ctx) }
   })
 })

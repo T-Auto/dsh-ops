@@ -380,14 +380,16 @@ await test('a live Loader activation, remount and disable leave the default pres
     // starts the registration.
     host.ctx.provide('agentPresets', registry)
     host.ctx.provide('settings', stubSettings(registry))
-    await waitFor(() => registry.state.definitions.length === 1, { what: 'the runtime registration in a live Loader tree' })
+    await waitFor(() => registry.state.definitions.some(definition => definition.id === PRESET_ID)
+      && registry.state.definitions.some(definition => definition.id === 'lean-ptc'), { what: 'the runtime PTC registrations in a live Loader tree' })
     await new Promise(resolve => setTimeout(resolve, 100))
     assert.equal(registry.state.updates.length, 0, 'an activation never writes the default preset')
 
     // Saving an ordinary row switch remounts the fiber from the same entry.
     fs.writeFileSync(fixture.profile.patchPath, JSON.stringify([{ id: 'dsh-ops', config: { panel: { enabled: true } } }]))
     await host.refresh()
-    await waitFor(() => registry.state.definitions.length === 2, { what: 'the replacement activation' })
+    await waitFor(() => registry.state.definitions.filter(definition => definition.id === PRESET_ID).length === 2
+      && registry.state.definitions.filter(definition => definition.id === 'lean-ptc').length === 2, { what: 'the replacement activations' })
     await new Promise(resolve => setTimeout(resolve, 100))
     assert.equal(registry.state.updates.length, 0, 'a remount never rewrites the default')
 

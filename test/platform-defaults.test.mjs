@@ -60,7 +60,7 @@ await test('the shipped merged mode configs are what validators resolve', () => 
   for (const mode of MODES) {
     assert.deepEqual(rows[0].config[mode].alwaysLoaded ?? [], resolved[mode].config.alwaysLoaded, mode)
     assert.equal(resolved[mode].enabled, true)
-    assert.equal(resolved[mode].config.residentTools, mode !== 'minimal')
+    assert.equal(resolved[mode].config.residentTools, mode !== 'minimal' && mode !== 'lean-ptc')
   }
   assert.equal(resolved.minimal.config.required, false)
   assert.equal(resolved.minimal.config.publishBashTool, true)

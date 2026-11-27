@@ -54,10 +54,12 @@ export const GLOBAL: readonly FieldSpec[] = Object.freeze([
   field(at('global', 'dynamicTools'), 'dynamicTools', 'dynamicToolsHint'),
 ])
 
-/** The five preset switches, identical in every mode. */
+/** The preset switches for the surfaces each mode exposes. */
 const MODE_FIELDS = (section: string, resident: boolean): readonly FieldSpec[] => Object.freeze([
-  field(at(section, 'bash'), 'swBash', 'swBashHint', 'bash'),
-  field(at(section, 'hidePwsh'), 'swHidePwsh', 'swHidePwshHint', 'hidePwsh'),
+  ...(section === 'lean-ptc' ? [] : [
+    field(at(section, 'bash'), 'swBash', 'swBashHint', 'bash'),
+    field(at(section, 'hidePwsh'), 'swHidePwsh', 'swHidePwshHint', 'hidePwsh'),
+  ]),
   field(at(section, 'hideOfficialTools'), 'hideOfficialTools', 'swHideOfficialToolsHint', 'hideOfficialTools'),
   ...(resident ? [field(at(section, 'residentTools'), 'swResidentTools', 'swResidentToolsHint')] : []),
   field(at(section, 'dynamicTools'), 'dynamicTools', 'swDynamicToolsHint', 'dynamicTools'),
@@ -73,6 +75,7 @@ export const GROUPS: readonly GroupSpec[] = Object.freeze([
   modeGroup('standard', 'featureStandard', 'featureStandardHint', true),
   modeGroup('ptc', 'featurePtc', 'featurePtcHint', true),
   modeGroup('ops-ptc', 'featureOpsPtc', 'featureOpsPtcHint', true),
+  modeGroup('lean-ptc', 'featureLeanPtc', 'featureLeanPtcHint', true),
   modeGroup('cordis', 'featureCordis', 'featureCordisHint', true),
   // The three opt-in features share one card: separate cards for one switch each
   // read as three empty shells next to the presets.
@@ -90,6 +93,7 @@ const DEFAULTS: Readonly<Record<string, boolean>> = Object.freeze({
   'standard.enabled': true, 'standard.residentTools': true, 'standard.bash': true, 'standard.hidePwsh': true, 'standard.hideOfficialTools': true, 'standard.dynamicTools': true,
   'ptc.enabled': true, 'ptc.residentTools': true, 'ptc.bash': true, 'ptc.hidePwsh': true, 'ptc.hideOfficialTools': true, 'ptc.dynamicTools': true,
   'ops-ptc.enabled': true, 'ops-ptc.residentTools': true, 'ops-ptc.bash': true, 'ops-ptc.hidePwsh': true, 'ops-ptc.hideOfficialTools': true, 'ops-ptc.dynamicTools': true,
+  'lean-ptc.enabled': true, 'lean-ptc.residentTools': true, 'lean-ptc.hideOfficialTools': true, 'lean-ptc.dynamicTools': true,
   'cordis.enabled': true, 'cordis.residentTools': true, 'cordis.bash': true, 'cordis.hidePwsh': true, 'cordis.hideOfficialTools': true, 'cordis.dynamicTools': true,
   'panel.enabled': false, 'tui.enabled': false, 'other.pwsh7Link': false,
 })
@@ -247,7 +251,7 @@ function savedBashPaths(raw: Record<string, unknown>): SavedBashPath[] {
   return list
 }
 
-/** The mode sections that own a PTC publication surface and its disclosure tier. */
+/** The mode sections controlled by the existing PTC disclosure card. */
 export const DISCLOSURE_SECTIONS = Object.freeze(['ptc', 'ops-ptc'] as const)
 
 /** One disclosure tier as the page holds it, or \`mixed\` when the saved rows disagree. */
@@ -259,7 +263,7 @@ export type DisclosureTier = Exclude<DisclosureSelection, 'mixed'>
 /**
  * Read the disclosure tier the saved rows stand for.
  * @param raw - the saved row config.
- * @returns the agreed tier, or \`mixed\` when the two PTC rows disagree.
+ * @returns the agreed tier, or \`mixed\` when the PTC rows disagree.
  */
 export function readDisclosure(raw: Record<string, unknown>): DisclosureSelection {
   const tiers = new Set(DISCLOSURE_SECTIONS.map(section =>
@@ -280,7 +284,7 @@ export function disclosureDiffers(selection: DisclosureSelection, raw: Record<st
 /**
  * The write operations that turn the saved rows into the reviewed tier.
  *
- * \`full\` pins both PTC rows; \`on-demand\` returns every row that carries the key
+ * \`full\` pins every PTC row; \`on-demand\` returns every row that carries the key
  * to the absent default, so an old profile saved through the card is
  * letter-identical to one that never met it.
  * @param raw - the saved row config.

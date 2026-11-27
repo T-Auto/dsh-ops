@@ -6,6 +6,8 @@ import type { PtcConfig } from '../ptc/config.js'
 import type { FileToolName } from '../capabilities/registry.js'
 
 export interface ConsumerGate {
+  /** PTC modes with one exact-name selector instead of load_sdk. */
+  typedDiscovery?: boolean
   allows(agent: Agent): boolean
   watch?(notify: () => void): () => void
 }

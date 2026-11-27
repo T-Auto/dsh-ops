@@ -1,0 +1,6 @@
+{
+  "name": "dsh-ops-mode-lean-ptc",
+  "description": "Use the OPS PTC surface with exact-name tool selection.",
+  "icon": "./icon.png",
+  "type": "module"
+}
