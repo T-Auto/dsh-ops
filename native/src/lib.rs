@@ -38,16 +38,32 @@ pub fn dispatch(request: Request) -> Result<Value> {
 /// Resolve exactly one model-requested capability. This deliberately has no
 /// filesystem or result-store access: discovery must never perturb cached data.
 fn discover_tool(request: &Request) -> Result<Value> {
-    let name = request.args.as_object()
+    let name = request
+        .args
+        .as_object()
         .filter(|args| args.len() == 1)
         .and_then(|args| args.get("name"))
         .and_then(Value::as_str)
         .filter(|name| name.len() <= 64)
         .ok_or_else(|| Failure::new("INVALID_ARGUMENT", "Provide one exact tool name"))?;
     const ALLOWED: &[&str] = &[
-        "inspect_local_file", "read_files", "read_table", "read_docx", "read_pdf",
-        "glob", "grep", "replace", "write_file", "edit_file", "diff", "stat",
-        "copy", "move", "remove", "result", "batch",
+        "inspect_local_file",
+        "read_files",
+        "read_table",
+        "read_docx",
+        "read_pdf",
+        "glob",
+        "grep",
+        "replace",
+        "write_file",
+        "edit_file",
+        "diff",
+        "stat",
+        "copy",
+        "move",
+        "remove",
+        "result",
+        "batch",
     ];
     let raw = name.strip_prefix("ops_").unwrap_or(name);
     if raw.is_empty() || !ALLOWED.contains(&raw) {
