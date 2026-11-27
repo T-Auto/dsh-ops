@@ -62,3 +62,54 @@ rendered the SDK declarations seven times; it now takes four at depth three and
 renders them four times, and the final assembly carries
 `harness:identity`, `tools:ptc-only`, `dsh-ops:repository-tooling:mode-ptc` and
 `tools:sdk` with `run_code` as its only tool.
+
+## #982 — one session scope, and examples that are not copyable twice
+
+`probe-scope-guidance.mjs` runs every fenced `ts` example of one guidance file twice
+inside one persistent REPL and reports which ones die on a redeclared top-level name.
+The harness is Node's REPL with a retained context, the shape PTC evaluates in, so the
+second run answers the only question the text controls: is a trajectory safe to copy
+twice.
+
+```console
+node bench/probes/probe-scope-guidance.mjs prompts/batching-guidance.md
+```
+
+On the revision-10 text (0.5.7 plus the shared-scope section) it reports five examples
+and **five** that are not copyable twice (`load`, `dirs`, `hits`, `stat`, `rows`). The
+five examples are the same in both texts — 0.5.7 rewrote only their report call — and the
+verified-edit trajectory now counts too, because it no longer needs top-level `await`
+that this plain REPL cannot evaluate. The number is descriptive: any example with a
+top-level `const` collides on its second run, and it documents the problem rather than
+the effect of the section. It is never a gate.
+
+`probe-scope-run.mjs` measures the effect the section is supposed to have. It drives one
+model through one audit task with the same tool contract and one retained REPL per run,
+varying only the guidance file, and scores every program the model writes:
+
+```console
+node bench/probes/probe-scope-run.mjs --guidance prompts/batching-guidance.md --steps 14 --json
+```
+
+The file is rendered for this probe's contract first (`__DSH_OUTPUT__(` becomes
+`console.log(`), the way the host renders it, so the marker never reaches the model and a
+missing marker cannot be scored as a failure. Measured 2026-11-27, `deepseek-v4.1-flash`
+through the local gateway, eight runs per arm at fourteen steps, arms interleaved:
+
+| arm | runs | programs | discarded by a redeclaration | rate |
+| --- | --- | --- | --- | --- |
+| 0.5.7 text (revision 9, no section) | 8 | 88 | 14 | 15.9% |
+| revision 10 (with the section) | 8 | 111 | 6 | 5.4% |
+
+Per run the baseline discarded 0, 1, 2, 3, 3, 2, 2 and 1 programs, the treatment
+1, 0, 1, 0, 1, 1, 1 and 1; the discarded names were `body`, `files`, `load`, `mods`,
+`out`, `paths`, `reads`, `srcDir`, `st`, `top` against `body`, `coreHits`, `first`,
+`res`, `top`. Fisher's exact test puts the two-sided p at 0.018.
+
+Three limits travel with that table. Neither arm finished the audit inside fourteen
+steps (no run of either arm wrote `report.md`), so the numbers describe the first
+fourteen programs, not a completed task. Two runs stopped early for reasons the probe
+does not control — one baseline run replied at step one without a tool call (0 programs)
+and another stopped after four — and they are counted as they fell rather than dropped.
+And the unit is one model on one task: the rates are evidence that the rule changes what
+the model does, not a percentage a user should expect.

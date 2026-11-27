@@ -15,7 +15,7 @@ import { literalShellFileWork } from './shell-file-work.js'
 /** Identity of the guidance in the host message source. */
 export const BATCHING_GUIDANCE_ID = 'batching-guidance'
 /** Revision of the guidance text; bump it when the wording or the file format changes. */
-export const BATCHING_GUIDANCE_REVISION = '9'
+export const BATCHING_GUIDANCE_REVISION = '10'
 /**
  * Host source kind for guidance delivered as a user-role message.
  *

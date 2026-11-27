@@ -26,7 +26,7 @@ await test('the shipped guidance is English Markdown with its host-source identi
   }
   assert.equal(BATCHING_GUIDANCE_ID, 'batching-guidance')
   // A wording or format change is a product change and must bump the revision.
-  assert.equal(BATCHING_GUIDANCE_REVISION, '9')
+  assert.equal(BATCHING_GUIDANCE_REVISION, '10')
 })
 
 await test('the guidance loader returns exactly the shipped Markdown file', () => {
@@ -109,7 +109,24 @@ await test('the teacher trajectory pins the first-line plan and a runnable load 
   assert.ok(text.includes('nextOffset'), 'paging advances by the cursor')
   // File work belongs to the OPS APIs; a shell example here would teach the bypass.
   for (const banned of ['find .', 'ls -la', 'grep -rn']) assert.ok(!text.includes(banned), banned)
-  assert.ok(text.length > 2500 && text.length < 9000, 'guidance stays bounded: ' + text.length)
+  // 8,464 was 0.5.6's ceiling; the shared-scope section and its two table rows cost
+  // ~600 more and the output clause ~150, so the bound is 9,300 and still a bound: the
+  // lesson rides in logged history, and a future edit has to pay for itself inside it.
+  assert.ok(text.length > 2500 && text.length < 9300, 'guidance stays bounded: ' + text.length)
+})
+
+await test('every shipped program reports through the scope output call, never a top-level return', () => {
+  // Host 0.2.3 runs run_code in the scoped REPL: a top-level `return` is a SyntaxError
+  // that discards the program before any tool call runs, so no example may teach one.
+  // The examples keep the neutral `__DSH_OUTPUT__(` call, which the renderer rewrites to
+  // the output API the scope declares, so one file serves the REPL and the function body.
+  const text = loadBatchingGuidance()
+  // A `return` inside a callback is legal; only a top-level one (column 0) is fatal.
+  assert.equal(/^return\b/mu.test(text), false, 'no example uses a top-level return')
+  // The program-shape rule lives in core rule 5, where the output API is stated once.
+  assert.match(text, /a program that reports\s+nothing shows nothing, and a top-level `return` is a SyntaxError/,
+    'rule 5 states that silence reports nothing and a top-level return is fatal')
+  assert.equal((text.match(/__DSH_OUTPUT__\(/gu) ?? []).length, 6, 'every program reports through the shared marker')
 })
 
 await test('the trim removed repeated prose and the anti-pattern demo', () => {
@@ -133,10 +150,23 @@ await test('the trimmed lesson keeps the four trajectories and restores the two 
   assert.ok(text.includes('**Recheck the SDK after a mode change**'), 'the post-mode-change recheck is a core rule')
 })
 
+await test('the session scope rule reaches every surface that ships the lesson', () => {
+  // The runtime keeps top-level declarations, so a second declaration discards the
+  // program before its first line; the rule is not a loader lesson and must survive
+  // the loader-less rendering that replaces the load section.
+  const text = loadBatchingGuidance()
+  assert.ok(text.includes('## One session, one scope'), 'the scope section keeps its heading')
+  assert.ok(text.includes('compile-time SyntaxError'), 'a redeclaration is named as fatal')
+  assert.ok(text.includes('The same top-level name in a second program'), 'the table names the trap')
+  assert.ok(text.includes('Re-sending a failed program with new arguments'), 'the table names the retry trap')
+  const rendered = renderBatchingGuidance(text, { loader: false, resident: ['ops_glob'], loadable: [] })
+  assert.ok(rendered.includes('## One session, one scope'), 'the rule is not dropped with the load section')
+})
+
 await test('the shipped lesson measures its declared trimmed size', () => {
   // The trim record in the PR declares this size; a wording edit must bump the
   // revision and this number together. The 84 B delivery prefix is counted separately.
-  assert.equal(Buffer.byteLength(loadBatchingGuidance(), 'utf8'), 8464)
+  assert.equal(Buffer.byteLength(loadBatchingGuidance(), 'utf8'), 9238)
 })
 
 await test('a loader scope adapts output markers to its declared host contract', () => {
