@@ -24,9 +24,10 @@
  * widening access if guessed. Owner and other xattrs are best-effort and reported
  * in `metadataWarnings`.
  *
- * Platform. Windows runs its own exact owner/group/DACL + timestamps test;
- * POSIX runs the mode/ACL/xattr cases below. Adversarial Windows ACL and staging
- * cleanup cases live in file-operations.test.mjs.
+ * Platform. Windows runs its own exact owner/group/DACL (copy timestamps and
+ * updated write/edit/replace mtime) tests; POSIX runs the mode/ACL/xattr cases
+ * below. Adversarial Windows ACL and staging cleanup cases live in
+ * file-operations.test.mjs.
  *
  * Not asserted here, and why:
  *
@@ -75,32 +76,104 @@ if (process.platform === 'win32') {
       }
     })
   })
-  await test('Windows overwrite/edit/replace/copy retain exact owner/group/DACL and timestamps', async () => {
+  await test('Windows overwrite/edit/replace preserve owner/group/DACL/CreationTime and advance mtime; copy retains timestamps', async () => {
     await withTempDir('file-windows-metadata', async root => {
       const source = path.join(root, 'source')
       fs.writeFileSync(source, 'TOKEN')
-      fs.utimesSync(source, new Date('2020-01-02T00:00:00Z'), new Date('2020-01-03T00:00:00Z'))
+      const past = new Date('2020-01-03T00:00:00Z')
+      fs.utimesSync(source, new Date('2020-01-02T00:00:00Z'), past)
       const acl = target => execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Acl -LiteralPath '${target.replaceAll("'", "''")}').Sddl`], { encoding: 'utf8', env: { ...process.env, PSModulePath: '' } }).trim()
-      const before = acl(source), timestamp = fs.statSync(source).mtimeMs
+      const before = acl(source), creation = fs.statSync(source).birthtimeMs
       const call = async (tool, args) => envelopeOf(await callTool(tool, { path: source, ...args }, { root }), assert)
       let revision = (await call('stat', {})).revision
       for (const [tool, args] of [
         ['write_file', { content: 'NEXT' }],
         ['edit_file', { edits: [{ oldText: 'NEXT', newText: 'FINAL' }] }],
-        ['replace', { pattern: 'FINAL', replacement: 'DONE' }],
+        ['replace', { pattern: 'FINAL', replacement: 'DONE!' }],
       ]) {
+        fs.utimesSync(source, new Date('2020-01-02T00:00:00Z'), past)
+        const beforeMtime = fs.statSync(source).mtimeMs
         const value = await call(tool, { ...(tool === 'replace' ? {} : { expectedRevision: revision }), ...args })
         assert.equal(value.status, 'completed', JSON.stringify(value))
         revision = (await call('stat', {})).revision
+        const afterStat = fs.statSync(source)
         assert.equal(acl(source), before)
-        assert.equal(fs.statSync(source).mtimeMs, timestamp)
+        assert.equal(afterStat.birthtimeMs, creation)
+        assert.ok(afterStat.mtimeMs > beforeMtime, `${tool} must advance mtimeMs past ${beforeMtime}, got ${afterStat.mtimeMs}`)
       }
+      fs.utimesSync(source, new Date('2020-01-02T00:00:00Z'), past)
+      const copySourceMtime = fs.statSync(source).mtimeMs
       const to = path.join(root, 'copied')
       const copied = await call('copy', { to, expectedRevision: revision })
       assert.equal(copied.status, 'completed', JSON.stringify(copied))
       assert.equal(acl(to), before)
-      assert.equal(fs.statSync(to).mtimeMs, timestamp)
-      assert.equal(fs.readFileSync(to, 'utf8'), 'DONE')
+      assert.equal(fs.statSync(to).birthtimeMs, creation)
+      assert.equal(fs.statSync(to).mtimeMs, copySourceMtime)
+      assert.equal(fs.readFileSync(to, 'utf8'), 'DONE!')
+    })
+  })
+  await test('Windows same-length edits and variable-length writes update stat.modifiedMs, glob sort:modified, and git status', async () => {
+    await withTempDir('file-windows-mtime-propagation', async root => {
+      const a = path.join(root, 'a.txt')
+      const b = path.join(root, 'b.txt')
+      const older = new Date(Date.now() - 2 * 86_400_000)
+      const newer = new Date(Date.now() - 1 * 86_400_000)
+      fs.writeFileSync(a, 'AAAA\n')
+      fs.writeFileSync(b, 'BBBB\n')
+      fs.utimesSync(a, older, older)
+      fs.utimesSync(b, newer, newer)
+
+      const globNames = async () => envelopeOf(await callTool('glob', { path: root, pattern: ['*.txt'], outputMode: 'details', sort: 'modified' }, { root }), assert).items.map(item => path.basename(item.path))
+      const statOf = async target => envelopeOf(await callTool('stat', { path: target }, { root }), assert)
+
+      assert.deepEqual(await globNames(), ['b.txt', 'a.txt'])
+      let revision = (await statOf(a)).revision
+      const resetOld = () => {
+        fs.utimesSync(a, older, older)
+        return fs.statSync(a).mtimeMs
+      }
+
+      for (const [tool, args, expected] of [
+        ['edit_file', { path: a, edits: [{ oldText: 'AAAA', newText: 'BBBB' }] }, 'BBBB\n'],
+        ['write_file', { path: a, content: 'CCCC\n' }, 'CCCC\n'],
+        ['replace', { path: root, pattern: 'CCCC', replacement: 'DDDD' }, 'DDDD\n'],
+        ['edit_file', { path: a, edits: [{ oldText: 'DDDD', newText: 'DDDD_LONGER' }] }, 'DDDD_LONGER\n'],
+        ['write_file', { path: a, content: '' }, ''],
+      ]) {
+        const beforeMs = resetOld()
+        const beforeStatMs = (await statOf(a)).modifiedMs
+        const res = envelopeOf(await callTool(tool, { ...(tool === 'replace' ? {} : { expectedRevision: revision }), ...args }, { root }), assert)
+        assert.equal(res.status, 'completed', JSON.stringify(res))
+        assert.equal(fs.readFileSync(a, 'utf8'), expected)
+        const afterStat = await statOf(a)
+        revision = afterStat.revision
+        assert.ok(fs.statSync(a).mtimeMs > beforeMs, `${tool} must advance mtimeMs`)
+        assert.ok(afterStat.modifiedMs > beforeStatMs, `${tool} must advance ops_stat.modifiedMs`)
+        assert.deepEqual(await globNames(), ['a.txt', 'b.txt'], `${tool} must rank modified a.txt ahead of older b.txt`)
+      }
+
+      let hasGit = false
+      try { execFileSync('git', ['--version'], { stdio: 'ignore' }); hasGit = true } catch { hasGit = false }
+      if (hasGit) {
+        const repo = path.join(root, 'repo')
+        fs.mkdirSync(repo)
+        const tracked = path.join(repo, 'f.txt')
+        fs.writeFileSync(tracked, 'AAAA\n')
+        fs.utimesSync(tracked, older, older)
+        const git = (...argv) => execFileSync('git', argv, { cwd: repo, encoding: 'utf8' }).trim()
+        git('init', '-q')
+        git('config', 'core.autocrlf', 'false')
+        git('config', 'user.email', 'test@example.com')
+        git('config', 'user.name', 'Test')
+        git('add', 'f.txt')
+        git('commit', '-qm', 'init')
+        fs.utimesSync(tracked, older, older)
+        git('update-index', '--refresh')
+        const trackedRev = envelopeOf(await callTool('stat', { path: tracked }, { root: repo }), assert).revision
+        const edited = envelopeOf(await callTool('edit_file', { path: tracked, expectedRevision: trackedRev, edits: [{ oldText: 'AAAA', newText: 'BBBB' }] }, { root: repo }), assert)
+        assert.equal(edited.status, 'completed', JSON.stringify(edited))
+        assert.match(git('status', '--porcelain'), /M\s+f\.txt/, 'equal-length edit must stay visible to git status')
+      }
     })
   })
   await test('Windows restricted workspace token can edit, rename and delete a newly published file', async () => {

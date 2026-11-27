@@ -52,18 +52,20 @@ await test('trusted anchor aliases retain descendant no-follow and temp never wi
 
 requireWorker('safety-atomicity')
 if (process.platform === 'win32') {
-  await test('Windows replace retains exact security/timestamps and rejects named streams before publication', async () => {
+  await test('Windows replace retains exact security, advances mtime and rejects named streams before publication', async () => {
     await withTempDir('safety-windows-metadata', async root => {
       const source = path.join(root, 'source.txt')
       fs.writeFileSync(source, 'TOKEN')
       fs.utimesSync(source, new Date('2020-01-02T00:00:00Z'), new Date('2020-01-03T00:00:00Z'))
       const acl = () => execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Acl -LiteralPath '${source.replaceAll("'", "''")}').Sddl`], { encoding: 'utf8', env: { ...process.env, PSModulePath: '' } }).trim()
-      const before = acl(), modified = fs.statSync(source).mtimeMs
+      const before = acl(), creation = fs.statSync(source).birthtimeMs, modified = fs.statSync(source).mtimeMs
       const replace = async () => envelopeOf(await callTool('replace', { path: source, pattern: 'TOKEN', replacement: 'DONE' }, { root }), assert)
       const value = await replace()
       assert.equal(value.status, 'completed', JSON.stringify(value))
       assert.equal(fs.readFileSync(source, 'utf8'), 'DONE')
-      assert.equal(acl(), before); assert.equal(fs.statSync(source).mtimeMs, modified)
+      assert.equal(acl(), before)
+      assert.equal(fs.statSync(source).birthtimeMs, creation)
+      assert.ok(fs.statSync(source).mtimeMs > modified, `replace must advance mtimeMs past ${modified}`)
       assert.equal(value.items[0].metadata.dacl, true)
       fs.writeFileSync(source, 'TOKEN'); fs.writeFileSync(`${source}:secret`, 'KEEP')
       const refused = await replace()
