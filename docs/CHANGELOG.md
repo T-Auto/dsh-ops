@@ -7,6 +7,12 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Correct the Chinese component and usage docs for `batchingGuidance`: the lesson and notices are
+  `role: 'user'` messages whose source kind is `dsh-ops:batching-guidance` (no plugin envelope),
+  replacing the stale `source kind user` wording (#1063).
+- 修正 `batchingGuidance` 的中文组件参考与使用指南：教学与提醒是以角色 `user`、来源种类
+  `dsh-ops:batching-guidance` 投递的用户消息，不再写作 `source kind user`（#1063）。
+
 ## [0.5.7] — 2026-11-27 — Patch release
 
 - Preserve sealed panel reports when a merge overlaps session close. Concurrent folds share
