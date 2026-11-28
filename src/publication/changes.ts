@@ -45,8 +45,8 @@ function hostScope(args: readonly unknown[]): object | undefined {
 export function onToolChange(
   ctx: Context,
   callback: (scopes?: readonly object[], origin?: 'host' | 'local') => void,
-): void {
-  ctx.on('internal/dispatch', (_type, name, args) => {
+): () => boolean {
+  return ctx.on('internal/dispatch', (_type, name, args) => {
     if (name !== 'tools/change') return
     if (!dispatches.has(args)) {
       const host = hostScope(args)

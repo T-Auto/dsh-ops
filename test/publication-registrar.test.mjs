@@ -19,6 +19,18 @@ const grant = (agent, label, extra = {}) => {
     dispatch: async () => ({ source: label }), ...extra }
 }
 const call = (ctx, agent, step) => executeCall(ctx, { agent, name, toolSet: step.toolSet, arguments: {}, callId: 'fixture' })
+// Count definitions() reads on the underlying service. Wrapping the per-context
+// proxy would not affect the registrar's separately resolved proxy.
+const countDefinitions = tools => {
+  const service = tools[Symbol.for('cordis.original')]
+  const definitions = service.definitions
+  let calls = 0
+  service.definitions = function (scope, toolSet) {
+    ++calls
+    return definitions.call(this, scope, toolSet)
+  }
+  return { calls: () => calls, reset: () => { calls = 0 } }
+}
 
 await test('shared canonical generation merges consumers and isolates exact agents', async () => {
   const { ctx, tools } = await bootHost()
@@ -191,6 +203,129 @@ await test('late ancestor source withdraws fallback synchronously and unload sta
     assert.ok(tools.get(name, child))
     next.dispose()
   } finally { steps.forEach(s => s.dispose()); await shutdown(ctx) }
+})
+
+await test('one tools/change computes definitions once per service and scope, not per publication', async () => {
+  const { ctx, tools } = await bootHost()
+  const leases = []
+  try {
+    const a = agentScope(ctx, 'shared-cache')
+    const counted = countDefinitions(tools)
+    const solo = await acquire(ctx, undefined, `${name}_solo`, canonical)
+    leases.push(solo)
+    solo.grant(grant(a, 'solo'))
+    counted.reset()
+    ctx.emit('tools/change')
+    const soloCalls = counted.calls()
+    assert.ok(soloCalls >= 1, 'the baseline publication must read definitions')
+    solo.dispose()
+    leases.pop()
+    for (let index = 0; index < 4; ++index) {
+      const lease = await acquire(ctx, undefined, `${name}_shared_${index}`, canonical)
+      leases.push(lease)
+      lease.grant(grant(a, `shared-${index}`))
+    }
+    counted.reset()
+    ctx.emit('tools/change')
+    const sharedCalls = counted.calls()
+    assert.ok(sharedCalls <= soloCalls + 1,
+      `four publications on one scope must share definitions: solo=${soloCalls}, shared=${sharedCalls}`)
+    assert.ok(sharedCalls < 4, `definitions must not be rebuilt per publication: ${sharedCalls}`)
+  } finally {
+    for (const lease of leases) lease.dispose()
+    await shutdown(ctx)
+  }
+})
+
+await test('a late ancestor source invalidates cached definitions and retires the fallback', async () => {
+  const { ctx, tools } = await bootHost()
+  let lease, remove
+  try {
+    const parent = agentScope(ctx, 'cache-parent'), child = agentScope(ctx, 'cache-child', parent)
+    const counted = countDefinitions(tools)
+    lease = await acquire(child.ctx, child, name, canonical)
+    lease.grant(grant(child, 'fallback'))
+    assert.ok(tools.get(name, child))
+    counted.reset()
+    const source = { ...canonical, name, execute: async () => ({ source: 'ancestor' }) }
+    remove = parent.ctx.get('tools').register(source)
+    assert.ok(counted.calls() >= 1, 'a tool change must discard the cached view before refresh')
+    assert.equal(tools.get(name, child), source)
+    assert.equal(tools.definitions(child).filter(candidate => candidate.name === name).length, 1)
+  } finally {
+    remove?.()
+    lease?.dispose()
+    await shutdown(ctx)
+  }
+})
+
+await test('a change while no publication listens cannot be served from an acquisition cache', async () => {
+  const { ctx, tools } = await bootHost()
+  let lease, next, remove
+  try {
+    const parent = agentScope(ctx, 'unwatched-parent'), child = agentScope(ctx, 'unwatched-child', parent)
+    const counted = countDefinitions(tools)
+    lease = await acquire(child.ctx, child, name, canonical)
+    lease.grant(grant(child, 'first'))
+    lease.dispose()
+    lease = undefined
+    const source = { ...canonical, name, execute: async () => ({ source: 'ancestor' }) }
+    remove = parent.ctx.get('tools').register(source)
+    counted.reset()
+    next = await acquire(child.ctx, child, name, canonical)
+    next.grant(grant(child, 'second'))
+    assert.ok(counted.calls() >= 1, 'acquisition must recompute after an unwatched change')
+    assert.equal(tools.get(name, child), source, 'the new publication must not cache a pre-change view')
+  } finally {
+    next?.dispose()
+    remove?.()
+    lease?.dispose()
+    await shutdown(ctx)
+  }
+})
+
+await test('sibling scopes keep separate cached definitions and neither shadows the other', async () => {
+  const { ctx, tools } = await bootHost()
+  const leases = []
+  try {
+    const a = agentScope(ctx, 'cache-sibling-a'), b = agentScope(ctx, 'cache-sibling-b')
+    const counted = countDefinitions(tools)
+    for (const [agent, label] of [[a, 'a'], [b, 'b']]) {
+      const lease = await acquire(agent.ctx, agent, name, canonical)
+      leases.push(lease)
+      lease.grant(grant(agent, label))
+    }
+    const left = tools.get(name, a), right = tools.get(name, b)
+    assert.ok(left, 'the first sibling registers')
+    assert.ok(right, 'the second sibling registers')
+    assert.notEqual(left, right, 'siblings own distinct definitions')
+    counted.reset()
+    ctx.emit('tools/change')
+    assert.equal(tools.get(name, a), left, 'the first sibling must keep its own view')
+    assert.equal(tools.get(name, b), right, 'the second sibling must keep its own view')
+    assert.ok(counted.calls() >= 2, `each distinct scope needs its own definitions: ${counted.calls()}`)
+  } finally {
+    for (const lease of leases) lease.dispose()
+    await shutdown(ctx)
+  }
+})
+
+await test('a closed publication removes its invalidation listener and stops reading definitions', async () => {
+  const { ctx, tools } = await bootHost()
+  try {
+    const a = agentScope(ctx, 'closed-cache')
+    const counted = countDefinitions(tools)
+    const listeners = () => ctx.events._hooks?.['internal/dispatch']?.length ?? 0
+    const before = listeners()
+    const lease = await acquire(ctx, undefined, name, canonical)
+    lease.grant(grant(a, 'closed'))
+    assert.equal(listeners(), before + 1, 'acquire registers one invalidation listener')
+    lease.dispose()
+    assert.equal(listeners(), before, 'dispose removes the invalidation listener')
+    counted.reset()
+    ctx.emit('tools/change')
+    assert.equal(counted.calls(), 0, 'a closed publication must not read definitions on later changes')
+  } finally { await shutdown(ctx) }
 })
 
 await test('hidden ancestor is discovered without bypassing child or parent deny', async () => {

@@ -7,6 +7,15 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+- Cache the visible tool definitions read by publication registration per underlying tools
+  service and viewing scope, instead of rebuilding the table for every publication on every
+  `tools/change`. The cache is invalidated from `internal/dispatch` before the change reaches
+  the publication listener, cleared on acquisition (covering changes while nothing listened)
+  and on close; registration, admission, retirement and dispatch semantics are unchanged (#1050).
+- 发布注册读取的工具定义现在按底层 tools 服务与查看作用域缓存，不再为每个发布项在每次
+  `tools/change` 时重建整张表。缓存在 `internal/dispatch` 阶段、变更送达发布监听器之前失效，
+  并在获取与关闭时清空（覆盖无人监听期间发生的变更）；注册、准入、退役与派发语义不变（#1050）。
+
 ## [0.5.7] — 2026-11-27 — Patch release
 
 - Preserve sealed panel reports when a merge overlaps session close. Concurrent folds share

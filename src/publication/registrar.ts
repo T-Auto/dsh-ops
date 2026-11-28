@@ -4,6 +4,7 @@ import type { Outcome } from '../kernel/outcome.js'
 import { loadScopes } from '../adapter/dsh/host.js'
 import { publicationReady, publicationRegistration } from './reentry.js'
 import { rootOf } from '../adapter/dsh/root.js'
+import { onToolChange } from './changes.js'
 
 export interface PublicationGrant {
   readonly consumer: object
@@ -45,6 +46,15 @@ interface Entry {
 const roots = new WeakMap<object, Map<object | undefined, Map<string, Entry>>>()
 const published = new WeakMap<ToolDefinition, { root: object; current(): boolean }>()
 const admissions = new WeakMap<ToolDefinition, (activation: ToolActivationContext) => Promise<boolean>>()
+/**
+ * `definitions()` rebuilds the complete visible table on every call. Publications
+ * sharing one underlying tools service can share one answer per viewing scope
+ * until a tool change invalidates it. The key is the service itself, never the
+ * per-context proxy that `ctx.get('tools')` returns.
+ */
+type DefinitionsCache = Map<object | undefined, readonly ToolDefinition[]>
+const definitionCaches = new WeakMap<object, DefinitionsCache>()
+const ORIGINAL = Symbol.for('cordis.original')
 /** Reuse the source registration's exact decision for a conditional official fallback. */
 export function publicationAdmission(tool: ToolDefinition): ((activation: ToolActivationContext) => Promise<boolean>) | undefined {
   return admissions.get(tool)
@@ -96,6 +106,22 @@ export async function acquire(ctx: Context, scope: object | undefined, name: str
   const availableTools = ctx.get('tools')
   if (!availableTools) throw new Error('Publication requires the tools service')
   const tools = availableTools
+  const service: object = (tools as unknown as Record<symbol, object | undefined>)[ORIGINAL] ?? tools
+  const cache: DefinitionsCache = definitionCaches.get(service) ?? new Map()
+  definitionCaches.set(service, cache)
+  // A change can happen while no publication is listening. Acquisition must not
+  // start from a view that predates it.
+  cache.clear()
+  // Only sourceExists uses this lookup and it never passes a step toolSet, so
+  // the cache key is exactly (service, scope). Anything that adds a toolSet must
+  // extend the key rather than share this cache.
+  const definitionsOf = (view: object | undefined): readonly ToolDefinition[] => {
+    const cached = cache.get(view)
+    if (cached !== undefined) return cached
+    const definitions = tools.definitions(view) as readonly ToolDefinition[]
+    cache.set(view, definitions)
+    return definitions
+  }
   const grants = new Set<PublicationGrant>()
   const owned = new Set<ToolDefinition>()
   // P5 (#997): an agent that ever held an eligible grant and now matches none
@@ -130,7 +156,7 @@ export async function acquire(ctx: Context, scope: object | undefined, name: str
   const sourceExists = () => {
     // Scan each ancestor independently: a child restriction cannot hide its source.
     for (const ancestor of [...scopeChainOf(scope), undefined]) {
-      if (tools.definitions(ancestor).some(candidate => candidate.name === name && !owned.has(candidate))) return true
+      if (definitionsOf(ancestor).some(candidate => candidate.name === name && !owned.has(candidate))) return true
     }
     return false
   }
@@ -212,6 +238,9 @@ export async function acquire(ctx: Context, scope: object | undefined, name: str
       finish(errors)
     } finally { busy = false }
   }
+  // internal/dispatch is observed before the tools/change callbacks, so the next
+  // refresh cannot read a view cached before this change.
+  const forget = onToolChange(ctx, () => { cache.clear() })
   const unwatch = ctx.on('tools/change', () => refresh(), { global: true, prepend: true })
   const entry: Entry = { canonical, owner: ctx, lease(owner) {
     if (owner !== ctx) throw new Error('Publication consumers must share a stable owner context')
@@ -282,6 +311,9 @@ export async function acquire(ctx: Context, scope: object | undefined, name: str
     const errors: unknown[] = []
     attempt(errors, unwatch)
     attempt(errors, withdraw)
+    attempt(errors, forget)
+    // Do not retain a closed generation's definitions after its service outlives it.
+    attempt(errors, () => cache.clear())
     for (const grant of remaining) attempt(errors, () => grant.cancel?.())
     finish(errors)
   }
